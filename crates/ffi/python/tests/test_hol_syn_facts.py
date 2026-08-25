@@ -449,9 +449,13 @@ def test_child_evidence_may_be_finer_than_the_parent(relation: str, child: str) 
     equal = kernel.syn_congr(child, left, right, [])
     equation_left = kernel.eq(base.bool_ty, left, left)
     equation_right = kernel.eq(base.bool_ty, right, right)
+    equality_type = kernel.syn_refl(child, base.bool_ty)
 
     fact = kernel.syn_congr(
-        relation, equation_left, equation_right, child_facts([equal, equal])
+        relation,
+        equation_left,
+        equation_right,
+        child_facts([equality_type, equal, equal]),
     )
     assert fact.relation == relation
 

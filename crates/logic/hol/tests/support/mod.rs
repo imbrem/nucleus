@@ -247,7 +247,6 @@ pub struct ArenaCbor {
     eq: Option<Vec<Value>>,
     syn_eq: Option<Vec<Value>>,
     conv: Option<Vec<Value>>,
-    sort: Option<Vec<Value>>,
     syn_facts: Option<Vec<Value>>,
     syn_free: Option<Value>,
     ctx: Vec<Value>,
@@ -273,7 +272,6 @@ impl ArenaCbor {
             eq: None,
             syn_eq: None,
             conv: None,
-            sort: None,
             syn_facts: None,
             syn_free: None,
             ctx: Vec::new(),
@@ -306,12 +304,6 @@ impl ArenaCbor {
     #[must_use]
     pub fn conv(mut self, values: Vec<Value>) -> Self {
         self.conv = Some(values);
-        self
-    }
-
-    #[must_use]
-    pub fn sort(mut self, values: Vec<Value>) -> Self {
-        self.sort = Some(values);
         self
     }
 
@@ -390,9 +382,6 @@ impl ArenaCbor {
         }
         if let Some(values) = self.conv {
             syn.push((text("conv"), Value::Array(values)));
-        }
-        if let Some(values) = self.sort {
-            syn.push((text("sort"), Value::Array(values)));
         }
         let amb = Value::Map(vec![
             (text("pred"), Value::Array(Vec::new())),

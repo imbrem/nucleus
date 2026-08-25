@@ -7,10 +7,11 @@ import Mathlib.Order.Basic
 /-!
 # One-based HOL proof core
 
-This is the semantic row model used by the established HOL soundness proofs.
-The current Rust arena is modeled exactly by `OneBased.Layout`; its separate
-columns are materialized into this proof core only through
-`Layout.Arena.holCore`. It is not the current serialized arena shape.
+This is the semantic storage model used by the established HOL soundness
+proofs.  As in Rust, physical rows contain syntax only and semantic equality
+and sort/classifier information live in separate dense columns.  The derived
+Proof-facing row lookup remains syntax-only; column facts are queried directly.
+`OneBased.Layout` adds the surrounding nested wire structure.
 Local definition references are positive `i32` values strictly below
 `i32::MAX`, so signed-literal negation is total. Import and syntactic-fact
 indices are positive `i32` values and may use `i32::MAX`.
@@ -332,8 +333,8 @@ inductive Expr where
   | bool (value : Bool)
   | op1 (op : Nucleus.Hol.Ethane.Builtin.Op1) (operand : Ref)
   | op2 (op : Nucleus.Hol.Ethane.Builtin.Op2) (left right : Ref)
-  /-- Equality operands; their common type is recovered during checking. -/
-  | eq (left right : Ref)
+  /-- Equality's immutable operand type, followed by its two operands. -/
+  | eq (type left right : Ref)
   | eps (type predicate : Ref)
   | tmRef (source : ImportId) (foreign : Ref)
   | tyRef (source : ImportId) (foreign : Ref)
@@ -369,23 +370,19 @@ structure RowView where
   val : Option Value := none
   src : Option ImportId := none
   ix : Option Ref := none
-  eq : Option Ref := none
-  sort : Option Ref := none
   deriving DecidableEq, Repr
 
-/-- One private row and its optional unvalidated inline members. -/
+/-- One private immutable syntax row.  Logical classifiers and equality
+parents live exclusively in the arena's dense columns. -/
 structure Row where
   expr : Expr
-  eq : Option Ref := none
-  sort : Option Ref := none
   deriving DecidableEq, Repr
 
 def Row.toView (row : Row) : RowView :=
   let ordinary (tag : Tag) (ixs : List Ref) (val : Option Value := none) : RowView :=
-    { tag, ixs := if ixs.isEmpty then none else some ixs,
-      val, eq := row.eq, sort := row.sort }
+    { tag, ixs := if ixs.isEmpty then none else some ixs, val }
   let foreign (tag : Tag) (src : ImportId) (ix : Ref) : RowView :=
-    { tag, src := some src, ix := some ix, eq := row.eq, sort := row.sort }
+    { tag, src := some src, ix := some ix }
   match row.expr with
   | .kindStar => ordinary (.kind .star) []
   | .kindArr a b => ordinary (.kind .arr) [a, b]
@@ -402,7 +399,7 @@ def Row.toView (row : Row) : RowView :=
   | .bool value => ordinary (.tm .bool) [] (some (.bool value))
   | .op1 op operand => ordinary (.tm .op1) [operand] (some (.nat op.code.toUInt64))
   | .op2 op left right => ordinary (.tm .op2) [left, right] (some (.nat op.code.toUInt64))
-  | .eq left right => ordinary (.tm .eq) [left, right]
+  | .eq type left right => ordinary (.tm .eq) [type, left, right]
   | .eps type predicate => ordinary (.tm .eps) [type, predicate]
   | .tmRef src ix => foreign (.tm .ref) src ix
   | .tyRef src ix => foreign (.ty .ref) src ix
@@ -429,21 +426,182 @@ def Row.ofView? (view : RowView) : Option Row := do
         some (.op1 (← Nucleus.Hol.Ethane.Builtin.Op1.ofUInt64? code) operand)
     | .tm .op2, some [left, right], some (.nat code), none, none =>
         some (.op2 (← Nucleus.Hol.Ethane.Builtin.Op2.ofUInt64? code) left right)
-    | .tm .eq, some [left, right], none, none, none => some (.eq left right)
+    | .tm .eq, some [type, left, right], none, none, none =>
+        some (.eq type left right)
     | .tm .eps, some [type, predicate], none, none, none => some (.eps type predicate)
     | .tm .ref, none, none, some src, some ix => some (.tmRef src ix)
     | .ty .ref, none, none, some src, some ix => some (.tyRef src ix)
     | .kind .ref, none, none, some src, some ix => some (.kindRef src ix)
     | _, _, _, _, _ => none
-  return { expr, eq := view.eq, sort := view.sort }
+  return { expr }
 
 @[simp] theorem Row.ofView?_toView (row : Row) : Row.ofView? row.toView = some row := by
   cases row with
-  | mk expr eq sort =>
+  | mk expr =>
       cases expr <;> try rfl
       case mk.op2 op left right => cases op <;> rfl
 
 end detail
+
+/-! ## Dense logical columns
+
+These definitions live in the base model because the base arena owns this
+storage.  `Columns` adds invariants and union-find relations without defining
+a second representation. -/
+
+/-- A dense optional column. Missing positions and stored nulls both denote
+absence. -/
+abbrev Column (α : Type) := List (Option α)
+
+namespace Column
+
+def get? (column : Column α) (reference : Ref) : Option α :=
+  column[(reference.value.toNat - 1)]?.bind id
+
+def Decreases (column : Column Ref) : Prop :=
+  ∀ {source target}, column.get? source = some target → target < source
+
+@[simp] theorem get?_nil (reference : Ref) :
+    get? ([] : Column α) reference = none := by simp [get?]
+
+def normalize : Column α → Column α
+  | [] => []
+  | none :: tail =>
+      let normalized := normalize tail
+      if normalized.isEmpty then [] else none :: normalized
+  | some value :: tail => some value :: normalize tail
+
+@[simp] theorem normalize_nil : normalize ([] : Column α) = [] := rfl
+
+theorem normalize_cons_some (value : α) (tail : Column α) :
+    normalize (some value :: tail) = some value :: normalize tail := rfl
+
+@[simp] theorem normalize_idempotent (column : Column α) :
+    normalize (normalize column) = normalize column := by
+  induction column with
+  | nil => rfl
+  | cons head tail ih =>
+      cases head with
+      | some value => simp [normalize, ih]
+      | none =>
+          simp only [normalize]
+          split <;> simp_all [normalize]
+
+@[simp] theorem getElem?_normalize_bind (column : Column α) (position : Nat) :
+    (normalize column)[position]?.bind id = column[position]?.bind id := by
+  induction column generalizing position with
+  | nil => rfl
+  | cons head tail ih =>
+      cases head with
+      | some value =>
+          cases position with
+          | zero => rfl
+          | succ position => simpa [normalize] using ih position
+      | none =>
+          simp only [normalize]
+          split
+          · rename_i empty
+            have normalizedNil : normalize tail = [] := List.isEmpty_iff.mp empty
+            cases position with
+            | zero => simp
+            | succ position =>
+                have tailNone : tail[position]?.bind id = none := by
+                  rw [← ih position, normalizedNil]
+                  rfl
+                simpa using tailNone.symm
+          · rename_i nonempty
+            cases position with
+            | zero => rfl
+            | succ position => simpa using ih position
+
+@[simp] theorem get?_normalize (column : Column α) (reference : Ref) :
+    get? (normalize column) reference = get? column reference := by
+  exact getElem?_normalize_bind column (reference.value.toNat - 1)
+
+end Column
+
+/-- Physical HOL definition and union-find storage, matching Rust. -/
+structure Dense where
+  defs : List detail.Expr
+  eq : Column Ref := []
+  synEq : Column Ref := []
+  conv : Column Ref := []
+  deriving DecidableEq, Repr
+
+namespace Dense
+
+def expr? (dense : Dense) (reference : Ref) : Option detail.Expr :=
+  dense.defs[(reference.value.toNat - 1)]?
+
+def tagSort? (dense : Dense) (reference : Ref) : Option TagSort :=
+  (dense.expr? reference).map (·.tag.sort)
+
+def classifierSort? : TagSort → Option TagSort
+  | .kind => none
+  | .ty => some .kind
+  | .tm => some .ty
+
+def classifierAt? (dense : Dense) : Nat → Ref → Option Ref
+  | 0, _ => none
+  | fuel + 1, reference =>
+      match dense.conv.get? reference with
+      | none => none
+      | some target =>
+          if dense.tagSort? reference = dense.tagSort? target then
+            dense.classifierAt? fuel target
+          else if (dense.tagSort? reference).bind classifierSort? = dense.tagSort? target then
+            some target
+          else none
+
+def classifier? (dense : Dense) (reference : Ref) : Option Ref :=
+  dense.classifierAt? (dense.defs.length + 1) reference
+
+def classifierFrom? (dense : Dense) : Nat → TagSort → Option Ref → Option Ref
+  | 0, _, _ => none
+  | _, _, none => none
+  | fuel + 1, category, some target =>
+      if dense.tagSort? target = some category then
+        dense.classifierAt? fuel target
+      else if classifierSort? category = dense.tagSort? target then some target else none
+
+theorem classifierAt?_eq_classifierFrom? (dense : Dense) (fuel : Nat)
+    (reference : Ref) (expr : detail.Expr)
+    (found : dense.expr? reference = some expr) :
+    dense.classifierAt? fuel reference =
+      dense.classifierFrom? fuel expr.tag.sort (dense.conv.get? reference) := by
+  cases fuel with
+  | zero => rfl
+  | succ fuel =>
+      cases link : dense.conv.get? reference with
+      | none => simp [classifierAt?, classifierFrom?, link]
+      | some target =>
+          simp only [classifierAt?, classifierFrom?, link]
+          have source : dense.tagSort? reference = some expr.tag.sort := by
+            simp [tagSort?, found]
+          rw [source]
+          by_cases same : dense.tagSort? target = some expr.tag.sort
+          · rw [if_pos same, if_pos same.symm]
+          · have reverse : some expr.tag.sort ≠ dense.tagSort? target :=
+              fun equal => same equal.symm
+            rw [if_neg same, if_neg reverse]
+            simp only [Option.bind_some]
+
+def row? (dense : Dense) (reference : Ref) : Option detail.Expr :=
+  dense.expr? reference
+
+def rows (dense : Dense) : List detail.Expr := dense.defs
+
+@[simp] theorem rows_length (dense : Dense) : dense.rows.length = dense.defs.length := by
+  simp [rows]
+
+theorem rows_get? (dense : Dense) (position : Nat) :
+    dense.rows[position]? = dense.defs[position]? := rfl
+
+theorem rows_row? (dense : Dense) (reference : Ref) :
+    dense.rows[(reference.value.toNat - 1)]? = dense.row? reference := by
+  rfl
+
+end Dense
 
 /-- BLAKE3 is fixed by the Rust link format; Lean treats its bytes abstractly. -/
 structure Link where
@@ -472,7 +630,7 @@ inductive Arena where
   | mk
       (imports : List Import)
       (axs : Finset String)
-      (defs : List detail.Row)
+      (dense : Dense)
       (synFacts : List SynSlot)
       (synFree : Option SynFactId)
       (ctx : Finset Ref)
@@ -485,19 +643,21 @@ namespace Arena
 
 def imports : Arena → List Import | .mk imports .. => imports
 def axs : Arena → Finset String | .mk _ axs .. => axs
-def defs : Arena → List detail.Row | .mk _ _ defs .. => defs
+def dense : Arena → Dense | .mk _ _ dense .. => dense
+/-- Syntax rows. Equality and classifiers remain separate dense columns. -/
+def defs (arena : Arena) : List detail.Expr := arena.dense.rows
 def synFacts : Arena → List SynSlot | .mk _ _ _ synFacts .. => synFacts
 def synFree : Arena → Option SynFactId | .mk _ _ _ _ synFree .. => synFree
 def ctx : Arena → Finset Ref | .mk _ _ _ _ _ ctx .. => ctx
 def assume : Arena → List Meta | .mk _ _ _ _ _ _ assume _ => assume
 def assert : Arena → List Meta | .mk _ _ _ _ _ _ _ assert => assert
 
-def empty : Arena := .mk [] ∅ [] [] none ∅ [] []
+def empty : Arena := .mk [] ∅ { defs := [] } [] none ∅ [] []
 
 /-- Erase the proof cache while preserving the logical row/import arena. -/
 def withoutSyn : Arena → Arena
-  | .mk imports axs defs _ _ ctx assume assert =>
-      .mk imports axs defs [] none ctx assume assert
+  | .mk imports axs dense _ _ ctx assume assert =>
+      .mk imports axs dense [] none ctx assume assert
 
 @[simp] theorem withoutSyn_empty : empty.withoutSyn = empty := rfl
 
@@ -519,33 +679,39 @@ def withoutSyn : Arena → Arena
 @[simp] theorem assert_withoutSyn (arena : Arena) :
     arena.withoutSyn.assert = arena.assert := by cases arena; rfl
 
-def row? (arena : Arena) (reference : Ref) : Option detail.Row :=
-  arena.defs[(reference.value.toNat - 1)]?
+def row? (arena : Arena) (reference : Ref) : Option detail.Expr :=
+  arena.dense.row? reference
 
 def tag? (arena : Arena) (reference : Ref) : Option Tag :=
-  (arena.row? reference).map (·.expr.tag)
+  (arena.row? reference).map (·.tag)
 
 def eq? (arena : Arena) (reference : Ref) : Option Ref :=
-  (arena.row? reference).bind (·.eq)
+  arena.dense.eq.get? reference
 
 def sort? (arena : Arena) (reference : Ref) : Option Ref :=
-  (arena.row? reference).bind (·.sort)
+  arena.dense.classifier? reference
+
+theorem row?_resident {arena : Arena} {reference : Ref} {row : detail.Expr}
+    (found : arena.row? reference = some row) :
+    arena.dense.expr? reference ≠ none := by
+  intro missing
+  simp [Arena.row?, Dense.row?, missing] at found
 
 @[simp] theorem row?_withoutSyn (arena : Arena) (reference : Ref) :
-    arena.withoutSyn.row? reference = arena.row? reference := by
-  simp [row?]
+  arena.withoutSyn.row? reference = arena.row? reference := by
+  cases arena; rfl
 
 @[simp] theorem tag?_withoutSyn (arena : Arena) (reference : Ref) :
     arena.withoutSyn.tag? reference = arena.tag? reference := by
   simp [tag?]
 
 @[simp] theorem eq?_withoutSyn (arena : Arena) (reference : Ref) :
-    arena.withoutSyn.eq? reference = arena.eq? reference := by
-  simp [eq?]
+  arena.withoutSyn.eq? reference = arena.eq? reference := by
+  cases arena; rfl
 
 @[simp] theorem sort?_withoutSyn (arena : Arena) (reference : Ref) :
-    arena.withoutSyn.sort? reference = arena.sort? reference := by
-  simp [sort?]
+  arena.withoutSyn.sort? reference = arena.sort? reference := by
+  cases arena; rfl
 
 end Arena
 
@@ -553,7 +719,10 @@ end Arena
 structure View where
   imports : List Import
   axs : List String
-  defs : List detail.Row
+  defs : List detail.Expr
+  eq : Column Ref := []
+  synEq : Column Ref := []
+  conv : Column Ref := []
   synFacts : List SynSlot := []
   synFree : Option SynFactId := none
   ctx : List Ref
@@ -561,13 +730,18 @@ structure View where
   assert : List Meta
 
 def View.normalize (view : View) : Arena :=
-  .mk view.imports view.axs.toFinset view.defs view.synFacts view.synFree
+  .mk view.imports view.axs.toFinset
+    { defs := view.defs, eq := view.eq, synEq := view.synEq, conv := view.conv }
+    view.synFacts view.synFree
     view.ctx.toFinset view.assume view.assert
 
 def Arena.toView (arena : Arena) : View :=
   { imports := arena.imports
     axs := arena.axs.sort (· ≤ ·)
-    defs := arena.defs
+    defs := arena.dense.defs
+    eq := arena.dense.eq
+    synEq := arena.dense.synEq
+    conv := arena.dense.conv
     synFacts := arena.synFacts
     synFree := arena.synFree
     ctx := arena.ctx.sort (· ≤ ·)
@@ -576,16 +750,16 @@ def Arena.toView (arena : Arena) : View :=
 
 @[simp] theorem normalize_toView (arena : Arena) : arena.toView.normalize = arena := by
   cases arena with
-  | mk imports axs defs synFacts synFree ctx assume assert =>
-      simp [Arena.toView, View.normalize, Arena.imports, Arena.axs, Arena.defs,
-        Arena.synFacts, Arena.synFree, Arena.ctx, Arena.assume, Arena.assert]
+  | mk imports axs dense synFacts synFree ctx assume assert =>
+      simp [Arena.toView, View.normalize, Arena.imports, Arena.axs,
+        Arena.dense, Arena.synFacts, Arena.synFree, Arena.ctx, Arena.assume, Arena.assert]
 
 @[simp] theorem toView_normalize (view : View) :
     view.normalize.toView =
       { view with
         axs := view.axs.toFinset.sort (· ≤ ·)
         ctx := view.ctx.toFinset.sort (· ≤ ·) } := by
-  simp [Arena.toView, View.normalize, Arena.imports, Arena.axs, Arena.defs,
+  simp [Arena.toView, View.normalize, Arena.imports, Arena.axs, Arena.dense,
     Arena.synFacts, Arena.synFree, Arena.ctx, Arena.assume, Arena.assert]
 
 theorem toView_axs_nodup (arena : Arena) : arena.toView.axs.Nodup := by

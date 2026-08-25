@@ -1229,6 +1229,8 @@ mod tests {
 
         assert_eq!(kernel.arena().syn_eq(right), Some(left));
         assert_eq!(kernel.arena().conv(right), Some(left));
+        assert_eq!(kernel.arena().conv(left), Some(bool_ty));
+        assert_eq!(kernel.arena().sort(right), Some(bool_ty));
         assert_eq!(kernel.arena().eq(right), Some(left));
 
         let third = kernel.bool(bool_ty, true).unwrap();
@@ -1240,6 +1242,8 @@ mod tests {
 
         assert_eq!(kernel.arena().syn_eq(third), None);
         assert_eq!(kernel.arena().conv(third), Some(left));
+        assert_eq!(kernel.arena().conv(left), Some(bool_ty));
+        assert_eq!(kernel.arena().sort(third), Some(bool_ty));
         assert_eq!(kernel.arena().eq(third), Some(left));
     }
 

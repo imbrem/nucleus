@@ -35,7 +35,7 @@ def populated() -> tuple[Arena, dict[str, int]]:
     rows["tm.app"] = arena.app(variable, variable)
     rows["tm.lam"] = arena.lam(variable, variable)
     rows["tm.bool"] = arena.bool(False)
-    rows["tm.eq"] = arena.tm_eq(rows["tm.bool"], rows["tm.bool"])
+    rows["tm.eq"] = arena.tm_eq(variable, variable)
     rows["tm.eps"] = arena.eps(boolean, variable)
 
     nested = Arena()
@@ -80,6 +80,11 @@ def test_rows_report_the_members_their_tag_carries() -> None:
     assert by_tag["tm.fv"].name == 14
     assert by_tag["tm.bool"].value is False
     assert by_tag["tm.app"].children == [rows["tm.fv"], rows["tm.fv"]]
+    assert by_tag["tm.eq"].children == [
+        rows["ty.bool"],
+        rows["tm.fv"],
+        rows["tm.fv"],
+    ]
     assert by_tag["tm.eps"].children == [rows["ty.bool"], rows["tm.fv"]]
     # A proxy stores its import and foreign index instead of local children.
     assert (by_tag["tm.ref"].source, by_tag["tm.ref"].foreign) == (2, rows["tm.bool"])
@@ -88,7 +93,6 @@ def test_rows_report_the_members_their_tag_carries() -> None:
     assert arena.eq == [None] * len(arena)
     assert arena.syn_eq == [None] * len(arena)
     assert arena.conv == [None] * len(arena)
-    assert arena.sort == [None] * len(arena)
 
 
 def test_the_sort_of_a_tag_is_not_the_sort_of_its_constructor() -> None:

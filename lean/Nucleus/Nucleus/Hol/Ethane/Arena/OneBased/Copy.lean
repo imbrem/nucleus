@@ -19,8 +19,8 @@ set_option relaxedAutoImplicit true
 The executable implementation establishes this by comparing the compiled
 prefix address and length before traversing any root. -/
 def InitPrefixCompatible (source destination : Arena) (length : Nat) : Prop :=
-  length ≤ source.defs.length ∧ length ≤ destination.defs.length ∧
-    source.defs.take length = destination.defs.take length
+  length ≤ source.dense.defs.length ∧ length ≤ destination.dense.defs.length ∧
+    source.dense.defs.take length = destination.dense.defs.take length
 
 /-- A successful, atomic cross-kernel copy.
 
@@ -63,7 +63,7 @@ theorem roots_correspond (copy : CopyResult resolve source destination) :
 
 /-- Every mapped source lookup has a destination lookup. -/
 theorem lookup_preserved (copy : CopyResult resolve source destination)
-    {reference : Ref} {row : detail.Row}
+    {reference : Ref} {row : detail.Expr}
     (lookup : source.row? reference = some row) :
     ∃ destinationRow,
       destination.row? (copy.map reference) = some destinationRow := by

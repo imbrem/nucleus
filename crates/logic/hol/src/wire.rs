@@ -59,6 +59,12 @@ impl std::error::Error for DecodeError {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncodeError(String);
 
+impl EncodeError {
+    pub(crate) fn canonical_decode(error: &DecodeError) -> Self {
+        Self(format!("canonical bytes did not decode: {error}"))
+    }
+}
+
 impl std::fmt::Display for EncodeError {
     fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(output, "could not encode Ethane arena: {}", self.0)

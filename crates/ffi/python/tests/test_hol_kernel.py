@@ -58,9 +58,11 @@ def test_constructors_record_the_classifier_they_derived() -> None:
     assert kernel.classifier(truth) == base.bool_ty
     assert kernel.classifier(applied) == base.bool_ty
     assert kernel.classifier(equation) == base.bool_ty
-    assert kernel.arena.sort[base.star - 1] is None
-    assert kernel.arena.sort[base.bool_ty - 1] == base.star
-    assert kernel.arena.sort[truth - 1] == base.bool_ty
+    assert kernel.arena.definition(equation).children == [
+        base.bool_ty,
+        applied,
+        truth,
+    ]
     # `lam` derives and appends its own arrow type rather than trusting one.
     arrow = kernel.classifier(identity)
     assert kernel.arena.definition(arrow).tag == "ty.arr"
@@ -88,7 +90,7 @@ def test_model_is_a_type_and_ty_exists_is_a_term() -> None:
     model = kernel.model(9, truth)
 
     assert kernel.category(model) == "ty"
-    assert kernel.arena.sort[model - 1] == base.star
+    assert kernel.classifier(model) == base.star
     assert kernel.category(kernel.ty_exists(9, truth)) == "tm"
 
 
@@ -369,5 +371,7 @@ def test_dense_columns_expose_the_checked_members() -> None:
     assert rows[variable].tag == "tm.fv"
     assert rows[variable].name == 7
     assert rows[variable].children == [base.bool_ty]
-    assert kernel.arena.sort[variable - 1] == base.bool_ty
-    assert kernel.arena.sort[base.star - 1] is None
+    assert kernel.classifier(variable) == base.bool_ty
+    assert kernel.arena.conv[variable - 1] == base.bool_ty
+    assert kernel.arena.conv[base.bool_ty - 1] == base.star
+    assert kernel.arena.conv[base.star - 1] is None

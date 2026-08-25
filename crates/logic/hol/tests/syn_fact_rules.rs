@@ -587,6 +587,9 @@ fn a_universal_fact_survives_refinement_and_congruence() {
     let right = fix
         .syn_sub_leaf_forall(None, variable, falsity)
         .expect("universal leaf");
+    let ty = fix
+        .syn_sub_leaf_forall(None, variable, bool_ty)
+        .expect("universal equality type");
     let congruence = fix
         .syn_congr(
             None,
@@ -595,7 +598,7 @@ fn a_universal_fact_survives_refinement_and_congruence() {
             None,
             equation,
             equation,
-            &[left, right],
+            &[ty, left, right],
         )
         .expect("congruence over a universal substitution");
     let refined = fix

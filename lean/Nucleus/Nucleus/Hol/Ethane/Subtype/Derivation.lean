@@ -33,6 +33,7 @@ def predicateBody {types} (A : Ty types)
     .app predicate.raw value.raw
   simp [HolE.openBound, HolE.instantiate]
 
+set_option linter.flexible false in
 @[simp] theorem guardBody_open {types depth} {Γ : Ctx types depth}
     (A : Ty types) (predicate : Term Γ (A.arr FamK.boolTy))
     (value : Term Γ A) :
@@ -51,6 +52,7 @@ def predicateBody {types} (A : Ty types)
       simp [HolE.liftSub, HolE.liftRen, HolE.weaken]
     · rfl
 
+set_option linter.flexible false in
 @[simp] theorem guardPredicate_open {types} (A : Ty types)
     (predicate : Term Ctx.empty (A.arr FamK.boolTy))
     (value : Term Ctx.empty A) :
@@ -70,6 +72,7 @@ def predicateBody {types} (A : Ty types)
       exact HolE.rename_closed_unique predicate.raw _ _
     · rfl
 
+set_option linter.flexible false in
 @[simp] theorem guardPredicate_instantiate_weaken {types} (A C : Ty types)
     (predicate : Term Ctx.empty (A.arr FamK.boolTy))
     (value : Term (Ctx.empty.extend C) A) :
@@ -332,6 +335,7 @@ def packageAfterRep (A B : Ty types)
   existsTm absType (lawsIn A B (predicate.weaken absType)
     (rep.weaken absType) abs)
 
+set_option linter.flexible false in
 @[simp] theorem existsLaws_open_rep (A B : Ty types)
     (predicate : Term Ctx.empty (A.arr FamK.boolTy))
     (rep : Term Ctx.empty (B.arr A)) :
@@ -351,6 +355,7 @@ def packageAfterRep (A B : Ty types)
     try simp [Fin.cases_succ, Fin.cases_succ', HolE.rename_comp]
     first | rfl | apply HolE.rename_closed_unique
 
+set_option linter.flexible false in
 @[simp] theorem lawsIn_open_abs (A B : Ty types)
     (predicate : Term Ctx.empty (A.arr FamK.boolTy))
     (rep : Term Ctx.empty (B.arr A)) (abs : Term Ctx.empty (A.arr B)) :

@@ -23,18 +23,15 @@ impl Table {
     ///
     /// # Errors
     ///
-    /// Returns an error if the arena cannot be encoded.
+    /// Returns an error if the arena cannot be encoded or if the resulting
+    /// bytes exceed a limitation of the canonical decoder.
     ///
-    /// # Panics
-    ///
-    /// Panics only if bytes produced by the arena's own canonical encoder do
-    /// not decode as an arena, which indicates an internal codec defect.
     pub fn from_arena(arena: Arena) -> Result<Self, wire::EncodeError> {
         let mut bytes = Vec::new();
         wire::serialize(&arena, &mut bytes)?;
         drop(arena);
         let arena = wire::deserialize(bytes.as_slice())
-            .expect("the canonical encoding of an arena must decode");
+            .map_err(|error| wire::EncodeError::canonical_decode(&error))?;
         Ok(Self {
             address: O256::from_bytes(&bytes),
             arena: Arc::new(arena),
@@ -114,6 +111,20 @@ mod tests {
         wire::serialize(&table, &mut encoded).unwrap();
         assert_eq!(table.addr(), O256::from_bytes(&encoded));
         assert_eq!(table.addr(), table.as_ref().addr());
+    }
+
+    #[test]
+    fn decoder_depth_failure_is_returned_instead_of_panicking() {
+        let mut arena = Arena::empty();
+        for _ in 0..127 {
+            let mut outer = Arena::empty();
+            outer
+                .push_import(crate::Import::Literal(Box::new(arena)))
+                .expect("one literal import remains addressable");
+            arena = outer;
+        }
+
+        assert!(Table::from_arena(arena).is_err());
     }
 
     #[test]

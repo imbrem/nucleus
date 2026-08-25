@@ -1,6 +1,7 @@
 import Nucleus.Hol.Ethane.Amb
 import Nucleus.Hol.Ethane.Arena.OneBased.Columns
 import Nucleus.Hol.Ethane.Arena.OneBased.Kernel
+import Nucleus.Hol.Ethane.Arena.OneBased.SynFacts
 
 /-!
 # Nested one-based arena layout
@@ -93,7 +94,6 @@ structure SynSection where
   subst1Free : Option SynFactId
   eq : Columns.Column Ref
   conv : Columns.Column Ref
-  sort : Columns.Column Ref
   deriving DecidableEq, Repr
 
 structure HolSection where
@@ -176,7 +176,6 @@ structure SynView where
   subst1Free : Option SynFactId
   eq : Columns.Column Ref
   conv : Columns.Column Ref
-  sort : Columns.Column Ref
 
 structure HolView where
   defs : List detail.Expr
@@ -199,7 +198,6 @@ def View.columnsResident (view : View) : Prop :=
     eq := view.hol.eq
     synEq := view.hol.syn.eq
     conv := view.hol.syn.conv
-    sort := view.hol.syn.sort
   }
   dense.WellFormed
 
@@ -227,7 +225,6 @@ noncomputable def View.normalize? (view : View) : Option Arena := by
           subst1Free := view.hol.syn.subst1Free
           eq := view.hol.syn.eq.normalize
           conv := view.hol.syn.conv.normalize
-          sort := view.hol.syn.sort.normalize
         }
       })
     else none
@@ -253,7 +250,6 @@ def Arena.toView (arena : Arena) : View := {
       subst1Free := arena.hol.syn.subst1Free
       eq := arena.hol.syn.eq
       conv := arena.hol.syn.conv
-      sort := arena.hol.syn.sort
     }
   }
 }
@@ -261,20 +257,19 @@ def Arena.toView (arena : Arena) : View := {
 def Arena.ColumnsNormalized (arena : Arena) : Prop :=
   arena.hol.eq.normalize = arena.hol.eq ∧
   arena.hol.syn.eq.normalize = arena.hol.syn.eq ∧
-  arena.hol.syn.conv.normalize = arena.hol.syn.conv ∧
-  arena.hol.syn.sort.normalize = arena.hol.syn.sort
+  arena.hol.syn.conv.normalize = arena.hol.syn.conv
 
 def Arena.ClassicalWireValid (arena : Arena) : Prop :=
   arena.amb.thm.WireValid ∧ arena.pred.syl.WireValid ∧ arena.hol.thm.WireValid
 
-/-- The five dense columns, with the unchanged `subst1` cache alongside them. -/
+/-- The dense expression/equality tables, with the unchanged `subst1` cache
+alongside them. Rows themselves contain only expressions. -/
 def Arena.columns (arena : Arena) : Columns.Arena where
   dense := {
     defs := arena.hol.defs
     eq := arena.hol.eq
     synEq := arena.hol.syn.eq
     conv := arena.hol.syn.conv
-    sort := arena.hol.syn.sort
   }
   subst1 := arena.hol.syn.subst1
   subst1Free := arena.hol.syn.subst1Free
@@ -288,10 +283,8 @@ def Import.holCore : Import → OneBased.Import
   | .literal arena => .literal arena.holCore
   | .link value => .link value
 
-/-- Materialize the logical row view consumed by the existing, fully proved
-HOL kernel model.  This operation is semantic, not a wire conversion: Rust
-likewise combines an expression row with column lookups when it returns a
-borrowed row. -/
+/-- Project the nested wire arena into the proof core while preserving its
+dense HOL storage exactly. -/
 def Arena.holCore : Arena → OneBased.Arena
   | .mk imports _ _ hol =>
       let dense : Columns.Dense := {
@@ -299,17 +292,21 @@ def Arena.holCore : Arena → OneBased.Arena
         eq := hol.eq
         synEq := hol.syn.eq
         conv := hol.syn.conv
-        sort := hol.syn.sort
       }
       .mk (imports.map Import.holCore) hol.ax
-        dense.rows
+        dense
         hol.syn.subst1 hol.syn.subst1Free hol.ctx [] []
 
 end
 
+@[simp] theorem Arena.holCore_dense (arena : Arena) :
+    arena.holCore.dense = arena.columns.dense := by
+  cases arena
+  simp [Arena.holCore, Arena.columns, OneBased.Arena.dense]
+
 @[simp] theorem Arena.holCore_defs (arena : Arena) :
     arena.holCore.defs = arena.columns.dense.rows := by
-  cases arena; simp [Arena.holCore, Arena.columns, OneBased.Arena.defs]
+  simp [OneBased.Arena.defs, Arena.holCore_dense]
 
 @[simp] theorem Arena.holCore_imports (arena : Arena) :
     arena.holCore.imports =
@@ -326,8 +323,7 @@ end
 
 theorem Arena.holCore_row? (arena : Arena) (reference : Ref) :
     arena.holCore.row? reference = arena.columns.dense.row? reference := by
-  simp only [OneBased.Arena.row?, Arena.holCore_defs]
-  exact arena.columns.dense.rows_row? reference
+  simp [OneBased.Arena.row?, Arena.holCore_dense]
 
 @[simp] theorem Arena.columns_subst1 (arena : Arena) :
     arena.columns.subst1 = arena.hol.syn.subst1 := rfl
@@ -344,9 +340,6 @@ theorem Arena.holCore_row? (arena : Arena) (reference : Ref) :
 @[simp] theorem Arena.columns_conv (arena : Arena) :
     arena.columns.dense.conv = arena.hol.syn.conv := rfl
 
-@[simp] theorem Arena.columns_sort (arena : Arena) :
-    arena.columns.dense.sort = arena.hol.syn.sort := rfl
-
 /-- Exact decoder invariant: a non-null cell's position is resident. Targets
 may dangle in a raw decoded arena, matching Rust. -/
 def Arena.ColumnsWireValid (arena : Arena) : Prop :=
@@ -355,7 +348,7 @@ def Arena.ColumnsWireValid (arena : Arena) : Prop :=
 /-- Stronger checked-kernel invariant. Checked union/classifier operations
 only install resident targets, although raw deserialization need not. -/
 def Arena.ColumnsChecked (arena : Arena) : Prop :=
-  arena.columns.dense.Checked
+  Columns.FusedChecked arena.columns.dense
 
 mutual
 
@@ -397,7 +390,7 @@ theorem Arena.normalize?_toView {arena : Arena}
     (wireValid : arena.ColumnsWireValid) (classicalValid : arena.ClassicalWireValid)
     (normalized : arena.ColumnsNormalized) :
     arena.toView.normalize? = some arena := by
-  rcases normalized with ⟨eq, synEq, conv, sort⟩
+  rcases normalized with ⟨eq, synEq, conv⟩
   rw [View.normalize?]
   have resident : arena.toView.columnsResident ∧ arena.toView.classicalResident :=
     ⟨Arena.toView_columnsResident wireValid,
@@ -522,6 +515,8 @@ the exact row view reconstructed from columns. -/
 structure Arena.KernelValid (trusted : Arena → Prop) (resolve : Resolver) (arena : Arena)
     (interpretation : PartialValuation Ref) : Prop where
   columns : arena.ColumnsChecked
+  synFacts : SynArena.Sound (coreResolver resolve) arena.holCore
+  synFree : SynArena.FreeListSafe arena.holCore
   hol : arena.HolKernelSound trusted resolve
   equalityRefines : arena.EqualityRefines
   ambientAxioms : arena.ambientTheory.AllowsAxioms AllowedAmbientAxiom
@@ -560,25 +555,30 @@ theorem Arena.semanticClass_sound {trusted : Arena → Prop} {resolve : Resolver
       apply Relation.EqvGen.rel
       unfold EqEdge
       have resident := (valid.columns.eqTargets _ _ edge).1
-      simpa [OneBased.Arena.eq?, arena.holCore_row?,
-        Columns.Dense.row?_eq _ _ resident, Columns.Edge,
-        Columns.Dense.column] using edge
+      simpa [OneBased.Arena.eq?, Arena.holCore_dense,
+        Columns.Edge, Columns.Dense.column] using edge
     · exact fun reference => Relation.EqvGen.refl reference
     · exact fun connected => Relation.EqvGen.symm _ _ connected
     · exact fun leftMiddle middleRight =>
         Relation.EqvGen.trans _ _ _ leftMiddle middleRight
   have leftRow : arena.holCore.row? left ≠ none := by
     rw [arena.holCore_row?]
-    unfold Columns.Dense.row?
+    unfold Columns.Dense.row? OneBased.Dense.row?
     cases found : arena.columns.dense.expr? left with
     | none => contradiction
-    | some expr => simp
+    | some expr =>
+        have found' : Nucleus.Hol.Ethane.OneBased.Dense.expr?
+            arena.columns.dense left = some expr := found
+        simp [found']
   have rightRow : arena.holCore.row? right ≠ none := by
     rw [arena.holCore_row?]
-    unfold Columns.Dense.row?
+    unfold Columns.Dense.row? OneBased.Dense.row?
     cases found : arena.columns.dense.expr? right with
     | none => contradiction
-    | some expr => simp
+    | some expr =>
+        have found' : Nucleus.Hol.Ethane.OneBased.Dense.expr?
+            arena.columns.dense right = some expr := found
+        simp [found']
   have connectedCore : EqClass arena.holCore.withoutSyn left right := by
     have edges : EqEdge arena.holCore.withoutSyn = EqEdge arena.holCore := by
       funext edgeLeft edgeRight

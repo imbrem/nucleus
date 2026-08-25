@@ -2,9 +2,9 @@
 //!
 //! The arena is the only syntax representation. The kernel accepts and
 //! returns plain local references, validates their tags and classifiers on
-//! every call, and records equality classes directly in each row's `eq`
-//! member. Concrete resolvers, caches, ergonomic typed objects, and indexes
-//! over the union-find belong in userspace.
+//! every call, and records classifiers and equality classes in arena-level
+//! dense columns. Concrete resolvers, caches, ergonomic typed objects, and
+//! indexes over the union-find belong in userspace.
 
 use std::{collections::BTreeMap, convert::Infallible, ops::Deref};
 
@@ -209,6 +209,12 @@ pub struct Kernel {
     init_prefix: Option<(crate::O256, usize)>,
 }
 
+struct ConvPath {
+    root: Ref,
+    classifier: Option<Ref>,
+    members: SmallVec<[Ref; 8]>,
+}
+
 impl Deref for Kernel {
     type Target = Arena;
 
@@ -335,8 +341,8 @@ impl Kernel {
                 }
                 stack.push((reference, true));
                 let mut dependencies = row.expr().children();
-                if let Some(sort) = row.sort() {
-                    dependencies.push(sort);
+                if row.tag().sort() != Sort::Kind {
+                    dependencies.push(source.classifier_as::<Infallible>(reference)?);
                 }
                 for dependency in dependencies.into_iter().rev() {
                     stack.push((dependency, false));
@@ -364,7 +370,7 @@ impl Kernel {
         };
         for &source_ref in &order {
             let row = source.row::<Infallible>(source_ref)?;
-            let (copied, sort) = remap_row(row, &nodes);
+            let (copied, sort) = remap_row(row, source.sort(source_ref), &nodes);
             staged
                 .arena
                 .push_row(copied, sort)
@@ -784,7 +790,7 @@ impl Kernel {
                 actual: right_ty,
             });
         }
-        self.push::<Infallible>(Row::new(Node::Eq(left, right)), Some(bool_ty))
+        self.push::<Infallible>(Row::new(Node::Eq(left_ty, left, right)), Some(bool_ty))
     }
 
     /// Appends Hilbert choice.
@@ -990,6 +996,7 @@ impl Kernel {
     #[allow(clippy::too_many_lines)]
     fn validate_copy_row(&self, reference: Ref) -> Result<(), KernelError> {
         let row = self.row::<Infallible>(reference)?;
+        let row_sort = self.arena.sort(reference);
         let expected_sort = match *row.expr() {
             Node::KindStar => None,
             Node::KindArr(domain, codomain) => {
@@ -998,7 +1005,7 @@ impl Kernel {
                 None
             }
             Node::BoolTy => {
-                let sort = row.sort().ok_or(KernelError::MissingSort { reference })?;
+                let sort = row_sort.ok_or(KernelError::MissingSort { reference })?;
                 self.require_star::<Infallible>(sort)?;
                 Some(sort)
             }
@@ -1030,7 +1037,7 @@ impl Kernel {
                     matches!(node, Node::TyFv { .. })
                 })?;
                 self.require_category::<Infallible>(body, Sort::Ty)?;
-                let sort = row.sort().ok_or(KernelError::MissingSort { reference })?;
+                let sort = row_sort.ok_or(KernelError::MissingSort { reference })?;
                 let (domain, codomain) = self.kind_arrow::<Infallible>(sort)?;
                 if domain != self.classifier(binder)? || codomain != self.classifier(body)? {
                     return Err(KernelError::ClassifierMismatch {
@@ -1070,7 +1077,7 @@ impl Kernel {
                     matches!(node, Node::TmFv { .. })
                 })?;
                 self.require_category::<Infallible>(body, Sort::Tm)?;
-                let sort = row.sort().ok_or(KernelError::MissingSort { reference })?;
+                let sort = row_sort.ok_or(KernelError::MissingSort { reference })?;
                 let (domain, codomain) = self.type_arrow_member::<Infallible>(sort)?;
                 if domain != self.classifier(binder)? || codomain != self.classifier(body)? {
                     return Err(KernelError::ClassifierMismatch {
@@ -1081,7 +1088,7 @@ impl Kernel {
                 Some(sort)
             }
             Node::Bool(_) => {
-                let sort = row.sort().ok_or(KernelError::MissingSort { reference })?;
+                let sort = row_sort.ok_or(KernelError::MissingSort { reference })?;
                 self.require_bool_type::<Infallible>(sort)?;
                 Some(sort)
             }
@@ -1097,18 +1104,25 @@ impl Kernel {
                 }
                 Some(bool_ty)
             }
-            Node::Eq(left, right) => {
+            Node::Eq(ty, left, right) => {
+                self.require_category::<Infallible>(ty, Sort::Ty)?;
                 self.require_category::<Infallible>(left, Sort::Tm)?;
                 self.require_category::<Infallible>(right, Sort::Tm)?;
                 let left_ty = self.classifier(left)?;
                 let right_ty = self.classifier(right)?;
+                if !self.equivalent(ty, left_ty)? {
+                    return Err(KernelError::ClassifierMismatch {
+                        expected: left_ty,
+                        actual: ty,
+                    });
+                }
                 if !self.equivalent(left_ty, right_ty)? {
                     return Err(KernelError::ClassifierMismatch {
                         expected: left_ty,
                         actual: right_ty,
                     });
                 }
-                let sort = row.sort().ok_or(KernelError::MissingSort { reference })?;
+                let sort = row_sort.ok_or(KernelError::MissingSort { reference })?;
                 self.require_bool_type::<Infallible>(sort)?;
                 Some(sort)
             }
@@ -1129,8 +1143,8 @@ impl Kernel {
                 return Err(KernelError::ImportedProxy { reference });
             }
         };
-        if row.sort() != expected_sort {
-            return match (expected_sort, row.sort()) {
+        if row_sort != expected_sort {
+            return match (expected_sort, row_sort) {
                 (Some(expected), Some(actual)) => {
                     Err(KernelError::ClassifierMismatch { expected, actual })
                 }
@@ -1158,7 +1172,7 @@ impl Kernel {
             .ok_or(KernelError::TooManyImports)
     }
 
-    fn row<E>(&self, reference: Ref) -> Result<crate::row::RowView<'_>, KernelError<E>>
+    fn row<E>(&self, reference: Ref) -> Result<&Row, KernelError<E>>
     where
         E: std::error::Error + 'static,
     {
@@ -1181,8 +1195,8 @@ impl Kernel {
     where
         E: std::error::Error + 'static,
     {
-        self.row::<E>(reference)?
-            .sort()
+        self.conv_path::<E>(reference)?
+            .classifier
             .ok_or(KernelError::MissingSort { reference })
     }
 
@@ -1398,8 +1412,19 @@ impl Kernel {
     where
         E: std::error::Error + 'static,
     {
-        let left_root = self.find_mut_in::<E>(column, left)?;
-        let right_root = self.find_mut_in::<E>(column, right)?;
+        if column == EqColumn::Conv {
+            return self.union_conv::<E>(left, right);
+        }
+        // Preflight both paths before compressing either one. Any preflight
+        // error is therefore transactional even for malformed private state.
+        let (left_root, left_path) = self.find_path_in::<E>(column, left)?;
+        let _ = self.find_path_in::<E>(column, right)?;
+        self.compress_path_in(column, left_root, left_path);
+        // Recompute after left compression so the successful path certificate
+        // describes the current forest. Every preflight failure above is
+        // transactional; failure here is unreachable for a checked kernel.
+        let (right_root, right_path) = self.find_path_in::<E>(column, right)?;
+        self.compress_path_in(column, right_root, right_path);
         if left_root == right_root {
             return Ok(());
         }
@@ -1417,13 +1442,164 @@ impl Kernel {
     where
         E: std::error::Error + 'static,
     {
+        if column == EqColumn::Conv {
+            return self.find_conv_mut::<E>(reference);
+        }
         let (representative, path) = self.find_path_in(column, reference)?;
+        self.compress_path_in(column, representative, path);
+        Ok(representative)
+    }
+
+    fn compress_path_in(
+        &mut self,
+        column: EqColumn,
+        representative: Ref,
+        path: SmallVec<[Ref; 8]>,
+    ) {
         for member in path {
             let parent = (member != representative).then_some(representative);
             let recorded = self.arena.set_eq_column(column, member, parent);
             debug_assert!(recorded, "find path contains only resident rows");
         }
-        Ok(representative)
+    }
+
+    /// Follows the fused conversion/classifier column.
+    ///
+    /// Same-category edges belong to the conversion forest.  Its root may
+    /// carry one cross-category edge encoding the class classifier.
+    fn conv_path<E>(&self, reference: Ref) -> Result<ConvPath, KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let category = self.category_as::<E>(reference)?;
+        let classifier_category = match category {
+            Sort::Kind => None,
+            Sort::Ty => Some(Sort::Kind),
+            Sort::Tm => Some(Sort::Ty),
+        };
+        let mut path = SmallVec::<[Ref; 8]>::new();
+        let mut current = reference;
+        loop {
+            if let Some(cycle_start) = path.iter().position(|member| *member == current) {
+                let representative = path[cycle_start..]
+                    .iter()
+                    .copied()
+                    .min()
+                    .expect("a repeated member starts a nonempty cycle");
+                return Ok(ConvPath {
+                    root: representative,
+                    classifier: None,
+                    members: path,
+                });
+            }
+            path.push(current);
+            let Some(parent) = self.arena.conv(current) else {
+                return Ok(ConvPath {
+                    root: current,
+                    classifier: None,
+                    members: path,
+                });
+            };
+            let parent_category = self.category_as::<E>(parent)?;
+            if parent_category == category {
+                current = parent;
+                continue;
+            }
+            let Some(expected) = classifier_category else {
+                return Err(KernelError::WrongCategory {
+                    reference: parent,
+                    expected: category,
+                    actual: parent_category,
+                });
+            };
+            if parent_category != expected {
+                return Err(KernelError::WrongCategory {
+                    reference: parent,
+                    expected,
+                    actual: parent_category,
+                });
+            }
+            return Ok(ConvPath {
+                root: current,
+                classifier: Some(parent),
+                members: path,
+            });
+        }
+    }
+
+    fn find_conv_mut<E>(&mut self, reference: Ref) -> Result<Ref, KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let path = self.conv_path::<E>(reference)?;
+        let root = path.root;
+        self.compress_conv_path(path);
+        Ok(root)
+    }
+
+    fn compress_conv_path(&mut self, path: ConvPath) {
+        for member in path.members {
+            let parent = if member == path.root {
+                path.classifier
+            } else {
+                Some(path.root)
+            };
+            let recorded = self.arena.set_eq_column(EqColumn::Conv, member, parent);
+            debug_assert!(recorded, "conversion path contains only resident rows");
+        }
+    }
+
+    fn union_conv<E>(&mut self, left: Ref, right: Ref) -> Result<(), KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let left_category = self.category_as::<E>(left)?;
+        let right_category = self.category_as::<E>(right)?;
+        if left_category != right_category {
+            return Err(KernelError::WrongCategory {
+                reference: right,
+                expected: left_category,
+                actual: right_category,
+            });
+        }
+        if left_category != Sort::Kind {
+            let left_classifier = self.classifier_as::<E>(left)?;
+            let right_classifier = self.classifier_as::<E>(right)?;
+            if !self.equivalent_as::<E>(left_classifier, right_classifier)? {
+                return Err(KernelError::ClassifierMismatch {
+                    expected: left_classifier,
+                    actual: right_classifier,
+                });
+            }
+        }
+        // As for ordinary equality, validate both paths before mutating
+        // either. Every preflight error is transactional. Failure while
+        // recomputing the right path below is unreachable for a checked
+        // kernel, but malformed private state may already have had its left
+        // path compressed when that defensive error is returned.
+        let left_path = self.conv_path::<E>(left)?;
+        let _right_path = self.conv_path::<E>(right)?;
+        let left_root = left_path.root;
+        self.compress_conv_path(left_path);
+        // Re-read the right path from the state produced by the first
+        // compression. The preservation theorem shows that this cannot fail
+        // after both preflights succeed on a valid kernel.
+        let right_path = self.conv_path::<E>(right)?;
+        let right_root = right_path.root;
+        self.compress_conv_path(right_path);
+        if left_root == right_root {
+            return Ok(());
+        }
+        let (child, parent) = if left_root > right_root {
+            (left_root, right_root)
+        } else {
+            (right_root, left_root)
+        };
+        let recorded = self
+            .arena
+            .set_eq_column(EqColumn::Conv, child, Some(parent));
+        debug_assert!(recorded, "conversion roots name resident rows");
+        Ok(())
     }
 
     fn references<E>(&self) -> Result<Vec<Ref>, KernelError<E>>
@@ -1441,7 +1617,7 @@ impl Kernel {
     }
 }
 
-fn remap_row(row: crate::row::RowView<'_>, map: &BTreeMap<Ref, Ref>) -> (Row, Option<Ref>) {
+fn remap_row(row: &Row, sort: Option<Ref>, map: &BTreeMap<Ref, Ref>) -> (Row, Option<Ref>) {
     let remap = |reference: Ref| map[&reference];
     let expr = match *row.expr() {
         Node::KindStar => Node::KindStar,
@@ -1471,7 +1647,7 @@ fn remap_row(row: crate::row::RowView<'_>, map: &BTreeMap<Ref, Ref>) -> (Row, Op
         Node::Bool(value) => Node::Bool(value),
         Node::Op1(op, operand) => Node::Op1(op, remap(operand)),
         Node::Op2(op, left, right) => Node::Op2(op, remap(left), remap(right)),
-        Node::Eq(a, b) => Node::Eq(remap(a), remap(b)),
+        Node::Eq(ty, a, b) => Node::Eq(remap(ty), remap(a), remap(b)),
         Node::Eps { ty, predicate } => Node::Eps {
             ty: remap(ty),
             predicate: remap(predicate),
@@ -1480,7 +1656,7 @@ fn remap_row(row: crate::row::RowView<'_>, map: &BTreeMap<Ref, Ref>) -> (Row, Op
             unreachable!("imported proxies are rejected before copying")
         }
     };
-    (Row::new(expr), row.sort().map(remap))
+    (Row::new(expr), sort.map(remap))
 }
 
 #[cfg(test)]
@@ -1688,6 +1864,155 @@ mod tests {
     }
 
     #[test]
+    fn conversion_compression_preserves_the_root_classifier() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let left = kernel.bool_ty(star).unwrap();
+        let middle = kernel.bool_ty(star).unwrap();
+        let right = kernel.bool_ty(star).unwrap();
+
+        kernel
+            .union_in::<Infallible>(EqColumn::Conv, middle, right)
+            .unwrap();
+        kernel
+            .union_in::<Infallible>(EqColumn::Conv, left, middle)
+            .unwrap();
+
+        for reference in [left, middle, right] {
+            assert_eq!(kernel.classifier(reference).unwrap(), star);
+            assert_eq!(kernel.find_conv_mut::<Infallible>(reference).unwrap(), left);
+            assert_eq!(kernel.classifier(reference).unwrap(), star);
+        }
+        assert_eq!(kernel.arena.conv(left), Some(star));
+        assert_eq!(kernel.arena.conv(middle), Some(left));
+        assert_eq!(kernel.arena.conv(right), Some(left));
+    }
+
+    #[test]
+    fn conversion_union_replaces_an_equivalent_distinct_classifier_atomically() {
+        let mut kernel = Kernel::new();
+        let first_star = kernel.star().unwrap();
+        let second_star = kernel.star().unwrap();
+        kernel
+            .union_in::<Infallible>(EqColumn::Semantic, first_star, second_star)
+            .unwrap();
+
+        let left = kernel.bool_ty(first_star).unwrap();
+        let right = kernel.bool_ty(second_star).unwrap();
+        kernel
+            .union_in::<Infallible>(EqColumn::Conv, left, right)
+            .unwrap();
+
+        for reference in [left, right] {
+            assert_eq!(kernel.classifier(reference).unwrap(), first_star);
+            assert_eq!(kernel.find_conv_mut::<Infallible>(reference).unwrap(), left);
+            assert_eq!(kernel.classifier(reference).unwrap(), first_star);
+        }
+        assert_eq!(kernel.arena.conv(left), Some(first_star));
+        assert_eq!(kernel.arena.conv(right), Some(left));
+        kernel
+            .bool(right, true)
+            .expect("the inherited type remains usable");
+
+        let mut bytes = Vec::new();
+        crate::wire::serialize(kernel.arena(), &mut bytes).unwrap();
+        let decoded = crate::wire::deserialize(bytes.as_slice()).unwrap();
+        assert_eq!(decoded.sort(left), Some(first_star));
+        assert_eq!(decoded.sort(right), Some(first_star));
+
+        let unrelated_kind = kernel.kind_arr(first_star, first_star).unwrap();
+        let incompatible = kernel.ty_fv(0, unrelated_kind).unwrap();
+        let before = kernel.arena.clone();
+        assert!(matches!(
+            kernel.union_in::<Infallible>(EqColumn::Conv, left, incompatible),
+            Err(KernelError::ClassifierMismatch { .. })
+        ));
+        assert_eq!(kernel.arena, before, "a rejected union mutated the arena");
+    }
+
+    #[test]
+    fn equality_union_preflights_both_paths_before_compression() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let first = kernel.bool_ty(star).unwrap();
+        let first_parent = kernel.bool_ty(star).unwrap();
+        let second = kernel.bool_ty(star).unwrap();
+        let boolean = kernel.bool(first, true).unwrap();
+
+        assert!(
+            kernel
+                .arena
+                .set_eq_column(EqColumn::Semantic, first, Some(first_parent))
+        );
+        assert!(
+            kernel
+                .arena
+                .set_eq_column(EqColumn::Semantic, second, Some(boolean))
+        );
+        let before = kernel.arena.clone();
+
+        assert!(
+            kernel
+                .union_in::<Infallible>(EqColumn::Semantic, first, second)
+                .is_err()
+        );
+        assert_eq!(kernel.arena, before);
+    }
+
+    #[test]
+    fn equality_union_recomputes_the_right_path_and_keeps_the_least_root() {
+        let mut kernel = Kernel::new();
+        let root = kernel.star().unwrap();
+        let middle = kernel.star().unwrap();
+        let leaf = kernel.star().unwrap();
+
+        assert!(
+            kernel
+                .arena
+                .set_eq_column(EqColumn::Semantic, leaf, Some(middle))
+        );
+        assert!(
+            kernel
+                .arena
+                .set_eq_column(EqColumn::Semantic, middle, Some(root))
+        );
+
+        kernel
+            .union_in::<Infallible>(EqColumn::Semantic, leaf, middle)
+            .unwrap();
+        for reference in [root, middle, leaf] {
+            assert_eq!(kernel.find_mut(reference).unwrap(), root);
+        }
+        assert_eq!(kernel.arena.eq(root), None);
+        assert_eq!(kernel.arena.eq(middle), Some(root));
+        assert_eq!(kernel.arena.eq(leaf), Some(root));
+    }
+
+    #[test]
+    fn kind_conversion_union_preflights_both_paths_before_compression() {
+        let mut kernel = Kernel::new();
+        let first = kernel.star().unwrap();
+        let first_parent = kernel.star().unwrap();
+        let second = kernel.star().unwrap();
+        let ty = kernel.bool_ty(first).unwrap();
+
+        assert!(
+            kernel
+                .arena
+                .set_eq_column(EqColumn::Conv, first, Some(first_parent))
+        );
+        assert!(kernel.arena.set_eq_column(EqColumn::Conv, second, Some(ty)));
+        let before = kernel.arena.clone();
+
+        assert!(
+            kernel
+                .union_in::<Infallible>(EqColumn::Conv, first, second)
+                .is_err()
+        );
+        assert_eq!(kernel.arena, before);
+    }
+
+    #[test]
     fn imported_rows_are_local_proxies_with_explicit_premises() {
         let mut imported = Kernel::new();
         let imported_star = imported.star().unwrap();
@@ -1762,6 +2087,7 @@ mod tests {
             .copy_terms_from(&source, &[left, right])
             .unwrap();
         let copied_variable = copied.get(variable).unwrap();
+        let copied_bool_ty = copied.get(bool_ty).unwrap();
         let left_children = destination
             .children(copied.get(left).unwrap())
             .unwrap()
@@ -1771,8 +2097,14 @@ mod tests {
             .unwrap()
             .collect::<Vec<_>>();
 
-        assert_eq!(left_children, [copied_variable, copied_variable]);
-        assert_eq!(right_children, [copied_variable, copied_variable]);
+        assert_eq!(
+            left_children,
+            [copied_bool_ty, copied_variable, copied_variable]
+        );
+        assert_eq!(
+            right_children,
+            [copied_bool_ty, copied_variable, copied_variable]
+        );
         assert_eq!(copied.len(), 5);
         drop(source);
         assert_eq!(destination.category(copied.roots()[0]).unwrap(), Sort::Tm);
@@ -1807,10 +2139,12 @@ mod tests {
     #[test]
     fn copy_rejects_bad_reachable_syntax_atomically() {
         let mut source = Kernel::new();
-        let self_ref = Ref::new(1).unwrap();
+        let star = source.star().unwrap();
+        let bool_ty = source.bool_ty(star).unwrap();
+        let self_ref = Ref::new(3).unwrap();
         source
             .arena
-            .push_row(Row::new(Node::App(self_ref, self_ref)), Some(self_ref));
+            .push_row(Row::new(Node::App(self_ref, self_ref)), Some(bool_ty));
         let mut destination = Kernel::new();
         let existing = destination.star().unwrap();
         let before = destination.len();
@@ -1847,6 +2181,23 @@ mod tests {
         assert!(matches!(
             destination.copy_term_from(&invalid, root),
             Err(KernelError::WrongCategory { .. })
+        ));
+
+        let mut mistyped_equality = Kernel::new();
+        let star = mistyped_equality.star().unwrap();
+        let bool_ty = mistyped_equality.bool_ty(star).unwrap();
+        let other_ty = mistyped_equality.ty_fv(1, star).unwrap();
+        let operand = mistyped_equality.tm_fv(2, bool_ty).unwrap();
+        let root = mistyped_equality
+            .arena
+            .push_row(
+                Row::new(Node::Eq(other_ty, operand, operand)),
+                Some(bool_ty),
+            )
+            .unwrap();
+        assert!(matches!(
+            destination.copy_term_from(&mistyped_equality, root),
+            Err(KernelError::ClassifierMismatch { .. })
         ));
 
         let mut imported = Kernel::new();

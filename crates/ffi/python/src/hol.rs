@@ -1462,12 +1462,6 @@ impl PyArena {
         self.dense_column(Arena::conv)
     }
 
-    /// Sort references, aligned with `definitions`.
-    #[getter]
-    fn sort(&self) -> PyResult<Vec<Option<i32>>> {
-        self.dense_column(Arena::sort)
-    }
-
     #[getter]
     fn amb_pred(&self) -> Vec<PyAmbPred> {
         self.arena

@@ -18,7 +18,13 @@ import Nucleus.Hol.Ethane.Arena
 import Nucleus.Hol.Ethane.Arena.Cbor
 import Nucleus.Hol.Ethane.Arena.OneBased
 import Nucleus.Hol.Ethane.Arena.OneBased.Columns
+import Nucleus.Hol.Ethane.Arena.OneBased.FusedTransitions
+import Nucleus.Hol.Ethane.Arena.OneBased.FusedPathProofs
+import Nucleus.Hol.Ethane.Arena.OneBased.FusedConvUnionProofs
+import Nucleus.Hol.Ethane.Arena.OneBased.FusedUnionProofs
 import Nucleus.Hol.Ethane.Arena.OneBased.Layout
+import Nucleus.Hol.Ethane.Arena.OneBased.DenseKernelTransport
+import Nucleus.Hol.Ethane.Arena.OneBased.SynCacheTransport
 import Nucleus.Hol.Ethane.Arena.OneBased.UnionFind
 import Nucleus.Hol.Ethane.Arena.OneBased.Kernel
 import Nucleus.Hol.Ethane.Arena.OneBased.Copy

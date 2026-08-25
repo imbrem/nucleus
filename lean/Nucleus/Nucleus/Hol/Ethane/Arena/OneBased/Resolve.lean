@@ -1,5 +1,8 @@
 import Nucleus.Hol.Ethane.Arena.OneBased.Structural
 import Nucleus.Hol.Ethane.Typing
+import Nucleus.Hol.Ethane.Semantics
+import Nucleus.Hol.Ethane.Reference
+import Nucleus.HolE.Named.Conversion
 
 /-!
 # Resolving one-based Ethane arenas
@@ -41,10 +44,14 @@ def syntax? : Value → Option EmptySyn
   | .family _ expression | .term _ expression => some expression.erase
 
 /-- The second value classifies the first one. Kinds need no arena row for
-the meta-sort above them. -/
+the meta-sort above them. Term classifiers are compared by family conversion,
+not literal syntax: the checked fused conversion forest may replace a class
+classifier by a semantically equal type. -/
 def HasSort : Value → Value → Prop
   | .family expected _, .kind actual => expected = actual
-  | .term expected _, .family .star actual => expected = actual
+  | .term expected _, .family .star actual =>
+      Nonempty (Nucleus.HolE.Named.FamEq
+        (.nil : TyScope []) expected.toHolE actual.toHolE)
   | _, _ => False
 
 /-- Forget classifications into the existing Ethane forest value. -/
@@ -81,10 +88,10 @@ def import? (arena : Arena) (source : ImportId) : Option Import :=
   simp [import?]
 
 @[simp] theorem import?_mk (imports : List Import) (axs : Finset String)
-    (defs : List detail.Row) (synFacts : List SynSlot) (synFree : Option SynFactId)
+    (dense : Dense) (synFacts : List SynSlot) (synFree : Option SynFactId)
     (ctx : Finset Ref) (assume assert : List Meta)
     (source : ImportId) :
-    (Arena.mk imports axs defs synFacts synFree ctx assume assert).import? source =
+    (Arena.mk imports axs dense synFacts synFree ctx assume assert).import? source =
       imports[(source.value.toNat - 1)]? := rfl
 
 end Arena
@@ -104,14 +111,28 @@ def resolveImport? (resolve : Resolver) : Import → Option Arena
 @[simp] theorem resolveImport?_link (resolve : Resolver) (link : Link) :
     resolveImport? resolve (.link link) = resolve link := rfl
 
-/-- Elaborate one expression after all referenced values have been resolved.
-Term syntax is reconstructed from its children, while its advertised type is
-always the row's `sort` member.  This distinction matters because Rust accepts
-term classifiers modulo the type union-find rather than by literal syntax. -/
-private def tyFvName? {kind : Kind} : EmptyExpr (.kind kind) → Option Nat
+/-- Recognize the free-variable binder shape required by type-family lambdas. -/
+def tyFvName? {kind : Kind} : EmptyExpr (.kind kind) → Option Nat
   | .tyFv name _ => some name
   | _ => none
 
+/-- Recognize the free term-variable binder shape required by term lambdas. -/
+def tmFvData? : EmptyTm → Option (Nat × EmptyTy)
+  | .tmFv name type => some (name, type)
+  | _ => none
+
+/-- Advertise the classifier shared by every locally constructed term. -/
+@[simp] noncomputable def elaborateTerm
+    (lookupLocal : Ref → Option Value) (declaredSort : Option Ref)
+    (expression : EmptyTm) : Option Value := do
+  let some sort := declaredSort | none
+  let Value.family .star advertisedType ← lookupLocal sort | none
+  return Value.term advertisedType expression
+
+/-- Elaborate one expression after all referenced values have been resolved.
+Term syntax is reconstructed from its children, while its advertised type is
+always the row's entry in the dense `sort` column. This distinction matters because Rust accepts
+term classifiers modulo the type union-find rather than by literal syntax. -/
 noncomputable def elaborateExpr
     (lookupLocal : Ref → Option Value)
     (lookupForeign : ImportId → Ref → Option Value)
@@ -144,57 +165,39 @@ noncomputable def elaborateExpr
       return Value.family kind (.tyFv name.toNat kind)
   | .tyExists name predicate => do
       let Value.term _ predicate ← lookupLocal predicate | none
-      let some sort := declaredSort | none
-      let Value.family .star advertisedType ← lookupLocal sort | none
-      return Value.term advertisedType (.tyExists name.toNat predicate)
+      elaborateTerm lookupLocal declaredSort (.tyExists name.toNat predicate)
   | .model name predicate => do
       let Value.term _ predicate ← lookupLocal predicate | none
       return Value.family .star (.model name.toNat predicate)
   | .tmFv name type => do
       let Value.family .star syntacticType ← lookupLocal type | none
-      let some sort := declaredSort | none
-      let Value.family .star advertisedType ← lookupLocal sort | none
-      return Value.term advertisedType (.tmFv name.toNat syntacticType)
+      elaborateTerm lookupLocal declaredSort (.tmFv name.toNat syntacticType)
   | .app function argument => do
       let Value.term _ function ← lookupLocal function | none
       let Value.term _ argument ← lookupLocal argument | none
-      let some sort := declaredSort | none
-      let Value.family .star advertisedType ← lookupLocal sort | none
-      return Value.term advertisedType (.app function argument)
+      elaborateTerm lookupLocal declaredSort (.app function argument)
   | .lam binder body => do
-      let Value.term _ (.tmFv name syntacticDomain) ← lookupLocal binder | none
+      let Value.term _ binder ← lookupLocal binder | none
+      let some (name, syntacticDomain) := tmFvData? binder | none
       let Value.term _ body ← lookupLocal body | none
-      let some sort := declaredSort | none
-      let Value.family .star advertisedType ← lookupLocal sort | none
-      return Value.term advertisedType (.lam name syntacticDomain body)
-  | .bool value => do
-      let some sort := declaredSort | none
-      let Value.family .star advertisedType ← lookupLocal sort | none
-      return Value.term advertisedType (.bool value)
+      elaborateTerm lookupLocal declaredSort (.lam name syntacticDomain body)
+  | .bool value => elaborateTerm lookupLocal declaredSort (.bool value)
   | .op1 op operand => do
       let Value.term _ operand ← lookupLocal operand | none
-      let some sort := declaredSort | none
-      let Value.family .star advertisedType ← lookupLocal sort | none
-      return Value.term advertisedType (op.lower operand)
+      elaborateTerm lookupLocal declaredSort (op.lower operand)
   | .op2 op left right => do
       let Value.term _ left ← lookupLocal left | none
       let Value.term _ right ← lookupLocal right | none
-      let some sort := declaredSort | none
-      let Value.family .star advertisedType ← lookupLocal sort | none
-      return Value.term advertisedType
-        (op.lower left right)
-  | .eq left right => do
-      let Value.term syntacticType left ← lookupLocal left | none
+      elaborateTerm lookupLocal declaredSort (op.lower left right)
+  | .eq type left right => do
+      let Value.family .star syntacticType ← lookupLocal type | none
+      let Value.term _ left ← lookupLocal left | none
       let Value.term _ right ← lookupLocal right | none
-      let some sort := declaredSort | none
-      let Value.family .star advertisedType ← lookupLocal sort | none
-      return Value.term advertisedType (.eq syntacticType left right)
+      elaborateTerm lookupLocal declaredSort (.eq syntacticType left right)
   | .eps type predicate => do
       let Value.family .star type ← lookupLocal type | none
       let Value.term _ predicate ← lookupLocal predicate | none
-      let some sort := declaredSort | none
-      let Value.family .star advertisedType ← lookupLocal sort | none
-      return Value.term advertisedType (.eps type predicate)
+      elaborateTerm lookupLocal declaredSort (.eps type predicate)
   | .tmRef source foreignRef => do
       let value ← lookupForeign source foreignRef
       if value.tagSort = .tm then some value else none
@@ -204,6 +207,238 @@ noncomputable def elaborateExpr
   | .kindRef source foreignRef => do
       let value ← lookupForeign source foreignRef
       if value.tagSort = .kind then some value else none
+
+/-- Every successful value in an optional computation has one category. -/
+def HasTagSort (expected : TagSort) : Option Value → Prop
+  | none => True
+  | some value => value.tagSort = expected
+
+namespace HasTagSort
+
+theorem bind {α : Type u} {expected : TagSort} {input : Option α}
+    {next : α → Option Value}
+    (valid : ∀ value, HasTagSort expected (next value)) :
+    HasTagSort expected (input.bind next) := by
+  cases input <;> simp_all [HasTagSort]
+
+theorem bindKind {expected : TagSort} {input : Option Value}
+    {next : Kind → Option Value}
+    (valid : ∀ kind, HasTagSort expected (next kind)) :
+    HasTagSort expected (input.bind fun
+      | .kind kind => next kind
+      | _ => none) := by
+  apply bind
+  intro value
+  cases value <;> simp_all [HasTagSort]
+
+theorem bindFamily {expected : TagSort} {input : Option Value}
+    {next : ∀ kind, EmptyExpr (.kind kind) → Option Value}
+    (valid : ∀ kind expression, HasTagSort expected (next kind expression)) :
+    HasTagSort expected (input.bind fun
+      | .family kind expression => next kind expression
+      | _ => none) := by
+  apply bind
+  intro value
+  cases value <;> simp_all [HasTagSort]
+
+theorem bindFamilyStar {expected : TagSort} {input : Option Value}
+    {next : EmptyTy → Option Value}
+    (valid : ∀ expression, HasTagSort expected (next expression)) :
+    HasTagSort expected (input.bind fun
+      | .family .star expression => next expression
+      | _ => none) := by
+  apply bind
+  intro value
+  cases value with
+  | kind => simp [HasTagSort]
+  | family kind expression =>
+      cases kind <;> simp_all [HasTagSort]
+  | term => simp [HasTagSort]
+
+theorem bindFamilyArr {expected : TagSort} {input : Option Value}
+    {next : ∀ domain codomain,
+      EmptyExpr (.kind (.arr domain codomain)) → Option Value}
+    (valid : ∀ domain codomain expression,
+      HasTagSort expected (next domain codomain expression)) :
+    HasTagSort expected (input.bind fun
+      | .family (.arr domain codomain) expression =>
+          next domain codomain expression
+      | _ => none) := by
+  apply bind
+  intro value
+  cases value with
+  | kind => simp [HasTagSort]
+  | family kind expression =>
+      cases kind <;> simp_all [HasTagSort]
+  | term => simp [HasTagSort]
+
+theorem bindTerm {expected : TagSort} {input : Option Value}
+    {next : EmptyTy → EmptyTm → Option Value}
+    (valid : ∀ type expression, HasTagSort expected (next type expression)) :
+    HasTagSort expected (input.bind fun
+      | .term type expression => next type expression
+      | _ => none) := by
+  apply bind
+  intro value
+  cases value <;> simp_all [HasTagSort]
+
+theorem elaborateTerm (lookupLocal : Ref → Option Value)
+    (declaredSort : Option Ref) (expression : EmptyTm) :
+    HasTagSort .tm
+      (Nucleus.Hol.Ethane.OneBased.elaborateTerm lookupLocal declaredSort expression) := by
+  cases declaredSort with
+  | none => simp [Nucleus.Hol.Ethane.OneBased.elaborateTerm, HasTagSort]
+  | some sort =>
+      simp only [Nucleus.Hol.Ethane.OneBased.elaborateTerm]
+      apply bindFamilyStar
+      intro advertisedType
+      simp [HasTagSort, Value.tagSort]
+
+theorem checked {expected : TagSort} (input : Option Value) :
+    HasTagSort expected (input.bind fun value =>
+      if value.tagSort = expected then some value else none) := by
+  apply bind
+  intro value
+  by_cases category : value.tagSort = expected <;>
+    simp [category, HasTagSort]
+
+theorem of_some {expected : TagSort} {result : Option Value} {value : Value}
+    (valid : HasTagSort expected result)
+    (found : result = some value) : value.tagSort = expected := by
+  rw [found] at valid
+  exact valid
+
+end HasTagSort
+
+/-- Successful expression elaboration preserves the syntactic category
+declared by the raw row tag. -/
+theorem elaborateExpr_tagSort
+    (lookupLocal : Ref → Option Value)
+    (lookupForeign : ImportId → Ref → Option Value)
+    (declaredSort : Option Ref) (expression : detail.Expr) (value : Value)
+    (found : elaborateExpr lookupLocal lookupForeign declaredSort expression =
+      some value) :
+    value.tagSort = expression.tag.sort := by
+  apply HasTagSort.of_some (result := elaborateExpr lookupLocal lookupForeign
+    declaredSort expression) (value := value) ?_ found
+  cases expression with
+  | kindStar => simp [elaborateExpr, HasTagSort, Value.tagSort,
+      detail.Expr.tag, Tag.sort]
+  | kindArr domain codomain =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindKind
+      intro domainValue
+      apply HasTagSort.bindKind
+      intro codomainValue
+      simp [HasTagSort, Value.tagSort]
+  | boolTy => simp [elaborateExpr, HasTagSort, Value.tagSort,
+      detail.Expr.tag, Tag.sort]
+  | tyArr domain codomain =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindFamilyStar
+      intro domainValue
+      apply HasTagSort.bindFamilyStar
+      intro codomainValue
+      simp [HasTagSort, Value.tagSort]
+  | tyApp function argument =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindFamilyArr
+      intro domain codomain functionValue
+      apply HasTagSort.bindFamily
+      intro actual argumentValue
+      by_cases equality : actual = domain <;>
+        simp [equality, HasTagSort, Value.tagSort]
+  | tyLam binder body =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindFamily
+      intro domain binderValue
+      cases name : tyFvName? binderValue with
+      | none => simp [HasTagSort]
+      | some name =>
+          apply HasTagSort.bindFamily
+          intro codomain bodyValue
+          simp [HasTagSort, Value.tagSort]
+  | tyFv name kind =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindKind
+      intro kindValue
+      simp [HasTagSort, Value.tagSort]
+  | tyExists name predicate =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindTerm
+      intro _ predicateValue
+      exact HasTagSort.elaborateTerm lookupLocal declaredSort _
+  | model name predicate =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindTerm
+      intro _ predicateValue
+      simp [HasTagSort, Value.tagSort]
+  | tmFv name type =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindFamilyStar
+      intro syntacticType
+      exact HasTagSort.elaborateTerm lookupLocal declaredSort _
+  | app function argument =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindTerm
+      intro _ functionValue
+      apply HasTagSort.bindTerm
+      intro _ argumentValue
+      exact HasTagSort.elaborateTerm lookupLocal declaredSort _
+  | lam binder body =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindTerm
+      intro _ binderValue
+      cases binderData : tmFvData? binderValue with
+      | none => simp [HasTagSort]
+      | some data =>
+          rcases data with ⟨name, syntacticDomain⟩
+          apply HasTagSort.bindTerm
+          intro _ bodyValue
+          exact HasTagSort.elaborateTerm lookupLocal declaredSort _
+  | bool value =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      exact HasTagSort.elaborateTerm lookupLocal declaredSort _
+  | op1 op operand =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindTerm
+      intro _ operandValue
+      exact HasTagSort.elaborateTerm lookupLocal declaredSort _
+  | op2 op left right =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindTerm
+      intro _ leftValue
+      apply HasTagSort.bindTerm
+      intro _ rightValue
+      exact HasTagSort.elaborateTerm lookupLocal declaredSort _
+  | eq type left right =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindFamilyStar
+      intro syntacticType
+      apply HasTagSort.bindTerm
+      intro _ leftValue
+      apply HasTagSort.bindTerm
+      intro _ rightValue
+      exact HasTagSort.elaborateTerm lookupLocal declaredSort _
+  | eps type predicate =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindFamilyStar
+      intro syntacticType
+      apply HasTagSort.bindTerm
+      intro _ predicateValue
+      exact HasTagSort.elaborateTerm lookupLocal declaredSort _
+  | tmRef source foreignRef =>
+      change HasTagSort .tm ((lookupForeign source foreignRef).bind fun value =>
+        if value.tagSort = .tm then some value else none)
+      exact HasTagSort.checked (expected := .tm) (lookupForeign source foreignRef)
+  | tyRef source foreignRef =>
+      change HasTagSort .ty ((lookupForeign source foreignRef).bind fun value =>
+        if value.tagSort = .ty then some value else none)
+      exact HasTagSort.checked (expected := .ty) (lookupForeign source foreignRef)
+  | kindRef source foreignRef =>
+      change HasTagSort .kind ((lookupForeign source foreignRef).bind fun value =>
+        if value.tagSort = .kind then some value else none)
+      exact HasTagSort.checked (expected := .kind) (lookupForeign source foreignRef)
 
 /-- Apply an arena lookup function through the owner's import table. -/
 noncomputable def resolveForeignUsing?
@@ -227,8 +462,8 @@ noncomputable def resolveAt? : Nat → Resolver → Arena → Ref → Option Val
           elaborateExpr
             (resolveAt? fuel resolve arena)
             (resolveForeignUsing? (resolveAt? fuel resolve) resolve arena)
-            row.sort
-            row.expr
+            (arena.sort? reference)
+            row
 
 @[simp] theorem resolveAt?_withoutSyn (fuel : Nat) (resolve : Resolver)
     (arena : Arena) (reference : Ref) :
@@ -249,6 +484,7 @@ noncomputable def resolveAt? : Nat → Resolver → Arena → Ref → Option Val
         rfl
       simp only [resolveAt?, Arena.row?_withoutSyn]
       rw [localLookup, foreignLookup]
+      simp only [Arena.sort?_withoutSyn]
 
 /-- Resolve one foreign reference through the owner's import table. -/
 noncomputable def resolveForeignAt? (fuel : Nat) (resolve : Resolver)
@@ -258,6 +494,43 @@ noncomputable def resolveForeignAt? (fuel : Nat) (resolve : Resolver)
 /-- A value is available when some finite resolution bound reconstructs it. -/
 def Resolves (resolve : Resolver) (arena : Arena) (reference : Ref) (value : Value) : Prop :=
   ∃ fuel, resolveAt? fuel resolve arena reference = some value
+
+/-- Resolution can succeed only at a resident syntax row, and the resulting
+value has exactly the syntactic category declared by that row's tag. The
+classifier and equality columns do not participate in this category fact. -/
+theorem Resolves.rowTag {resolve : Resolver} {arena : Arena}
+    {reference : Ref} {value : Value}
+    (resolved : Resolves resolve arena reference value) :
+    ∃ expression,
+      arena.row? reference = some expression ∧
+      value.tagSort = expression.tag.sort := by
+  rcases resolved with ⟨fuel, found⟩
+  cases fuel with
+  | zero => simp [resolveAt?] at found
+  | succ fuel =>
+      cases rowFound : arena.row? reference with
+      | none => simp [resolveAt?, rowFound] at found
+      | some expression =>
+          refine ⟨expression, rfl, ?_⟩
+          apply elaborateExpr_tagSort
+          simpa only [resolveAt?, rowFound] using found
+
+theorem Resolves.resident {resolve : Resolver} {arena : Arena}
+    {reference : Ref} {value : Value}
+    (resolved : Resolves resolve arena reference value) :
+    arena.dense.expr? reference ≠ none := by
+  obtain ⟨expression, found, _⟩ := resolved.rowTag
+  exact Arena.row?_resident found
+
+theorem Resolves.tagSort? {resolve : Resolver} {arena : Arena}
+    {reference : Ref} {value : Value}
+    (resolved : Resolves resolve arena reference value) :
+    arena.dense.tagSort? reference = some value.tagSort := by
+  obtain ⟨expression, found, category⟩ := resolved.rowTag
+  change (arena.dense.expr? reference).map (·.tag.sort) = some value.tagSort
+  change arena.dense.expr? reference = some expression at found
+  rw [found, category]
+  rfl
 
 @[simp] theorem resolves_withoutSyn_iff (resolve : Resolver) (arena : Arena)
     (reference : Ref) (value : Value) :
@@ -344,9 +617,7 @@ theorem literal_link_agree (fuel : Nat) (literalOwner linkedOwner imported : Are
 
 theorem resolveAt?_tmRef (fuel : Nat) (resolve : Resolver) (arena : Arena)
     (reference : Ref) (source : ImportId) (foreignRef : Ref)
-    (eq sort : Option Ref)
-    (lookup : arena.row? reference =
-      some ⟨.tmRef source foreignRef, eq, sort⟩) :
+    (lookup : arena.row? reference = some (.tmRef source foreignRef)) :
     resolveAt? (fuel + 1) resolve arena reference =
       match resolveForeignAt? fuel resolve arena source foreignRef with
       | none => none
@@ -356,9 +627,7 @@ theorem resolveAt?_tmRef (fuel : Nat) (resolve : Resolver) (arena : Arena)
 
 theorem resolveAt?_tyRef (fuel : Nat) (resolve : Resolver) (arena : Arena)
     (reference : Ref) (source : ImportId) (foreignRef : Ref)
-    (eq sort : Option Ref)
-    (lookup : arena.row? reference =
-      some ⟨.tyRef source foreignRef, eq, sort⟩) :
+    (lookup : arena.row? reference = some (.tyRef source foreignRef)) :
     resolveAt? (fuel + 1) resolve arena reference =
       match resolveForeignAt? fuel resolve arena source foreignRef with
       | none => none
@@ -368,9 +637,7 @@ theorem resolveAt?_tyRef (fuel : Nat) (resolve : Resolver) (arena : Arena)
 
 theorem resolveAt?_kindRef (fuel : Nat) (resolve : Resolver) (arena : Arena)
     (reference : Ref) (source : ImportId) (foreignRef : Ref)
-    (eq sort : Option Ref)
-    (lookup : arena.row? reference =
-      some ⟨.kindRef source foreignRef, eq, sort⟩) :
+    (lookup : arena.row? reference = some (.kindRef source foreignRef)) :
     resolveAt? (fuel + 1) resolve arena reference =
       match resolveForeignAt? fuel resolve arena source foreignRef with
       | none => none
@@ -403,9 +670,8 @@ theorem foreignResolves_iff_import (resolve : Resolver) (arena : Arena)
 
 theorem resolves_tmRef_iff (resolve : Resolver) (arena : Arena)
     (reference : Ref) (source : ImportId) (foreignRef : Ref)
-    (eq sort : Option Ref)
-    (lookup : arena.row? reference =
-      some ⟨.tmRef source foreignRef, eq, sort⟩) (value : Value) :
+    (lookup : arena.row? reference = some (.tmRef source foreignRef))
+    (value : Value) :
     Resolves resolve arena reference value ↔
       value.tagSort = .tm ∧
       ForeignResolves resolve arena source foreignRef value := by
@@ -414,7 +680,7 @@ theorem resolves_tmRef_iff (resolve : Resolver) (arena : Arena)
     cases fuel with
     | zero => contradiction
     | succ fuel =>
-      rw [resolveAt?_tmRef fuel resolve arena reference source foreignRef eq sort lookup]
+      rw [resolveAt?_tmRef fuel resolve arena reference source foreignRef lookup]
         at resolved
       cases foreign : resolveForeignAt? fuel resolve arena source foreignRef with
       | none =>
@@ -433,15 +699,14 @@ theorem resolves_tmRef_iff (resolve : Resolver) (arena : Arena)
           contradiction
   · rintro ⟨category, fuel, foreign⟩
     refine ⟨fuel + 1, ?_⟩
-    rw [resolveAt?_tmRef fuel resolve arena reference source foreignRef eq sort lookup,
+    rw [resolveAt?_tmRef fuel resolve arena reference source foreignRef lookup,
       foreign]
     simp [category]
 
 theorem resolves_tyRef_iff (resolve : Resolver) (arena : Arena)
     (reference : Ref) (source : ImportId) (foreignRef : Ref)
-    (eq sort : Option Ref)
-    (lookup : arena.row? reference =
-      some ⟨.tyRef source foreignRef, eq, sort⟩) (value : Value) :
+    (lookup : arena.row? reference = some (.tyRef source foreignRef))
+    (value : Value) :
     Resolves resolve arena reference value ↔
       value.tagSort = .ty ∧
       ForeignResolves resolve arena source foreignRef value := by
@@ -450,7 +715,7 @@ theorem resolves_tyRef_iff (resolve : Resolver) (arena : Arena)
     cases fuel with
     | zero => contradiction
     | succ fuel =>
-      rw [resolveAt?_tyRef fuel resolve arena reference source foreignRef eq sort lookup]
+      rw [resolveAt?_tyRef fuel resolve arena reference source foreignRef lookup]
         at resolved
       cases foreign : resolveForeignAt? fuel resolve arena source foreignRef with
       | none =>
@@ -469,15 +734,14 @@ theorem resolves_tyRef_iff (resolve : Resolver) (arena : Arena)
           contradiction
   · rintro ⟨category, fuel, foreign⟩
     refine ⟨fuel + 1, ?_⟩
-    rw [resolveAt?_tyRef fuel resolve arena reference source foreignRef eq sort lookup,
+    rw [resolveAt?_tyRef fuel resolve arena reference source foreignRef lookup,
       foreign]
     simp [category]
 
 theorem resolves_kindRef_iff (resolve : Resolver) (arena : Arena)
     (reference : Ref) (source : ImportId) (foreignRef : Ref)
-    (eq sort : Option Ref)
-    (lookup : arena.row? reference =
-      some ⟨.kindRef source foreignRef, eq, sort⟩) (value : Value) :
+    (lookup : arena.row? reference = some (.kindRef source foreignRef))
+    (value : Value) :
     Resolves resolve arena reference value ↔
       value.tagSort = .kind ∧
       ForeignResolves resolve arena source foreignRef value := by
@@ -486,7 +750,7 @@ theorem resolves_kindRef_iff (resolve : Resolver) (arena : Arena)
     cases fuel with
     | zero => contradiction
     | succ fuel =>
-      rw [resolveAt?_kindRef fuel resolve arena reference source foreignRef eq sort lookup]
+      rw [resolveAt?_kindRef fuel resolve arena reference source foreignRef lookup]
         at resolved
       cases foreign : resolveForeignAt? fuel resolve arena source foreignRef with
       | none =>
@@ -505,15 +769,14 @@ theorem resolves_kindRef_iff (resolve : Resolver) (arena : Arena)
           contradiction
   · rintro ⟨category, fuel, foreign⟩
     refine ⟨fuel + 1, ?_⟩
-    rw [resolveAt?_kindRef fuel resolve arena reference source foreignRef eq sort lookup,
+    rw [resolveAt?_kindRef fuel resolve arena reference source foreignRef lookup,
       foreign]
     simp [category]
 
 theorem sortingClaim_tmRef_iff (resolve : Resolver) (arena : Arena)
     (reference : Ref) (source : ImportId) (foreignRef sort : Ref)
-    (eq : Option Ref)
-    (lookup : arena.row? reference =
-      some ⟨.tmRef source foreignRef, eq, some sort⟩) :
+    (lookup : arena.row? reference = some (.tmRef source foreignRef))
+    (sortLookup : arena.sort? reference = some sort) :
     SortingClaim resolve arena reference ↔
       ProxySortingClaim .tm resolve arena source foreignRef sort := by
   constructor
@@ -521,25 +784,25 @@ theorem sortingClaim_tmRef_iff (resolve : Resolver) (arena : Arena)
       classifierResolved, sorted⟩
     have actualSortEq : actualSort = sort := by
       have reversed : sort = actualSort := by
-        simpa [Arena.sort?, lookup] using sortMember
+        rw [sortLookup] at sortMember
+        exact Option.some.inj sortMember
       exact reversed.symm
     subst actualSort
-    rw [resolves_tmRef_iff resolve arena reference source foreignRef eq
-      (some sort) lookup value] at valueResolved
+    rw [resolves_tmRef_iff resolve arena reference source foreignRef lookup value]
+      at valueResolved
     exact ⟨value, classifier, valueResolved.2, valueResolved.1,
       classifierResolved, sorted⟩
   · rintro ⟨value, classifier, foreignResolved, category,
       classifierResolved, sorted⟩
-    exact ⟨sort, value, classifier, by simp [Arena.sort?, lookup],
-      (resolves_tmRef_iff resolve arena reference source foreignRef eq
-        (some sort) lookup value).2 ⟨category, foreignResolved⟩,
+    exact ⟨sort, value, classifier, sortLookup,
+      (resolves_tmRef_iff resolve arena reference source foreignRef lookup value).2
+        ⟨category, foreignResolved⟩,
       classifierResolved, sorted⟩
 
 theorem sortingClaim_tyRef_iff (resolve : Resolver) (arena : Arena)
     (reference : Ref) (source : ImportId) (foreignRef sort : Ref)
-    (eq : Option Ref)
-    (lookup : arena.row? reference =
-      some ⟨.tyRef source foreignRef, eq, some sort⟩) :
+    (lookup : arena.row? reference = some (.tyRef source foreignRef))
+    (sortLookup : arena.sort? reference = some sort) :
     SortingClaim resolve arena reference ↔
       ProxySortingClaim .ty resolve arena source foreignRef sort := by
   constructor
@@ -547,18 +810,19 @@ theorem sortingClaim_tyRef_iff (resolve : Resolver) (arena : Arena)
       classifierResolved, sorted⟩
     have actualSortEq : actualSort = sort := by
       have reversed : sort = actualSort := by
-        simpa [Arena.sort?, lookup] using sortMember
+        rw [sortLookup] at sortMember
+        exact Option.some.inj sortMember
       exact reversed.symm
     subst actualSort
-    rw [resolves_tyRef_iff resolve arena reference source foreignRef eq
-      (some sort) lookup value] at valueResolved
+    rw [resolves_tyRef_iff resolve arena reference source foreignRef lookup value]
+      at valueResolved
     exact ⟨value, classifier, valueResolved.2, valueResolved.1,
       classifierResolved, sorted⟩
   · rintro ⟨value, classifier, foreignResolved, category,
       classifierResolved, sorted⟩
-    exact ⟨sort, value, classifier, by simp [Arena.sort?, lookup],
-      (resolves_tyRef_iff resolve arena reference source foreignRef eq
-        (some sort) lookup value).2 ⟨category, foreignResolved⟩,
+    exact ⟨sort, value, classifier, sortLookup,
+      (resolves_tyRef_iff resolve arena reference source foreignRef lookup value).2
+        ⟨category, foreignResolved⟩,
       classifierResolved, sorted⟩
 
 theorem metaWf_iff_proxy (resolve : Resolver) (arena : Arena)
@@ -595,14 +859,13 @@ theorem metaWf_iff_proxy (resolve : Resolver) (arena : Arena)
 /-- `meta.wf` is exactly the inline sorting claim of an actual term proxy. -/
 theorem metaWf_iff_tmRef_sortingClaim (resolve : Resolver) (arena : Arena)
     (reference : Ref) (source : ImportId) (foreignRef sort : Ref)
-    (eq : Option Ref)
-    (lookup : arena.row? reference =
-      some ⟨.tmRef source foreignRef, eq, some sort⟩)
+    (lookup : arena.row? reference = some (.tmRef source foreignRef))
+    (sortLookup : arena.sort? reference = some sort)
     (category : ProxySortingClaim .tm resolve arena source foreignRef sort) :
     MetaClaim resolve arena (.wf source foreignRef sort) ↔
       SortingClaim resolve arena reference := by
   rw [metaWf_iff_proxy, sortingClaim_tmRef_iff resolve arena reference source
-    foreignRef sort eq lookup]
+    foreignRef sort lookup sortLookup]
   constructor
   · intro _claim
     exact category
@@ -611,14 +874,13 @@ theorem metaWf_iff_tmRef_sortingClaim (resolve : Resolver) (arena : Arena)
 /-- `meta.wf` is exactly the inline sorting claim of an actual type proxy. -/
 theorem metaWf_iff_tyRef_sortingClaim (resolve : Resolver) (arena : Arena)
     (reference : Ref) (source : ImportId) (foreignRef sort : Ref)
-    (eq : Option Ref)
-    (lookup : arena.row? reference =
-      some ⟨.tyRef source foreignRef, eq, some sort⟩)
+    (lookup : arena.row? reference = some (.tyRef source foreignRef))
+    (sortLookup : arena.sort? reference = some sort)
     (category : ProxySortingClaim .ty resolve arena source foreignRef sort) :
     MetaClaim resolve arena (.wf source foreignRef sort) ↔
       SortingClaim resolve arena reference := by
   rw [metaWf_iff_proxy, sortingClaim_tyRef_iff resolve arena reference source
-    foreignRef sort eq lookup]
+    foreignRef sort lookup sortLookup]
   constructor
   · intro _claim
     exact category
