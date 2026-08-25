@@ -15,6 +15,10 @@ mod proof;
 #[cfg(not(target_arch = "wasm32"))]
 pub use proof::{ProofError, load_standard_proof};
 
+mod subtype;
+
+pub use subtype::{Subtype, SubtypeExt};
+
 mod connection;
 
 pub use connection::{Connection, ConnectionError};

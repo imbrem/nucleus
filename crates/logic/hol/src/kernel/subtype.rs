@@ -21,14 +21,23 @@
 //! caller owes nothing. The price is that the `rep`-inverts-`abs` law holds
 //! only on guarded values, which is what [`Subtype::rep_abs`] states.
 //!
-//! ## What the axiom is, and what it is not
+//! ## What is trusted here, and what is not
 //!
-//! [`Kernel::subtype`] only *builds terms* — it appends no assumption and
-//! needs no capability, because `ty.model` is a primitive and choosing a model
-//! is always well-formed. What the axiom supplies is that the chosen model is
-//! a *genuine* one: that the package sentence
-//! [`Subtype::exists_type`] is true, so the laws may be used. That is
-//! [`Kernel::sub_exists`], and it consumes the `ax.sub` capability.
+//! Only the rule is. [`Kernel::sub_exists`] builds the package *sentence* and
+//! concludes it, and it must do both: a rule that accepted a sentence from its
+//! caller would be concluding whatever it was handed, and Ethane has no
+//! structural equality with which to check one instead.
+//!
+//! Everything a caller actually wants — the subtype itself, `rep`, `abs`,
+//! their arrow rows, and the three laws as usable statements — is *not* here.
+//! It is ordinary construction over public constructors, it carries no
+//! authority, and it lives outside this crate in `covalence-nucleus`'s
+//! `SubtypeExt`. If that construction is wrong the terms it produces are
+//! useless, not dangerous: nothing but `exists_type` can be concluded.
+//!
+//! So this module hands back [`SubtypeAxiom`], which carries the sentence, the
+//! body it quantifies, and the names used to build them — everything a
+//! userspace package needs in order to be about the same subtype.
 //!
 //! ## What is established about the sentence, and what is not
 //!
@@ -36,8 +45,8 @@
 //! same object:
 //!
 //! * `Nucleus.Hol.Ethane.Subtype` builds it in *named* Ethane syntax. That is
-//!   the one this module mirrors, and after the `freshBase` alignment it
-//!   builds the same term — see the hygiene section.
+//!   the one this module mirrors, term for term, after the `freshBase`
+//!   alignment — see the hygiene section.
 //! * `Nucleus.HolE.Empty.SubtypePackage` rebuilds it through the
 //!   intrinsically checked de Bruijn API, and that is the one carrying the
 //!   soundness theorem:
@@ -52,17 +61,9 @@
 //! the concrete guarded carrier (`Subtype.guardedPackage`), off the
 //! nonemptiness-free `semanticPackage_exists`.
 //!
-//! **No lemma links the two.** They are visibly the same construction written
-//! twice, and each is checked, but "the sentence this module builds is true"
-//! is not currently a theorem — it is a theorem about a parallel term plus a
-//! reading of two definitions side by side. Closing that needs the named
-//! construction lowered to the intrinsic one and the lowering shown to
-//! preserve evaluation.
-//!
-//! So `ax.sub` is an axiom of the *object* logic — the kernel cannot derive
-//! it, and an arena that uses it says so — and its truth is argued rather than
-//! transported. That is a weaker claim than it would be worth making, and it
-//! is the reason the capability is explicit.
+//! `Nucleus.Hol.Ethane.Subtype.existsTypeAt_true` transports that theorem to
+//! the named construction, so "the sentence this module builds is true" is a
+//! theorem rather than a reading of two definitions side by side.
 //!
 //! ## Type rows are not interchangeable
 //!
@@ -136,45 +137,35 @@ pub enum Binder {
 /// How many names the package reserves above [`Subtype::base_name`].
 pub const BINDER_COUNT: u64 = 7;
 
-/// A built guarded subtype package.
+/// The package sentence, and everything a caller needs to build terms about
+/// the same subtype.
 ///
-/// Every field is a reference into the kernel that produced it. The three law
-/// fields are *statements*, not theorems: they hold exactly when
-/// [`Kernel::sub_exists`] has been used, which is what the axiom buys.
+/// `exists_type` is the only field carrying authority: it is what
+/// [`theorem`](Self::theorem) concludes. The rest are handles into the
+/// construction so that an untrusted package layer can be *about* this
+/// subtype rather than a parallel one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Subtype {
+pub struct SubtypeAxiom {
     /// The carrier type the subtype was carved out of.
     pub carrier: Ref,
     /// The defining predicate, of type `carrier → bool`.
     pub predicate: Ref,
-    /// `∃type B. package` — the sentence `ax.sub` concludes.
+    /// `∃type B. package` — the sentence [`theorem`](Self::theorem) concludes.
     pub exists_type: Ref,
-    /// The subtype itself: `model B. package`.
-    pub sub: Ref,
-    /// `rep : sub → carrier`.
-    pub rep: Ref,
-    /// `abs : carrier → sub`.
-    pub abs: Ref,
-    /// The `sub → carrier` row classifying [`rep`](Self::rep).
+    /// The body `exists_type` quantifies, with the model type variable free.
     ///
-    /// Exposed because Ethane's type equality is the row union-find: an arrow
-    /// the caller rebuilds is *not* equal to this one, so anything typed
-    /// against `rep` must reuse this row.
-    pub rep_ty: Ref,
-    /// The `carrier → sub` row classifying [`abs`](Self::abs).
-    pub abs_ty: Ref,
-    /// `∀ b : sub. abs (rep b) = b`.
-    pub abs_rep: Ref,
-    /// `∀ a : carrier. guard a → rep (abs a) = a`.
-    pub rep_abs: Ref,
-    /// `∀ b : sub. guard (rep b)`.
-    pub rep_guarded: Ref,
+    /// A caller builds the subtype itself as `model(model_name, package)`.
+    pub package: Ref,
+    /// The name of the model type variable bound in `package`.
+    pub model_name: u64,
     /// The first name reserved for the package's own binders; the caller's
     /// terms use no name at or above it.
     pub base_name: u64,
+    /// The premise-free sequent concluding `exists_type`.
+    pub theorem: ThmId,
 }
 
-impl Subtype {
+impl SubtypeAxiom {
     /// The name given to `binder`.
     #[must_use]
     pub const fn name_of(&self, binder: Binder) -> u64 {
@@ -183,24 +174,33 @@ impl Subtype {
 }
 
 impl Kernel {
-    /// Builds the guarded subtype of `carrier` cut out by `predicate`.
+    /// Concludes the guarded subtype-package sentence for `carrier` and
+    /// `predicate`, consuming the `ax.sub` capability.
     ///
-    /// Appends terms only: no assumption is recorded and no capability is
-    /// consumed. Using the resulting laws requires
-    /// [`sub_exists`](Self::sub_exists).
+    /// Builds the sentence and mints a premise-free sequent for it. The
+    /// sentence is constructed here rather than accepted from the caller, so
+    /// the kernel asserts exactly the statement it built — see the module docs
+    /// for why there is no cheaper option.
+    ///
+    /// This is the whole of the trusted surface. To get a usable subtype from
+    /// it, see `covalence-nucleus`'s `SubtypeExt`.
     ///
     /// # Errors
     ///
-    /// Returns an error unless `bool_ty` is Boolean, `carrier` is a type of
-    /// kind `star`, and `predicate` is a term of type `carrier → bool`. Also
-    /// propagates a name-space exhaustion if the caller's terms use names
-    /// within [`BINDER_COUNT`] of `u64::MAX`.
-    pub fn subtype(
+    /// Returns an error if the arena does not carry the [`AX_SUB`] capability,
+    /// unless `bool_ty` is Boolean, `carrier` is a type of kind `star`, and
+    /// `predicate` is a term of type `carrier → bool`. Also propagates a
+    /// name-space exhaustion if the caller's terms use names within
+    /// [`BINDER_COUNT`] of `u64::MAX`.
+    pub fn sub_exists(
         &mut self,
         bool_ty: Ref,
         carrier: Ref,
         predicate: Ref,
-    ) -> Result<Subtype, KernelError> {
+    ) -> Result<SubtypeAxiom, KernelError> {
+        if !self.arena.axioms().any(|name| name == AX_SUB) {
+            return Err(KernelError::MissingAxiom { name: AX_SUB });
+        }
         self.require_bool_type::<Infallible>(bool_ty)?;
         self.require_star_type::<Infallible>(carrier)?;
         let predicate_ty = self.classifier(predicate)?;
@@ -213,18 +213,17 @@ impl Kernel {
         }
         self.require_bool_type::<Infallible>(codomain)?;
 
-        let base_name = self.fresh_name_base(&[carrier, predicate])?;
-        let name = |binder: Binder| base_name + binder as u64;
+        let base_name = self.fresh_name(&[carrier, predicate])?;
+        let model_name = base_name + Binder::ModelType as u64;
 
-        // Kinds and the two function types the package quantifies over. The
-        // model type is a *variable* here: everything below is built under the
-        // `ty.exists` / `ty.model` binder that closes over it.
+        // The model type is a *variable* here: everything below is built under
+        // the `ty.exists` binder that closes over it.
         let star = self.star()?;
-        let model_ty = self.ty_fv(name(Binder::ModelType), star)?;
+        let model_ty = self.ty_fv(model_name, star)?;
         let rep_ty = self.ty_arr(model_ty, carrier)?;
         let abs_ty = self.ty_arr(carrier, model_ty)?;
-        let representation = self.tm_fv(name(Binder::Representation), rep_ty)?;
-        let abstraction = self.tm_fv(name(Binder::Abstraction), abs_ty)?;
+        let representation = self.tm_fv(base_name + Binder::Representation as u64, rep_ty)?;
+        let abstraction = self.tm_fv(base_name + Binder::Abstraction as u64, abs_ty)?;
 
         let laws = self.package_laws(
             bool_ty,
@@ -237,85 +236,61 @@ impl Kernel {
         )?;
         let has_abstraction = self.exists_tm(abstraction, laws)?;
         let package = self.exists_tm(representation, has_abstraction)?;
+        let exists_type = self.ty_exists(model_name, package)?;
+        let theorem = self.push_axiom(exists_type)?;
 
-        let exists_type = self.ty_exists(name(Binder::ModelType), package)?;
-        let sub = self.model(name(Binder::ModelType), package)?;
-
-        // Outside the binder the model type is the concrete subtype, so the
-        // two function types are rebuilt against `sub`.
-        let concrete_rep_ty = self.ty_arr(sub, carrier)?;
-        let concrete_abs_ty = self.ty_arr(carrier, sub)?;
-        let concrete_representation = self.tm_fv(name(Binder::Representation), concrete_rep_ty)?;
-        let concrete_abstraction = self.tm_fv(name(Binder::Abstraction), concrete_abs_ty)?;
-
-        let rep_laws = self.package_laws(
-            bool_ty,
-            base_name,
-            carrier,
-            sub,
-            predicate,
-            concrete_representation,
-            concrete_abstraction,
-        )?;
-        let rep_has_abstraction = self.exists_tm(concrete_abstraction, rep_laws)?;
-        let rep_chooser = self.lam(concrete_representation, rep_has_abstraction)?;
-        let rep = self.eps(concrete_rep_ty, rep_chooser)?;
-
-        let abs_laws = self.package_laws(
-            bool_ty,
-            base_name,
-            carrier,
-            sub,
-            predicate,
-            rep,
-            concrete_abstraction,
-        )?;
-        let abs_chooser = self.lam(concrete_abstraction, abs_laws)?;
-        let abs = self.eps(concrete_abs_ty, abs_chooser)?;
-
-        // The laws as usable statements about the chosen `rep` and `abs`.
-        let (abs_rep, rep_abs, rep_guarded) =
-            self.package_law_parts(bool_ty, base_name, carrier, sub, predicate, rep, abs)?;
-
-        Ok(Subtype {
+        Ok(SubtypeAxiom {
             carrier,
             predicate,
             exists_type,
-            sub,
-            rep,
-            abs,
-            rep_ty: concrete_rep_ty,
-            abs_ty: concrete_abs_ty,
-            abs_rep,
-            rep_abs,
-            rep_guarded,
+            package,
+            model_name,
             base_name,
+            theorem,
         })
     }
 
-    /// Concludes the guarded subtype-package sentence for `carrier` and
-    /// `predicate`, consuming the `ax.sub` capability.
+    /// One past the largest name occurring in the sub-DAG reachable from
+    /// `roots`, counting "no names at all" as zero.
     ///
-    /// The sentence is *rebuilt* here rather than taken from the caller, so
-    /// the kernel asserts exactly the statement it constructed. The returned
-    /// sequent is premise-free.
+    /// A binder allocated at or above this cannot capture anything in `roots`.
+    /// Public because an untrusted package layer has to pick the *same* names
+    /// the axiom did in order to be talking about the same subtype;
+    /// `Nucleus.Hol.Ethane.Subtype.freshBase` is the same function.
     ///
     /// # Errors
     ///
-    /// Returns an error if the arena does not carry the [`AX_SUB`] capability,
-    /// or for any reason [`subtype`](Self::subtype) would.
-    pub fn sub_exists(
-        &mut self,
-        bool_ty: Ref,
-        carrier: Ref,
-        predicate: Ref,
-    ) -> Result<(Subtype, ThmId), KernelError> {
-        if !self.arena.axioms().any(|name| name == AX_SUB) {
-            return Err(KernelError::MissingAxiom { name: AX_SUB });
+    /// Returns an error for a dangling reference, or if no name remains.
+    pub fn fresh_name(&self, roots: &[Ref]) -> Result<u64, KernelError> {
+        let mut seen: BTreeSet<Ref> = BTreeSet::new();
+        let mut stack: Vec<Ref> = roots.to_vec();
+        let mut highest: Option<u64> = None;
+        while let Some(reference) = stack.pop() {
+            if !seen.insert(reference) {
+                continue;
+            }
+            let row = self.row::<Infallible>(reference)?;
+            let node = *row.expr();
+            if let Node::TyFv { name, .. }
+            | Node::TmFv { name, .. }
+            | Node::TyExists { name, .. }
+            | Node::Model { name, .. } = node
+            {
+                highest = Some(highest.map_or(name, |seen| seen.max(name)));
+            }
+            stack.extend(node.children());
         }
-        let package = self.subtype(bool_ty, carrier, predicate)?;
-        let theorem = self.push_axiom(package.exists_type)?;
-        Ok((package, theorem))
+        // One past the largest name, counting "no names at all" as zero — the
+        // uniform rule, so this agrees with `freshBase` (`Finset.sup` of the
+        // empty set is zero) in every case rather than all but one.
+        let base = highest
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or(KernelError::TooManyNames)?;
+        if u64::MAX - base < BINDER_COUNT {
+            return Err(KernelError::TooManyNames);
+        }
+        Ok(base)
     }
 
     /// `P value ∨ ¬∃w. P w` — membership in the guarded predicate.
@@ -408,40 +383,5 @@ impl Kernel {
         let unary = self.ty_arr(bool_ty, bool_ty)?;
         let binary = self.ty_arr(bool_ty, unary)?;
         self.tm_fv(base_name + Binder::Conjunction as u64, binary)
-    }
-
-    /// One past the largest free name occurring in the sub-DAG reachable from
-    /// `roots`, so a binder allocated there cannot capture.
-    fn fresh_name_base(&self, roots: &[Ref]) -> Result<u64, KernelError> {
-        let mut seen: BTreeSet<Ref> = BTreeSet::new();
-        let mut stack: Vec<Ref> = roots.to_vec();
-        let mut highest: Option<u64> = None;
-        while let Some(reference) = stack.pop() {
-            if !seen.insert(reference) {
-                continue;
-            }
-            let row = self.row::<Infallible>(reference)?;
-            let node = *row.expr();
-            if let Node::TyFv { name, .. }
-            | Node::TmFv { name, .. }
-            | Node::TyExists { name, .. }
-            | Node::Model { name, .. } = node
-            {
-                highest = Some(highest.map_or(name, |seen| seen.max(name)));
-            }
-            stack.extend(node.children());
-        }
-        // One past the largest name, counting "no names at all" as zero — the
-        // uniform rule, so this agrees with `Nucleus.Hol.Ethane.Subtype.freshBase`
-        // (`Finset.sup` of the empty set is zero) in every case rather than all
-        // but one. Spending name zero is worth an exact correspondence.
-        let base = highest
-            .unwrap_or(0)
-            .checked_add(1)
-            .ok_or(KernelError::TooManyNames)?;
-        if u64::MAX - base < BINDER_COUNT {
-            return Err(KernelError::TooManyNames);
-        }
-        Ok(base)
     }
 }

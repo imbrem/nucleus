@@ -15,7 +15,7 @@ pub mod wire;
 pub use kernel::{
     AX_SUB, BINDER_COUNT, Binder, CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules,
     Cnf, CnfId, CopyMap, Dnf, DnfId, Kernel, KernelError, Lit, LitError, LitVec, Refutation,
-    Subtype, ThmId, ThmRef,
+    SubtypeAxiom, ThmId, ThmRef,
 };
 pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
