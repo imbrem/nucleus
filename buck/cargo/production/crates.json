@@ -471,6 +471,12 @@
           ]
         },
         {
+          "name": "subtype",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "syn_fact_cache",
           "kinds": [
             "test"
@@ -595,7 +601,19 @@
           ]
         },
         {
+          "name": "proof_subtype",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "sqlite",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "subtype",
           "kinds": [
             "test"
           ]
