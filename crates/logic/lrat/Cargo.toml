@@ -13,6 +13,7 @@ parse = []
 
 [dependencies]
 covalence-lib-error = { path = "../../lib/error" }
+covalence-logic-classical = { path = "../classical" }
 covalence-logic-hol = { path = "../hol" }
 covalence-logic-sat = { path = "../sat" }
 

@@ -10,8 +10,8 @@ use std::{
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::{exceptions::PyRuntimeError, types::PyBytes, types::PyType};
 use covalence_logic_hol::{
-    Arena, Clause, ClauseId, Cube, CubeId, Import, ImportId, Kernel, Link, LinkFormat, Lit, Meta,
-    Ref, Sort, SynFact, SynFactId, SynRel, ThmId,
+    Arena, CnfId, DnfId, Import, ImportId, Kernel, Link, LinkFormat, Lit, LitVec, Meta, Ref, Sort,
+    SynFact, SynFactId, SynRel, ThmId,
     builtin::{Op1, Op2},
     wire,
 };
@@ -38,42 +38,34 @@ fn fact_target(value: Option<i32>) -> PyResult<Option<SynFactId>> {
     value.map(fact_id).transpose()
 }
 
-fn i32_value(value: i64, what: &str) -> PyResult<i32> {
-    i32::try_from(value)
-        .map_err(|_| PyValueError::new_err(format!("{what} must fit signed 32 bits")))
-}
-
 fn theorem_id(value: i32) -> PyResult<ThmId> {
     ThmId::new(value).ok_or_else(|| PyValueError::new_err("theorem IDs are positive i32 values"))
 }
 
-fn clause_id(value: i32) -> PyResult<ClauseId> {
-    ClauseId::new(value).ok_or_else(|| PyValueError::new_err("clause IDs are positive i32 values"))
+fn cnf_id(value: i32) -> PyResult<CnfId> {
+    CnfId::new(value).ok_or_else(|| PyValueError::new_err("CNF row IDs are positive i32 values"))
 }
 
-fn cube_id(value: i32) -> PyResult<CubeId> {
-    CubeId::new(value).ok_or_else(|| PyValueError::new_err("cube IDs are positive i32 values"))
+fn dnf_id(value: i32) -> PyResult<DnfId> {
+    DnfId::new(value).ok_or_else(|| PyValueError::new_err("DNF row IDs are positive i32 values"))
 }
 
-fn literal(value: i64) -> PyResult<Lit> {
-    Lit::from_raw(i32_value(value, "literal")?).map_err(value_error)
+fn literal(value: i32) -> PyResult<Lit> {
+    Lit::try_new(value).map_err(value_error)
 }
 
-fn literals(values: Vec<i64>) -> PyResult<Vec<Lit>> {
+fn literals(values: Vec<i32>) -> PyResult<Vec<Lit>> {
     values.into_iter().map(literal).collect()
 }
 
-fn clauses(values: Vec<Vec<i64>>) -> PyResult<Vec<Clause>> {
+fn matrix(values: Vec<Vec<i32>>) -> PyResult<Vec<LitVec>> {
     values
         .into_iter()
-        .map(|row| literals(row).map(Clause::new))
-        .collect()
-}
-
-fn cubes(values: Vec<Vec<i64>>) -> PyResult<Vec<Cube>> {
-    values
-        .into_iter()
-        .map(|row| literals(row).map(Cube::new))
+        .map(|row| {
+            literals(row)
+                .map(IntoIterator::into_iter)
+                .map(Iterator::collect)
+        })
         .collect()
 }
 
@@ -777,26 +769,28 @@ impl PyKernel {
             .map_err(value_error)
     }
 
-    fn theorem(&self, id: i64) -> PyResult<PySequent> {
+    fn theorem(&self, id: i32) -> PyResult<PySequent> {
+        let id = theorem_id(id)?;
         let theorem = self
             .kernel
-            .theorem(theorem_id(i32_value(id, "theorem ID")?)?)
-            .map_err(value_error)?;
+            .thm()
+            .get(id)
+            .ok_or_else(|| PyValueError::new_err(format!("theorem {} is absent", id.get())))?;
         Ok((
-            python_rows(theorem.premises().clauses().iter().map(Clause::literals)),
-            python_rows(theorem.conclusions().cubes().iter().map(Cube::literals)),
+            python_rows(theorem.lhs.rows()),
+            python_rows(theorem.rhs.rows()),
         ))
     }
 
-    fn identity(&mut self, proposition: i64) -> PyResult<i32> {
+    fn identity(&mut self, proposition: i32) -> PyResult<i32> {
         self.kernel
             .identity(literal(proposition)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn weaken(&mut self, theorem: i64, premises: Vec<i64>, conclusions: Vec<i64>) -> PyResult<()> {
-        let id = theorem_id(i32_value(theorem, "theorem ID")?)?;
+    fn weaken(&mut self, theorem: i32, premises: Vec<i32>, conclusions: Vec<i32>) -> PyResult<()> {
+        let id = theorem_id(theorem)?;
         let premises = literals(premises)?;
         let conclusions = literals(conclusions)?;
         self.kernel
@@ -807,172 +801,129 @@ impl PyKernel {
 
     fn weaken_matrix(
         &mut self,
-        theorem: i64,
-        premises: Vec<Vec<i64>>,
-        conclusions: Vec<Vec<i64>>,
+        theorem: i32,
+        premises: Vec<Vec<i32>>,
+        conclusions: Vec<Vec<i32>>,
     ) -> PyResult<()> {
-        let id = theorem_id(i32_value(theorem, "theorem ID")?)?;
-        let premises = clauses(premises)?;
-        let conclusions = cubes(conclusions)?;
+        let id = theorem_id(theorem)?;
+        let premises = matrix(premises)?;
+        let conclusions = matrix(conclusions)?;
         self.kernel
             .weaken_matrix(id, &premises, &conclusions)
             .map_err(value_error)?;
         Ok(())
     }
 
-    fn move_clause_right(&mut self, theorem: i64, clause: i64) -> PyResult<()> {
-        let id = theorem_id(i32_value(theorem, "theorem ID")?)?;
-        let clause = clause_id(i32_value(clause, "clause ID")?)?;
-        self.kernel
-            .move_clause_right(id, clause)
-            .map_err(value_error)?;
+    fn move_cnf_right(&mut self, theorem: i32, row: i32) -> PyResult<()> {
+        let id = theorem_id(theorem)?;
+        let row = cnf_id(row)?;
+        self.kernel.move_cnf_right(id, row).map_err(value_error)?;
         Ok(())
     }
 
-    fn move_cube_left(&mut self, theorem: i64, cube: i64) -> PyResult<()> {
-        let id = theorem_id(i32_value(theorem, "theorem ID")?)?;
-        let cube = cube_id(i32_value(cube, "cube ID")?)?;
-        self.kernel.move_cube_left(id, cube).map_err(value_error)?;
+    fn move_dnf_left(&mut self, theorem: i32, row: i32) -> PyResult<()> {
+        let id = theorem_id(theorem)?;
+        let row = dnf_id(row)?;
+        self.kernel.move_dnf_left(id, row).map_err(value_error)?;
         Ok(())
     }
 
-    fn normalize_theorem(&mut self, theorem: i64) -> PyResult<()> {
+    fn normalize_theorem(&mut self, theorem: i32) -> PyResult<()> {
         self.kernel
-            .normalize_theorem(theorem_id(i32_value(theorem, "theorem ID")?)?)
+            .normalize_theorem(theorem_id(theorem)?)
             .map_err(value_error)
     }
 
-    fn normalize_clause(&mut self, theorem: i64, clause: i64) -> PyResult<()> {
+    fn normalize_cnf(&mut self, theorem: i32, row: i32) -> PyResult<()> {
         self.kernel
-            .normalize_clause(
-                theorem_id(i32_value(theorem, "theorem ID")?)?,
-                clause_id(i32_value(clause, "clause ID")?)?,
-            )
+            .normalize_cnf(theorem_id(theorem)?, cnf_id(row)?)
             .map_err(value_error)
     }
 
-    fn normalize_cube(&mut self, theorem: i64, cube: i64) -> PyResult<()> {
+    fn normalize_dnf(&mut self, theorem: i32, row: i32) -> PyResult<()> {
         self.kernel
-            .normalize_cube(
-                theorem_id(i32_value(theorem, "theorem ID")?)?,
-                cube_id(i32_value(cube, "cube ID")?)?,
-            )
+            .normalize_dnf(theorem_id(theorem)?, dnf_id(row)?)
             .map_err(value_error)
     }
 
-    fn cut(&mut self, left: i64, right: i64, proposition: i64) -> PyResult<i32> {
+    fn cut(&mut self, left: i32, right: i32, proposition: i32) -> PyResult<i32> {
         self.kernel
-            .cut(
-                theorem_id(i32_value(left, "theorem ID")?)?,
-                theorem_id(i32_value(right, "theorem ID")?)?,
-                literal(proposition)?,
-            )
+            .cut(theorem_id(left)?, theorem_id(right)?, literal(proposition)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn resolve(&mut self, left: i64, right: i64, pivot: i64) -> PyResult<i32> {
+    fn resolve(&mut self, left: i32, right: i32, pivot: i32) -> PyResult<i32> {
         self.kernel
-            .resolve(
-                theorem_id(i32_value(left, "theorem ID")?)?,
-                theorem_id(i32_value(right, "theorem ID")?)?,
-                literal(pivot)?,
-            )
+            .resolve(theorem_id(left)?, theorem_id(right)?, literal(pivot)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn false_left(&mut self, falsehood: i64) -> PyResult<i32> {
+    fn false_left(&mut self, falsehood: i32) -> PyResult<i32> {
         self.kernel
             .false_left(literal(falsehood)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn true_right(&mut self, truth: i64) -> PyResult<i32> {
+    fn true_right(&mut self, truth: i32) -> PyResult<i32> {
         self.kernel
             .true_right(literal(truth)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn not_left(&mut self, theorem: i64, proposition: i64) -> PyResult<()> {
+    fn not_left(&mut self, theorem: i32, proposition: i32) -> PyResult<()> {
         self.kernel
-            .not_left(
-                theorem_id(i32_value(theorem, "theorem ID")?)?,
-                literal(proposition)?,
-            )
+            .not_left(theorem_id(theorem)?, literal(proposition)?)
             .map_err(value_error)
     }
 
-    fn not_right(&mut self, theorem: i64, proposition: i64) -> PyResult<()> {
+    fn not_right(&mut self, theorem: i32, proposition: i32) -> PyResult<()> {
         self.kernel
-            .not_right(
-                theorem_id(i32_value(theorem, "theorem ID")?)?,
-                literal(proposition)?,
-            )
+            .not_right(theorem_id(theorem)?, literal(proposition)?)
             .map_err(value_error)
     }
 
-    fn and_left(&mut self, theorem: i64, conjunction: i64) -> PyResult<i32> {
+    fn and_left(&mut self, theorem: i32, conjunction: i32) -> PyResult<i32> {
         self.kernel
-            .and_left(
-                theorem_id(i32_value(theorem, "theorem ID")?)?,
-                literal(conjunction)?,
-            )
+            .and_left(theorem_id(theorem)?, literal(conjunction)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn and_right(&mut self, left: i64, right: i64, conjunction: i64) -> PyResult<i32> {
+    fn and_right(&mut self, left: i32, right: i32, conjunction: i32) -> PyResult<i32> {
         self.kernel
-            .and_right(
-                theorem_id(i32_value(left, "theorem ID")?)?,
-                theorem_id(i32_value(right, "theorem ID")?)?,
-                literal(conjunction)?,
-            )
+            .and_right(theorem_id(left)?, theorem_id(right)?, literal(conjunction)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn or_left(&mut self, left: i64, right: i64, disjunction: i64) -> PyResult<i32> {
+    fn or_left(&mut self, left: i32, right: i32, disjunction: i32) -> PyResult<i32> {
         self.kernel
-            .or_left(
-                theorem_id(i32_value(left, "theorem ID")?)?,
-                theorem_id(i32_value(right, "theorem ID")?)?,
-                literal(disjunction)?,
-            )
+            .or_left(theorem_id(left)?, theorem_id(right)?, literal(disjunction)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn or_right(&mut self, theorem: i64, disjunction: i64) -> PyResult<i32> {
+    fn or_right(&mut self, theorem: i32, disjunction: i32) -> PyResult<i32> {
         self.kernel
-            .or_right(
-                theorem_id(i32_value(theorem, "theorem ID")?)?,
-                literal(disjunction)?,
-            )
+            .or_right(theorem_id(theorem)?, literal(disjunction)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn imp_left(&mut self, left: i64, right: i64, implication: i64) -> PyResult<i32> {
+    fn imp_left(&mut self, left: i32, right: i32, implication: i32) -> PyResult<i32> {
         self.kernel
-            .imp_left(
-                theorem_id(i32_value(left, "theorem ID")?)?,
-                theorem_id(i32_value(right, "theorem ID")?)?,
-                literal(implication)?,
-            )
+            .imp_left(theorem_id(left)?, theorem_id(right)?, literal(implication)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn imp_right(&mut self, theorem: i64, implication: i64) -> PyResult<i32> {
+    fn imp_right(&mut self, theorem: i32, implication: i32) -> PyResult<i32> {
         self.kernel
-            .imp_right(
-                theorem_id(i32_value(theorem, "theorem ID")?)?,
-                literal(implication)?,
-            )
+            .imp_right(theorem_id(theorem)?, literal(implication)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
@@ -980,71 +931,53 @@ impl PyKernel {
     #[pyo3(signature = (theorem, formula, branch=None))]
     fn expand_conclusion(
         &mut self,
-        theorem: i64,
-        formula: i64,
+        theorem: i32,
+        formula: i32,
         branch: Option<bool>,
     ) -> PyResult<i32> {
         self.kernel
-            .expand_conclusion(
-                theorem_id(i32_value(theorem, "theorem ID")?)?,
-                literal(formula)?,
-                branch,
-            )
+            .expand_conclusion(theorem_id(theorem)?, literal(formula)?, branch)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn flatten_conclusion(&mut self, theorem: i64, formula: i64) -> PyResult<i32> {
+    fn flatten_conclusion(&mut self, theorem: i32, formula: i32) -> PyResult<i32> {
         self.kernel
-            .flatten_conclusion(
-                theorem_id(i32_value(theorem, "theorem ID")?)?,
-                literal(formula)?,
-            )
+            .flatten_conclusion(theorem_id(theorem)?, literal(formula)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn flatten_premise(&mut self, theorem: i64, formula: i64) -> PyResult<i32> {
+    fn flatten_premise(&mut self, theorem: i32, formula: i32) -> PyResult<i32> {
         self.kernel
-            .flatten_premise(
-                theorem_id(i32_value(theorem, "theorem ID")?)?,
-                literal(formula)?,
-            )
+            .flatten_premise(theorem_id(theorem)?, literal(formula)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn fold_premise(&mut self, theorem: i64, formula: i64) -> PyResult<i32> {
+    fn fold_premise(&mut self, theorem: i32, formula: i32) -> PyResult<i32> {
         self.kernel
-            .fold_premise(
-                theorem_id(i32_value(theorem, "theorem ID")?)?,
-                literal(formula)?,
-            )
+            .fold_premise(theorem_id(theorem)?, literal(formula)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn fold_conclusion(&mut self, theorem: i64, formula: i64) -> PyResult<i32> {
+    fn fold_conclusion(&mut self, theorem: i32, formula: i32) -> PyResult<i32> {
         self.kernel
-            .fold_conclusion(
-                theorem_id(i32_value(theorem, "theorem ID")?)?,
-                literal(formula)?,
-            )
+            .fold_conclusion(theorem_id(theorem)?, literal(formula)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn copy_theorem(&mut self, theorem: i64) -> PyResult<i32> {
+    fn copy_theorem(&mut self, theorem: i32) -> PyResult<i32> {
         self.kernel
-            .copy_theorem(theorem_id(i32_value(theorem, "theorem ID")?)?)
+            .copy_theorem(theorem_id(theorem)?)
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn remove_theorem(&mut self, theorem: i64) -> PyResult<bool> {
-        Ok(self
-            .kernel
-            .remove_theorem(theorem_id(i32_value(theorem, "theorem ID")?)?))
+    fn remove_theorem(&mut self, theorem: i32) -> PyResult<bool> {
+        Ok(self.kernel.remove_theorem(theorem_id(theorem)?))
     }
 
     fn syn_fact(&self, id: i32) -> PyResult<PySynFact> {

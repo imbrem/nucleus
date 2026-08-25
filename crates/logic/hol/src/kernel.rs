@@ -21,9 +21,9 @@ use crate::{
 mod classical;
 mod syn_facts;
 
-use classical::ClassicalState;
 pub use covalence_logic_classical::{
-    Clause, ClauseId, Cnf, Cube, CubeId, Dnf, Lit, LitError, LitVec, Thm, ThmId,
+    CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, Dnf, DnfId, Lit,
+    LitError, LitVec, RatPolicy, Refutation, ThmId, ThmRef,
 };
 
 /// A recoverable failure at the checked kernel boundary.
@@ -191,7 +191,8 @@ impl CopyMap {
 pub struct Kernel {
     arena: Arena,
     init_prefix: Option<(crate::O256, usize)>,
-    classical: ClassicalState,
+    syl: ClassicalArena,
+    thm: ClassicalArena,
 }
 
 impl Deref for Kernel {
@@ -209,7 +210,8 @@ impl Kernel {
         Self {
             arena: Arena::empty(),
             init_prefix: None,
-            classical: ClassicalState::new(),
+            syl: ClassicalArena::new(),
+            thm: ClassicalArena::new(),
         }
     }
 
@@ -219,7 +221,8 @@ impl Kernel {
         Self {
             arena: init.arena().clone(),
             init_prefix: Some((init.arena().addr(), init.arena().len())),
-            classical: ClassicalState::new(),
+            syl: ClassicalArena::new(),
+            thm: ClassicalArena::new(),
         }
     }
 
@@ -229,7 +232,8 @@ impl Kernel {
         Self {
             arena,
             init_prefix,
-            classical: ClassicalState::new(),
+            syl: ClassicalArena::new(),
+            thm: ClassicalArena::new(),
         }
     }
 
@@ -352,7 +356,8 @@ impl Kernel {
         let mut staged = Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
-            classical: ClassicalState::new(),
+            syl: ClassicalArena::new(),
+            thm: ClassicalArena::new(),
         };
         for &source_ref in &order {
             let row = source.row::<Infallible>(source_ref)?;

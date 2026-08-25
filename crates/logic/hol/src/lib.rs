@@ -13,8 +13,8 @@ mod table;
 pub mod wire;
 
 pub use kernel::{
-    Clause, ClauseId, Cnf, CopyMap, Cube, CubeId, Dnf, Kernel, KernelError, Lit, LitError, LitVec,
-    Thm, ThmId,
+    CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, CopyMap, Dnf, DnfId,
+    Kernel, KernelError, Lit, LitError, LitVec, RatPolicy, Refutation, ThmId, ThmRef,
 };
 pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};

@@ -1052,6 +1052,13 @@
     },
     {
       "source": "workspace#covalence-logic-lrat@0.0.0",
+      "target": "workspace#covalence-logic-classical@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-lrat@0.0.0",
       "target": "workspace#covalence-logic-hol@0.0.0",
       "kinds": [
         "normal"
