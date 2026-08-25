@@ -92,6 +92,19 @@ fn binary_logic(
     ))
 }
 
+/// Marshal a concluded infinity axiom out to the component ABI.
+fn infinity_axiom(
+    axiom: covalence_logic_hol::InfinityAxiom,
+) -> nucleus::proof::host::InfinityAxiom {
+    nucleus::proof::host::InfinityAxiom {
+        exists_type: u64_from_ref(axiom.exists_type),
+        body: u64_from_ref(axiom.body),
+        carrier_name: axiom.carrier_name,
+        base_name: axiom.base_name,
+        theorem: axiom.theorem.get().unsigned_abs().into(),
+    }
+}
+
 /// Marshal a built subtype axiom out to the component ABI.
 fn subtype_axiom(axiom: covalence_logic_hol::SubtypeAxiom) -> nucleus::proof::host::SubtypeAxiom {
     nucleus::proof::host::SubtypeAxiom {
@@ -1360,6 +1373,24 @@ impl nucleus::proof::host::HostKernel for ProofState {
             .0
             .fresh_name(&resolved)
             .map_err(|error| error.to_string()))
+    }
+
+    fn inf_exists(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        bool_type: u64,
+    ) -> wasmtime::Result<Result<nucleus::proof::host::InfinityAxiom, String>> {
+        let bool_type = match reference(bool_type) {
+            Ok(bool_type) => bool_type,
+            Err(error) => return Ok(Err(error)),
+        };
+        Ok(self
+            .table
+            .get_mut(&kernel)?
+            .0
+            .inf_exists(bool_type)
+            .map_err(|error| error.to_string())
+            .map(infinity_axiom))
     }
 
     fn sub_exists(

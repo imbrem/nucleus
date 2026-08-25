@@ -16,6 +16,22 @@ interface host {
         tm,
     }
 
+    /// The axiom of infinity: some type carries an equality-reflecting endomap
+    /// that misses a point.
+    record infinity-axiom {
+        /// The sentence the theorem concludes.
+        exists-type: u64,
+        /// The body `exists-type` quantifies, with the carrier type variable
+        /// free.
+        body: u64,
+        /// The name of the carrier type variable bound in `body`.
+        carrier-name: u64,
+        /// The first name reserved for the sentence's own binders.
+        base-name: u64,
+        /// Slot of the premise-free sequent concluding `exists-type`.
+        theorem: u64,
+    }
+
     /// The guarded subtype-package sentence, and what an untrusted layer needs
     /// in order to build terms about the same subtype.
     record subtype-axiom {
@@ -234,6 +250,14 @@ interface host {
         /// because a component building terms about a subtype has to pick the
         /// same names the axiom did.
         fresh-name: func(roots: list<u64>) -> result<u64, string>;
+
+        /// Concludes the axiom of infinity, consuming the `ax.inf` capability.
+        ///
+        /// The sentence is closed, so it takes only the Boolean type to build
+        /// it at. Concluding it is not the same as using it: naming the carrier
+        /// whose existence it asserts needs elimination for `ty.exists`, which
+        /// the kernel does not yet offer.
+        inf-exists: func(bool-type: u64) -> result<infinity-axiom, string>;
 
         /// Concludes the guarded subtype-package sentence for `carrier` and
         /// `predicate`, consuming the `ax.sub` capability.
