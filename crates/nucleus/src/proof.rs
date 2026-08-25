@@ -1432,6 +1432,27 @@ impl nucleus::proof::host::HostKernel for ProofState {
         })
     }
 
+    fn refl(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        bool_ty: u64,
+        term: u64,
+    ) -> wasmtime::Result<Result<nucleus::proof::host::ReflThm, String>> {
+        Ok(match (reference(bool_ty), reference(term)) {
+            (Ok(bool_ty), Ok(term)) => self
+                .table
+                .get_mut(&kernel)?
+                .0
+                .refl(bool_ty, term)
+                .map(|result| nucleus::proof::host::ReflThm {
+                    equality: u64::from(result.equality.get().unsigned_abs()),
+                    theorem: u64::from(result.theorem.get().unsigned_abs()),
+                })
+                .map_err(|error| error.to_string()),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+        })
+    }
+
     fn ap_thm(
         &mut self,
         kernel: Resource<HostKernel>,

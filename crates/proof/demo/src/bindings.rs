@@ -176,6 +176,24 @@ pub mod nucleus {
                         .finish()
                 }
             }
+            /// Result of HOL equality reflexivity.
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct ReflThm {
+                pub equality: u64,
+                pub theorem: u64,
+            }
+            impl ::core::fmt::Debug for ReflThm {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("ReflThm")
+                        .field("equality", &self.equality)
+                        .field("theorem", &self.theorem)
+                        .finish()
+                }
+            }
             /// Result of universal introduction.
             #[repr(C)]
             #[derive(Clone, Copy)]
@@ -5486,6 +5504,79 @@ pub mod nucleus {
             impl Kernel {
                 #[allow(unused_unsafe, clippy::all)]
                 /// From `G |- f = g`, derive `G |- f argument = g argument`.
+                /// Introduces the exact theorem `|- term = term`.
+                pub fn refl(
+                    &self,
+                    bool_ty: u64,
+                    term: u64,
+                ) -> Result<ReflThm, _rt::String> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea([::core::mem::MaybeUninit<u8>; 24]);
+                        let mut ret_area = RetArea(
+                            [::core::mem::MaybeUninit::uninit(); 24],
+                        );
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "nucleus:proof/host@0.1.0")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]kernel.refl"]
+                            fn wit_import1(_: i32, _: i64, _: i64, _: *mut u8);
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(
+                            _: i32,
+                            _: i64,
+                            _: i64,
+                            _: *mut u8,
+                        ) {
+                            unreachable!()
+                        }
+                        unsafe {
+                            wit_import1(
+                                (self).handle() as i32,
+                                _rt::as_i64(&bool_ty),
+                                _rt::as_i64(&term),
+                                ptr0,
+                            )
+                        };
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result8 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+                                    let l4 = *ptr0.add(16).cast::<i64>();
+                                    ReflThm {
+                                        equality: l3 as u64,
+                                        theorem: l4 as u64,
+                                    }
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l5 = *ptr0.add(8).cast::<*mut u8>();
+                                    let l6 = *ptr0
+                                        .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                        .cast::<usize>();
+                                    let len7 = l6;
+                                    let bytes7 = _rt::Vec::from_raw_parts(
+                                        l5.cast(),
+                                        len7,
+                                        len7,
+                                    );
+                                    _rt::string_lift(bytes7)
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result8
+                    }
+                }
+            }
+            impl Kernel {
+                #[allow(unused_unsafe, clippy::all)]
                 pub fn ap_thm(
                     &self,
                     theorem: u64,
@@ -9000,146 +9091,148 @@ pub(crate) use __export_standard_proof_impl as export;
 )]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 7020] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xe75\x01A\x02\x01A\x05\
-\x01B\x9a\x02\x01m\x03\x03syn\x05alpha\x04conv\x04\0\x07syn-rel\x03\0\0\x01m\x03\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 7118] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xc96\x01A\x02\x01A\x05\
+\x01B\x9f\x02\x01m\x03\x03syn\x05alpha\x04conv\x04\0\x07syn-rel\x03\0\0\x01m\x03\
 \x04kind\x02ty\x02tm\x04\0\x04sort\x03\0\x02\x01r\x05\x0bexists-typew\x04bodyw\x0c\
 carrier-namew\x09base-namew\x07theoremw\x04\0\x0einfinity-axiom\x03\0\x04\x01r\x07\
 \x07carrierw\x09predicatew\x0bexists-typew\x0cpackage-bodyw\x0amodel-namew\x09ba\
 se-namew\x07theoremw\x04\0\x0dsubtype-axiom\x03\0\x06\x01r\x04\x04leftw\x05right\
-w\x08equalityw\x07theoremw\x04\0\x06ap-thm\x03\0\x08\x01r\x02\x09universalw\x07t\
-heoremw\x04\0\x0aforall-thm\x03\0\x0a\x01r\x03\x07witnessw\x0bpropositionw\x07th\
-eoremw\x04\0\x0achoice-thm\x03\0\x0c\x04\0\x05bytes\x03\x01\x04\0\x04blob\x03\x01\
-\x04\0\x09index-cas\x03\x01\x04\0\x05arena\x03\x01\x04\0\x05table\x03\x01\x04\0\x06\
-kernel\x03\x01\x01p}\x01i\x0e\x01@\x01\x05value\x14\0\x15\x04\0\x12[constructor]\
-bytes\x01\x16\x01h\x0e\x01@\x01\x04self\x17\0w\x04\0\x11[method]bytes.len\x01\x18\
-\x01@\x01\x04self\x17\0\x14\x04\0\x15[method]bytes.to-list\x01\x19\x01j\x01\x15\x01\
-s\x01@\x03\x04self\x17\x05startw\x03endw\0\x1a\x04\0\x13[method]bytes.slice\x01\x1b\
-\x01i\x0f\x01@\x01\x04self\x17\0\x1c\x04\0\x12[method]bytes.blob\x01\x1d\x01j\x01\
-\x1c\x01s\x01@\x02\x07address\x14\x05value\x17\0\x1e\x04\0\x12[static]blob.check\
-\x01\x1f\x01h\x0f\x01@\x01\x04self\x20\0\x14\x04\0\x14[method]blob.address\x01!\x01\
-@\x01\x04self\x20\0\x15\x04\0\x12[method]blob.bytes\x01\"\x01@\x01\x04self\x20\0\
-w\x04\0\x10[method]blob.len\x01#\x01i\x10\x01@\0\0$\x04\0\x16[constructor]index-\
-cas\x01%\x01h\x10\x01@\x02\x04self&\x05value\x20\0w\x04\0\x18[method]index-cas.i\
-nsert\x01'\x01@\x02\x04self&\x05value\x17\0w\x04\0\x15[method]index-cas.put\x01(\
-\x01k\x1c\x01@\x02\x04self&\x06objectw\0)\x04\0\x15[method]index-cas.get\x01*\x01\
-kw\x01j\x01+\x01s\x01@\x02\x04self&\x07address\x14\0,\x04\0\x16[method]index-cas\
-.find\x01-\x01j\x01\x7f\x01s\x01@\x02\x04self&\x07address\x14\0.\x04\0\x18[metho\
-d]index-cas.remove\x01/\x01@\x01\x04self&\0w\x04\0\x15[method]index-cas.len\x010\
-\x01i\x11\x01@\0\01\x04\0\x12[constructor]arena\x012\x01j\x011\x01s\x01@\x01\x05\
-value\x17\03\x04\0\x17[static]arena.from-cbor\x014\x01h\x11\x01@\x01\x04self5\0\x1a\
-\x04\0\x15[method]arena.to-cbor\x016\x01@\x01\x04self5\0\x14\x04\0\x15[method]ar\
-ena.address\x017\x01@\x01\x04self5\0w\x04\0\x11[method]arena.len\x018\x01j\x01w\x01\
-s\x01@\x01\x04self5\09\x04\0\x17[method]arena.kind-star\x01:\x01@\x03\x04self5\x06\
-domainw\x08codomainw\09\x04\0\x16[method]arena.kind-arr\x01;\x04\0\x17[method]ar\
-ena.bool-type\x01:\x04\0\x14[method]arena.ty-arr\x01;\x01@\x03\x04self5\x08funct\
-ionw\x08argumentw\09\x04\0\x14[method]arena.ty-app\x01<\x01@\x03\x04self5\x06bin\
-derw\x04bodyw\09\x04\0\x14[method]arena.ty-lam\x01=\x01@\x03\x04self5\x04namew\x04\
-kindw\09\x04\0\x13[method]arena.ty-fv\x01>\x01@\x03\x04self5\x04namew\x09predica\
-tew\09\x04\0\x17[method]arena.ty-exists\x01?\x04\0\x17[method]arena.ty-forall\x01\
-?\x04\0\x13[method]arena.model\x01?\x01@\x03\x04self5\x04namew\x02tyw\09\x04\0\x13\
-[method]arena.tm-fv\x01@\x04\0\x11[method]arena.app\x01<\x04\0\x11[method]arena.\
-lam\x01=\x01@\x02\x04self5\x05value\x7f\09\x04\0\x16[method]arena.bool-lit\x01A\x01\
-@\x03\x04self5\x04leftw\x05rightw\09\x04\0\x13[method]arena.tm-eq\x01B\x01@\x03\x04\
-self5\x02tyw\x09predicatew\09\x04\0\x11[method]arena.eps\x01C\x01@\x03\x04self5\x06\
-sourcew\x07foreignw\09\x04\0\x16[method]arena.kind-ref\x01D\x04\0\x14[method]are\
-na.ty-ref\x01D\x04\0\x14[method]arena.tm-ref\x01D\x04\0\x19[method]arena.import-\
-null\x01:\x01@\x02\x04self5\x05value5\09\x04\0\x1a[method]arena.import-arena\x01\
-E\x01@\x02\x04self5\x07address\x14\09\x04\0\x19[method]arena.import-link\x01F\x01\
-j\0\x01s\x01@\x02\x04self5\x0bpropositionw\0\xc7\0\x04\0\x19[method]arena.add-co\
-ntext\x01H\x01@\x02\x04self5\x04names\x01\0\x04\0\x17[method]arena.add-axiom\x01\
-I\x01i\x12\x01j\x01\xca\0\x01s\x01@\x01\x05value5\0\xcb\0\x04\0\x18[static]table\
-.from-arena\x01L\x01@\x01\x05value\x20\0\xcb\0\x04\0\x17[static]table.from-blob\x01\
-M\x01h\x12\x01@\x01\x04self\xce\0\0\x14\x04\0\x15[method]table.address\x01O\x01@\
-\x01\x04self\xce\0\01\x04\0\x13[method]table.arena\x01P\x01i\x13\x01@\0\0\xd1\0\x04\
-\0\x13[constructor]kernel\x01R\x01h\x13\x01@\x01\x04self\xd3\0\01\x04\0\x14[meth\
-od]kernel.arena\x01T\x01@\x01\x04self\xd3\0\0\x14\x04\0\x16[method]kernel.addres\
-s\x01U\x01@\x01\x04self\xd3\0\0w\x04\0\x12[method]kernel.len\x01V\x01j\x01\x03\x01\
-s\x01@\x02\x04self\xd3\0\x09referencew\0\xd7\0\x04\0\x17[method]kernel.category\x01\
-X\x01@\x02\x04self\xd3\0\x09referencew\09\x04\0\x19[method]kernel.classifier\x01\
-Y\x04\0\x13[method]kernel.find\x01Y\x04\0\x17[method]kernel.find-mut\x01Y\x01@\x03\
-\x04self\xd3\0\x04leftw\x05rightw\0.\x04\0\x19[method]kernel.equivalent\x01Z\x04\
-\0\x1d[method]kernel.equivalent-mut\x01Z\x01@\x01\x04self\xd3\0\09\x04\0\x18[met\
-hod]kernel.kind-star\x01[\x01@\x03\x04self\xd3\0\x06domainw\x08codomainw\09\x04\0\
-\x17[method]kernel.kind-arr\x01\\\x01@\x02\x04self\xd3\0\x04starw\09\x04\0\x18[m\
-ethod]kernel.bool-type\x01]\x04\0\x15[method]kernel.ty-arr\x01\\\x01@\x03\x04sel\
-f\xd3\0\x08functionw\x08argumentw\09\x04\0\x15[method]kernel.ty-app\x01^\x01@\x03\
-\x04self\xd3\0\x06binderw\x04bodyw\09\x04\0\x15[method]kernel.ty-lam\x01_\x01@\x03\
-\x04self\xd3\0\x04namew\x04kindw\09\x04\0\x14[method]kernel.ty-fv\x01`\x01@\x03\x04\
-self\xd3\0\x04namew\x09predicatew\09\x04\0\x18[method]kernel.ty-exists\x01a\x04\0\
-\x18[method]kernel.ty-forall\x01a\x04\0\x14[method]kernel.model\x01a\x01@\x03\x04\
-self\xd3\0\x04namew\x02tyw\09\x04\0\x14[method]kernel.tm-fv\x01b\x04\0\x12[metho\
-d]kernel.app\x01^\x04\0\x12[method]kernel.lam\x01_\x01@\x03\x04self\xd3\0\x09boo\
-l-typew\x05value\x7f\09\x04\0\x17[method]kernel.bool-lit\x01c\x01@\x04\x04self\xd3\
-\0\x09bool-typew\x04leftw\x05rightw\09\x04\0\x14[method]kernel.tm-eq\x01d\x01@\x03\
-\x04self\xd3\0\x02tyw\x09predicatew\09\x04\0\x12[method]kernel.eps\x01e\x01@\x03\
-\x04self\xd3\0\x09bool-typew\x0bpropositionw\09\x04\0\x15[method]kernel.not-tm\x01\
-f\x01@\x04\x04self\xd3\0\x09bool-typew\x06binderw\x04bodyw\09\x04\0\x18[method]k\
-ernel.forall-tm\x01g\x04\0\x18[method]kernel.exists-tm\x01_\x01@\x05\x04self\xd3\
-\0\x09bool-typew\x06binderw\x04leftw\x05rightw\09\x04\0\x15[method]kernel.and-tm\
-\x01h\x04\0\x14[method]kernel.or-tm\x01h\x04\0\x15[method]kernel.imp-tm\x01h\x01\
-pw\x01@\x02\x04self\xd3\0\x05roots\xe9\0\09\x04\0\x19[method]kernel.fresh-name\x01\
-j\x01@\x03\x04self\xd3\0\x07theoremw\x0csubstitutionw\09\x04\0\x19[method]kernel\
-.model-spec\x01k\x01j\x01\x09\x01s\x01@\x03\x04self\xd3\0\x07theoremw\x08argumen\
-tw\0\xec\0\x04\0\x15[method]kernel.ap-thm\x01m\x01@\x03\x04self\xd3\0\x07theorem\
-w\x08functionw\0\xec\0\x04\0\x16[method]kernel.ap-term\x01n\x01@\x03\x04self\xd3\
-\0\x08equalityw\x07premisew\09\x04\0\x14[method]kernel.eq-mp\x01o\x01j\x01\x0b\x01\
-s\x01@\x03\x04self\xd3\0\x07theoremw\x06binderw\0\xf0\0\x04\0\x1b[method]kernel.\
-forall-intro\x01q\x01@\x04\x04self\xd3\0\x07theoremw\x06binderw\x09universalw\09\
-\x04\0\x1e[method]kernel.forall-intro-at\x01r\x01j\x01\x0d\x01s\x01@\x02\x04self\
-\xd3\0\x07theoremw\0\xf3\0\x04\0\x1b[method]kernel.choice-intro\x01t\x01@\x03\x04\
-self\xd3\0\x07theoremw\x06targetw\09\x04\0\x1e[method]kernel.choice-intro-at\x01\
-u\x01@\x04\x04self\xd3\0\x07theoremw\x06sourcew\x06targetw\0\xc7\0\x04\0\x1e[met\
-hod]kernel.convert-theorem\x01v\x04\0\"[method]kernel.convert-conclusions\x01v\x01\
-@\x02\x04self\xd3\0\x07theoremw\0\xc7\0\x04\0\x1f[method]kernel.contract-theorem\
-\x01w\x01@\x02\x04self\xd3\0\x07theoremw\09\x04\0\x17[method]kernel.eqt-elim\x01\
-x\x01j\x01\x05\x01s\x01@\x02\x04self\xd3\0\x09bool-typew\0\xf9\0\x04\0\x19[metho\
-d]kernel.inf-exists\x01z\x01j\x01\x07\x01s\x01@\x04\x04self\xd3\0\x09bool-typew\x07\
-carrierw\x09predicatew\0\xfb\0\x04\0\x19[method]kernel.sub-exists\x01|\x01@\x02\x04\
-self\xd3\0\x05value5\09\x04\0\x1b[method]kernel.import-arena\x01}\x01@\x02\x04se\
-lf\xd3\0\x05value\xce\0\09\x04\0\x1b[method]kernel.import-table\x01~\x01@\x02\x04\
-self\xd3\0\x07address\x14\09\x04\0\x1a[method]kernel.import-link\x01\x7f\x01@\x03\
-\x04self\xd3\0\x06sourcew\x07foreignw\09\x04\0\x17[method]kernel.kind-ref\x01\x80\
-\x01\x01@\x04\x04self\xd3\0\x06sourcew\x07foreignw\x04kindw\09\x04\0\x15[method]\
-kernel.ty-ref\x01\x81\x01\x01@\x04\x04self\xd3\0\x06sourcew\x07foreignw\x02tyw\0\
-9\x04\0\x15[method]kernel.tm-ref\x01\x82\x01\x01@\x02\x04self\xd3\0\x0bpropositi\
-onw\0\xc7\0\x04\0\x1a[method]kernel.add-context\x01\x83\x01\x01@\x02\x04self\xd3\
-\0\x04names\0\xc7\0\x04\0\x18[method]kernel.add-axiom\x01\x84\x01\x04\0\x1d[meth\
-od]kernel.syn-fact-count\x01V\x01@\x02\x04self\xd3\0\x04factw\0\x7f\x04\0\x1e[me\
-thod]kernel.remove-syn-fact\x01\x85\x01\x01@\x02\x04self\xd3\0\x03lenw\0\xc7\0\x04\
-\0![method]kernel.truncate-syn-facts\x01\x86\x01\x01@\x04\x04self\xd3\0\x08relat\
-ion\x01\x05inputw\x06target+\09\x04\0\x17[method]kernel.syn-refl\x01\x87\x01\x01\
-@\x04\x04self\xd3\0\x04factw\x08relation\x01\x06target+\09\x04\0\x19[method]kern\
-el.syn-refine\x01\x88\x01\x01@\x03\x04self\xd3\0\x04factw\x06target+\09\x04\0\x17\
-[method]kernel.syn-symm\x01\x89\x01\x01@\x04\x04self\xd3\0\x04leftw\x05rightw\x06\
-target+\09\x04\0\x18[method]kernel.syn-trans\x01\x8a\x01\x01@\x04\x04self\xd3\0\x03\
-varw\x03valw\x06target+\09\x04\0\x1a[method]kernel.syn-sub-var\x01\x8b\x01\x01@\x05\
-\x04self\xd3\0\x03varw\x03valw\x05inputw\x06target+\09\x04\0\x1b[method]kernel.s\
-yn-sub-leaf\x01\x8c\x01\x01@\x04\x04self\xd3\0\x03varw\x05inputw\x06target+\09\x04\
-\0\"[method]kernel.syn-sub-leaf-forall\x01\x8d\x01\x01@\x08\x04self\xd3\0\x03var\
-w\x03valw\x05inputw\x06outputw\x11variable-equalityw\x0dbody-equalityw\x06target\
-+\09\x04\0\x1f[method]kernel.syn-sub-identity\x01\x8e\x01\x01@\x08\x04self\xd3\0\
-\x08relation\x01\x03var+\x03val+\x05inputw\x06outputw\x08children\xe9\0\x06targe\
-t+\09\x04\0\x18[method]kernel.syn-congr\x01\x8f\x01\x01@\x09\x04self\xd3\0\x08re\
-lation\x01\x03var+\x03val+\x05inputw\x06outputw\x06binderw\x04bodyw\x06target+\0\
-9\x04\0\x1f[method]kernel.syn-binder-congr\x01\x90\x01\x04\0([method]kernel.syn-\
-implicit-binder-congr\x01\x90\x01\x01@\x06\x04self\xd3\0\x05inputw\x06outputw\x11\
-binder-classifierw\x11body-substitutionw\x06target+\09\x04\0\x1f[method]kernel.s\
-yn-alpha-binder\x01\x91\x01\x01@\x07\x04self\xd3\0\x05inputw\x06outputw\x0cinput\
--binderw\x0doutput-binderw\x11body-substitutionw\x06target+\09\x04\0([method]ker\
-nel.syn-alpha-implicit-binder\x01\x92\x01\x01@\x04\x04self\xd3\0\x06sourcew\x0cs\
-ubstitutionw\x06target+\09\x04\0\x16[method]kernel.tm-beta\x01\x93\x01\x04\0\x16\
-[method]kernel.ty-beta\x01\x93\x01\x01@\x03\x04self\xd3\0\x06sourcew\x06target+\0\
-9\x04\0\x15[method]kernel.tm-eta\x01\x94\x01\x01@\x02\x04self\xd3\0\x04factw\0\xc7\
-\0\x04\0\x1d[method]kernel.union-syn-fact\x01\x95\x01\x01@\x01\x05value\x20\0w\x04\
-\0\x0acas-insert\x01\x96\x01\x01@\x01\x05value\x17\0w\x04\0\x07cas-put\x01\x97\x01\
-\x01@\x01\x06objectw\0)\x04\0\x07cas-get\x01\x98\x01\x01@\x01\x07address\x14\0,\x04\
-\0\x08cas-find\x01\x99\x01\x03\0\x18nucleus:proof/host@0.1.0\x05\0\x02\x03\0\0\x06\
-kernel\x01B\x06\x02\x03\x02\x01\x01\x04\0\x06kernel\x03\0\0\x01i\x01\x01j\x01\x02\
-\x01s\x01@\0\0\x03\x04\0\x05prove\x01\x04\x04\0\x1cnucleus:proof/standard@0.1.0\x05\
-\x02\x04\0\"nucleus:proof/standard-proof@0.1.0\x04\0\x0b\x14\x01\0\x0estandard-p\
-roof\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.227.1\
-\x10wit-bindgen-rust\x060.41.0";
+w\x08equalityw\x07theoremw\x04\0\x06ap-thm\x03\0\x08\x01r\x02\x08equalityw\x07th\
+eoremw\x04\0\x08refl-thm\x03\0\x0a\x01r\x02\x09universalw\x07theoremw\x04\0\x0af\
+orall-thm\x03\0\x0c\x01r\x03\x07witnessw\x0bpropositionw\x07theoremw\x04\0\x0ach\
+oice-thm\x03\0\x0e\x04\0\x05bytes\x03\x01\x04\0\x04blob\x03\x01\x04\0\x09index-c\
+as\x03\x01\x04\0\x05arena\x03\x01\x04\0\x05table\x03\x01\x04\0\x06kernel\x03\x01\
+\x01p}\x01i\x10\x01@\x01\x05value\x16\0\x17\x04\0\x12[constructor]bytes\x01\x18\x01\
+h\x10\x01@\x01\x04self\x19\0w\x04\0\x11[method]bytes.len\x01\x1a\x01@\x01\x04sel\
+f\x19\0\x16\x04\0\x15[method]bytes.to-list\x01\x1b\x01j\x01\x17\x01s\x01@\x03\x04\
+self\x19\x05startw\x03endw\0\x1c\x04\0\x13[method]bytes.slice\x01\x1d\x01i\x11\x01\
+@\x01\x04self\x19\0\x1e\x04\0\x12[method]bytes.blob\x01\x1f\x01j\x01\x1e\x01s\x01\
+@\x02\x07address\x16\x05value\x19\0\x20\x04\0\x12[static]blob.check\x01!\x01h\x11\
+\x01@\x01\x04self\"\0\x16\x04\0\x14[method]blob.address\x01#\x01@\x01\x04self\"\0\
+\x17\x04\0\x12[method]blob.bytes\x01$\x01@\x01\x04self\"\0w\x04\0\x10[method]blo\
+b.len\x01%\x01i\x12\x01@\0\0&\x04\0\x16[constructor]index-cas\x01'\x01h\x12\x01@\
+\x02\x04self(\x05value\"\0w\x04\0\x18[method]index-cas.insert\x01)\x01@\x02\x04s\
+elf(\x05value\x19\0w\x04\0\x15[method]index-cas.put\x01*\x01k\x1e\x01@\x02\x04se\
+lf(\x06objectw\0+\x04\0\x15[method]index-cas.get\x01,\x01kw\x01j\x01-\x01s\x01@\x02\
+\x04self(\x07address\x16\0.\x04\0\x16[method]index-cas.find\x01/\x01j\x01\x7f\x01\
+s\x01@\x02\x04self(\x07address\x16\00\x04\0\x18[method]index-cas.remove\x011\x01\
+@\x01\x04self(\0w\x04\0\x15[method]index-cas.len\x012\x01i\x13\x01@\0\03\x04\0\x12\
+[constructor]arena\x014\x01j\x013\x01s\x01@\x01\x05value\x19\05\x04\0\x17[static\
+]arena.from-cbor\x016\x01h\x13\x01@\x01\x04self7\0\x1c\x04\0\x15[method]arena.to\
+-cbor\x018\x01@\x01\x04self7\0\x16\x04\0\x15[method]arena.address\x019\x01@\x01\x04\
+self7\0w\x04\0\x11[method]arena.len\x01:\x01j\x01w\x01s\x01@\x01\x04self7\0;\x04\
+\0\x17[method]arena.kind-star\x01<\x01@\x03\x04self7\x06domainw\x08codomainw\0;\x04\
+\0\x16[method]arena.kind-arr\x01=\x04\0\x17[method]arena.bool-type\x01<\x04\0\x14\
+[method]arena.ty-arr\x01=\x01@\x03\x04self7\x08functionw\x08argumentw\0;\x04\0\x14\
+[method]arena.ty-app\x01>\x01@\x03\x04self7\x06binderw\x04bodyw\0;\x04\0\x14[met\
+hod]arena.ty-lam\x01?\x01@\x03\x04self7\x04namew\x04kindw\0;\x04\0\x13[method]ar\
+ena.ty-fv\x01@\x01@\x03\x04self7\x04namew\x09predicatew\0;\x04\0\x17[method]aren\
+a.ty-exists\x01A\x04\0\x17[method]arena.ty-forall\x01A\x04\0\x13[method]arena.mo\
+del\x01A\x01@\x03\x04self7\x04namew\x02tyw\0;\x04\0\x13[method]arena.tm-fv\x01B\x04\
+\0\x11[method]arena.app\x01>\x04\0\x11[method]arena.lam\x01?\x01@\x02\x04self7\x05\
+value\x7f\0;\x04\0\x16[method]arena.bool-lit\x01C\x01@\x03\x04self7\x04leftw\x05\
+rightw\0;\x04\0\x13[method]arena.tm-eq\x01D\x01@\x03\x04self7\x02tyw\x09predicat\
+ew\0;\x04\0\x11[method]arena.eps\x01E\x01@\x03\x04self7\x06sourcew\x07foreignw\0\
+;\x04\0\x16[method]arena.kind-ref\x01F\x04\0\x14[method]arena.ty-ref\x01F\x04\0\x14\
+[method]arena.tm-ref\x01F\x04\0\x19[method]arena.import-null\x01<\x01@\x02\x04se\
+lf7\x05value7\0;\x04\0\x1a[method]arena.import-arena\x01G\x01@\x02\x04self7\x07a\
+ddress\x16\0;\x04\0\x19[method]arena.import-link\x01H\x01j\0\x01s\x01@\x02\x04se\
+lf7\x0bpropositionw\0\xc9\0\x04\0\x19[method]arena.add-context\x01J\x01@\x02\x04\
+self7\x04names\x01\0\x04\0\x17[method]arena.add-axiom\x01K\x01i\x14\x01j\x01\xcc\
+\0\x01s\x01@\x01\x05value7\0\xcd\0\x04\0\x18[static]table.from-arena\x01N\x01@\x01\
+\x05value\"\0\xcd\0\x04\0\x17[static]table.from-blob\x01O\x01h\x14\x01@\x01\x04s\
+elf\xd0\0\0\x16\x04\0\x15[method]table.address\x01Q\x01@\x01\x04self\xd0\0\03\x04\
+\0\x13[method]table.arena\x01R\x01i\x15\x01@\0\0\xd3\0\x04\0\x13[constructor]ker\
+nel\x01T\x01h\x15\x01@\x01\x04self\xd5\0\03\x04\0\x14[method]kernel.arena\x01V\x01\
+@\x01\x04self\xd5\0\0\x16\x04\0\x16[method]kernel.address\x01W\x01@\x01\x04self\xd5\
+\0\0w\x04\0\x12[method]kernel.len\x01X\x01j\x01\x03\x01s\x01@\x02\x04self\xd5\0\x09\
+referencew\0\xd9\0\x04\0\x17[method]kernel.category\x01Z\x01@\x02\x04self\xd5\0\x09\
+referencew\0;\x04\0\x19[method]kernel.classifier\x01[\x04\0\x13[method]kernel.fi\
+nd\x01[\x04\0\x17[method]kernel.find-mut\x01[\x01@\x03\x04self\xd5\0\x04leftw\x05\
+rightw\00\x04\0\x19[method]kernel.equivalent\x01\\\x04\0\x1d[method]kernel.equiv\
+alent-mut\x01\\\x01@\x01\x04self\xd5\0\0;\x04\0\x18[method]kernel.kind-star\x01]\
+\x01@\x03\x04self\xd5\0\x06domainw\x08codomainw\0;\x04\0\x17[method]kernel.kind-\
+arr\x01^\x01@\x02\x04self\xd5\0\x04starw\0;\x04\0\x18[method]kernel.bool-type\x01\
+_\x04\0\x15[method]kernel.ty-arr\x01^\x01@\x03\x04self\xd5\0\x08functionw\x08arg\
+umentw\0;\x04\0\x15[method]kernel.ty-app\x01`\x01@\x03\x04self\xd5\0\x06binderw\x04\
+bodyw\0;\x04\0\x15[method]kernel.ty-lam\x01a\x01@\x03\x04self\xd5\0\x04namew\x04\
+kindw\0;\x04\0\x14[method]kernel.ty-fv\x01b\x01@\x03\x04self\xd5\0\x04namew\x09p\
+redicatew\0;\x04\0\x18[method]kernel.ty-exists\x01c\x04\0\x18[method]kernel.ty-f\
+orall\x01c\x04\0\x14[method]kernel.model\x01c\x01@\x03\x04self\xd5\0\x04namew\x02\
+tyw\0;\x04\0\x14[method]kernel.tm-fv\x01d\x04\0\x12[method]kernel.app\x01`\x04\0\
+\x12[method]kernel.lam\x01a\x01@\x03\x04self\xd5\0\x09bool-typew\x05value\x7f\0;\
+\x04\0\x17[method]kernel.bool-lit\x01e\x01@\x04\x04self\xd5\0\x09bool-typew\x04l\
+eftw\x05rightw\0;\x04\0\x14[method]kernel.tm-eq\x01f\x01@\x03\x04self\xd5\0\x02t\
+yw\x09predicatew\0;\x04\0\x12[method]kernel.eps\x01g\x01@\x03\x04self\xd5\0\x09b\
+ool-typew\x0bpropositionw\0;\x04\0\x15[method]kernel.not-tm\x01h\x01@\x04\x04sel\
+f\xd5\0\x09bool-typew\x06binderw\x04bodyw\0;\x04\0\x18[method]kernel.forall-tm\x01\
+i\x04\0\x18[method]kernel.exists-tm\x01a\x01@\x05\x04self\xd5\0\x09bool-typew\x06\
+binderw\x04leftw\x05rightw\0;\x04\0\x15[method]kernel.and-tm\x01j\x04\0\x14[meth\
+od]kernel.or-tm\x01j\x04\0\x15[method]kernel.imp-tm\x01j\x01pw\x01@\x02\x04self\xd5\
+\0\x05roots\xeb\0\0;\x04\0\x19[method]kernel.fresh-name\x01l\x01@\x03\x04self\xd5\
+\0\x07theoremw\x0csubstitutionw\0;\x04\0\x19[method]kernel.model-spec\x01m\x01j\x01\
+\x0b\x01s\x01@\x03\x04self\xd5\0\x07bool-tyw\x04termw\0\xee\0\x04\0\x13[method]k\
+ernel.refl\x01o\x01j\x01\x09\x01s\x01@\x03\x04self\xd5\0\x07theoremw\x08argument\
+w\0\xf0\0\x04\0\x15[method]kernel.ap-thm\x01q\x01@\x03\x04self\xd5\0\x07theoremw\
+\x08functionw\0\xf0\0\x04\0\x16[method]kernel.ap-term\x01r\x01@\x03\x04self\xd5\0\
+\x08equalityw\x07premisew\0;\x04\0\x14[method]kernel.eq-mp\x01s\x01j\x01\x0d\x01\
+s\x01@\x03\x04self\xd5\0\x07theoremw\x06binderw\0\xf4\0\x04\0\x1b[method]kernel.\
+forall-intro\x01u\x01@\x04\x04self\xd5\0\x07theoremw\x06binderw\x09universalw\0;\
+\x04\0\x1e[method]kernel.forall-intro-at\x01v\x01j\x01\x0f\x01s\x01@\x02\x04self\
+\xd5\0\x07theoremw\0\xf7\0\x04\0\x1b[method]kernel.choice-intro\x01x\x01@\x03\x04\
+self\xd5\0\x07theoremw\x06targetw\0;\x04\0\x1e[method]kernel.choice-intro-at\x01\
+y\x01@\x04\x04self\xd5\0\x07theoremw\x06sourcew\x06targetw\0\xc9\0\x04\0\x1e[met\
+hod]kernel.convert-theorem\x01z\x04\0\"[method]kernel.convert-conclusions\x01z\x01\
+@\x02\x04self\xd5\0\x07theoremw\0\xc9\0\x04\0\x1f[method]kernel.contract-theorem\
+\x01{\x01@\x02\x04self\xd5\0\x07theoremw\0;\x04\0\x17[method]kernel.eqt-elim\x01\
+|\x01j\x01\x05\x01s\x01@\x02\x04self\xd5\0\x09bool-typew\0\xfd\0\x04\0\x19[metho\
+d]kernel.inf-exists\x01~\x01j\x01\x07\x01s\x01@\x04\x04self\xd5\0\x09bool-typew\x07\
+carrierw\x09predicatew\0\xff\0\x04\0\x19[method]kernel.sub-exists\x01\x80\x01\x01\
+@\x02\x04self\xd5\0\x05value7\0;\x04\0\x1b[method]kernel.import-arena\x01\x81\x01\
+\x01@\x02\x04self\xd5\0\x05value\xd0\0\0;\x04\0\x1b[method]kernel.import-table\x01\
+\x82\x01\x01@\x02\x04self\xd5\0\x07address\x16\0;\x04\0\x1a[method]kernel.import\
+-link\x01\x83\x01\x01@\x03\x04self\xd5\0\x06sourcew\x07foreignw\0;\x04\0\x17[met\
+hod]kernel.kind-ref\x01\x84\x01\x01@\x04\x04self\xd5\0\x06sourcew\x07foreignw\x04\
+kindw\0;\x04\0\x15[method]kernel.ty-ref\x01\x85\x01\x01@\x04\x04self\xd5\0\x06so\
+urcew\x07foreignw\x02tyw\0;\x04\0\x15[method]kernel.tm-ref\x01\x86\x01\x01@\x02\x04\
+self\xd5\0\x0bpropositionw\0\xc9\0\x04\0\x1a[method]kernel.add-context\x01\x87\x01\
+\x01@\x02\x04self\xd5\0\x04names\0\xc9\0\x04\0\x18[method]kernel.add-axiom\x01\x88\
+\x01\x04\0\x1d[method]kernel.syn-fact-count\x01X\x01@\x02\x04self\xd5\0\x04factw\
+\0\x7f\x04\0\x1e[method]kernel.remove-syn-fact\x01\x89\x01\x01@\x02\x04self\xd5\0\
+\x03lenw\0\xc9\0\x04\0![method]kernel.truncate-syn-facts\x01\x8a\x01\x01@\x04\x04\
+self\xd5\0\x08relation\x01\x05inputw\x06target-\0;\x04\0\x17[method]kernel.syn-r\
+efl\x01\x8b\x01\x01@\x04\x04self\xd5\0\x04factw\x08relation\x01\x06target-\0;\x04\
+\0\x19[method]kernel.syn-refine\x01\x8c\x01\x01@\x03\x04self\xd5\0\x04factw\x06t\
+arget-\0;\x04\0\x17[method]kernel.syn-symm\x01\x8d\x01\x01@\x04\x04self\xd5\0\x04\
+leftw\x05rightw\x06target-\0;\x04\0\x18[method]kernel.syn-trans\x01\x8e\x01\x01@\
+\x04\x04self\xd5\0\x03varw\x03valw\x06target-\0;\x04\0\x1a[method]kernel.syn-sub\
+-var\x01\x8f\x01\x01@\x05\x04self\xd5\0\x03varw\x03valw\x05inputw\x06target-\0;\x04\
+\0\x1b[method]kernel.syn-sub-leaf\x01\x90\x01\x01@\x04\x04self\xd5\0\x03varw\x05\
+inputw\x06target-\0;\x04\0\"[method]kernel.syn-sub-leaf-forall\x01\x91\x01\x01@\x08\
+\x04self\xd5\0\x03varw\x03valw\x05inputw\x06outputw\x11variable-equalityw\x0dbod\
+y-equalityw\x06target-\0;\x04\0\x1f[method]kernel.syn-sub-identity\x01\x92\x01\x01\
+@\x08\x04self\xd5\0\x08relation\x01\x03var-\x03val-\x05inputw\x06outputw\x08chil\
+dren\xeb\0\x06target-\0;\x04\0\x18[method]kernel.syn-congr\x01\x93\x01\x01@\x09\x04\
+self\xd5\0\x08relation\x01\x03var-\x03val-\x05inputw\x06outputw\x06binderw\x04bo\
+dyw\x06target-\0;\x04\0\x1f[method]kernel.syn-binder-congr\x01\x94\x01\x04\0([me\
+thod]kernel.syn-implicit-binder-congr\x01\x94\x01\x01@\x06\x04self\xd5\0\x05inpu\
+tw\x06outputw\x11binder-classifierw\x11body-substitutionw\x06target-\0;\x04\0\x1f\
+[method]kernel.syn-alpha-binder\x01\x95\x01\x01@\x07\x04self\xd5\0\x05inputw\x06\
+outputw\x0cinput-binderw\x0doutput-binderw\x11body-substitutionw\x06target-\0;\x04\
+\0([method]kernel.syn-alpha-implicit-binder\x01\x96\x01\x01@\x04\x04self\xd5\0\x06\
+sourcew\x0csubstitutionw\x06target-\0;\x04\0\x16[method]kernel.tm-beta\x01\x97\x01\
+\x04\0\x16[method]kernel.ty-beta\x01\x97\x01\x01@\x03\x04self\xd5\0\x06sourcew\x06\
+target-\0;\x04\0\x15[method]kernel.tm-eta\x01\x98\x01\x01@\x02\x04self\xd5\0\x04\
+factw\0\xc9\0\x04\0\x1d[method]kernel.union-syn-fact\x01\x99\x01\x01@\x01\x05val\
+ue\"\0w\x04\0\x0acas-insert\x01\x9a\x01\x01@\x01\x05value\x19\0w\x04\0\x07cas-pu\
+t\x01\x9b\x01\x01@\x01\x06objectw\0+\x04\0\x07cas-get\x01\x9c\x01\x01@\x01\x07ad\
+dress\x16\0.\x04\0\x08cas-find\x01\x9d\x01\x03\0\x18nucleus:proof/host@0.1.0\x05\
+\0\x02\x03\0\0\x06kernel\x01B\x06\x02\x03\x02\x01\x01\x04\0\x06kernel\x03\0\0\x01\
+i\x01\x01j\x01\x02\x01s\x01@\0\0\x03\x04\0\x05prove\x01\x04\x04\0\x1cnucleus:pro\
+of/standard@0.1.0\x05\x02\x04\0\"nucleus:proof/standard-proof@0.1.0\x04\0\x0b\x14\
+\x01\0\x0estandard-proof\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-\
+component\x070.227.1\x10wit-bindgen-rust\x060.41.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

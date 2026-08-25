@@ -31,6 +31,15 @@ fn reference(proposition: Lit) -> Ref {
         .expect("literal magnitude is nonzero")
 }
 
+/// The exact theorem and syntax produced by equality reflexivity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReflThm {
+    /// Object-language equality `term = term`.
+    pub equality: Ref,
+    /// Premise-free theorem concluding [`equality`](Self::equality).
+    pub theorem: ThmId,
+}
+
 /// The exact theorem and syntax produced by applying equal functions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ApThm {
@@ -275,6 +284,31 @@ impl Kernel {
             .map(|row| replace_atom(row, source, target))
             .collect();
         self.replace_theorem(theorem, Thm::new(premises, Dnf::new(conclusions)))
+    }
+
+    /// Introduces equality reflexivity (`REFL`).
+    ///
+    /// Constructs the object-language equality `term = term` and its exact
+    /// premise-free theorem.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `bool_ty` is the checked Boolean type and
+    /// `term` is a checked term. Rejection is transactional.
+    pub fn refl(&mut self, bool_ty: Ref, term: Ref) -> Result<ReflThm, KernelError> {
+        self.require_bool_type::<std::convert::Infallible>(bool_ty)?;
+        self.require_category::<std::convert::Infallible>(term, crate::Sort::Tm)?;
+        let mut staged = Self {
+            arena: self.arena.clone(),
+            init_prefix: self.init_prefix,
+        };
+        let equality = staged.eq(bool_ty, term, term)?;
+        let theorem = staged.push_theorem(Thm::new(
+            Cnf::default(),
+            Dnf::new(vec![unit_row(positive(equality))]),
+        ))?;
+        *self = staged;
+        Ok(ReflThm { equality, theorem })
     }
 
     /// Applies a proved function equality to one argument (`AP_THM`).
@@ -1653,6 +1687,28 @@ mod tests {
 
         let before = kernel.arena().clone();
         assert!(kernel.ap_thm(premise, bool_ty).is_err());
+        assert_eq!(*kernel.arena(), before);
+    }
+
+    #[test]
+    fn reflexivity_builds_an_exact_theorem_transactionally() {
+        let Fixture { mut kernel, p, .. } = fixture();
+        let bool_ty = kernel.classifier(reference(p)).unwrap();
+        let result = kernel.refl(bool_ty, reference(p)).unwrap();
+        assert_eq!(
+            kernel
+                .arena()
+                .children(result.equality)
+                .unwrap()
+                .collect::<Vec<_>>(),
+            [bool_ty, reference(p), reference(p)]
+        );
+        let theorem = kernel.require_thm(result.theorem).unwrap();
+        assert!(theorem.lhs.rows().next().is_none());
+        assert_eq!(unit_conclusions(theorem), [positive(result.equality)]);
+
+        let before = kernel.arena().clone();
+        assert!(kernel.refl(reference(p), reference(p)).is_err());
         assert_eq!(*kernel.arena(), before);
     }
 

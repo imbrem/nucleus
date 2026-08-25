@@ -498,6 +498,14 @@ def Arena.FunctionApplicationEquality (resolve : Resolver) (arena : Arena)
     Resolves (coreResolver resolve) arena.holCore target
       (.term boolType (.eq codomain (.app function value) (.app varied value)))
 
+/-- A checked term and its reflexive object-language equality (`REFL`). -/
+def Arena.ReflexiveEquality (resolve : Resolver) (arena : Arena)
+    (term target : Ref) : Prop :=
+  ∃ boolType domain value,
+    Resolves (coreResolver resolve) arena.holCore term (.term domain value) ∧
+    Resolves (coreResolver resolve) arena.holCore target
+      (.term boolType (.eq domain value value))
+
 /-- An equality and the equality obtained by applying one checked function to
 both operands (`AP_TERM`). -/
 def Arena.FunctionArgumentEquality (resolve : Resolver) (arena : Arena)
@@ -566,6 +574,10 @@ structure Arena.HolInterpretationSound (resolve : Resolver) (arena : Arena)
     Columns.Class arena.columns.dense .semantic left right →
     interpretation left = some leftProp → interpretation right = some rightProp →
     (leftProp ↔ rightProp)
+  /-- Every checked term is equal to itself (`REFL`). -/
+  reflexivity : ∀ {term target targetProp},
+    arena.ReflexiveEquality resolve term target →
+    interpretation target = some targetProp → targetProp
   /-- Equality remains true after applying equal functions to one checked
   argument. This is the reference-level form of HOL's standard `AP_THM` rule. -/
   applyFunction : ∀ {source argument target sourceProp targetProp},
@@ -791,6 +803,21 @@ theorem Arena.holTheorem_replaceRightSemantic {trusted : Arena → Prop}
   apply fact.semantic.replaceRightAtom_holds source target
   · exact valid.holTheorems ambientValuation admitted fact member valuation completion
   · exact valid.holInterpretation.completion_eq sourceBool targetBool related completion
+
+/-- Equality reflexivity introduces an exact premise-free theorem. -/
+theorem Arena.holTheorem_reflexivity {trusted : Arena → Prop}
+    {resolve : Resolver} {arena : Arena} {interpretation : PartialValuation Ref}
+    (valid : arena.KernelValid trusted resolve interpretation)
+    {term target : Ref}
+    (targetBool : ContextClaim (coreResolver resolve) arena.holCore target)
+    (shape : arena.ReflexiveEquality resolve term target) :
+    ∀ valuation : Valuation Ref, valuation.Completes interpretation →
+      (Sequent.assert target).Holds valuation := by
+  intro valuation completion
+  obtain ⟨targetProp, targetFound⟩ := valid.holInterpretation.total target targetBool
+  rw [Sequent.assert_holds]
+  exact (completion target targetProp targetFound).mpr
+    (valid.holInterpretation.reflexivity shape targetFound)
 
 /-- A theorem of function equality may be specialized at one
 checked argument. This is the semantic contract of Rust's `AP_THM` operation;

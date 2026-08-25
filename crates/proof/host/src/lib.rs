@@ -685,6 +685,18 @@ impl GuestKernel for HostKernel {
             .map_err(|error| error.to_string())
     }
 
+    fn refl(&self, bool_ty: u64, term: u64) -> Result<wit::ReflThm, String> {
+        let result = self
+            .0
+            .borrow_mut()
+            .refl(reference(bool_ty)?, reference(term)?)
+            .map_err(|error| error.to_string())?;
+        Ok(wit::ReflThm {
+            equality: ref_index(result.equality),
+            theorem: result.theorem.get().unsigned_abs().into(),
+        })
+    }
+
     fn ap_thm(&self, theorem: u64, argument: u64) -> Result<wit::ApThm, String> {
         let result = self
             .0
