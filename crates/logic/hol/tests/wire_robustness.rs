@@ -6,7 +6,7 @@ mod support;
 use covalence_lib_cbor::{Value, into_writer};
 use covalence_lib_hash::O256;
 use covalence_logic_cas::CasFact;
-use covalence_logic_hol::{Arena, Table, wire};
+use covalence_logic_hol::{Arena, Import, Table, wire};
 use support::{ArenaCbor, Fix, direct_slot, encode, fact_id, free_slot, int, map, text};
 
 fn star_row() -> Value {
@@ -397,6 +397,35 @@ fn a_cache_survives_being_nested_as_a_literal_import() {
         panic!("the import must stay literal")
     };
     assert_eq!(**nested, inner);
+}
+
+fn nested_literal_imports(depth: usize) -> Arena {
+    let mut arena = Arena::empty();
+    for _ in 0..depth {
+        let mut outer = Arena::empty();
+        outer
+            .push_import(Import::Literal(Box::new(arena)))
+            .expect("one import remains addressable");
+        arena = outer;
+    }
+    arena
+}
+
+#[test]
+fn literal_import_byte_depth_boundary_is_representation_not_canonicity() {
+    let supported = nested_literal_imports(126);
+    let supported_bytes = encode(&supported);
+    assert_eq!(
+        wire::deserialize(supported_bytes.as_slice()).unwrap(),
+        supported
+    );
+
+    // Rust arenas remain structurally valid and serializable past the byte
+    // decoder's current 127-container recursion budget.  The limitation is a
+    // property of that decoder, not of arena canonicity or the reference space.
+    let deeper = nested_literal_imports(127);
+    let deeper_bytes = encode(&deeper);
+    assert!(wire::deserialize(deeper_bytes.as_slice()).is_err());
 }
 
 #[test]

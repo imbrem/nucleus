@@ -182,11 +182,10 @@ private def decodeOptional (decode : Nucleus.Cbor → Option α) :
   simp [decodeOptional, encodeSynFactId, decodeSynFactId?, unsigned, asUnsigned?]
 
 private def encodeExpr (expr : detail.Expr) : Nucleus.Cbor :=
-  OneBased.Cbor.encodeRow { expr, eq := none, sort := none }
+  OneBased.Cbor.encodeExpr expr
 
 private def decodeExpr? (value : Nucleus.Cbor) : Option detail.Expr := do
-  let row ← OneBased.Cbor.decodeRow? value
-  if row.eq.isNone ∧ row.sort.isNone then some row.expr else none
+  OneBased.Cbor.decodeExpr? value
 
 @[simp] private theorem decodeExpr?_encode (expr : detail.Expr) :
     decodeExpr? (encodeExpr expr) = some expr := by
@@ -641,7 +640,10 @@ theorem decodeNormalizedUsing?_encode {arena : Layout.Arena}
 
 These three mutually proved statements follow the mutually recursive arena,
 import, and import-list syntax.  The fuel hypothesis is expressed using only
-literal-import depth; no reference bound truncates the semantic object. -/
+literal-import depth; no reference bound truncates the semantic object.  They
+describe the already-parsed `CborSyn` decoder, which has no artificial depth
+cutoff.  `Arena.ByteWireCanonical` separately records the concrete Rust byte
+decoder's 126-level limit. -/
 
 mutual
 
@@ -743,9 +745,9 @@ theorem decodeImportsWithFuel?_encode (imports : List Layout.Import)
 
 end
 
-/-- The actual public recursive decoder round-trips every recursively
-canonical arena. Its concrete `Cbor.size` fuel is proved sufficient from the
-encoding tree itself; no external import-decoder premise remains. -/
+/-- The parsed-value decoder round-trips every recursively canonical arena.
+Its concrete `Cbor.size` fuel is proved sufficient from the encoding tree
+itself; no external import-decoder premise or artificial depth cutoff remains. -/
 theorem decodeArena?_encode (arena : Layout.Arena)
     (canonical : arena.WireCanonical) :
     decodeArena? (encodeArena arena) = some arena := by
@@ -763,6 +765,15 @@ theorem decodeArena?_encode (arena : Layout.Arena)
       rw [decoded]
       exact (Layout.Arena.mk imports amb pred hol).normalize?_toView
         columns classical normalized
+
+/-- The same parsed-value roundtrip specialized to arenas accepted by the
+current Rust byte decoder.  The byte parser itself is outside `CborSyn`; its
+126-level precondition is retained explicitly rather than redefining semantic
+canonicity. -/
+theorem decodeArena?_encode_byteWire (arena : Layout.Arena)
+    (supported : arena.ByteWireCanonical) :
+    decodeArena? (encodeArena arena) = some arena :=
+  decodeArena?_encode arena supported.1
 
 /-- A serialized CNF tombstone is retained at its exact row position. -/
 theorem decodeCnf?_leadingNull (cnf : Layout.WireCnf) :

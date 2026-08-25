@@ -122,7 +122,9 @@ inductive Arena where
 end
 
 /-! Structural measures and recursive wire validity. These recurse through
-literal imports without imposing any artificial reference-space cutoff. -/
+literal imports without imposing any artificial reference-space cutoff. The
+separate wire-depth bound below is the concrete CBOR decoder limit, not a HOL
+reference-space limit. -/
 
 mutual
 
@@ -139,6 +141,12 @@ def Imports.literalDepth : List Import → Nat
   | entry :: entries => max entry.literalDepth (Imports.literalDepth entries)
 
 end
+
+/-- The concrete CBOR decoder accepts at most 126 nested literal imports.
+
+This is one below its 127-container recursion budget.  It is a property of the
+Rust byte decoder, not of the recursive logical arena datatype or of `Ref`. -/
+def maxLiteralImportDepth : Nat := 126
 
 namespace Arena
 
@@ -367,6 +375,14 @@ def Imports.WireCanonical : List Import → Prop
   | entry :: entries => entry.WireCanonical ∧ Imports.WireCanonical entries
 
 end
+
+/-- A canonical arena that the current Rust byte decoder can deserialize.
+
+This deliberately does not participate in `WireCanonical`: arenas and the
+parsed-CBOR model are structurally recursive without a depth cutoff.  The
+bound records only the current serde implementation's container budget. -/
+def Arena.ByteWireCanonical (arena : Arena) : Prop :=
+  arena.WireCanonical ∧ arena.literalDepth ≤ maxLiteralImportDepth
 
 theorem Arena.toView_columnsResident {arena : Arena}
     (wireValid : arena.ColumnsWireValid) : arena.toView.columnsResident := wireValid
