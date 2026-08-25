@@ -10,7 +10,9 @@ use std::{
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::{exceptions::PyRuntimeError, types::PyBytes, types::PyType};
 use covalence_logic_hol::{
-    Arena, Import, ImportId, Kernel, Link, LinkFormat, Meta, Ref, Sort, SynFact, SynFactId, SynRel,
+    Arena, CnfId, DnfId, Import, ImportId, Kernel, Link, LinkFormat, Lit, LitVec, Meta, Ref, Sort,
+    SynFact, SynFactId, SynRel, ThmId,
+    builtin::{Op1, Op2},
     wire,
 };
 
@@ -20,20 +22,51 @@ fn value_error(error: impl ToString) -> PyErr {
     PyValueError::new_err(error.to_string())
 }
 
-fn reference(value: u64) -> PyResult<Ref> {
+fn reference(value: i32) -> PyResult<Ref> {
     Ref::new(value).ok_or_else(|| PyValueError::new_err("references are one-based"))
 }
 
-fn source(value: u64) -> PyResult<ImportId> {
+fn source(value: i32) -> PyResult<ImportId> {
     ImportId::new(value).ok_or_else(|| PyValueError::new_err("import IDs are one-based"))
 }
 
-fn fact_id(value: u64) -> PyResult<SynFactId> {
+fn fact_id(value: i32) -> PyResult<SynFactId> {
     SynFactId::new(value).ok_or_else(|| PyValueError::new_err("fact IDs are one-based"))
 }
 
-fn fact_target(value: Option<u64>) -> PyResult<Option<SynFactId>> {
+fn fact_target(value: Option<i32>) -> PyResult<Option<SynFactId>> {
     value.map(fact_id).transpose()
+}
+
+fn theorem_id(value: i32) -> PyResult<ThmId> {
+    ThmId::new(value).ok_or_else(|| PyValueError::new_err("theorem IDs are positive i32 values"))
+}
+
+fn cnf_id(value: i32) -> PyResult<CnfId> {
+    CnfId::new(value).ok_or_else(|| PyValueError::new_err("CNF row IDs are positive i32 values"))
+}
+
+fn dnf_id(value: i32) -> PyResult<DnfId> {
+    DnfId::new(value).ok_or_else(|| PyValueError::new_err("DNF row IDs are positive i32 values"))
+}
+
+fn literal(value: i32) -> PyResult<Lit> {
+    Lit::try_new(value).map_err(value_error)
+}
+
+fn literals(values: Vec<i32>) -> PyResult<Vec<Lit>> {
+    values.into_iter().map(literal).collect()
+}
+
+fn matrix(values: Vec<Vec<i32>>) -> PyResult<Vec<LitVec>> {
+    values
+        .into_iter()
+        .map(|row| {
+            literals(row)
+                .map(IntoIterator::into_iter)
+                .map(Iterator::collect)
+        })
+        .collect()
 }
 
 const MAX_LITERAL_IMPORT_DEPTH: usize = 127;
@@ -73,13 +106,13 @@ const fn relation_name(value: SynRel) -> &'static str {
     }
 }
 
-fn allocated(value: Option<Ref>) -> PyResult<u64> {
+fn allocated(value: Option<Ref>) -> PyResult<i32> {
     value
         .map(Ref::get)
         .ok_or_else(|| PyValueError::new_err("arena reference space is exhausted"))
 }
 
-fn imported(value: Option<ImportId>) -> PyResult<u64> {
+fn imported(value: Option<ImportId>) -> PyResult<i32> {
     value
         .map(ImportId::get)
         .ok_or_else(|| PyValueError::new_err("arena import space is exhausted"))
@@ -138,22 +171,22 @@ impl PyLink {
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 #[derive(Clone)]
 pub struct PyDefinition {
-    reference: u64,
+    reference: i32,
     tag: &'static str,
-    children: Vec<u64>,
+    children: Vec<i32>,
     name: Option<u64>,
     value: Option<bool>,
-    source: Option<u64>,
-    foreign: Option<u64>,
-    equal: Option<u64>,
-    classifier: Option<u64>,
+    source: Option<i32>,
+    foreign: Option<i32>,
+    equal: Option<i32>,
+    classifier: Option<i32>,
 }
 
 #[pymethods]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyDefinition {
     #[getter]
-    const fn reference(&self) -> u64 {
+    const fn reference(&self) -> i32 {
         self.reference
     }
 
@@ -163,7 +196,7 @@ impl PyDefinition {
     }
 
     #[getter]
-    fn children(&self) -> Vec<u64> {
+    fn children(&self) -> Vec<i32> {
         self.children.clone()
     }
 
@@ -178,22 +211,22 @@ impl PyDefinition {
     }
 
     #[getter]
-    const fn source(&self) -> Option<u64> {
+    const fn source(&self) -> Option<i32> {
         self.source
     }
 
     #[getter]
-    const fn foreign(&self) -> Option<u64> {
+    const fn foreign(&self) -> Option<i32> {
         self.foreign
     }
 
     #[getter]
-    const fn equal(&self) -> Option<u64> {
+    const fn equal(&self) -> Option<i32> {
         self.equal
     }
 
     #[getter]
-    const fn classifier(&self) -> Option<u64> {
+    const fn classifier(&self) -> Option<i32> {
         self.classifier
     }
 }
@@ -221,14 +254,14 @@ impl PyMeta {
     }
 
     #[getter]
-    fn source(&self) -> u64 {
+    fn source(&self) -> i32 {
         match self.0 {
             Meta::Valid { src } | Meta::Wf { src, .. } => src.get(),
         }
     }
 
     #[getter]
-    fn reference(&self) -> Option<u64> {
+    fn reference(&self) -> Option<i32> {
         match self.0 {
             Meta::Valid { .. } => None,
             Meta::Wf { ix, .. } => Some(ix.get()),
@@ -236,7 +269,7 @@ impl PyMeta {
     }
 
     #[getter]
-    fn classifier(&self) -> Option<u64> {
+    fn classifier(&self) -> Option<i32> {
         match self.0 {
             Meta::Valid { .. } => None,
             Meta::Wf { sort, .. } => Some(sort.get()),
@@ -310,7 +343,7 @@ pub struct PyKind {
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyKind {
     #[getter]
-    const fn reference(&self) -> u64 {
+    const fn reference(&self) -> i32 {
         self.reference.get()
     }
 }
@@ -332,7 +365,7 @@ pub struct PyTy {
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyTy {
     #[getter]
-    const fn reference(&self) -> u64 {
+    const fn reference(&self) -> i32 {
         self.reference.get()
     }
 }
@@ -350,11 +383,20 @@ pub struct PyTm {
     reference: Ref,
 }
 
+type PyMatrix = Vec<Vec<i32>>;
+type PySequent = (PyMatrix, PyMatrix);
+
+fn python_rows<'a>(rows: impl IntoIterator<Item = &'a [Lit]>) -> PyMatrix {
+    rows.into_iter()
+        .map(|row| row.iter().map(|literal| literal.get()).collect())
+        .collect()
+}
+
 #[pymethods]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyTm {
     #[getter]
-    const fn reference(&self) -> u64 {
+    const fn reference(&self) -> i32 {
         self.reference.get()
     }
 }
@@ -378,7 +420,7 @@ pub struct PySynFact {
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PySynFact {
     #[getter]
-    const fn id(&self) -> u64 {
+    const fn id(&self) -> i32 {
         self.id.get()
     }
 
@@ -388,22 +430,22 @@ impl PySynFact {
     }
 
     #[getter]
-    fn var(&self) -> Option<u64> {
+    fn var(&self) -> Option<i32> {
         self.fact.var().map(Ref::get)
     }
 
     #[getter]
-    fn val(&self) -> Option<u64> {
+    fn val(&self) -> Option<i32> {
         self.fact.val().map(Ref::get)
     }
 
     #[getter]
-    const fn input(&self) -> u64 {
+    const fn input(&self) -> i32 {
         self.fact.input().get()
     }
 
     #[getter]
-    const fn output(&self) -> u64 {
+    const fn output(&self) -> i32 {
         self.fact.output().get()
     }
 }
@@ -481,41 +523,41 @@ impl PyKernel {
         PyO256::wrap(python, self.kernel.addr())
     }
 
-    fn category(&self, reference_value: u64) -> PyResult<&'static str> {
+    fn category(&self, reference_value: i32) -> PyResult<&'static str> {
         self.kernel
             .category(reference(reference_value)?)
             .map(sort_name)
             .map_err(value_error)
     }
 
-    fn classifier(&self, reference_value: u64) -> PyResult<u64> {
+    fn classifier(&self, reference_value: i32) -> PyResult<i32> {
         self.kernel
             .classifier(reference(reference_value)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn find(&self, reference_value: u64) -> PyResult<u64> {
+    fn find(&self, reference_value: i32) -> PyResult<i32> {
         self.kernel
             .find(reference(reference_value)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn find_mut(&mut self, reference_value: u64) -> PyResult<u64> {
+    fn find_mut(&mut self, reference_value: i32) -> PyResult<i32> {
         self.kernel
             .find_mut(reference(reference_value)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn equivalent(&self, left: u64, right: u64) -> PyResult<bool> {
+    fn equivalent(&self, left: i32, right: i32) -> PyResult<bool> {
         self.kernel
             .equivalent(reference(left)?, reference(right)?)
             .map_err(value_error)
     }
 
-    fn kind(&self, reference_value: u64) -> PyResult<PyKind> {
+    fn kind(&self, reference_value: i32) -> PyResult<PyKind> {
         let reference = reference(reference_value)?;
         if self.kernel.category(reference).map_err(value_error)? != Sort::Kind {
             return Err(PyValueError::new_err("reference is not a kind"));
@@ -526,7 +568,7 @@ impl PyKernel {
         })
     }
 
-    fn ty(&self, reference_value: u64) -> PyResult<PyTy> {
+    fn ty(&self, reference_value: i32) -> PyResult<PyTy> {
         let reference = reference(reference_value)?;
         if self.kernel.category(reference).map_err(value_error)? != Sort::Ty {
             return Err(PyValueError::new_err("reference is not a type"));
@@ -537,7 +579,7 @@ impl PyKernel {
         })
     }
 
-    fn tm(&self, reference_value: u64) -> PyResult<PyTm> {
+    fn tm(&self, reference_value: i32) -> PyResult<PyTm> {
         let reference = reference(reference_value)?;
         if self.kernel.category(reference).map_err(value_error)? != Sort::Tm {
             return Err(PyValueError::new_err("reference is not a term"));
@@ -548,109 +590,109 @@ impl PyKernel {
         })
     }
 
-    fn star(&mut self) -> PyResult<u64> {
+    fn star(&mut self) -> PyResult<i32> {
         self.kernel.star().map(Ref::get).map_err(value_error)
     }
 
-    fn kind_arr(&mut self, domain: u64, codomain: u64) -> PyResult<u64> {
+    fn kind_arr(&mut self, domain: i32, codomain: i32) -> PyResult<i32> {
         self.kernel
             .kind_arr(reference(domain)?, reference(codomain)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn bool_ty(&mut self, star: u64) -> PyResult<u64> {
+    fn bool_ty(&mut self, star: i32) -> PyResult<i32> {
         self.kernel
             .bool_ty(reference(star)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn ty_arr(&mut self, domain: u64, codomain: u64) -> PyResult<u64> {
+    fn ty_arr(&mut self, domain: i32, codomain: i32) -> PyResult<i32> {
         self.kernel
             .ty_arr(reference(domain)?, reference(codomain)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn ty_fv(&mut self, name: u64, kind: u64) -> PyResult<u64> {
+    fn ty_fv(&mut self, name: u64, kind: i32) -> PyResult<i32> {
         self.kernel
             .ty_fv(name, reference(kind)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn ty_app(&mut self, function: u64, argument: u64) -> PyResult<u64> {
+    fn ty_app(&mut self, function: i32, argument: i32) -> PyResult<i32> {
         self.kernel
             .ty_app(reference(function)?, reference(argument)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn ty_lam(&mut self, binder: u64, body: u64) -> PyResult<u64> {
+    fn ty_lam(&mut self, binder: i32, body: i32) -> PyResult<i32> {
         self.kernel
             .ty_lam(reference(binder)?, reference(body)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn model(&mut self, name: u64, predicate: u64) -> PyResult<u64> {
+    fn model(&mut self, name: u64, predicate: i32) -> PyResult<i32> {
         self.kernel
             .model(name, reference(predicate)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn ty_exists(&mut self, name: u64, predicate: u64) -> PyResult<u64> {
+    fn ty_exists(&mut self, name: u64, predicate: i32) -> PyResult<i32> {
         self.kernel
             .ty_exists(name, reference(predicate)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn tm_fv(&mut self, name: u64, ty: u64) -> PyResult<u64> {
+    fn tm_fv(&mut self, name: u64, ty: i32) -> PyResult<i32> {
         self.kernel
             .tm_fv(name, reference(ty)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn app(&mut self, function: u64, argument: u64) -> PyResult<u64> {
+    fn app(&mut self, function: i32, argument: i32) -> PyResult<i32> {
         self.kernel
             .app(reference(function)?, reference(argument)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn lam(&mut self, binder: u64, body: u64) -> PyResult<u64> {
+    fn lam(&mut self, binder: i32, body: i32) -> PyResult<i32> {
         self.kernel
             .lam(reference(binder)?, reference(body)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn bool(&mut self, bool_ty: u64, value: bool) -> PyResult<u64> {
+    fn bool(&mut self, bool_ty: i32, value: bool) -> PyResult<i32> {
         self.kernel
             .bool(reference(bool_ty)?, value)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn eq(&mut self, bool_ty: u64, left: u64, right: u64) -> PyResult<u64> {
+    fn eq(&mut self, bool_ty: i32, left: i32, right: i32) -> PyResult<i32> {
         self.kernel
             .eq(reference(bool_ty)?, reference(left)?, reference(right)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn eps(&mut self, ty: u64, predicate: u64) -> PyResult<u64> {
+    fn eps(&mut self, ty: i32, predicate: i32) -> PyResult<i32> {
         self.kernel
             .eps(reference(ty)?, reference(predicate)?)
             .map(Ref::get)
             .map_err(value_error)
     }
 
-    fn import_literal(&mut self, arena: &PyArena) -> PyResult<u64> {
+    fn import_literal(&mut self, arena: &PyArena) -> PyResult<i32> {
         ensure_literal_import_can_be_wrapped(&arena.arena)?;
         self.kernel
             .import_literal(arena.arena.clone())
@@ -658,14 +700,14 @@ impl PyKernel {
             .map_err(value_error)
     }
 
-    fn import_link(&mut self, link: &PyLink) -> PyResult<u64> {
+    fn import_link(&mut self, link: &PyLink) -> PyResult<i32> {
         self.kernel
             .import_link(link.0)
             .map(ImportId::get)
             .map_err(value_error)
     }
 
-    fn add_context(&mut self, proposition: u64) -> PyResult<()> {
+    fn add_context(&mut self, proposition: i32) -> PyResult<()> {
         self.kernel
             .add_context(reference(proposition)?)
             .map_err(value_error)
@@ -675,7 +717,270 @@ impl PyKernel {
         self.kernel.add_axiom(name).map_err(value_error)
     }
 
-    fn syn_fact(&self, id: u64) -> PyResult<PySynFact> {
+    /// Encodes a Boolean term reference as a positive or negated i32 literal.
+    #[pyo3(signature = (reference_value, negated=false))]
+    #[allow(
+        clippy::unused_self,
+        reason = "the Python API scopes literals by kernel flavor"
+    )]
+    fn lit(&self, reference_value: i32, negated: bool) -> PyResult<i32> {
+        let reference = reference(reference_value)?;
+        let magnitude = reference.get();
+        if magnitude == i32::MAX {
+            return Err(PyValueError::new_err(
+                "literal magnitude must be below i32::MAX",
+            ));
+        }
+        // Rule application performs the authoritative resident Boolean check.
+        let positive = Lit::positive(magnitude);
+        Ok(if negated {
+            positive.negated()
+        } else {
+            positive
+        }
+        .get())
+    }
+
+    fn logical_not(&mut self, operand: i32) -> PyResult<i32> {
+        self.kernel
+            .op1(Op1::Not, reference(operand)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn logical_and(&mut self, left: i32, right: i32) -> PyResult<i32> {
+        self.kernel
+            .op2(Op2::And, reference(left)?, reference(right)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn logical_or(&mut self, left: i32, right: i32) -> PyResult<i32> {
+        self.kernel
+            .op2(Op2::Or, reference(left)?, reference(right)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn logical_imp(&mut self, left: i32, right: i32) -> PyResult<i32> {
+        self.kernel
+            .op2(Op2::Imp, reference(left)?, reference(right)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn theorem(&self, id: i32) -> PyResult<PySequent> {
+        let id = theorem_id(id)?;
+        let theorem = self
+            .kernel
+            .thm()
+            .get(id)
+            .ok_or_else(|| PyValueError::new_err(format!("theorem {} is absent", id.get())))?;
+        Ok((
+            python_rows(theorem.lhs.rows()),
+            python_rows(theorem.rhs.rows()),
+        ))
+    }
+
+    fn identity(&mut self, proposition: i32) -> PyResult<i32> {
+        self.kernel
+            .identity(literal(proposition)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn weaken(&mut self, theorem: i32, premises: Vec<i32>, conclusions: Vec<i32>) -> PyResult<()> {
+        let id = theorem_id(theorem)?;
+        let premises = literals(premises)?;
+        let conclusions = literals(conclusions)?;
+        self.kernel
+            .weaken(id, &premises, &conclusions)
+            .map_err(value_error)?;
+        Ok(())
+    }
+
+    fn weaken_matrix(
+        &mut self,
+        theorem: i32,
+        premises: Vec<Vec<i32>>,
+        conclusions: Vec<Vec<i32>>,
+    ) -> PyResult<()> {
+        let id = theorem_id(theorem)?;
+        let premises = matrix(premises)?;
+        let conclusions = matrix(conclusions)?;
+        self.kernel
+            .weaken_matrix(id, &premises, &conclusions)
+            .map_err(value_error)?;
+        Ok(())
+    }
+
+    fn move_cnf_right(&mut self, theorem: i32, row: i32) -> PyResult<()> {
+        let id = theorem_id(theorem)?;
+        let row = cnf_id(row)?;
+        self.kernel.move_cnf_right(id, row).map_err(value_error)?;
+        Ok(())
+    }
+
+    fn move_dnf_left(&mut self, theorem: i32, row: i32) -> PyResult<()> {
+        let id = theorem_id(theorem)?;
+        let row = dnf_id(row)?;
+        self.kernel.move_dnf_left(id, row).map_err(value_error)?;
+        Ok(())
+    }
+
+    fn normalize_theorem(&mut self, theorem: i32) -> PyResult<()> {
+        self.kernel
+            .normalize_theorem(theorem_id(theorem)?)
+            .map_err(value_error)
+    }
+
+    fn normalize_cnf(&mut self, theorem: i32, row: i32) -> PyResult<()> {
+        self.kernel
+            .normalize_cnf(theorem_id(theorem)?, cnf_id(row)?)
+            .map_err(value_error)
+    }
+
+    fn normalize_dnf(&mut self, theorem: i32, row: i32) -> PyResult<()> {
+        self.kernel
+            .normalize_dnf(theorem_id(theorem)?, dnf_id(row)?)
+            .map_err(value_error)
+    }
+
+    fn cut(&mut self, left: i32, right: i32, proposition: i32) -> PyResult<i32> {
+        self.kernel
+            .cut(theorem_id(left)?, theorem_id(right)?, literal(proposition)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn resolve(&mut self, left: i32, right: i32, pivot: i32) -> PyResult<i32> {
+        self.kernel
+            .resolve(theorem_id(left)?, theorem_id(right)?, literal(pivot)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn false_left(&mut self, falsehood: i32) -> PyResult<i32> {
+        self.kernel
+            .false_left(literal(falsehood)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn true_right(&mut self, truth: i32) -> PyResult<i32> {
+        self.kernel
+            .true_right(literal(truth)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn not_left(&mut self, theorem: i32, proposition: i32) -> PyResult<()> {
+        self.kernel
+            .not_left(theorem_id(theorem)?, literal(proposition)?)
+            .map_err(value_error)
+    }
+
+    fn not_right(&mut self, theorem: i32, proposition: i32) -> PyResult<()> {
+        self.kernel
+            .not_right(theorem_id(theorem)?, literal(proposition)?)
+            .map_err(value_error)
+    }
+
+    fn and_left(&mut self, theorem: i32, conjunction: i32) -> PyResult<i32> {
+        self.kernel
+            .and_left(theorem_id(theorem)?, literal(conjunction)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn and_right(&mut self, left: i32, right: i32, conjunction: i32) -> PyResult<i32> {
+        self.kernel
+            .and_right(theorem_id(left)?, theorem_id(right)?, literal(conjunction)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn or_left(&mut self, left: i32, right: i32, disjunction: i32) -> PyResult<i32> {
+        self.kernel
+            .or_left(theorem_id(left)?, theorem_id(right)?, literal(disjunction)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn or_right(&mut self, theorem: i32, disjunction: i32) -> PyResult<i32> {
+        self.kernel
+            .or_right(theorem_id(theorem)?, literal(disjunction)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn imp_left(&mut self, left: i32, right: i32, implication: i32) -> PyResult<i32> {
+        self.kernel
+            .imp_left(theorem_id(left)?, theorem_id(right)?, literal(implication)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn imp_right(&mut self, theorem: i32, implication: i32) -> PyResult<i32> {
+        self.kernel
+            .imp_right(theorem_id(theorem)?, literal(implication)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    #[pyo3(signature = (theorem, formula, branch=None))]
+    fn expand_conclusion(
+        &mut self,
+        theorem: i32,
+        formula: i32,
+        branch: Option<bool>,
+    ) -> PyResult<i32> {
+        self.kernel
+            .expand_conclusion(theorem_id(theorem)?, literal(formula)?, branch)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn flatten_conclusion(&mut self, theorem: i32, formula: i32) -> PyResult<i32> {
+        self.kernel
+            .flatten_conclusion(theorem_id(theorem)?, literal(formula)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn flatten_premise(&mut self, theorem: i32, formula: i32) -> PyResult<i32> {
+        self.kernel
+            .flatten_premise(theorem_id(theorem)?, literal(formula)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn fold_premise(&mut self, theorem: i32, formula: i32) -> PyResult<i32> {
+        self.kernel
+            .fold_premise(theorem_id(theorem)?, literal(formula)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn fold_conclusion(&mut self, theorem: i32, formula: i32) -> PyResult<i32> {
+        self.kernel
+            .fold_conclusion(theorem_id(theorem)?, literal(formula)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn copy_theorem(&mut self, theorem: i32) -> PyResult<i32> {
+        self.kernel
+            .copy_theorem(theorem_id(theorem)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn remove_theorem(&mut self, theorem: i32) -> PyResult<bool> {
+        Ok(self.kernel.remove_theorem(theorem_id(theorem)?))
+    }
+
+    fn syn_fact(&self, id: i32) -> PyResult<PySynFact> {
         self.fact_handle(fact_id(id)?)
     }
 
@@ -693,7 +998,7 @@ impl PyKernel {
     }
 
     #[pyo3(signature = (relation, input, target=None))]
-    fn syn_refl(&mut self, relation: &str, input: u64, target: Option<u64>) -> PyResult<PySynFact> {
+    fn syn_refl(&mut self, relation: &str, input: i32, target: Option<i32>) -> PyResult<PySynFact> {
         let id = self
             .kernel
             .syn_refl(
@@ -710,7 +1015,7 @@ impl PyKernel {
         &mut self,
         source: &PySynFact,
         relation: &str,
-        target: Option<u64>,
+        target: Option<i32>,
     ) -> PyResult<PySynFact> {
         let source = self.checked_fact(source)?;
         let id = self
@@ -721,7 +1026,7 @@ impl PyKernel {
     }
 
     #[pyo3(signature = (source, target=None))]
-    fn syn_symm(&mut self, source: &PySynFact, target: Option<u64>) -> PyResult<PySynFact> {
+    fn syn_symm(&mut self, source: &PySynFact, target: Option<i32>) -> PyResult<PySynFact> {
         let source = self.checked_fact(source)?;
         let id = self
             .kernel
@@ -735,7 +1040,7 @@ impl PyKernel {
         &mut self,
         left: &PySynFact,
         right: &PySynFact,
-        target: Option<u64>,
+        target: Option<i32>,
     ) -> PyResult<PySynFact> {
         let left = self.checked_fact(left)?;
         let right = self.checked_fact(right)?;
@@ -747,7 +1052,7 @@ impl PyKernel {
     }
 
     #[pyo3(signature = (var, val, target=None))]
-    fn syn_sub_var(&mut self, var: u64, val: u64, target: Option<u64>) -> PyResult<PySynFact> {
+    fn syn_sub_var(&mut self, var: i32, val: i32, target: Option<i32>) -> PyResult<PySynFact> {
         let id = self
             .kernel
             .syn_sub_var(fact_target(target)?, reference(var)?, reference(val)?)
@@ -758,10 +1063,10 @@ impl PyKernel {
     #[pyo3(signature = (var, val, input, target=None))]
     fn syn_sub_leaf(
         &mut self,
-        var: u64,
-        val: u64,
-        input: u64,
-        target: Option<u64>,
+        var: i32,
+        val: i32,
+        input: i32,
+        target: Option<i32>,
     ) -> PyResult<PySynFact> {
         let id = self
             .kernel
@@ -779,13 +1084,13 @@ impl PyKernel {
     #[allow(clippy::too_many_arguments)]
     fn syn_sub_identity(
         &mut self,
-        var: u64,
-        val: u64,
-        input: u64,
-        output: u64,
+        var: i32,
+        val: i32,
+        input: i32,
+        output: i32,
         variable_equality: &PySynFact,
         body_equality: &PySynFact,
-        target: Option<u64>,
+        target: Option<i32>,
     ) -> PyResult<PySynFact> {
         let variable_equality = self.checked_fact(variable_equality)?;
         let body_equality = self.checked_fact(body_equality)?;
@@ -809,12 +1114,12 @@ impl PyKernel {
     fn syn_congr(
         &mut self,
         relation: &str,
-        input: u64,
-        output: u64,
+        input: i32,
+        output: i32,
         children: Vec<PyRef<'_, PySynFact>>,
-        var: Option<u64>,
-        val: Option<u64>,
-        target: Option<u64>,
+        var: Option<i32>,
+        val: Option<i32>,
+        target: Option<i32>,
     ) -> PyResult<PySynFact> {
         let evidence = children
             .iter()
@@ -840,13 +1145,13 @@ impl PyKernel {
     fn syn_binder_congr(
         &mut self,
         relation: &str,
-        input: u64,
-        output: u64,
+        input: i32,
+        output: i32,
         binder: &PySynFact,
         body: &PySynFact,
-        var: Option<u64>,
-        val: Option<u64>,
-        target: Option<u64>,
+        var: Option<i32>,
+        val: Option<i32>,
+        target: Option<i32>,
     ) -> PyResult<PySynFact> {
         let binder = self.checked_fact(binder)?;
         let body = self.checked_fact(body)?;
@@ -871,13 +1176,13 @@ impl PyKernel {
     fn syn_implicit_binder_congr(
         &mut self,
         relation: &str,
-        input: u64,
-        output: u64,
-        binder: u64,
+        input: i32,
+        output: i32,
+        binder: i32,
         body: &PySynFact,
-        var: Option<u64>,
-        val: Option<u64>,
-        target: Option<u64>,
+        var: Option<i32>,
+        val: Option<i32>,
+        target: Option<i32>,
     ) -> PyResult<PySynFact> {
         let body = self.checked_fact(body)?;
         let id = self
@@ -899,11 +1204,11 @@ impl PyKernel {
     #[pyo3(signature = (input, output, binder_classifier, body_substitution, target=None))]
     fn syn_alpha_binder(
         &mut self,
-        input: u64,
-        output: u64,
+        input: i32,
+        output: i32,
         binder_classifier: &PySynFact,
         body_substitution: &PySynFact,
-        target: Option<u64>,
+        target: Option<i32>,
     ) -> PyResult<PySynFact> {
         let binder_classifier = self.checked_fact(binder_classifier)?;
         let body_substitution = self.checked_fact(body_substitution)?;
@@ -924,12 +1229,12 @@ impl PyKernel {
     #[allow(clippy::too_many_arguments)]
     fn syn_alpha_implicit_binder(
         &mut self,
-        input: u64,
-        output: u64,
-        input_binder: u64,
-        output_binder: u64,
+        input: i32,
+        output: i32,
+        input_binder: i32,
+        output_binder: i32,
         body_substitution: &PySynFact,
-        target: Option<u64>,
+        target: Option<i32>,
     ) -> PyResult<PySynFact> {
         let body_substitution = self.checked_fact(body_substitution)?;
         let id = self
@@ -949,9 +1254,9 @@ impl PyKernel {
     #[pyo3(signature = (source, substitution, target=None))]
     fn tm_beta(
         &mut self,
-        source: u64,
+        source: i32,
         substitution: &PySynFact,
-        target: Option<u64>,
+        target: Option<i32>,
     ) -> PyResult<PySynFact> {
         let substitution = self.checked_fact(substitution)?;
         let id = self
@@ -964,9 +1269,9 @@ impl PyKernel {
     #[pyo3(signature = (source, substitution, target=None))]
     fn ty_beta(
         &mut self,
-        source: u64,
+        source: i32,
         substitution: &PySynFact,
-        target: Option<u64>,
+        target: Option<i32>,
     ) -> PyResult<PySynFact> {
         let substitution = self.checked_fact(substitution)?;
         let id = self
@@ -977,7 +1282,7 @@ impl PyKernel {
     }
 
     #[pyo3(signature = (source, target=None))]
-    fn tm_eta(&mut self, source: u64, target: Option<u64>) -> PyResult<PySynFact> {
+    fn tm_eta(&mut self, source: i32, target: Option<i32>) -> PyResult<PySynFact> {
         let id = self
             .kernel
             .tm_eta_fact(fact_target(target)?, reference(source)?)
@@ -1035,7 +1340,7 @@ impl PyArena {
         PyO256::wrap(python, self.arena.addr())
     }
 
-    fn definition(&self, reference_value: u64) -> PyResult<Option<PyDefinition>> {
+    fn definition(&self, reference_value: i32) -> PyResult<Option<PyDefinition>> {
         if reference_value == 0 {
             return Err(PyValueError::new_err("references are one-based"));
         }
@@ -1049,7 +1354,7 @@ impl PyArena {
     fn definitions(&self) -> PyResult<Vec<PyDefinition>> {
         (1..=self.arena.len())
             .map(|position| {
-                let value = u64::try_from(position).map_err(value_error)?;
+                let value = i32::try_from(position).map_err(value_error)?;
                 self.definition_at(reference(value)?)
                     .ok_or_else(|| PyValueError::new_err("arena definition is missing"))
             })
@@ -1081,7 +1386,7 @@ impl PyArena {
     }
 
     #[getter]
-    fn context(&self) -> Vec<u64> {
+    fn context(&self) -> Vec<i32> {
         self.arena.context().map(Ref::get).collect()
     }
 
@@ -1105,11 +1410,11 @@ impl PyArena {
             .collect()
     }
 
-    fn add_null_import(&mut self) -> PyResult<u64> {
+    fn add_null_import(&mut self) -> PyResult<i32> {
         imported(self.arena.push_import(Import::Null))
     }
 
-    fn add_literal_import(&mut self, arena: &Self) -> PyResult<u64> {
+    fn add_literal_import(&mut self, arena: &Self) -> PyResult<i32> {
         ensure_literal_import_can_be_wrapped(&arena.arena)?;
         imported(
             self.arena
@@ -1117,7 +1422,7 @@ impl PyArena {
         )
     }
 
-    fn add_link_import(&mut self, link: &PyLink) -> PyResult<u64> {
+    fn add_link_import(&mut self, link: &PyLink) -> PyResult<i32> {
         imported(self.arena.push_import(Import::Link(link.0)))
     }
 
@@ -1125,26 +1430,26 @@ impl PyArena {
         self.arena.insert_axiom(name);
     }
 
-    fn add_context(&mut self, reference_value: u64) -> PyResult<()> {
+    fn add_context(&mut self, reference_value: i32) -> PyResult<()> {
         self.arena.insert_context(reference(reference_value)?);
         Ok(())
     }
 
-    fn assume_valid(&mut self, source_value: u64) -> PyResult<()> {
+    fn assume_valid(&mut self, source_value: i32) -> PyResult<()> {
         self.arena.push_assumption(Meta::Valid {
             src: source(source_value)?,
         });
         Ok(())
     }
 
-    fn assert_valid(&mut self, source_value: u64) -> PyResult<()> {
+    fn assert_valid(&mut self, source_value: i32) -> PyResult<()> {
         self.arena.push_assertion(Meta::Valid {
             src: source(source_value)?,
         });
         Ok(())
     }
 
-    fn assume_wf(&mut self, source_value: u64, ix: u64, sort: u64) -> PyResult<()> {
+    fn assume_wf(&mut self, source_value: i32, ix: i32, sort: i32) -> PyResult<()> {
         self.arena.push_assumption(Meta::Wf {
             src: source(source_value)?,
             ix: reference(ix)?,
@@ -1153,7 +1458,7 @@ impl PyArena {
         Ok(())
     }
 
-    fn assert_wf(&mut self, source_value: u64, ix: u64, sort: u64) -> PyResult<()> {
+    fn assert_wf(&mut self, source_value: i32, ix: i32, sort: i32) -> PyResult<()> {
         self.arena.push_assertion(Meta::Wf {
             src: source(source_value)?,
             ix: reference(ix)?,
@@ -1162,99 +1467,99 @@ impl PyArena {
         Ok(())
     }
 
-    fn kind_star(&mut self) -> PyResult<u64> {
+    fn kind_star(&mut self) -> PyResult<i32> {
         allocated(self.arena.push_kind_star())
     }
 
-    fn kind_arr(&mut self, domain: u64, codomain: u64) -> PyResult<u64> {
+    fn kind_arr(&mut self, domain: i32, codomain: i32) -> PyResult<i32> {
         let domain = reference(domain)?;
         let codomain = reference(codomain)?;
         allocated(self.arena.push_kind_arr(domain, codomain))
     }
 
-    fn bool_ty(&mut self) -> PyResult<u64> {
+    fn bool_ty(&mut self) -> PyResult<i32> {
         allocated(self.arena.push_bool_ty())
     }
 
-    fn ty_arr(&mut self, domain: u64, codomain: u64) -> PyResult<u64> {
+    fn ty_arr(&mut self, domain: i32, codomain: i32) -> PyResult<i32> {
         let domain = reference(domain)?;
         let codomain = reference(codomain)?;
         allocated(self.arena.push_ty_arr(domain, codomain))
     }
 
-    fn ty_app(&mut self, function: u64, argument: u64) -> PyResult<u64> {
+    fn ty_app(&mut self, function: i32, argument: i32) -> PyResult<i32> {
         let function = reference(function)?;
         let argument = reference(argument)?;
         allocated(self.arena.push_ty_app(function, argument))
     }
 
-    fn ty_lam(&mut self, binder: u64, body: u64) -> PyResult<u64> {
+    fn ty_lam(&mut self, binder: i32, body: i32) -> PyResult<i32> {
         let binder = reference(binder)?;
         let body = reference(body)?;
         allocated(self.arena.push_ty_lam(binder, body))
     }
 
-    fn ty_fv(&mut self, name: u64, kind: u64) -> PyResult<u64> {
+    fn ty_fv(&mut self, name: u64, kind: i32) -> PyResult<i32> {
         let kind = reference(kind)?;
         allocated(self.arena.push_ty_fv(name, kind))
     }
 
-    fn ty_exists(&mut self, name: u64, predicate: u64) -> PyResult<u64> {
+    fn ty_exists(&mut self, name: u64, predicate: i32) -> PyResult<i32> {
         let predicate = reference(predicate)?;
         allocated(self.arena.push_ty_exists(name, predicate))
     }
 
-    fn model(&mut self, name: u64, predicate: u64) -> PyResult<u64> {
+    fn model(&mut self, name: u64, predicate: i32) -> PyResult<i32> {
         let predicate = reference(predicate)?;
         allocated(self.arena.push_model(name, predicate))
     }
 
-    fn tm_fv(&mut self, name: u64, ty: u64) -> PyResult<u64> {
+    fn tm_fv(&mut self, name: u64, ty: i32) -> PyResult<i32> {
         let ty = reference(ty)?;
         allocated(self.arena.push_tm_fv(name, ty))
     }
 
-    fn app(&mut self, function: u64, argument: u64) -> PyResult<u64> {
+    fn app(&mut self, function: i32, argument: i32) -> PyResult<i32> {
         let function = reference(function)?;
         let argument = reference(argument)?;
         allocated(self.arena.push_app(function, argument))
     }
 
-    fn lam(&mut self, binder: u64, body: u64) -> PyResult<u64> {
+    fn lam(&mut self, binder: i32, body: i32) -> PyResult<i32> {
         let binder = reference(binder)?;
         let body = reference(body)?;
         allocated(self.arena.push_lam(binder, body))
     }
 
-    fn bool(&mut self, value: bool) -> PyResult<u64> {
+    fn bool(&mut self, value: bool) -> PyResult<i32> {
         allocated(self.arena.push_bool(value))
     }
 
-    fn tm_eq(&mut self, left: u64, right: u64) -> PyResult<u64> {
+    fn tm_eq(&mut self, left: i32, right: i32) -> PyResult<i32> {
         let left = reference(left)?;
         let right = reference(right)?;
         allocated(self.arena.push_tm_eq(left, right))
     }
 
-    fn eps(&mut self, ty: u64, predicate: u64) -> PyResult<u64> {
+    fn eps(&mut self, ty: i32, predicate: i32) -> PyResult<i32> {
         let ty = reference(ty)?;
         let predicate = reference(predicate)?;
         allocated(self.arena.push_eps(ty, predicate))
     }
 
-    fn tm_ref(&mut self, source_value: u64, foreign: u64) -> PyResult<u64> {
+    fn tm_ref(&mut self, source_value: i32, foreign: i32) -> PyResult<i32> {
         let source = source(source_value)?;
         let foreign = reference(foreign)?;
         allocated(self.arena.push_tm_ref(source, foreign))
     }
 
-    fn ty_ref(&mut self, source_value: u64, foreign: u64) -> PyResult<u64> {
+    fn ty_ref(&mut self, source_value: i32, foreign: i32) -> PyResult<i32> {
         let source = source(source_value)?;
         let foreign = reference(foreign)?;
         allocated(self.arena.push_ty_ref(source, foreign))
     }
 
-    fn kind_ref(&mut self, source_value: u64, foreign: u64) -> PyResult<u64> {
+    fn kind_ref(&mut self, source_value: i32, foreign: i32) -> PyResult<i32> {
         let source = source(source_value)?;
         let foreign = reference(foreign)?;
         allocated(self.arena.push_kind_ref(source, foreign))

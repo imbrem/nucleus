@@ -1338,7 +1338,7 @@ def remove (state : SynArena) (id : SynFactId) : Option SynArena := do
 /-- Turn a zero-based position into the corresponding one-based wire ID.
 The `none` branch is the mathematical analogue of Rust's checked overflow. -/
 def idAt? (position : Nat) : Option SynFactId :=
-  if position + 1 < 2 ^ 64 then
+  if position + 1 ≤ SynFactId.maxInclusive then
     SynFactId.ofUInt64? (UInt64.ofNat (position + 1))
   else none
 
@@ -1352,10 +1352,13 @@ private theorem idAt?_position {id : SynFactId}
     id.position = position := by
   unfold idAt? at found
   split at found
-  next fits =>
+  next bounded =>
+    have fits : position + 1 < 2 ^ 64 := by
+      simp only [SynFactId.maxInclusive] at bounded
+      omega
     unfold SynFactId.ofUInt64? at found
     split at found
-    next nonzero =>
+    next valid =>
       injection found with found
       subst id
       change (position + 1) % 2 ^ 64 - 1 = position

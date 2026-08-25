@@ -77,14 +77,17 @@ fn u64_from_usize(value: usize, what: &str) -> wasmtime::Result<u64> {
 }
 
 fn reference(value: u64) -> Result<Ref, String> {
+    let value = i32::try_from(value).map_err(|_| "reference exceeds i32".to_owned())?;
     Ref::new(value).ok_or_else(|| "references are one-based".to_owned())
 }
 
 fn fact_id(value: u64) -> Result<SynFactId, String> {
+    let value = i32::try_from(value).map_err(|_| "syntactic-fact slot exceeds i32".to_owned())?;
     SynFactId::new(value).ok_or_else(|| "syntactic-fact slots are one-based".to_owned())
 }
 
 fn import_id(value: u64) -> Result<covalence_logic_hol::ImportId, String> {
+    let value = i32::try_from(value).map_err(|_| "import ID exceeds i32".to_owned())?;
     covalence_logic_hol::ImportId::new(value).ok_or_else(|| "import IDs are one-based".to_owned())
 }
 
@@ -94,14 +97,26 @@ fn optional_fact_id(value: Option<u64>) -> Result<Option<SynFactId>, String> {
 
 fn pushed(value: Option<Ref>, what: &str) -> Result<u64, String> {
     value
-        .map(Ref::get)
+        .map(ref_index)
         .ok_or_else(|| format!("{what} exceeds the arena's index space"))
 }
 
 fn pushed_import(value: Option<covalence_logic_hol::ImportId>) -> Result<u64, String> {
     value
-        .map(covalence_logic_hol::ImportId::get)
+        .map(import_index)
         .ok_or_else(|| "import exceeds the arena's index space".to_owned())
+}
+
+fn ref_index(value: Ref) -> u64 {
+    u64::try_from(value.get()).expect("resident references are positive")
+}
+
+fn import_index(value: covalence_logic_hol::ImportId) -> u64 {
+    u64::try_from(value.get()).expect("resident import IDs are positive")
+}
+
+fn fact_index(value: SynFactId) -> u64 {
+    u64::try_from(value.get()).expect("resident syntactic-fact IDs are positive")
 }
 
 fn link(value: Vec<u8>) -> Result<Link, String> {
@@ -719,11 +734,11 @@ fn wit_sort(value: HolSort) -> nucleus::proof::host::Sort {
 }
 
 fn checked_ref(value: Result<Ref, covalence_logic_hol::KernelError>) -> Result<u64, String> {
-    value.map(Ref::get).map_err(|error| error.to_string())
+    value.map(ref_index).map_err(|error| error.to_string())
 }
 
 fn checked_fact(value: Result<SynFactId, covalence_logic_hol::KernelError>) -> Result<u64, String> {
-    value.map(SynFactId::get).map_err(|error| error.to_string())
+    value.map(fact_index).map_err(|error| error.to_string())
 }
 
 impl nucleus::proof::host::HostKernel for ProofState {
@@ -1055,7 +1070,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
             .get_mut(&kernel)?
             .0
             .import_literal(arena)
-            .map(covalence_logic_hol::ImportId::get)
+            .map(import_index)
             .map_err(|error| error.to_string()))
     }
 
@@ -1070,7 +1085,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
             .get_mut(&kernel)?
             .0
             .import_literal(arena)
-            .map(covalence_logic_hol::ImportId::get)
+            .map(import_index)
             .map_err(|error| error.to_string()))
     }
 
@@ -1085,7 +1100,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
                 .map_err(|error| error.to_string())?
                 .0
                 .import_link(value)
-                .map(covalence_logic_hol::ImportId::get)
+                .map(import_index)
                 .map_err(|error| error.to_string())
         }))
     }
@@ -1105,7 +1120,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
                     .get_mut(&kernel)?
                     .0
                     .kind_ref(&mut resolver, source, foreign)
-                    .map(Ref::get)
+                    .map(ref_index)
                     .map_err(|error| error.to_string())
             }
             Err(error) => Err(error),
@@ -1128,7 +1143,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
                     .get_mut(&kernel)?
                     .0
                     .ty_ref(&mut resolver, source, foreign, kind)
-                    .map(Ref::get)
+                    .map(ref_index)
                     .map_err(|error| error.to_string())
             }
             Err(error) => Err(error),
@@ -1151,7 +1166,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
                     .get_mut(&kernel)?
                     .0
                     .tm_ref(&mut resolver, source, foreign, ty)
-                    .map(Ref::get)
+                    .map(ref_index)
                     .map_err(|error| error.to_string())
             }
             Err(error) => Err(error),

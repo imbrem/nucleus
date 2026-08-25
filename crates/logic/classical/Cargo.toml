@@ -1,0 +1,19 @@
+[package]
+name = "covalence-logic-classical"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Polarity-aware classical matrix storage and inference rules"
+publish = false
+
+[dependencies]
+covalence-lib-error = { path = "../../lib/error" }
+serde = { version = "1", features = ["derive"] }
+smallvec = { version = "1", features = ["serde"] }
+
+[dev-dependencies]
+covalence-lib-cbor = { path = "../../lib/cbor" }
+
+[lints]
+workspace = true

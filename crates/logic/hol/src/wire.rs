@@ -77,11 +77,11 @@ mod tests {
     use covalence_lib_cbor::{Value, from_reader, into_writer};
     use covalence_lib_hash::O256;
 
-    const fn reference(value: u64) -> Ref {
+    const fn reference(value: i32) -> Ref {
         Ref::new(value).unwrap()
     }
 
-    const fn import(value: u64) -> ImportId {
+    const fn import(value: i32) -> ImportId {
         ImportId::new(value).unwrap()
     }
 

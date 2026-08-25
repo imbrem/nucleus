@@ -497,6 +497,7 @@ version = "0.0.0"
 dependencies = [
  "covalence-data-cas",
  "covalence-lib-hash",
+ "covalence-lib-json",
  "covalence-lib-sqlite",
  "covalence-logic-hol",
  "covalence-neutron",
@@ -698,6 +699,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-logic-classical"
+version = "0.0.0"
+dependencies = [
+ "covalence-lib-cbor",
+ "covalence-lib-error",
+ "serde",
+ "smallvec",
+]
+
+[[package]]
 name = "covalence-logic-hol"
 version = "0.0.0"
 dependencies = [
@@ -706,6 +717,7 @@ dependencies = [
  "covalence-lib-hash",
  "covalence-lib-json",
  "covalence-logic-cas",
+ "covalence-logic-classical",
  "serde",
  "smallvec",
 ]
@@ -715,6 +727,7 @@ name = "covalence-logic-lrat"
 version = "0.0.0"
 dependencies = [
  "covalence-lib-error",
+ "covalence-logic-classical",
  "covalence-logic-hol",
  "covalence-logic-sat",
 ]

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import init, { Repl } from "../generated/nucleus.js";
+import init, { HolProver, Repl } from "../generated/nucleus.js";
 
 async function load() {
   await init({
@@ -12,6 +12,45 @@ async function load() {
 }
 
 const fixture = () => readFile(new URL("./fixture.sqlite", import.meta.url));
+
+test("classical HOL uses native i32 JavaScript values", async () => {
+  await load();
+  const prover = new HolProver();
+  const p = prover.proposition("1");
+  const q = prover.proposition("2");
+  const theorem = prover.identity(p);
+
+  assert.equal(typeof p, "number");
+  assert.equal(typeof theorem, "number");
+  assert.equal(HolProver.complement(HolProver.complement(p)), p);
+  prover.weaken(theorem, Int32Array.of(q), Int32Array.of(-q));
+  const view = JSON.parse(prover.theoremJson(theorem));
+  assert.ok(view.premises.flat().every(Number.isSafeInteger));
+  assert.ok(view.conclusions.flat().every(Number.isSafeInteger));
+  assert.throws(() => HolProver.complement(0));
+  assert.throws(() => prover.identity(0));
+});
+
+test("generated HOL declarations contain no string or BigInt IDs", async () => {
+  const declarations = await readFile(
+    new URL("../generated/nucleus.d.ts", import.meta.url),
+    "utf8",
+  );
+  const hol = declarations.match(
+    /export class HolProver \{(?<body>[\s\S]*?)\n\}/,
+  )?.groups?.body;
+  assert.ok(hol, "HolProver declaration is generated");
+  assert.doesNotMatch(hol, /\b(?:bigint|BigInt64Array)\b/);
+  assert.doesNotMatch(
+    hol,
+    /(?:identity|cut|resolve|copyTheorem)\([^\n]*: string/,
+  );
+  assert.match(hol, /identity\(proposition: number\): number/);
+  assert.match(
+    hol,
+    /weaken\(theorem: number, premises: Int32Array, conclusions: Int32Array\): void/,
+  );
+});
 
 /** Evaluates a form and returns its printed value, asserting it was one. */
 function value(repl, text) {

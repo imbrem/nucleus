@@ -19,6 +19,7 @@ covalence-lib-cbor = { path = "../../lib/cbor" }
 covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["serde"] }
 covalence-logic-cas = { path = "../cas" }
+covalence-logic-classical = { path = "../classical" }
 serde = { version = "1", features = ["derive"] }
 smallvec = { version = "1", features = ["serde"] }
 

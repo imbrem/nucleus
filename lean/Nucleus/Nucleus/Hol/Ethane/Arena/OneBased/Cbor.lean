@@ -115,6 +115,20 @@ private def decodeSynFactId? (value : Nucleus.Cbor) : Option SynFactId := do
     decodeSynFactId? (encodeSynFactId id) = some id := by
   simp [decodeSynFactId?, encodeSynFactId, unsigned, asUnsigned?]
 
+@[simp] private theorem decodeRef?_maxExclusive :
+    decodeRef? (unsigned (UInt64.ofNat Ref.maxExclusive)) = none := by
+  simp [decodeRef?, unsigned, asUnsigned?]
+
+@[simp] private theorem decodeImportId?_aboveMax :
+    decodeImportId? (unsigned (UInt64.ofNat (ImportId.maxInclusive + 1))) = none := by
+  change ImportId.ofUInt64? (UInt64.ofNat (ImportId.maxInclusive + 1)) = none
+  exact ImportId.ofUInt64?_aboveMax
+
+@[simp] private theorem decodeSynFactId?_aboveMax :
+    decodeSynFactId? (unsigned (UInt64.ofNat (SynFactId.maxInclusive + 1))) = none := by
+  change SynFactId.ofUInt64? (UInt64.ofNat (SynFactId.maxInclusive + 1)) = none
+  exact SynFactId.ofUInt64?_aboveMax
+
 private def optional (name : String) : Option Nucleus.Cbor → List (String × Nucleus.Cbor)
   | none => []
   | some value => [(name, value)]

@@ -21,8 +21,10 @@ use crate::{
 mod classical;
 mod syn_facts;
 
-use classical::ClassicalState;
-pub use classical::{PropId, PropIdError, PropVec, Thm, ThmId};
+pub use covalence_logic_classical::{
+    CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, Dnf, DnfId, Lit,
+    LitError, LitVec, Refutation, ThmId, ThmRef,
+};
 
 /// A recoverable failure at the checked kernel boundary.
 #[derive(Debug, Snafu)]
@@ -189,7 +191,8 @@ impl CopyMap {
 pub struct Kernel {
     arena: Arena,
     init_prefix: Option<(crate::O256, usize)>,
-    classical: ClassicalState,
+    syl: ClassicalArena,
+    thm: ClassicalArena,
 }
 
 impl Deref for Kernel {
@@ -207,7 +210,8 @@ impl Kernel {
         Self {
             arena: Arena::empty(),
             init_prefix: None,
-            classical: ClassicalState::new(),
+            syl: ClassicalArena::new(),
+            thm: ClassicalArena::new(),
         }
     }
 
@@ -217,7 +221,8 @@ impl Kernel {
         Self {
             arena: init.arena().clone(),
             init_prefix: Some((init.arena().addr(), init.arena().len())),
-            classical: ClassicalState::new(),
+            syl: ClassicalArena::new(),
+            thm: ClassicalArena::new(),
         }
     }
 
@@ -227,7 +232,8 @@ impl Kernel {
         Self {
             arena,
             init_prefix,
-            classical: ClassicalState::new(),
+            syl: ClassicalArena::new(),
+            thm: ClassicalArena::new(),
         }
     }
 
@@ -338,19 +344,20 @@ impl Kernel {
             .len()
             .checked_add(order.len())
             .ok_or(KernelError::TooManyDefinitions)?;
-        u64::try_from(final_len).map_err(|_| KernelError::TooManyDefinitions)?;
+        i32::try_from(final_len).map_err(|_| KernelError::TooManyDefinitions)?;
 
         for (offset, &source_ref) in order.iter().enumerate() {
             let value = self.arena.len() + offset + 1;
             let destination =
-                Ref::new(u64::try_from(value).map_err(|_| KernelError::TooManyDefinitions)?)
+                Ref::new(i32::try_from(value).map_err(|_| KernelError::TooManyDefinitions)?)
                     .ok_or(KernelError::TooManyDefinitions)?;
             nodes.insert(source_ref, destination);
         }
         let mut staged = Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
-            classical: ClassicalState::new(),
+            syl: ClassicalArena::new(),
+            thm: ClassicalArena::new(),
         };
         for &source_ref in &order {
             let row = source.row::<Infallible>(source_ref)?;
@@ -1371,7 +1378,7 @@ impl Kernel {
     {
         (1..=self.arena.len())
             .map(|position| {
-                u64::try_from(position)
+                i32::try_from(position)
                     .ok()
                     .and_then(Ref::new)
                     .ok_or(KernelError::TooManyDefinitions)

@@ -103,14 +103,12 @@ def test_lookup_is_one_based_and_bounded() -> None:
     assert arena.definition(1).reference == 1
     assert arena.definition(len(arena)).reference == len(arena)
     assert arena.definition(len(arena) + 1) is None
-    assert arena.definition(2**63 - 1) is None
-    assert arena.definition(2**63) is None
+    for outside_i32 in (2**31, 2**63, 2**64):
+        with pytest.raises(OverflowError):
+            arena.definition(outside_i32)
     with pytest.raises(ValueError, match=ONE_BASED):
         arena.definition(0)
-    with pytest.raises(OverflowError):
-        arena.definition(-1)
-    with pytest.raises(OverflowError):
-        arena.definition(2**64)
+    assert arena.definition(-1) is None
 
 
 def test_definitions_agrees_with_pointwise_lookup() -> None:

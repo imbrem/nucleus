@@ -419,6 +419,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-logic-classical@0.0.0",
+      "name": "covalence-logic-classical",
+      "version": "0.0.0",
+      "path": "crates/logic/classical",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_logic_classical",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-logic-hol@0.0.0",
       "name": "covalence-logic-hol",
       "version": "0.0.0",
@@ -757,6 +772,13 @@
     },
     {
       "source": "workspace#covalence-browser@0.0.0",
+      "target": "workspace#covalence-lib-json@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-browser@0.0.0",
       "target": "workspace#covalence-lib-sqlite@0.0.0",
       "kinds": [
         "normal"
@@ -966,6 +988,20 @@
       ]
     },
     {
+      "source": "workspace#covalence-logic-classical@0.0.0",
+      "target": "workspace#covalence-lib-cbor@0.0.0",
+      "kinds": [
+        "dev"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-classical@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-logic-hol@0.0.0",
       "target": "workspace#covalence-lib-cbor@0.0.0",
       "kinds": [
@@ -1001,8 +1037,22 @@
       ]
     },
     {
+      "source": "workspace#covalence-logic-hol@0.0.0",
+      "target": "workspace#covalence-logic-classical@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-logic-lrat@0.0.0",
       "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-lrat@0.0.0",
+      "target": "workspace#covalence-logic-classical@0.0.0",
       "kinds": [
         "normal"
       ]

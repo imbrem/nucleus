@@ -1,7 +1,7 @@
 //! Lossless browser boundary for the checked classical HOL kernel.
 
 use covalence_logic_hol::{
-    Kernel, PropId, Ref, ThmId,
+    CnfId, DnfId, Kernel, Lit, LitVec, Ref, ThmId,
     builtin::{Op1, Op2},
 };
 use wasm_bindgen::prelude::*;
@@ -10,8 +10,8 @@ use crate::to_js;
 
 /// A checked classical HOL prover for browser tactics.
 ///
-/// Proposition and theorem identifiers cross the `JavaScript` boundary as
-/// decimal strings, so all valid kernel identifiers remain exact.
+/// Proposition, theorem, and matrix-row identifiers cross the `JavaScript`
+/// boundary as native signed 32-bit numbers.
 #[wasm_bindgen]
 pub struct HolProver {
     kernel: Kernel,
@@ -30,35 +30,35 @@ impl HolProver {
         Self::try_new().map_err(to_js)
     }
 
-    /// Creates a Boolean free variable and returns its positive proposition ID.
+    /// Creates a Boolean free variable and returns its positive literal.
     ///
     /// # Errors
     ///
     /// Returns an error if `name` is not a decimal `u64`, or allocation fails.
     #[wasm_bindgen(js_name = proposition)]
-    pub fn proposition_js(&mut self, name: &str) -> Result<String, JsError> {
+    pub fn proposition_js(&mut self, name: &str) -> Result<i32, JsError> {
         self.proposition(name).map(format_prop).map_err(to_js)
     }
 
-    /// Creates a Boolean literal and returns its positive proposition ID.
+    /// Creates a Boolean constant and returns its positive literal.
     ///
     /// # Errors
     ///
     /// Returns an error if allocation fails.
     #[wasm_bindgen(js_name = boolean)]
-    pub fn boolean_js(&mut self, value: bool) -> Result<String, JsError> {
+    pub fn boolean_js(&mut self, value: bool) -> Result<i32, JsError> {
         self.boolean(value).map(format_prop).map_err(to_js)
     }
 
-    /// Returns the complementary signed proposition ID.
+    /// Returns the complementary signed literal.
     ///
     /// # Errors
     ///
-    /// Returns an error if `proposition` is not a valid signed decimal ID.
+    /// Returns an error if `proposition` is zero or outside the literal domain.
     #[wasm_bindgen(js_name = complement)]
-    pub fn complement_js(proposition: &str) -> Result<String, JsError> {
+    pub fn complement_js(proposition: i32) -> Result<i32, JsError> {
         parse_prop(proposition)
-            .map(PropId::negated)
+            .map(Lit::negated)
             .map(format_prop)
             .map_err(to_js)
     }
@@ -69,7 +69,7 @@ impl HolProver {
     ///
     /// Returns an error for invalid IDs or failed checked construction.
     #[wasm_bindgen(js_name = and)]
-    pub fn and_js(&mut self, left: &str, right: &str) -> Result<String, JsError> {
+    pub fn and_js(&mut self, left: i32, right: i32) -> Result<i32, JsError> {
         self.binary(Op2::And, left, right)
             .map(format_prop)
             .map_err(to_js)
@@ -81,7 +81,7 @@ impl HolProver {
     ///
     /// Returns an error for invalid IDs or failed checked construction.
     #[wasm_bindgen(js_name = or)]
-    pub fn or_js(&mut self, left: &str, right: &str) -> Result<String, JsError> {
+    pub fn or_js(&mut self, left: i32, right: i32) -> Result<i32, JsError> {
         self.binary(Op2::Or, left, right)
             .map(format_prop)
             .map_err(to_js)
@@ -93,7 +93,7 @@ impl HolProver {
     ///
     /// Returns an error for invalid IDs or failed checked construction.
     #[wasm_bindgen(js_name = implies)]
-    pub fn implies_js(&mut self, left: &str, right: &str) -> Result<String, JsError> {
+    pub fn implies_js(&mut self, left: i32, right: i32) -> Result<i32, JsError> {
         self.binary(Op2::Imp, left, right)
             .map(format_prop)
             .map_err(to_js)
@@ -104,7 +104,7 @@ impl HolProver {
     /// # Errors
     ///
     /// Returns an error for an invalid proposition or failed kernel rule.
-    pub fn identity(&mut self, proposition: &str) -> Result<String, JsError> {
+    pub fn identity(&mut self, proposition: i32) -> Result<i32, JsError> {
         let proposition = parse_prop(proposition).map_err(to_js)?;
         self.kernel
             .identity(proposition)
@@ -112,16 +112,16 @@ impl HolProver {
             .map_err(to_js)
     }
 
-    /// Weakens a theorem with whitespace-separated signed proposition IDs.
+    /// Weakens a theorem with native signed 32-bit literal arrays.
     ///
     /// # Errors
     ///
     /// Returns an error for malformed contexts, a missing theorem, or a failed rule.
     pub fn weaken(
         &mut self,
-        theorem: &str,
-        premises: &str,
-        conclusions: &str,
+        theorem: i32,
+        premises: &[i32],
+        conclusions: &[i32],
     ) -> Result<(), JsError> {
         let theorem = parse_thm(theorem).map_err(to_js)?;
         let premises = parse_context(premises).map_err(to_js)?;
@@ -136,7 +136,7 @@ impl HolProver {
     /// # Errors
     ///
     /// Returns an error for invalid IDs, missing theorems, or mismatched evidence.
-    pub fn cut(&mut self, left: &str, right: &str, proposition: &str) -> Result<String, JsError> {
+    pub fn cut(&mut self, left: i32, right: i32, proposition: i32) -> Result<i32, JsError> {
         self.rule2_prop(left, right, proposition, Kernel::cut)
     }
 
@@ -146,7 +146,7 @@ impl HolProver {
     ///
     /// Returns an error unless the ID names signed false.
     #[wasm_bindgen(js_name = falseLeft)]
-    pub fn false_left(&mut self, proposition: &str) -> Result<String, JsError> {
+    pub fn false_left(&mut self, proposition: i32) -> Result<i32, JsError> {
         self.rule0_prop(proposition, Kernel::false_left)
     }
 
@@ -156,7 +156,7 @@ impl HolProver {
     ///
     /// Returns an error unless the ID names signed true.
     #[wasm_bindgen(js_name = trueRight)]
-    pub fn true_right(&mut self, proposition: &str) -> Result<String, JsError> {
+    pub fn true_right(&mut self, proposition: i32) -> Result<i32, JsError> {
         self.rule0_prop(proposition, Kernel::true_right)
     }
 
@@ -166,7 +166,7 @@ impl HolProver {
     ///
     /// Returns an error for invalid IDs or mismatched evidence.
     #[wasm_bindgen(js_name = notLeft)]
-    pub fn not_left(&mut self, theorem: &str, proposition: &str) -> Result<(), JsError> {
+    pub fn not_left(&mut self, theorem: i32, proposition: i32) -> Result<(), JsError> {
         let theorem = parse_thm(theorem).map_err(to_js)?;
         let proposition = parse_prop(proposition).map_err(to_js)?;
         self.kernel.not_left(theorem, proposition).map_err(to_js)
@@ -178,7 +178,7 @@ impl HolProver {
     ///
     /// Returns an error for invalid IDs or mismatched evidence.
     #[wasm_bindgen(js_name = notRight)]
-    pub fn not_right(&mut self, theorem: &str, proposition: &str) -> Result<(), JsError> {
+    pub fn not_right(&mut self, theorem: i32, proposition: i32) -> Result<(), JsError> {
         let theorem = parse_thm(theorem).map_err(to_js)?;
         let proposition = parse_prop(proposition).map_err(to_js)?;
         self.kernel.not_right(theorem, proposition).map_err(to_js)
@@ -190,7 +190,7 @@ impl HolProver {
     ///
     /// Returns an error for invalid IDs or mismatched evidence.
     #[wasm_bindgen(js_name = andLeft)]
-    pub fn and_left(&mut self, theorem: &str, proposition: &str) -> Result<String, JsError> {
+    pub fn and_left(&mut self, theorem: i32, proposition: i32) -> Result<i32, JsError> {
         self.rule1_prop(theorem, proposition, Kernel::and_left)
     }
 
@@ -200,12 +200,7 @@ impl HolProver {
     ///
     /// Returns an error for invalid IDs or mismatched evidence.
     #[wasm_bindgen(js_name = andRight)]
-    pub fn and_right(
-        &mut self,
-        left: &str,
-        right: &str,
-        proposition: &str,
-    ) -> Result<String, JsError> {
+    pub fn and_right(&mut self, left: i32, right: i32, proposition: i32) -> Result<i32, JsError> {
         self.rule2_prop(left, right, proposition, Kernel::and_right)
     }
 
@@ -215,12 +210,7 @@ impl HolProver {
     ///
     /// Returns an error for invalid IDs or mismatched evidence.
     #[wasm_bindgen(js_name = orLeft)]
-    pub fn or_left(
-        &mut self,
-        left: &str,
-        right: &str,
-        proposition: &str,
-    ) -> Result<String, JsError> {
+    pub fn or_left(&mut self, left: i32, right: i32, proposition: i32) -> Result<i32, JsError> {
         self.rule2_prop(left, right, proposition, Kernel::or_left)
     }
 
@@ -230,7 +220,7 @@ impl HolProver {
     ///
     /// Returns an error for invalid IDs or mismatched evidence.
     #[wasm_bindgen(js_name = orRight)]
-    pub fn or_right(&mut self, theorem: &str, proposition: &str) -> Result<String, JsError> {
+    pub fn or_right(&mut self, theorem: i32, proposition: i32) -> Result<i32, JsError> {
         self.rule1_prop(theorem, proposition, Kernel::or_right)
     }
 
@@ -240,12 +230,7 @@ impl HolProver {
     ///
     /// Returns an error for invalid IDs or mismatched evidence.
     #[wasm_bindgen(js_name = impLeft)]
-    pub fn imp_left(
-        &mut self,
-        left: &str,
-        right: &str,
-        proposition: &str,
-    ) -> Result<String, JsError> {
+    pub fn imp_left(&mut self, left: i32, right: i32, proposition: i32) -> Result<i32, JsError> {
         self.rule2_prop(left, right, proposition, Kernel::imp_left)
     }
 
@@ -255,7 +240,7 @@ impl HolProver {
     ///
     /// Returns an error for invalid IDs or mismatched evidence.
     #[wasm_bindgen(js_name = impRight)]
-    pub fn imp_right(&mut self, theorem: &str, proposition: &str) -> Result<String, JsError> {
+    pub fn imp_right(&mut self, theorem: i32, proposition: i32) -> Result<i32, JsError> {
         self.rule1_prop(theorem, proposition, Kernel::imp_right)
     }
 
@@ -264,12 +249,7 @@ impl HolProver {
     /// # Errors
     ///
     /// Returns an error for invalid IDs or mismatched evidence.
-    pub fn resolve(
-        &mut self,
-        left: &str,
-        right: &str,
-        proposition: &str,
-    ) -> Result<String, JsError> {
+    pub fn resolve(&mut self, left: i32, right: i32, proposition: i32) -> Result<i32, JsError> {
         self.rule2_prop(left, right, proposition, Kernel::resolve)
     }
 
@@ -285,10 +265,10 @@ impl HolProver {
     #[wasm_bindgen(js_name = expandConclusion)]
     pub fn expand_conclusion(
         &mut self,
-        theorem: &str,
-        formula: &str,
+        theorem: i32,
+        formula: i32,
         branch: Option<bool>,
-    ) -> Result<String, JsError> {
+    ) -> Result<i32, JsError> {
         let theorem = parse_thm(theorem).map_err(to_js)?;
         let formula = parse_prop(formula).map_err(to_js)?;
         self.kernel
@@ -304,7 +284,7 @@ impl HolProver {
     /// Returns an error for invalid IDs, mismatched evidence, or a
     /// conjunctive normalized node.
     #[wasm_bindgen(js_name = flattenConclusion)]
-    pub fn flatten_conclusion(&mut self, theorem: &str, formula: &str) -> Result<String, JsError> {
+    pub fn flatten_conclusion(&mut self, theorem: i32, formula: i32) -> Result<i32, JsError> {
         self.rule1_prop(theorem, formula, Kernel::flatten_conclusion)
     }
 
@@ -315,7 +295,7 @@ impl HolProver {
     /// Returns an error for invalid IDs, mismatched evidence, or a
     /// disjunctive normalized node.
     #[wasm_bindgen(js_name = flattenPremise)]
-    pub fn flatten_premise(&mut self, theorem: &str, formula: &str) -> Result<String, JsError> {
+    pub fn flatten_premise(&mut self, theorem: i32, formula: i32) -> Result<i32, JsError> {
         self.rule1_prop(theorem, formula, Kernel::flatten_premise)
     }
 
@@ -326,7 +306,7 @@ impl HolProver {
     /// Returns an error for invalid IDs, mismatched evidence, or a
     /// disjunctive normalized node.
     #[wasm_bindgen(js_name = foldPremise)]
-    pub fn fold_premise(&mut self, theorem: &str, formula: &str) -> Result<String, JsError> {
+    pub fn fold_premise(&mut self, theorem: i32, formula: i32) -> Result<i32, JsError> {
         self.rule1_prop(theorem, formula, Kernel::fold_premise)
     }
 
@@ -337,7 +317,7 @@ impl HolProver {
     /// Returns an error for invalid IDs, mismatched evidence, or a
     /// conjunctive normalized node.
     #[wasm_bindgen(js_name = foldConclusion)]
-    pub fn fold_conclusion(&mut self, theorem: &str, formula: &str) -> Result<String, JsError> {
+    pub fn fold_conclusion(&mut self, theorem: i32, formula: i32) -> Result<i32, JsError> {
         self.rule1_prop(theorem, formula, Kernel::fold_conclusion)
     }
 
@@ -347,7 +327,7 @@ impl HolProver {
     ///
     /// Returns an error if the source ID is malformed or absent.
     #[wasm_bindgen(js_name = copyTheorem)]
-    pub fn copy_theorem(&mut self, source: &str) -> Result<String, JsError> {
+    pub fn copy_theorem(&mut self, source: i32) -> Result<i32, JsError> {
         let source = parse_thm(source).map_err(to_js)?;
         self.kernel
             .copy_theorem(source)
@@ -361,19 +341,102 @@ impl HolProver {
     ///
     /// Returns an error if `theorem` is not a valid theorem ID.
     #[wasm_bindgen(js_name = removeTheorem)]
-    pub fn remove_theorem(&mut self, theorem: &str) -> Result<bool, JsError> {
+    pub fn remove_theorem(&mut self, theorem: i32) -> Result<bool, JsError> {
         let theorem = parse_thm(theorem).map_err(to_js)?;
         Ok(self.kernel.remove_theorem(theorem))
     }
 
-    /// Returns a theorem as JSON containing string-valued proposition arrays.
+    /// Returns a theorem as JSON containing numeric proposition arrays.
     ///
     /// # Errors
     ///
     /// Returns an error if the theorem ID is malformed, absent, or deleted.
     #[wasm_bindgen(js_name = theoremJson)]
-    pub fn theorem_json(&self, theorem: &str) -> Result<String, JsError> {
+    pub fn theorem_json(&self, theorem: i32) -> Result<String, JsError> {
         self.snapshot(theorem).map_err(to_js)
+    }
+
+    /// Weakens a theorem with complete CNF clauses and DNF cubes.
+    ///
+    /// Both matrix arguments are JSON arrays of rows containing signed
+    /// literals as JSON numbers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed JSON, invalid IDs, a missing theorem,
+    /// or a row containing a non-Boolean proposition.
+    #[wasm_bindgen(js_name = weakenMatrix)]
+    pub fn weaken_matrix(
+        &mut self,
+        theorem: i32,
+        premises_json: &str,
+        conclusions_json: &str,
+    ) -> Result<(), JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        let premises = parse_matrix(premises_json).map_err(to_js)?;
+        let conclusions = parse_matrix(conclusions_json).map_err(to_js)?;
+        self.kernel
+            .weaken_matrix(theorem, &premises, &conclusions)
+            .map_err(to_js)
+    }
+
+    /// Moves a one-based left clause to the right with complemented literals.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed index or absent theorem/clause.
+    #[wasm_bindgen(js_name = moveCnfRight)]
+    pub fn move_cnf_right(&mut self, theorem: i32, index: i32) -> Result<(), JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        let row = parse_cnf(index).map_err(to_js)?;
+        self.kernel.move_cnf_right(theorem, row).map_err(to_js)
+    }
+
+    /// Moves a one-based right cube to the left with complemented literals.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed index or absent theorem/cube.
+    #[wasm_bindgen(js_name = moveDnfLeft)]
+    pub fn move_dnf_left(&mut self, theorem: i32, index: i32) -> Result<(), JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        let row = parse_dnf(index).map_err(to_js)?;
+        self.kernel.move_dnf_left(theorem, row).map_err(to_js)
+    }
+
+    /// Canonicalizes every clause, cube, and matrix row of one theorem.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed or absent theorem ID.
+    #[wasm_bindgen(js_name = normalizeTheorem)]
+    pub fn normalize_theorem(&mut self, theorem: i32) -> Result<(), JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        self.kernel.normalize_theorem(theorem).map_err(to_js)
+    }
+
+    /// Sorts and deduplicates the selected one-based left clause in place.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed index or absent theorem/clause.
+    #[wasm_bindgen(js_name = normalizeCnf)]
+    pub fn normalize_cnf(&mut self, theorem: i32, index: i32) -> Result<(), JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        let row = parse_cnf(index).map_err(to_js)?;
+        self.kernel.normalize_cnf(theorem, row).map_err(to_js)
+    }
+
+    /// Sorts and deduplicates the selected one-based right cube in place.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed index or absent theorem/cube.
+    #[wasm_bindgen(js_name = normalizeDnf)]
+    pub fn normalize_dnf(&mut self, theorem: i32, index: i32) -> Result<(), JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        let row = parse_dnf(index).map_err(to_js)?;
+        self.kernel.normalize_dnf(theorem, row).map_err(to_js)
     }
 }
 
@@ -385,57 +448,68 @@ impl HolProver {
         Ok(Self { kernel, bool_ty })
     }
 
-    fn proposition(&mut self, name: &str) -> Result<PropId, String> {
+    fn proposition(&mut self, name: &str) -> Result<Lit, String> {
         let name = parse_u64(name, "proposition name")?;
         self.kernel
             .tm_fv(name, self.bool_ty)
-            .map(PropId::positive)
+            .map(|reference| Lit::positive(reference.get()))
             .map_err(|error| error.to_string())
     }
 
-    fn boolean(&mut self, value: bool) -> Result<PropId, String> {
+    fn boolean(&mut self, value: bool) -> Result<Lit, String> {
         self.kernel
             .bool(self.bool_ty, value)
-            .map(PropId::positive)
+            .map(|reference| Lit::positive(reference.get()))
             .map_err(|error| error.to_string())
     }
 
-    fn materialize(&mut self, proposition: PropId) -> Result<Ref, String> {
+    fn materialize(&mut self, proposition: Lit) -> Result<Ref, String> {
         if proposition.is_positive() {
-            Ok(proposition.reference())
+            Ok(Ref::new(
+                i32::try_from(proposition.magnitude()).expect("literal magnitude fits i32"),
+            )
+            .expect("literal magnitude is nonzero"))
         } else {
             self.kernel
-                .op1(Op1::Not, proposition.reference())
+                .op1(
+                    Op1::Not,
+                    Ref::new(
+                        i32::try_from(proposition.magnitude()).expect("literal magnitude fits i32"),
+                    )
+                    .expect("literal magnitude is nonzero"),
+                )
                 .map_err(|error| error.to_string())
         }
     }
 
-    fn binary(&mut self, op: Op2, left: &str, right: &str) -> Result<PropId, String> {
+    fn binary(&mut self, op: Op2, left: i32, right: i32) -> Result<Lit, String> {
         let left = self.materialize(parse_prop(left)?)?;
         let right = self.materialize(parse_prop(right)?)?;
         self.kernel
             .op2(op, left, right)
-            .map(PropId::positive)
+            .map(|reference| Lit::positive(reference.get()))
             .map_err(|error| error.to_string())
     }
 
-    fn snapshot(&self, theorem: &str) -> Result<String, String> {
+    fn snapshot(&self, theorem: i32) -> Result<String, String> {
+        let id = parse_thm(theorem)?;
         let theorem = self
             .kernel
-            .theorem(parse_thm(theorem)?)
-            .map_err(|error| error.to_string())?;
+            .thm()
+            .get(id)
+            .ok_or_else(|| format!("theorem {} is absent", id.get()))?;
         Ok(format!(
             "{{\"premises\":[{}],\"conclusions\":[{}]}}",
-            json_props(theorem.premises()),
-            json_props(theorem.conclusions())
+            json_rows(theorem.lhs.rows()),
+            json_rows(theorem.rhs.rows())
         ))
     }
 
     fn rule0_prop(
         &mut self,
-        proposition: &str,
-        rule: fn(&mut Kernel, PropId) -> Result<ThmId, covalence_logic_hol::KernelError>,
-    ) -> Result<String, JsError> {
+        proposition: i32,
+        rule: fn(&mut Kernel, Lit) -> Result<ThmId, covalence_logic_hol::KernelError>,
+    ) -> Result<i32, JsError> {
         let proposition = parse_prop(proposition).map_err(to_js)?;
         rule(&mut self.kernel, proposition)
             .map(format_thm)
@@ -444,10 +518,10 @@ impl HolProver {
 
     fn rule1_prop(
         &mut self,
-        theorem: &str,
-        proposition: &str,
-        rule: fn(&mut Kernel, ThmId, PropId) -> Result<ThmId, covalence_logic_hol::KernelError>,
-    ) -> Result<String, JsError> {
+        theorem: i32,
+        proposition: i32,
+        rule: fn(&mut Kernel, ThmId, Lit) -> Result<ThmId, covalence_logic_hol::KernelError>,
+    ) -> Result<i32, JsError> {
         let theorem = parse_thm(theorem).map_err(to_js)?;
         let proposition = parse_prop(proposition).map_err(to_js)?;
         rule(&mut self.kernel, theorem, proposition)
@@ -457,16 +531,11 @@ impl HolProver {
 
     fn rule2_prop(
         &mut self,
-        left: &str,
-        right: &str,
-        proposition: &str,
-        rule: fn(
-            &mut Kernel,
-            ThmId,
-            ThmId,
-            PropId,
-        ) -> Result<ThmId, covalence_logic_hol::KernelError>,
-    ) -> Result<String, JsError> {
+        left: i32,
+        right: i32,
+        proposition: i32,
+        rule: fn(&mut Kernel, ThmId, ThmId, Lit) -> Result<ThmId, covalence_logic_hol::KernelError>,
+    ) -> Result<i32, JsError> {
         let left = parse_thm(left).map_err(to_js)?;
         let right = parse_thm(right).map_err(to_js)?;
         let proposition = parse_prop(proposition).map_err(to_js)?;
@@ -481,34 +550,53 @@ fn parse_u64(text: &str, label: &str) -> Result<u64, String> {
         .map_err(|_| format!("{label} must be a decimal u64"))
 }
 
-fn parse_prop(text: &str) -> Result<PropId, String> {
-    let raw = text
-        .parse::<i64>()
-        .map_err(|_| "proposition ID must be a signed decimal i64".to_owned())?;
-    PropId::from_raw(raw).map_err(|error| error.to_string())
+fn parse_prop(value: i32) -> Result<Lit, String> {
+    Lit::try_new(value).map_err(|error| error.to_string())
 }
 
-fn parse_thm(text: &str) -> Result<ThmId, String> {
-    let raw = parse_u64(text, "theorem ID")?;
-    ThmId::new(raw).ok_or_else(|| "theorem IDs are one-based".to_owned())
+fn parse_thm(value: i32) -> Result<ThmId, String> {
+    ThmId::new(value).ok_or_else(|| "theorem IDs are one-based".to_owned())
 }
 
-fn parse_context(text: &str) -> Result<Vec<PropId>, String> {
-    text.split_whitespace().map(parse_prop).collect()
+fn parse_cnf(value: i32) -> Result<CnfId, String> {
+    CnfId::new(value).ok_or_else(|| "CNF row IDs are one-based".to_owned())
 }
 
-fn format_prop(proposition: PropId) -> String {
-    proposition.get().to_string()
+fn parse_dnf(value: i32) -> Result<DnfId, String> {
+    DnfId::new(value).ok_or_else(|| "DNF row IDs are one-based".to_owned())
 }
 
-fn format_thm(theorem: ThmId) -> String {
-    theorem.get().to_string()
+fn parse_context(values: &[i32]) -> Result<Vec<Lit>, String> {
+    values.iter().copied().map(parse_prop).collect()
 }
 
-fn json_props(propositions: &[PropId]) -> String {
+fn parse_matrix(text: &str) -> Result<Vec<LitVec>, String> {
+    let rows: Vec<Vec<i32>> = covalence_lib_json::from_str(text)
+        .map_err(|error| format!("invalid matrix JSON: {error}"))?;
+    rows.into_iter()
+        .map(|row| row.into_iter().map(parse_prop).collect())
+        .collect()
+}
+
+fn format_prop(proposition: Lit) -> i32 {
+    proposition.get()
+}
+
+fn format_thm(theorem: ThmId) -> i32 {
+    theorem.get()
+}
+
+fn json_props(propositions: &[Lit]) -> String {
     propositions
         .iter()
-        .map(|proposition| format!("\"{}\"", proposition.get()))
+        .map(|proposition| proposition.get().to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn json_rows<'a>(rows: impl IntoIterator<Item = &'a [Lit]>) -> String {
+    rows.into_iter()
+        .map(|row| format!("[{}]", json_props(row)))
         .collect::<Vec<_>>()
         .join(",")
 }
@@ -521,24 +609,32 @@ mod tests {
         HolProver::try_new().unwrap()
     }
 
+    fn unit_premises(theorem: covalence_logic_hol::ThmRef<'_>) -> Vec<Lit> {
+        theorem.lhs.rows().map(|clause| clause[0]).collect()
+    }
+
+    fn unit_conclusions(theorem: covalence_logic_hol::ThmRef<'_>) -> Vec<Lit> {
+        theorem.rhs.rows().map(|cube| cube[0]).collect()
+    }
+
     #[test]
     fn lossless_signed_ids_and_canonical_contexts() {
-        assert!(parse_prop("0").is_err());
-        assert!(parse_prop(&i64::MIN.to_string()).is_err());
-        assert!(parse_prop(&i64::MAX.to_string()).is_err());
-        assert!(parse_thm("0").is_err());
-        assert!(parse_thm("9007199254740993").is_ok());
+        assert!(parse_prop(0).is_err());
+        assert!(parse_prop(i32::MIN).is_err());
+        assert!(parse_prop(i32::MAX).is_err());
+        assert!(parse_thm(0).is_err());
+        assert_eq!(parse_thm(i32::MAX).unwrap().get(), i32::MAX);
 
         let mut prover = prover();
         let p = prover.proposition("18446744073709551615").unwrap();
         let q = prover.proposition("2").unwrap();
         let base = prover.kernel.identity(p).unwrap();
         prover.kernel.weaken(base, &[q, p, q], &[q, p]).unwrap();
-        let snapshot = prover.snapshot(&format_thm(base)).unwrap();
+        let snapshot = prover.snapshot(format_thm(base)).unwrap();
         assert_eq!(
             snapshot,
             format!(
-                "{{\"premises\":[\"{}\",\"{}\"],\"conclusions\":[\"{}\",\"{}\"]}}",
+                "{{\"premises\":[[{}],[{}]],\"conclusions\":[[{}],[{}]]}}",
                 p.get().min(q.get()),
                 p.get().max(q.get()),
                 p.get().min(q.get()),
@@ -557,11 +653,11 @@ mod tests {
 
         assert!(prover.kernel.remove_theorem(first));
         assert!(!prover.kernel.remove_theorem(first));
-        assert!(prover.kernel.theorem(first).is_err());
-        assert!(prover.kernel.theorem(second).is_ok());
+        assert!(prover.kernel.thm().get(first).is_none());
+        assert!(prover.kernel.thm().get(second).is_some());
 
         assert!(prover.kernel.remove_theorem(second));
-        assert!(prover.kernel.theorem(second).is_err());
+        assert!(prover.kernel.thm().get(second).is_none());
         let reused_second = prover.kernel.identity(p).unwrap();
         let reused_first = prover.kernel.identity(q).unwrap();
         assert_eq!(reused_second, second);
@@ -580,26 +676,174 @@ mod tests {
         assert_ne!(copied, source);
         assert_ne!(copied, freed);
         assert_eq!(
-            prover.kernel.theorem(copied).unwrap(),
-            prover.kernel.theorem(source).unwrap()
+            prover.kernel.thm().get(copied).unwrap(),
+            prover.kernel.thm().get(source).unwrap()
         );
         assert!(prover.kernel.remove_theorem(freed));
         let reused = prover.kernel.copy_theorem(source).unwrap();
         assert_eq!(reused, freed);
-        assert_eq!(prover.kernel.theorem(source).unwrap().premises(), [p]);
-        assert_eq!(prover.kernel.theorem(reused).unwrap().premises(), [p]);
+        assert_eq!(unit_premises(prover.kernel.thm().get(source).unwrap()), [p]);
+        assert_eq!(unit_premises(prover.kernel.thm().get(reused).unwrap()), [p]);
     }
 
     #[test]
-    fn theorem_lifecycle_boundary_returns_strings_and_booleans() {
+    fn theorem_lifecycle_boundary_returns_i32_ids_and_booleans() {
         let mut prover = prover();
         let p = prover.proposition("1").unwrap();
         let source = prover.kernel.identity(p).unwrap();
-        let copied = prover.copy_theorem(&format_thm(source)).unwrap();
+        let copied = prover.copy_theorem(format_thm(source)).unwrap();
 
         assert_ne!(copied, format_thm(source));
-        assert!(prover.remove_theorem(&copied).unwrap());
-        assert!(!prover.remove_theorem(&copied).unwrap());
+        assert!(prover.remove_theorem(copied).unwrap());
+        assert!(!prover.remove_theorem(copied).unwrap());
+    }
+
+    #[test]
+    fn matrix_boundary_round_trips_nested_rows_and_indexed_transfer() {
+        let mut prover = prover();
+        let p = prover.proposition("1").unwrap();
+        let q = prover.proposition("2").unwrap();
+        let theorem = prover.kernel.identity(p).unwrap();
+        let theorem_id = format_thm(theorem);
+        let clause_json = format!(r"[[{},{}]]", q.get(), p.negated().get());
+        let cube_json = format!(r"[[{},{}]]", q.negated().get(), p.get());
+        prover
+            .weaken_matrix(theorem_id, &clause_json, &cube_json)
+            .unwrap();
+        let snapshot = prover.theorem_json(theorem_id).unwrap();
+        assert!(snapshot.contains(&format!(r"[{},{}]", q.get(), p.negated().get())));
+        assert!(snapshot.contains(&format!(r"[{},{}]", p.get(), q.negated().get())));
+
+        let clause_index = prover
+            .kernel
+            .thm()
+            .get(theorem)
+            .unwrap()
+            .lhs
+            .rows()
+            .position(|clause| clause.len() == 2)
+            .unwrap();
+        prover
+            .move_cnf_right(theorem_id, i32::try_from(clause_index + 1).unwrap())
+            .unwrap();
+        assert!(
+            prover
+                .kernel
+                .thm()
+                .get(theorem)
+                .unwrap()
+                .rhs
+                .rows()
+                .any(|cube| cube.len() == 2)
+        );
+    }
+
+    #[test]
+    fn matrix_boundary_emits_exact_nested_json_and_exposes_normalization() {
+        let mut prover = prover();
+        let p = prover.proposition("1").unwrap();
+        let q = prover.proposition("2").unwrap();
+        let theorem = prover.kernel.identity(p).unwrap();
+        let theorem_id = format_thm(theorem);
+        let clauses = format!(
+            r"[[{},{},{}],[{}],[{},{},{}]]",
+            q.get(),
+            p.get(),
+            q.get(),
+            p.get(),
+            p.get(),
+            q.get(),
+            p.get()
+        );
+        let cubes = format!(
+            r"[[{},{},{}],[{}],[{},{},{}]]",
+            p.get(),
+            q.get(),
+            p.get(),
+            p.get(),
+            q.get(),
+            p.get(),
+            q.get()
+        );
+        prover.weaken_matrix(theorem_id, &clauses, &cubes).unwrap();
+
+        let expected = format!(
+            concat!(
+                "{{\"premises\":[[{},{}],[{}]],",
+                "\"conclusions\":[[{},{}],[{}]]}}"
+            ),
+            q.get(),
+            p.get(),
+            p.get(),
+            q.get(),
+            p.get(),
+            p.get()
+        );
+        assert_eq!(prover.theorem_json(theorem_id).unwrap(), expected);
+
+        prover.normalize_cnf(theorem_id, 1).unwrap();
+        prover.normalize_dnf(theorem_id, 1).unwrap();
+        prover.normalize_theorem(theorem_id).unwrap();
+        assert_eq!(prover.theorem_json(theorem_id).unwrap(), expected);
+    }
+
+    #[test]
+    fn matrix_index_failures_leave_theorem_unchanged() {
+        let mut prover = prover();
+        let p = prover.proposition("1").unwrap();
+        let q = prover.proposition("2").unwrap();
+        let theorem = prover.kernel.identity(p).unwrap();
+        let theorem_id = format_thm(theorem);
+        prover
+            .weaken_matrix(
+                theorem_id,
+                &format!(r"[[{},{},{}]]", q.get(), p.get(), q.get()),
+                &format!(r"[[{},{},{}]]", p.get(), q.get(), p.get()),
+            )
+            .unwrap();
+        let before = prover.theorem_json(theorem_id).unwrap();
+
+        assert!(parse_cnf(-1).is_err());
+        assert!(parse_cnf(0).is_err());
+        assert_eq!(prover.theorem_json(theorem_id).unwrap(), before);
+        assert!(
+            prover
+                .kernel
+                .normalize_cnf(theorem, CnfId::new(99).unwrap())
+                .is_err()
+        );
+        assert_eq!(prover.theorem_json(theorem_id).unwrap(), before);
+        assert!(parse_dnf(-1).is_err());
+        assert!(parse_dnf(0).is_err());
+        assert_eq!(prover.theorem_json(theorem_id).unwrap(), before);
+        assert!(
+            prover
+                .kernel
+                .normalize_dnf(theorem, DnfId::new(99).unwrap())
+                .is_err()
+        );
+        assert_eq!(prover.theorem_json(theorem_id).unwrap(), before);
+        assert!(
+            prover
+                .kernel
+                .move_cnf_right(theorem, CnfId::new(99).unwrap())
+                .is_err()
+        );
+        assert_eq!(prover.theorem_json(theorem_id).unwrap(), before);
+        assert!(
+            prover
+                .kernel
+                .move_dnf_left(theorem, DnfId::new(99).unwrap())
+                .is_err()
+        );
+        assert_eq!(prover.theorem_json(theorem_id).unwrap(), before);
+        assert!(
+            prover
+                .kernel
+                .normalize_theorem(ThmId::new(999).unwrap())
+                .is_err()
+        );
+        assert_eq!(prover.theorem_json(theorem_id).unwrap(), before);
     }
 
     #[test]
@@ -611,24 +855,27 @@ mod tests {
         let theorem_id = format_thm(theorem);
 
         prover
-            .weaken(&theorem_id, &format_prop(q), &format_prop(q))
+            .weaken(theorem_id, &[format_prop(q)], &[format_prop(q)])
             .unwrap();
-        let weakened = prover.snapshot(&theorem_id).unwrap();
-        assert!(weakened.contains(&format!("\"{}\"", p.get())));
-        assert!(weakened.contains(&format!("\"{}\"", q.get())));
+        let weakened = prover.snapshot(theorem_id).unwrap();
+        assert!(weakened.contains(&format!("{}", p.get())));
+        assert!(weakened.contains(&format!("{}", q.get())));
 
         assert!(prover.kernel.not_left(theorem, q.negated()).is_err());
-        assert_eq!(prover.snapshot(&theorem_id).unwrap(), weakened);
-        prover.not_left(&theorem_id, &format_prop(p)).unwrap();
-        assert_eq!(prover.kernel.theorem(theorem).unwrap().conclusions(), [q]);
-
-        prover.not_right(&theorem_id, &format_prop(q)).unwrap();
+        assert_eq!(prover.snapshot(theorem_id).unwrap(), weakened);
+        prover.not_left(theorem_id, format_prop(p)).unwrap();
         assert_eq!(
-            prover.kernel.theorem(theorem).unwrap().premises(),
+            unit_conclusions(prover.kernel.thm().get(theorem).unwrap()),
+            [q]
+        );
+
+        prover.not_right(theorem_id, format_prop(q)).unwrap();
+        assert_eq!(
+            unit_premises(prover.kernel.thm().get(theorem).unwrap()),
             [p, p.negated()]
         );
         assert_eq!(
-            prover.kernel.theorem(theorem).unwrap().conclusions(),
+            unit_conclusions(prover.kernel.thm().get(theorem).unwrap()),
             [q, q.negated()]
         );
     }
@@ -642,9 +889,9 @@ mod tests {
         let q_id = format_prop(q);
         let theorem = prover.kernel.identity(p).unwrap();
         let theorem_id = format_thm(theorem);
-        let conjunction = format_prop(prover.binary(Op2::And, &p_id, &q_id).unwrap());
-        let disjunction = format_prop(prover.binary(Op2::Or, &p_id, &q_id).unwrap());
-        let implication = format_prop(prover.binary(Op2::Imp, &p_id, &q_id).unwrap());
+        let conjunction = format_prop(prover.binary(Op2::And, p_id, q_id).unwrap());
+        let disjunction = format_prop(prover.binary(Op2::Or, p_id, q_id).unwrap());
+        let implication = format_prop(prover.binary(Op2::Imp, p_id, q_id).unwrap());
 
         assert!(prover.kernel.cut(theorem, theorem, q).is_err());
         assert!(prover.kernel.false_left(p).is_err());
@@ -654,43 +901,43 @@ mod tests {
         assert!(
             prover
                 .kernel
-                .and_left(theorem, parse_prop(&conjunction).unwrap())
+                .and_left(theorem, parse_prop(conjunction).unwrap())
                 .is_err()
         );
         assert!(
             prover
                 .kernel
-                .and_right(theorem, theorem, parse_prop(&conjunction).unwrap())
+                .and_right(theorem, theorem, parse_prop(conjunction).unwrap())
                 .is_err()
         );
         assert!(
             prover
                 .kernel
-                .or_left(theorem, theorem, parse_prop(&disjunction).unwrap())
+                .or_left(theorem, theorem, parse_prop(disjunction).unwrap())
                 .is_err()
         );
         assert!(
             prover
                 .kernel
-                .or_right(theorem, parse_prop(&disjunction).unwrap())
+                .or_right(theorem, parse_prop(disjunction).unwrap())
                 .is_err()
         );
         assert!(
             prover
                 .kernel
-                .imp_left(theorem, theorem, parse_prop(&implication).unwrap())
+                .imp_left(theorem, theorem, parse_prop(implication).unwrap())
                 .is_err()
         );
         assert!(
             prover
                 .kernel
-                .imp_right(theorem, parse_prop(&implication).unwrap())
+                .imp_right(theorem, parse_prop(implication).unwrap())
                 .is_err()
         );
         assert!(prover.kernel.resolve(theorem, theorem, p).is_err());
 
         assert!(prover.kernel.remove_theorem(theorem));
-        assert!(prover.snapshot(&theorem_id).is_err());
+        assert!(prover.snapshot(theorem_id).is_err());
         assert!(prover.kernel.weaken(theorem, &[], &[]).is_err());
     }
 
@@ -700,17 +947,20 @@ mod tests {
         let p = prover.proposition("1").unwrap();
         let not_p = p.negated();
         let conjunction = prover
-            .binary(Op2::And, &format_prop(not_p), &format_prop(p))
+            .binary(Op2::And, format_prop(not_p), format_prop(p))
             .unwrap();
         assert!(conjunction.is_positive());
         let children = prover
             .kernel
-            .children(conjunction.reference())
+            .children(Ref::new(i32::try_from(conjunction.magnitude()).unwrap()).unwrap())
             .unwrap()
             .collect::<Vec<_>>();
         assert_eq!(children.len(), 2);
         assert_eq!(prover.kernel.arena().op1(children[0]), Some(Op1::Not));
-        assert_eq!(children[1], p.reference());
+        assert_eq!(
+            children[1],
+            Ref::new(i32::try_from(p.magnitude()).unwrap()).unwrap()
+        );
     }
 
     #[test]
@@ -719,7 +969,7 @@ mod tests {
         let p = prover.proposition("1").unwrap();
         let q = prover.proposition("2").unwrap();
         let conjunction = prover
-            .binary(Op2::And, &format_prop(p), &format_prop(q))
+            .binary(Op2::And, format_prop(p), format_prop(q))
             .unwrap();
         let identity = prover.kernel.identity(conjunction).unwrap();
 
@@ -727,19 +977,19 @@ mod tests {
             .kernel
             .flatten_premise(identity, conjunction)
             .unwrap();
-        let flattened_json = prover.snapshot(&format_thm(flattened)).unwrap();
-        assert!(flattened_json.contains(&format!("\"{}\"", p.get())));
-        assert!(flattened_json.contains(&format!("\"{}\"", q.get())));
+        let flattened_json = prover.snapshot(format_thm(flattened)).unwrap();
+        assert!(flattened_json.contains(&format!("{}", p.get())));
+        assert!(flattened_json.contains(&format!("{}", q.get())));
 
         let folded = prover.kernel.fold_premise(flattened, conjunction).unwrap();
         assert_eq!(
-            prover.kernel.theorem(folded).unwrap().premises(),
+            unit_premises(prover.kernel.thm().get(folded).unwrap()),
             [conjunction]
         );
         assert_eq!(
-            parse_context(&format!("{} {} {}", q.get(), p.get(), q.get())).unwrap(),
+            parse_context(&[q.get(), p.get(), q.get()]).unwrap(),
             [q, p, q]
         );
-        assert!(parse_context("-1 nope").is_err());
+        assert!(parse_context(&[-1, 0]).is_err());
     }
 }

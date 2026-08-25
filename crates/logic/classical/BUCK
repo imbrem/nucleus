@@ -21,29 +21,24 @@ filegroup(
 )
 
 rust_library(
-    name = "covalence_logic_lrat",
-    crate = "covalence_logic_lrat",
+    name = "covalence_logic_classical",
+    crate = "covalence_logic_classical",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    features = [
-        "default",
-        "parse",
-    ],
-    tests = [":covalence_logic_lrat-unit-test"],
+    tests = [":covalence_logic_classical-unit-test"],
     named_deps = {
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
-        "covalence_logic_classical": "nucleus//crates/logic/classical:covalence_logic_classical",
-        "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
-        "covalence_logic_sat": "nucleus//crates/logic/sat:covalence_logic_sat",
+        "serde": "nucleus//buck/cargo/production:serde-1.0.229",
+        "smallvec": "nucleus//buck/cargo/production:smallvec-1.15.2",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Userspace LRAT proof loading through the checked HOL kernel",
+        "CARGO_PKG_DESCRIPTION": "Polarity-aware classical matrix storage and inference rules",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-logic-lrat",
+        "CARGO_PKG_NAME": "covalence-logic-classical",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
@@ -58,28 +53,24 @@ rust_library(
 )
 
 rust_test(
-    name = "covalence_logic_lrat-unit-test",
-    crate = "covalence_logic_lrat",
+    name = "covalence_logic_classical-unit-test",
+    crate = "covalence_logic_classical",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    features = [
-        "default",
-        "parse",
-    ],
     named_deps = {
+        "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
-        "covalence_logic_classical": "nucleus//crates/logic/classical:covalence_logic_classical",
-        "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
-        "covalence_logic_sat": "nucleus//crates/logic/sat:covalence_logic_sat",
+        "serde": "nucleus//buck/cargo/production:serde-1.0.229",
+        "smallvec": "nucleus//buck/cargo/production:smallvec-1.15.2",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Userspace LRAT proof loading through the checked HOL kernel",
+        "CARGO_PKG_DESCRIPTION": "Polarity-aware classical matrix storage and inference rules",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-logic-lrat",
+        "CARGO_PKG_NAME": "covalence-logic-classical",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
