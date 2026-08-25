@@ -300,7 +300,7 @@ def test_an_unvalidated_import_cannot_reach_the_checked_rows() -> None:
     hostile.kind_arr(999, 999)
     hostile.add_axiom("ax.choice")
     hostile.add_context(5)
-    hostile.assert_valid(1)
+    hostile.amb_thm_arena_ok(1)
 
     kernel, rows = loaded_kernel()
     before = len(kernel)
@@ -310,7 +310,7 @@ def test_an_unvalidated_import_cannot_reach_the_checked_rows() -> None:
     assert len(kernel) == before
     assert kernel.arena.axioms == []
     assert kernel.arena.context == []
-    assert kernel.arena.assertions == []
+    assert kernel.arena.amb_thm == []
     assert_kernel_invariants(kernel)
     # The kernel has no operation for naming a row inside that import.
     assert not hasattr(kernel, "tm_ref")

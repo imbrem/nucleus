@@ -15,7 +15,7 @@ from .._covalence import (
     parse_text,
 )
 from .classical import ClassicalKernel, Cnf, Refutation
-from .hol import Kernel
+from .hol import Kernel as _Kernel
 
 __all__ = [
     "LratError",
@@ -53,14 +53,14 @@ def replay_into_classical(
 
 
 def replay_into_syllogisms(
-    kernel: Kernel, cnf: Cnf, proof: str | bytes, *, binary: bool = False
+    kernel: _Kernel, cnf: Cnf, proof: str | bytes, *, binary: bool = False
 ) -> int:
     """Replay LRAT and copy its certificate into a HOL syllogism arena."""
     return kernel.copy_refutation_to_syllogisms(_replay(cnf, proof, binary))
 
 
 def replay_into_theorems(
-    kernel: Kernel, cnf: Cnf, proof: str | bytes, *, binary: bool = False
+    kernel: _Kernel, cnf: Cnf, proof: str | bytes, *, binary: bool = False
 ) -> int:
     """Replay LRAT and copy its certificate into a HOL theorem arena."""
     return kernel.copy_refutation_to_theorems(_replay(cnf, proof, binary))
@@ -104,7 +104,7 @@ def solve_cadical_into_classical(
 
 
 def solve_cadical_into_syllogisms(
-    kernel: Kernel,
+    kernel: _Kernel,
     cnf: Cnf,
     executable: str = "cadical",
     *,
@@ -116,7 +116,7 @@ def solve_cadical_into_syllogisms(
 
 
 def solve_cadical_into_theorems(
-    kernel: Kernel,
+    kernel: _Kernel,
     cnf: Cnf,
     executable: str = "cadical",
     *,

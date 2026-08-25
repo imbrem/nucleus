@@ -128,37 +128,23 @@ impl Expr {
     }
 }
 
-/// One raw definition and its optional, unvalidated inline members.
+/// One raw definition.
+///
+/// Classifiers and equality links are stored in arena-level dense columns;
+/// keeping them out of the row makes the expression table representation
+/// independent of which checked relations an arena elects to materialize.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Row {
     expr: Expr,
-    eq: Option<Ref>,
-    sort: Option<Ref>,
 }
 
 impl Row {
     #[must_use]
     pub(crate) const fn new(expr: Expr) -> Self {
-        Self {
-            expr,
-            eq: None,
-            sort: None,
-        }
+        Self { expr }
     }
 
     #[must_use]
-    #[cfg(test)]
-    pub(crate) const fn with_eq(mut self, reference: Ref) -> Self {
-        self.eq = Some(reference);
-        self
-    }
-
-    #[must_use]
-    pub(crate) const fn with_sort(mut self, reference: Ref) -> Self {
-        self.sort = Some(reference);
-        self
-    }
-
     pub(crate) const fn tag(&self) -> Tag {
         self.expr.tag()
     }
@@ -166,17 +152,30 @@ impl Row {
     pub(crate) const fn expr(&self) -> &Expr {
         &self.expr
     }
+}
 
-    pub(crate) const fn eq(&self) -> Option<Ref> {
-        self.eq
+/// A definition together with its optional dense-column members.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RowView<'a> {
+    row: &'a Row,
+    sort: Option<Ref>,
+}
+
+impl<'a> RowView<'a> {
+    pub(crate) const fn new(row: &'a Row, sort: Option<Ref>) -> Self {
+        Self { row, sort }
     }
 
-    pub(crate) const fn sort(&self) -> Option<Ref> {
+    pub(crate) const fn tag(self) -> Tag {
+        self.row.tag()
+    }
+
+    pub(crate) const fn expr(self) -> &'a Expr {
+        self.row.expr()
+    }
+
+    pub(crate) const fn sort(self) -> Option<Ref> {
         self.sort
-    }
-
-    pub(crate) const fn set_eq(&mut self, reference: Option<Ref>) {
-        self.eq = reference;
     }
 }
 
@@ -360,10 +359,6 @@ struct RowSerde {
     src: Option<ImportId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ix: Option<Ref>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    eq: Option<Ref>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    sort: Option<Ref>,
 }
 
 fn bounded_children<'de, D>(
@@ -464,8 +459,6 @@ impl From<Row> for RowSerde {
             val,
             src,
             ix,
-            eq: row.eq,
-            sort: row.sort,
         }
     }
 }
@@ -549,11 +542,7 @@ impl TryFrom<RowSerde> for Row {
             (Tag::Kind(KindTag::Ref), None, None, Some(src), Some(ix)) => Expr::KindRef { src, ix },
             _ => return Err("fields do not form an Ethane row"),
         };
-        Ok(Self {
-            expr: expression,
-            eq: row.eq,
-            sort: row.sort,
-        })
+        Ok(Self::new(expression))
     }
 }
 

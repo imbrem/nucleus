@@ -2,11 +2,14 @@ import Nucleus.Cbor.Containers
 import Nucleus.Hol.Ethane.Arena.OneBased
 
 /-!
-# CBOR for one-based dense Ethane arenas
+# Legacy CBOR oracle for the HOL proof core
 
-The codec mirrors the private Rust Serde views.  Maps are decoded by field
-name, so their order is irrelevant; duplicate, unknown, missing, and
-constructor-inappropriate fields are rejected.
+The expression-row codec remains useful for golden tests. The arena codec in
+this file describes the pre-column proof-core fixture only and is not the
+current Rust wire contract. The authoritative current shape is
+`OneBased.Layout`: `import` plus nested `amb`, `pred`, and `hol` sections, with
+no separate proxy metadata arrays. New table or wire proofs must target that
+layout.
 -/
 
 namespace Nucleus.Hol.Ethane.OneBased.Cbor
@@ -243,11 +246,11 @@ private def decodeSynFree? (value : Nucleus.Cbor) : Option SynFree := do
 
 /-- Rust uses an untagged enum: fact decoding is attempted before the free
 payload.  Required fact fields make the two object shapes disjoint. -/
-private def encodeSynSlot : SynSlot → Nucleus.Cbor
+def encodeSynSlot : SynSlot → Nucleus.Cbor
   | .fact fact => encodeSynFact fact
   | .free free => encodeSynFree free
 
-private def decodeSynSlot? (value : Nucleus.Cbor) : Option SynSlot :=
+def decodeSynSlot? (value : Nucleus.Cbor) : Option SynSlot :=
   match decodeSynFact? value with
   | some fact => some (.fact fact)
   | none => return .free (← decodeSynFree? value)
@@ -279,7 +282,7 @@ private def decodeSynSlot? (value : Nucleus.Cbor) : Option SynSlot :=
         simp [decodeSynFact?, encodeSynFree, fields?, field?, required?,
           decodeOptional, object, null]
 
-@[simp] private theorem decodeSynSlot?_encode (slot : SynSlot) :
+@[simp] theorem decodeSynSlot?_encode (slot : SynSlot) :
     decodeSynSlot? (encodeSynSlot slot) = some slot := by
   cases slot <;> simp [decodeSynSlot?, encodeSynSlot]
 
@@ -366,6 +369,12 @@ private def rowFields (view : detail.RowView) : List (String × Nucleus.Cbor) :=
 
 def encodeRow (row : detail.Row) : Nucleus.Cbor := object (rowFields row.toView)
 
+/-- Encode the current expression-only Rust row.  The temporary `detail.Row`
+is solely the legacy proof codec's projection; both inline columns are fixed
+to `none`, so the emitted map contains neither `eq` nor `sort`. -/
+def encodeExpr (expr : detail.Expr) : Nucleus.Cbor :=
+  encodeRow ({ expr } : detail.Row)
+
 private def decodeRowView? (value : Nucleus.Cbor) : Option detail.RowView := do
   let fields ← fields? ["tag", "ixs", "val", "src", "ix", "eq", "sort"] value
   let tag ← decodeTag? (← required? "tag" fields)
@@ -379,6 +388,15 @@ private def decodeRowView? (value : Nucleus.Cbor) : Option detail.RowView := do
 
 def decodeRow? (value : Nucleus.Cbor) : Option detail.Row := do
   detail.Row.ofView? (← decodeRowView? value)
+
+/-- Decode the current expression-only Rust `RowSerde` shape.
+
+The legacy proof row accepted inline `eq` and `sort` fields.  The current Rust
+row has exactly `tag`, `ixs`, `val`, `src`, and `ix`; the strict field gate
+therefore rejects the two legacy names even when their values are null. -/
+def decodeExpr? (value : Nucleus.Cbor) : Option detail.Expr := do
+  let _ ← fields? ["tag", "ixs", "val", "src", "ix"] value
+  return (← decodeRow? value).expr
 
 private def encodeMeta : Meta → Nucleus.Cbor
   | .valid source => object [
@@ -449,6 +467,30 @@ private theorem decodeRowView?_encodeRow (row : detail.Row) :
 @[simp] theorem decodeRow?_encodeRow (row : detail.Row) :
     decodeRow? (encodeRow row) = some row := by
   simp [decodeRow?, decodeRowView?_encodeRow, detail.Row.ofView?_toView]
+
+private theorem expressionFields_encodeRow (expr : detail.Expr) :
+    fields? ["tag", "ixs", "val", "src", "ix"]
+      (encodeRow ({ expr } : detail.Row)) =
+        some (rowFields ({ expr } : detail.Row).toView) := by
+  cases expr <;>
+    simp [encodeRow, rowFields, detail.Row.toView, fields?, object, optional]
+
+@[simp] theorem decodeExpr?_encodeRow (expr : detail.Expr) :
+    decodeExpr? (encodeRow ({ expr } : detail.Row)) = some expr := by
+  unfold decodeExpr?
+  rw [expressionFields_encodeRow, decodeRow?_encodeRow]
+  rfl
+
+@[simp] theorem decodeExpr?_encodeExpr (expr : detail.Expr) :
+    decodeExpr? (encodeExpr expr) = some expr := decodeExpr?_encodeRow expr
+
+theorem decodeExpr?_reject_eq_null :
+    decodeExpr? (object [("tag", text "kind.star"), ("eq", null)]) = none := by
+  simp [decodeExpr?, fields?, object]
+
+theorem decodeExpr?_reject_sort_null :
+    decodeExpr? (object [("tag", text "kind.star"), ("sort", null)]) = none := by
+  simp [decodeExpr?, fields?, object]
 
 mutual
 

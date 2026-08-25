@@ -132,7 +132,9 @@ def test_cache_operations_never_add_a_claim() -> None:
 
     assert kernel.equivalent(left, right)
     assert kernel.addr() != address  # the table is part of the arena
-    assert kernel.arena.definition(right).equal == left
+    assert kernel.arena.eq[right - 1] == left
+    assert kernel.arena.syn_eq[right - 1] == left
+    assert kernel.arena.conv[right - 1] == left
 
 
 # --- handle identity ------------------------------------------------------

@@ -7,7 +7,9 @@
 
 mod support;
 
-use covalence_logic_hol::{AX_SUB, Binder, Kernel, KernelError, Lit, Ref, Sort, SubtypeAxiom};
+use covalence_logic_hol::{
+    AX_SUB, Binder, Kernel, KernelError, Lit, Ref, Sort, SubtypeAxiom, wire,
+};
 use support::Fix;
 
 /// A kernel with `star`, `bool`, a carrier, and a predicate over it.
@@ -77,6 +79,14 @@ fn the_body_and_the_model_name_are_enough_to_name_the_subtype() {
         .expect("subtype");
     assert_eq!(package.fix.kernel.category(sub).expect("sub"), Sort::Ty);
     assert_eq!(axiom.model_name, axiom.name_of(Binder::ModelType));
+
+    let star = package.fix.star;
+    let arena = package.fix.kernel.into_arena();
+    let mut bytes = Vec::new();
+    wire::serialize(&arena, &mut bytes).expect("model arena encodes");
+    let decoded = wire::deserialize(bytes.as_slice()).expect("model arena decodes");
+    assert_eq!(decoded.sort(sub), arena.sort(sub));
+    assert_eq!(decoded.sort(sub), Some(star));
 }
 
 #[test]

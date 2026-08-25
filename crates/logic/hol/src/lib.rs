@@ -3,6 +3,7 @@
 //! Deserialization establishes only the representation invariants. It does
 //! not establish kinding, typing, equality, or provability.
 
+mod arena;
 pub mod builtin;
 pub mod init;
 mod kernel;
@@ -12,6 +13,7 @@ mod syn;
 mod table;
 pub mod wire;
 
+pub use arena::Arena;
 pub use kernel::{
     AX_SUB, BINDER_COUNT, Binder, CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules,
     Cnf, CnfId, CopyMap, Dnf, DnfId, Kernel, KernelError, Lit, LitError, LitVec, Refutation,
@@ -24,10 +26,16 @@ pub use table::Table;
 
 use std::{collections::BTreeSet, num::NonZeroI32};
 
+use arena::{Dense, EqColumn};
 use covalence_lib_hash::O256;
-use row::Row;
+use row::{Row, RowView};
 use serde::{Deserialize, Serialize};
 use syn::{SynFree, SynSlot};
+
+fn next_ref(len: usize) -> Option<Ref> {
+    let next = i32::try_from(len).ok()?.checked_add(1)?;
+    Ref::new(next)
+}
 
 macro_rules! id_type {
     ($(#[$attribute:meta])* $visibility:vis struct $name:ident($storage:ty);) => {
@@ -321,14 +329,14 @@ impl<'de> Deserialize<'de> for Import {
     }
 }
 
-/// Raw metadata appearing in either the assumption or assertion list.
+/// One atomic ambient predicate.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "tag", deny_unknown_fields)]
-pub enum Meta {
-    #[serde(rename = "meta.valid")]
-    Valid { src: ImportId },
-    #[serde(rename = "meta.wf")]
-    Wf { src: ImportId, ix: Ref, sort: Ref },
+pub enum AmbPred {
+    #[serde(rename = "arena.ok")]
+    ArenaOk { src: ImportId },
+    #[serde(rename = "hol.sort")]
+    HolSort { src: ImportId, ix: Ref, sort: Ref },
 }
 
 mod sealed {
@@ -349,11 +357,6 @@ pub trait ArenaRepr: sealed::Sealed {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct Dense {
-    defs: Vec<Row>,
-}
-
 impl sealed::Sealed for Dense {}
 
 impl ArenaRepr for Dense {
@@ -368,37 +371,12 @@ impl ArenaRepr for Dense {
     }
 
     fn eq(&self, reference: Ref) -> Option<Ref> {
-        self.row(reference).and_then(Row::eq)
+        self.column(&self.eq, reference)
     }
 
     fn sort(&self, reference: Ref) -> Option<Ref> {
-        self.row(reference).and_then(Row::sort)
+        self.column(&self.sort, reference)
     }
-}
-
-impl Dense {
-    pub(crate) fn row(&self, reference: Ref) -> Option<&Row> {
-        let position = usize::try_from(reference.get() - 1).ok()?;
-        self.defs.get(position)
-    }
-
-    fn row_mut(&mut self, reference: Ref) -> Option<&mut Row> {
-        let position = usize::try_from(reference.get() - 1).ok()?;
-        self.defs.get_mut(position)
-    }
-}
-
-/// A one-based dense Ethane arena.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Arena {
-    imports: Vec<Import>,
-    axs: BTreeSet<String>,
-    dense: Dense,
-    syn_facts: Vec<SynSlot>,
-    syn_free: Option<SynFactId>,
-    ctx: BTreeSet<Ref>,
-    assume: Vec<Meta>,
-    assert: Vec<Meta>,
 }
 
 impl Arena {
@@ -407,12 +385,22 @@ impl Arena {
         Self {
             imports: Vec::new(),
             axs: BTreeSet::new(),
-            dense: Dense { defs: Vec::new() },
+            dense: Dense {
+                defs: Vec::new(),
+                eq: Vec::new(),
+                syn_eq: Vec::new(),
+                conv: Vec::new(),
+                sort: Vec::new(),
+            },
             syn_facts: Vec::new(),
             syn_free: None,
             ctx: BTreeSet::new(),
-            assume: Vec::new(),
-            assert: Vec::new(),
+            amb_pred: Vec::new(),
+            amb_ax: BTreeSet::new(),
+            amb_ctx: Cnf::empty(),
+            amb_thm: ClassicalArena::new(),
+            syl: ClassicalArena::new(),
+            thm: ClassicalArena::new(),
         }
     }
 
@@ -453,13 +441,28 @@ impl Arena {
         ArenaRepr::eq(&self.dense, reference)
     }
 
+    /// Returns the parent link in the literal-syntax equality column.
+    #[must_use]
+    pub fn syn_eq(&self, reference: Ref) -> Option<Ref> {
+        self.dense.column(&self.dense.syn_eq, reference)
+    }
+
+    /// Returns the parent link in the syntactic-conversion column.
+    #[must_use]
+    pub fn conv(&self, reference: Ref) -> Option<Ref> {
+        self.dense.column(&self.dense.conv, reference)
+    }
+
     #[must_use]
     pub fn sort(&self, reference: Ref) -> Option<Ref> {
         self.dense.sort(reference)
     }
 
-    pub(crate) fn row(&self, reference: Ref) -> Option<&Row> {
-        self.dense.row(reference)
+    pub(crate) fn row(&self, reference: Ref) -> Option<RowView<'_>> {
+        Some(RowView::new(
+            self.dense.row(reference)?,
+            self.dense.sort(reference),
+        ))
     }
 
     #[must_use]
@@ -478,13 +481,41 @@ impl Arena {
     }
 
     #[must_use]
-    pub fn assumptions(&self) -> &[Meta] {
-        &self.assume
+    pub fn ambient_predicates(&self) -> &[AmbPred] {
+        &self.amb_pred
     }
 
     #[must_use]
-    pub fn assertions(&self) -> &[Meta] {
-        &self.assert
+    pub fn ambient_axioms(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.amb_ax.iter().map(String::as_str)
+    }
+
+    #[must_use]
+    pub const fn ambient_context(&self) -> &Cnf {
+        &self.amb_ctx
+    }
+
+    #[must_use]
+    pub const fn ambient_theorems(&self) -> &ClassicalArena {
+        &self.amb_thm
+    }
+
+    #[must_use]
+    pub const fn syllogisms(&self) -> &ClassicalArena {
+        &self.syl
+    }
+
+    pub(crate) const fn syllogisms_mut(&mut self) -> &mut ClassicalArena {
+        &mut self.syl
+    }
+
+    #[must_use]
+    pub const fn theorems(&self) -> &ClassicalArena {
+        &self.thm
+    }
+
+    pub(crate) const fn theorems_mut(&mut self) -> &mut ClassicalArena {
+        &mut self.thm
     }
 
     /// Returns one occupied syntactic-fact slot.
@@ -524,14 +555,46 @@ impl Arena {
         self.ctx.insert(reference);
     }
 
-    /// Append unvalidated premise metadata.
-    pub fn push_assumption(&mut self, record: Meta) {
-        self.assume.push(record);
+    /// Appends an atom and assumes it as a positive ambient unit clause.
+    #[must_use]
+    pub fn push_ambient_context(&mut self, record: AmbPred) -> bool {
+        let Some(next) = self.next_ambient_ref() else {
+            return false;
+        };
+        self.amb_pred.push(record);
+        let mut rows = self.amb_ctx.to_rows();
+        rows.push(LitVec::from_slice(&[Lit::positive(next.get())]));
+        self.amb_ctx = Cnf::new(rows);
+        true
     }
 
-    /// Append unvalidated conclusion metadata.
-    pub fn push_assertion(&mut self, record: Meta) {
-        self.assert.push(record);
+    /// Appends an atom and records it as a positive ambient unit theorem.
+    #[must_use]
+    pub fn push_ambient_theorem(&mut self, record: AmbPred) -> bool {
+        let Some(next) = self.next_ambient_ref() else {
+            return false;
+        };
+        self.amb_pred.push(record);
+        if self
+            .amb_thm
+            .insert(
+                Cnf::new([]),
+                Dnf::new([LitVec::from_slice(&[Lit::positive(next.get())])]),
+            )
+            .is_err()
+        {
+            self.amb_pred.pop();
+            return false;
+        }
+        true
+    }
+
+    fn next_ambient_ref(&self) -> Option<Ref> {
+        next_ref(self.amb_pred.len())
+    }
+
+    pub(crate) fn has_definition_capacity(&self) -> bool {
+        next_ref(self.dense.defs.len()).is_some()
     }
 
     /// The ordinary children of one local row.
@@ -592,102 +655,102 @@ impl Arena {
 
     /// Append a raw `kind.star` row.
     pub fn push_kind_star(&mut self) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::KindStar))
+        self.push_row(Row::new(row::Expr::KindStar), None)
     }
 
     /// Append a raw `kind.arr` row.
     pub fn push_kind_arr(&mut self, domain: Ref, codomain: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::KindArr(domain, codomain)))
+        self.push_row(Row::new(row::Expr::KindArr(domain, codomain)), None)
     }
 
     /// Append a raw `ty.bool` row.
     pub fn push_bool_ty(&mut self) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::BoolTy))
+        self.push_row(Row::new(row::Expr::BoolTy), None)
     }
 
     /// Append a raw `ty.arr` row.
     pub fn push_ty_arr(&mut self, domain: Ref, codomain: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::TyArr(domain, codomain)))
+        self.push_row(Row::new(row::Expr::TyArr(domain, codomain)), None)
     }
 
     /// Append a raw `ty.app` row.
     pub fn push_ty_app(&mut self, function: Ref, argument: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::TyApp(function, argument)))
+        self.push_row(Row::new(row::Expr::TyApp(function, argument)), None)
     }
 
     /// Append a raw `ty.lam` row. The first child is the binder variable.
     pub fn push_ty_lam(&mut self, binder: Ref, body: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::TyLam(binder, body)))
+        self.push_row(Row::new(row::Expr::TyLam(binder, body)), None)
     }
 
     /// Append a raw typed type-variable row.
     pub fn push_ty_fv(&mut self, name: u64, kind: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::TyFv { name, kind }))
+        self.push_row(Row::new(row::Expr::TyFv { name, kind }), None)
     }
 
     /// Append a raw type-existential proposition row.
     pub fn push_ty_exists(&mut self, name: u64, predicate: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::TyExists { name, predicate }))
+        self.push_row(Row::new(row::Expr::TyExists { name, predicate }), None)
     }
 
     /// Append a raw model-type row.
     pub fn push_model(&mut self, name: u64, predicate: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::Model { name, predicate }))
+        self.push_row(Row::new(row::Expr::Model { name, predicate }), None)
     }
 
     /// Append a raw typed term-variable row.
     pub fn push_tm_fv(&mut self, name: u64, ty: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::TmFv { name, ty }))
+        self.push_row(Row::new(row::Expr::TmFv { name, ty }), None)
     }
 
     /// Append a raw `tm.app` row.
     pub fn push_app(&mut self, function: Ref, argument: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::App(function, argument)))
+        self.push_row(Row::new(row::Expr::App(function, argument)), None)
     }
 
     /// Append a raw `tm.lam` row. The first child is the binder variable.
     pub fn push_lam(&mut self, binder: Ref, body: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::Lam(binder, body)))
+        self.push_row(Row::new(row::Expr::Lam(binder, body)), None)
     }
 
     /// Append a raw Boolean literal row.
     pub fn push_bool(&mut self, value: bool) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::Bool(value)))
+        self.push_row(Row::new(row::Expr::Bool(value)), None)
     }
 
     /// Append a raw unary builtin row.
     pub fn push_op1(&mut self, op: builtin::Op1, operand: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::Op1(op, operand)))
+        self.push_row(Row::new(row::Expr::Op1(op, operand)), None)
     }
 
     /// Append a raw binary builtin row.
     pub fn push_op2(&mut self, op: builtin::Op2, left: Ref, right: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::Op2(op, left, right)))
+        self.push_row(Row::new(row::Expr::Op2(op, left, right)), None)
     }
 
     /// Append a raw object-language equality row.
     pub fn push_tm_eq(&mut self, left: Ref, right: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::Eq(left, right)))
+        self.push_row(Row::new(row::Expr::Eq(left, right)), None)
     }
 
     /// Append a raw choice row.
     pub fn push_eps(&mut self, ty: Ref, predicate: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::Eps { ty, predicate }))
+        self.push_row(Row::new(row::Expr::Eps { ty, predicate }), None)
     }
 
     /// Append a raw term proxy into an import.
     pub fn push_tm_ref(&mut self, src: ImportId, ix: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::TmRef { src, ix }))
+        self.push_row(Row::new(row::Expr::TmRef { src, ix }), None)
     }
 
     /// Append a raw type proxy into an import.
     pub fn push_ty_ref(&mut self, src: ImportId, ix: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::TyRef { src, ix }))
+        self.push_row(Row::new(row::Expr::TyRef { src, ix }), None)
     }
 
     /// Append a raw kind proxy into an import.
     pub fn push_kind_ref(&mut self, src: ImportId, ix: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::KindRef { src, ix }))
+        self.push_row(Row::new(row::Expr::KindRef { src, ix }), None)
     }
 
     fn import(&self, source: ImportId) -> Option<&Import> {
@@ -695,28 +758,59 @@ impl Arena {
         self.imports.get(position)
     }
 
-    pub(crate) fn push_row(&mut self, row: Row) -> Option<Ref> {
-        let next = i32::try_from(self.dense.defs.len()).ok()?.checked_add(1)?;
-        let reference = Ref::new(next)?;
+    pub(crate) fn push_row(&mut self, row: Row, sort: Option<Ref>) -> Option<Ref> {
+        let reference = next_ref(self.dense.defs.len())?;
         self.dense.defs.push(row);
+        if let Some(sort) = sort {
+            let recorded = self
+                .dense
+                .set_column(|dense| &mut dense.sort, reference, Some(sort));
+            debug_assert!(recorded, "the appended row is resident");
+        }
         Some(reference)
     }
 
     pub(crate) fn has_definition_prefix(&self, prefix: &Self) -> bool {
+        let columns_match = |column: &[Option<Ref>], expected: &[Option<Ref>]| {
+            (0..prefix.dense.defs.len()).all(|position| {
+                column.get(position).copied().flatten() == expected.get(position).copied().flatten()
+            })
+        };
         self.imports == prefix.imports
             && self.dense.defs.starts_with(&prefix.dense.defs)
+            && columns_match(&self.dense.eq, &prefix.dense.eq)
+            && columns_match(&self.dense.syn_eq, &prefix.dense.syn_eq)
+            && columns_match(&self.dense.conv, &prefix.dense.conv)
+            && columns_match(&self.dense.sort, &prefix.dense.sort)
             && self.axs == prefix.axs
             && self.ctx == prefix.ctx
-            && self.assume == prefix.assume
-            && self.assert == prefix.assert
+            && self.amb_pred == prefix.amb_pred
+            && self.amb_ax == prefix.amb_ax
+            && self.amb_ctx == prefix.amb_ctx
+            && self.amb_thm == prefix.amb_thm
     }
 
-    pub(crate) fn set_eq(&mut self, left: Ref, right: Option<Ref>) -> bool {
-        let Some(row) = self.dense.row_mut(left) else {
-            return false;
-        };
-        row.set_eq(right);
-        true
+    pub(crate) fn eq_column(&self, column: EqColumn, reference: Ref) -> Option<Ref> {
+        match column {
+            EqColumn::Syn => self.syn_eq(reference),
+            EqColumn::Conv => self.conv(reference),
+            EqColumn::Semantic => self.eq(reference),
+        }
+    }
+
+    pub(crate) fn set_eq_column(
+        &mut self,
+        column: EqColumn,
+        left: Ref,
+        right: Option<Ref>,
+    ) -> bool {
+        match column {
+            EqColumn::Syn => self
+                .dense
+                .set_column(|dense| &mut dense.syn_eq, left, right),
+            EqColumn::Conv => self.dense.set_column(|dense| &mut dense.conv, left, right),
+            EqColumn::Semantic => self.dense.set_column(|dense| &mut dense.eq, left, right),
+        }
     }
 
     pub(crate) fn push_syn_fact(&mut self, fact: SynFact) -> Option<SynFactId> {
@@ -803,21 +897,38 @@ impl Arena {
     fn from_parts(
         imports: Vec<Import>,
         axs: impl IntoIterator<Item = String>,
-        defs: Vec<Row>,
+        defs: Vec<(Row, Option<Ref>, Option<Ref>)>,
         ctx: impl IntoIterator<Item = Ref>,
-        assume: Vec<Meta>,
-        assert: Vec<Meta>,
+        amb_ctx: Vec<AmbPred>,
+        amb_thm: Vec<AmbPred>,
     ) -> Self {
-        Self {
+        let mut arena = Self {
             imports,
             axs: axs.into_iter().collect(),
-            dense: Dense { defs },
+            dense: Dense::default(),
             syn_facts: Vec::new(),
             syn_free: None,
             ctx: ctx.into_iter().collect(),
-            assume,
-            assert,
+            amb_pred: Vec::new(),
+            amb_ax: BTreeSet::new(),
+            amb_ctx: Cnf::empty(),
+            amb_thm: ClassicalArena::new(),
+            syl: ClassicalArena::new(),
+            thm: ClassicalArena::new(),
+        };
+        for (row, sort, eq) in defs {
+            let reference = arena.push_row(row, sort).expect("test definitions fit Ref");
+            if let Some(eq) = eq {
+                assert!(arena.set_eq_column(EqColumn::Semantic, reference, Some(eq)));
+            }
         }
+        for record in amb_ctx {
+            assert!(arena.push_ambient_context(record));
+        }
+        for record in amb_thm {
+            assert!(arena.push_ambient_theorem(record));
+        }
+        arena
     }
 }
 
@@ -831,16 +942,57 @@ enum ArenaTag {
 #[serde(deny_unknown_fields)]
 struct ArenaSerde {
     tag: ArenaTag,
+    #[serde(rename = "import")]
     imports: Vec<Import>,
-    axs: Vec<String>,
+    amb: AmbSerde,
+    pred: PredSerde,
+    hol: HolSerde,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AmbSerde {
+    pred: Vec<AmbPred>,
+    ax: Vec<String>,
+    ctx: Cnf,
+    thm: ClassicalArena,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PredSerde {
+    syl: ClassicalArena,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct HolSerde {
     defs: Vec<Row>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    syn_facts: Vec<SynSlot>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    syn_free: Option<SynFactId>,
+    ax: Vec<String>,
     ctx: Vec<Ref>,
-    assume: Vec<Meta>,
-    assert: Vec<Meta>,
+    thm: ClassicalArena,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    eq: Vec<Option<Ref>>,
+    syn: HolSynSerde,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct HolSynSerde {
+    #[serde(rename = "subst1", default, skip_serializing_if = "Vec::is_empty")]
+    subst1: Vec<SynSlot>,
+    #[serde(
+        rename = "subst1_free",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    subst1_free: Option<SynFactId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    eq: Vec<Option<Ref>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    conv: Vec<Option<Ref>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sort: Vec<Option<Ref>>,
 }
 
 impl From<Arena> for ArenaSerde {
@@ -848,30 +1000,93 @@ impl From<Arena> for ArenaSerde {
         Self {
             tag: ArenaTag::Arena,
             imports: arena.imports,
-            axs: arena.axs.into_iter().collect(),
-            defs: arena.dense.defs,
-            syn_facts: arena.syn_facts,
-            syn_free: arena.syn_free,
-            ctx: arena.ctx.into_iter().collect(),
-            assume: arena.assume,
-            assert: arena.assert,
+            amb: AmbSerde {
+                pred: arena.amb_pred,
+                ax: arena.amb_ax.into_iter().collect(),
+                ctx: arena.amb_ctx,
+                thm: arena.amb_thm,
+            },
+            pred: PredSerde { syl: arena.syl },
+            hol: HolSerde {
+                defs: arena.dense.defs,
+                ax: arena.axs.into_iter().collect(),
+                ctx: arena.ctx.into_iter().collect(),
+                thm: arena.thm,
+                eq: arena.dense.eq,
+                syn: HolSynSerde {
+                    subst1: arena.syn_facts,
+                    subst1_free: arena.syn_free,
+                    eq: arena.dense.syn_eq,
+                    conv: arena.dense.conv,
+                    sort: arena.dense.sort,
+                },
+            },
         }
     }
 }
 
-impl From<ArenaSerde> for Arena {
-    fn from(arena: ArenaSerde) -> Self {
+fn normalize_column(column: &mut Vec<Option<Ref>>) {
+    while column.last() == Some(&None) {
+        column.pop();
+    }
+}
+
+fn column_is_resident(column: &[Option<Ref>], definitions: usize) -> bool {
+    column
+        .iter()
+        .enumerate()
+        .all(|(position, value)| value.is_none() || position < definitions)
+}
+
+impl TryFrom<ArenaSerde> for Arena {
+    type Error = &'static str;
+
+    fn try_from(arena: ArenaSerde) -> Result<Self, Self::Error> {
         let ArenaTag::Arena = arena.tag;
-        Self {
-            imports: arena.imports,
-            axs: arena.axs.into_iter().collect(),
-            dense: Dense { defs: arena.defs },
-            syn_facts: arena.syn_facts,
-            syn_free: arena.syn_free,
-            ctx: arena.ctx.into_iter().collect(),
-            assume: arena.assume,
-            assert: arena.assert,
+        let AmbSerde {
+            pred,
+            ax: amb_ax,
+            ctx: amb_ctx,
+            thm: amb_thm,
+        } = arena.amb;
+        let HolSerde {
+            defs,
+            ax,
+            ctx: hol_ctx,
+            thm: hol_thm,
+            eq,
+            mut syn,
+        } = arena.hol;
+        let mut eq = eq;
+        for column in [&eq, &syn.eq, &syn.conv, &syn.sort] {
+            if !column_is_resident(column, defs.len()) {
+                return Err("dense column has a member without a definition row");
+            }
         }
+        normalize_column(&mut eq);
+        normalize_column(&mut syn.eq);
+        normalize_column(&mut syn.conv);
+        normalize_column(&mut syn.sort);
+        Ok(Self {
+            imports: arena.imports,
+            axs: ax.into_iter().collect(),
+            dense: Dense {
+                defs,
+                eq,
+                syn_eq: syn.eq,
+                conv: syn.conv,
+                sort: syn.sort,
+            },
+            syn_facts: syn.subst1,
+            syn_free: syn.subst1_free,
+            ctx: hol_ctx.into_iter().collect(),
+            amb_pred: pred,
+            amb_ax: amb_ax.into_iter().collect(),
+            amb_ctx,
+            amb_thm,
+            syl: arena.pred.syl,
+            thm: hol_thm,
+        })
     }
 }
 
@@ -889,7 +1104,9 @@ impl<'de> Deserialize<'de> for Arena {
     where
         D: serde::Deserializer<'de>,
     {
-        Ok(ArenaSerde::deserialize(deserializer)?.into())
+        ArenaSerde::deserialize(deserializer)?
+            .try_into()
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -908,10 +1125,12 @@ mod tests {
             vec![],
             [],
             vec![
-                Row::new(Expr::KindStar).with_sort(reference(2)),
-                Row::new(Expr::BoolTy)
-                    .with_eq(reference(1))
-                    .with_sort(reference(2)),
+                (Row::new(Expr::KindStar), Some(reference(2)), None),
+                (
+                    Row::new(Expr::BoolTy),
+                    Some(reference(2)),
+                    Some(reference(1)),
+                ),
             ],
             [],
             vec![],
@@ -949,6 +1168,13 @@ mod tests {
             covalence_lib_cbor::into_writer(&rejected, &mut bytes).unwrap();
             assert!(covalence_lib_cbor::from_reader::<Ref, _>(bytes.as_slice()).is_err());
         }
+        assert_eq!(
+            next_ref(usize::try_from(i32::MAX - 2).unwrap())
+                .unwrap()
+                .get(),
+            i32::MAX - 1
+        );
+        assert_eq!(next_ref(usize::try_from(i32::MAX - 1).unwrap()), None);
     }
 
     #[test]

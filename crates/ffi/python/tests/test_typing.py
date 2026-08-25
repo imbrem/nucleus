@@ -96,8 +96,9 @@ def test_every_public_name_is_reexported() -> None:
             }
         if public_module is public_hol:
             # The public HOL module removes the extension's `Hol` prefix.
-            for name in names - {"load_standard_proof"}:
+            for name in names - {"AmbPred", "load_standard_proof"}:
                 assert getattr(public_module, name) is getattr(_covalence, f"Hol{name}")
+            assert public_hol.AmbPred is _covalence.AmbPred
             assert public_hol.load_standard_proof is _covalence.load_standard_proof
             continue
         assert names <= _exported_names()
@@ -169,7 +170,7 @@ def test_the_stub_does_not_omit_class_members() -> None:
         "IndexCas",
         "HolLink",
         "HolDefinition",
-        "HolMeta",
+        "AmbPred",
         "HolArena",
         "HolKind",
         "HolTy",

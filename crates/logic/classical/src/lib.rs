@@ -161,6 +161,12 @@ pub struct Dnf(Matrix);
 macro_rules! semantic_matrix {
     ($name:ident) => {
         impl $name {
+            /// Constructs the empty matrix.
+            #[must_use]
+            pub const fn empty() -> Self {
+                Self(Matrix(Vec::new()))
+            }
+
             /// Constructs a matrix without imposing a normalization requirement.
             #[must_use]
             pub fn new(rows: impl IntoIterator<Item = LitVec>) -> Self {
@@ -440,7 +446,7 @@ pub enum Error {
 }
 
 /// Mutable theorem-row storage with one-at-a-time deletion and slot reuse.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ClassicalArena {
     slots: Vec<Option<ThmRow>>,
     free: Vec<ThmId>,

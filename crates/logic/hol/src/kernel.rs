@@ -12,7 +12,8 @@ use covalence_lib_error::snafu::Snafu;
 use smallvec::SmallVec;
 
 use crate::{
-    Arena, Import, ImportId, Link, Meta, Ref, ResolveError, Resolver, Sort, SynFactId, Tag,
+    AmbPred, Arena, EqColumn, Import, ImportId, Link, Ref, ResolveError, Resolver, Sort, SynFactId,
+    Tag,
     builtin::{Op1, Op2},
     init::Compiled,
     row::{Expr as Node, Row},
@@ -42,6 +43,9 @@ where
     /// The import index no longer fits in `ImportId`.
     #[snafu(display("kernel has too many imports"))]
     TooManyImports,
+    /// The ambient predicate index no longer fits in `Lit`.
+    #[snafu(display("kernel has too many ambient predicates"))]
+    TooManyAmbientPredicates,
     /// The syntactic-fact slot space no longer fits in `SynFactId`.
     #[snafu(display("kernel has too many syntactic facts"))]
     TooManySynFacts,
@@ -203,8 +207,6 @@ impl CopyMap {
 pub struct Kernel {
     arena: Arena,
     init_prefix: Option<(crate::O256, usize)>,
-    syl: ClassicalArena,
-    thm: ClassicalArena,
 }
 
 impl Deref for Kernel {
@@ -222,8 +224,6 @@ impl Kernel {
         Self {
             arena: Arena::empty(),
             init_prefix: None,
-            syl: ClassicalArena::new(),
-            thm: ClassicalArena::new(),
         }
     }
 
@@ -233,20 +233,13 @@ impl Kernel {
         Self {
             arena: init.arena().clone(),
             init_prefix: Some((init.arena().addr(), init.arena().len())),
-            syl: ClassicalArena::new(),
-            thm: ClassicalArena::new(),
         }
     }
 
     /// Creates a checked kernel whose first rows are a compiled init prefix.
     pub(crate) fn with_init_prefix(arena: Arena) -> Self {
         let init_prefix = Some((arena.addr(), arena.len()));
-        Self {
-            arena,
-            init_prefix,
-            syl: ClassicalArena::new(),
-            thm: ClassicalArena::new(),
-        }
+        Self { arena, init_prefix }
     }
 
     /// Returns the compiled init-prefix address and row count, when present.
@@ -368,15 +361,13 @@ impl Kernel {
         let mut staged = Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
-            syl: ClassicalArena::new(),
-            thm: ClassicalArena::new(),
         };
         for &source_ref in &order {
             let row = source.row::<Infallible>(source_ref)?;
-            let copied = remap_row(row, &nodes);
+            let (copied, sort) = remap_row(row, &nodes);
             staged
                 .arena
-                .push_row(copied)
+                .push_row(copied, sort)
                 .ok_or(KernelError::TooManyDefinitions)?;
         }
         for &destination in nodes.values() {
@@ -509,7 +500,7 @@ impl Kernel {
     ///
     /// Returns an error if the dense reference space is exhausted.
     pub fn star(&mut self) -> Result<Ref, KernelError> {
-        self.push::<Infallible>(Row::new(Node::KindStar))
+        self.push::<Infallible>(Row::new(Node::KindStar), None)
     }
 
     /// Appends a kind arrow.
@@ -520,7 +511,7 @@ impl Kernel {
     pub fn kind_arr(&mut self, domain: Ref, codomain: Ref) -> Result<Ref, KernelError> {
         self.require_category::<Infallible>(domain, Sort::Kind)?;
         self.require_category::<Infallible>(codomain, Sort::Kind)?;
-        self.push::<Infallible>(Row::new(Node::KindArr(domain, codomain)))
+        self.push::<Infallible>(Row::new(Node::KindArr(domain, codomain)), None)
     }
 
     /// Appends the Boolean type.
@@ -530,7 +521,7 @@ impl Kernel {
     /// Returns an error unless `star` names `kind.star`.
     pub fn bool_ty(&mut self, star: Ref) -> Result<Ref, KernelError> {
         self.require_star::<Infallible>(star)?;
-        self.push::<Infallible>(Row::new(Node::BoolTy).with_sort(star))
+        self.push::<Infallible>(Row::new(Node::BoolTy), Some(star))
     }
 
     /// Appends a simple function type.
@@ -541,7 +532,7 @@ impl Kernel {
     pub fn ty_arr(&mut self, domain: Ref, codomain: Ref) -> Result<Ref, KernelError> {
         let star = self.require_star_type::<Infallible>(domain)?;
         self.require_star_type::<Infallible>(codomain)?;
-        self.push::<Infallible>(Row::new(Node::TyArr(domain, codomain)).with_sort(star))
+        self.push::<Infallible>(Row::new(Node::TyArr(domain, codomain)), Some(star))
     }
 
     /// Appends an intrinsically kinded free type variable.
@@ -551,7 +542,7 @@ impl Kernel {
     /// Returns an error unless `kind` is a local kind row.
     pub fn ty_fv(&mut self, name: u64, kind: Ref) -> Result<Ref, KernelError> {
         self.require_category::<Infallible>(kind, Sort::Kind)?;
-        self.push::<Infallible>(Row::new(Node::TyFv { name, kind }).with_sort(kind))
+        self.push::<Infallible>(Row::new(Node::TyFv { name, kind }), Some(kind))
     }
 
     /// Appends type-family application.
@@ -575,7 +566,7 @@ impl Kernel {
                 actual: argument_kind,
             });
         }
-        self.push::<Infallible>(Row::new(Node::TyApp(function, argument)).with_sort(codomain))
+        self.push::<Infallible>(Row::new(Node::TyApp(function, argument)), Some(codomain))
     }
 
     /// Appends a type-family abstraction and its arrow kind.
@@ -588,8 +579,8 @@ impl Kernel {
         self.require_category::<Infallible>(body, Sort::Ty)?;
         let domain = self.classifier(binder)?;
         let codomain = self.classifier(body)?;
-        let kind = self.push::<Infallible>(Row::new(Node::KindArr(domain, codomain)))?;
-        self.push::<Infallible>(Row::new(Node::TyLam(binder, body)).with_sort(kind))
+        let kind = self.push::<Infallible>(Row::new(Node::KindArr(domain, codomain)), None)?;
+        self.push::<Infallible>(Row::new(Node::TyLam(binder, body)), Some(kind))
     }
 
     /// Appends a guarded model type.
@@ -601,7 +592,7 @@ impl Kernel {
         let bool_ty = self.require_bool_term::<Infallible>(predicate)?;
         let star = self.classifier(bool_ty)?;
         self.require_star::<Infallible>(star)?;
-        self.push::<Infallible>(Row::new(Node::Model { name, predicate }).with_sort(star))
+        self.push::<Infallible>(Row::new(Node::Model { name, predicate }), Some(star))
     }
 
     /// Appends type-level existential quantification.
@@ -611,7 +602,7 @@ impl Kernel {
     /// Returns an error unless `predicate` is a Boolean term.
     pub fn ty_exists(&mut self, name: u64, predicate: Ref) -> Result<Ref, KernelError> {
         let bool_ty = self.require_bool_term::<Infallible>(predicate)?;
-        self.push::<Infallible>(Row::new(Node::TyExists { name, predicate }).with_sort(bool_ty))
+        self.push::<Infallible>(Row::new(Node::TyExists { name, predicate }), Some(bool_ty))
     }
 
     /// Appends an intrinsically typed free term variable.
@@ -621,7 +612,7 @@ impl Kernel {
     /// Returns an error unless `ty` is a type of kind `star`.
     pub fn tm_fv(&mut self, name: u64, ty: Ref) -> Result<Ref, KernelError> {
         self.require_star_type::<Infallible>(ty)?;
-        self.push::<Infallible>(Row::new(Node::TmFv { name, ty }).with_sort(ty))
+        self.push::<Infallible>(Row::new(Node::TmFv { name, ty }), Some(ty))
     }
 
     /// Appends term application.
@@ -645,7 +636,7 @@ impl Kernel {
                 actual: argument_ty,
             });
         }
-        self.push::<Infallible>(Row::new(Node::App(function, argument)).with_sort(codomain))
+        self.push::<Infallible>(Row::new(Node::App(function, argument)), Some(codomain))
     }
 
     /// Appends a term abstraction and its function type.
@@ -691,7 +682,7 @@ impl Kernel {
                 actual: body_ty,
             });
         }
-        self.push::<Infallible>(Row::new(Node::Lam(binder, body)).with_sort(function_ty))
+        self.push::<Infallible>(Row::new(Node::Lam(binder, body)), Some(function_ty))
     }
 
     /// Appends a Boolean literal.
@@ -701,7 +692,7 @@ impl Kernel {
     /// Returns an error unless `bool_ty` names a Boolean type row.
     pub fn bool(&mut self, bool_ty: Ref, value: bool) -> Result<Ref, KernelError> {
         self.require_bool_type::<Infallible>(bool_ty)?;
-        self.push::<Infallible>(Row::new(Node::Bool(value)).with_sort(bool_ty))
+        self.push::<Infallible>(Row::new(Node::Bool(value)), Some(bool_ty))
     }
 
     /// Appends a checked unary Boolean builtin.
@@ -711,7 +702,7 @@ impl Kernel {
     /// Returns an error unless the operand is a Boolean term.
     pub fn op1(&mut self, op: Op1, operand: Ref) -> Result<Ref, KernelError> {
         let bool_ty = self.require_bool_term::<Infallible>(operand)?;
-        self.push::<Infallible>(Row::new(Node::Op1(op, operand)).with_sort(bool_ty))
+        self.push::<Infallible>(Row::new(Node::Op1(op, operand)), Some(bool_ty))
     }
 
     /// Appends a checked binary Boolean builtin.
@@ -728,7 +719,7 @@ impl Kernel {
                 actual: right_ty,
             });
         }
-        self.push::<Infallible>(Row::new(Node::Op2(op, left, right)).with_sort(bool_ty))
+        self.push::<Infallible>(Row::new(Node::Op2(op, left, right)), Some(bool_ty))
     }
 
     /// Canonically lowers one compact logical row through its named init definition.
@@ -793,7 +784,7 @@ impl Kernel {
                 actual: right_ty,
             });
         }
-        self.push::<Infallible>(Row::new(Node::Eq(left, right)).with_sort(bool_ty))
+        self.push::<Infallible>(Row::new(Node::Eq(left, right)), Some(bool_ty))
     }
 
     /// Appends Hilbert choice.
@@ -813,7 +804,7 @@ impl Kernel {
             });
         }
         self.require_bool_type::<Infallible>(codomain)?;
-        self.push::<Infallible>(Row::new(Node::Eps { ty, predicate }).with_sort(ty))
+        self.push::<Infallible>(Row::new(Node::Eps { ty, predicate }), Some(ty))
     }
 
     /// Appends a literal arena import without asserting anything about it.
@@ -853,11 +844,22 @@ impl Kernel {
                 actual: target,
             });
         }
-        self.arena.push_assumption(Meta::Valid { src: source });
-        self.push::<R::Error>(Row::new(Node::KindRef {
-            src: source,
-            ix: foreign,
-        }))
+        if !self.arena.has_definition_capacity() {
+            return Err(KernelError::TooManyDefinitions);
+        }
+        if !self
+            .arena
+            .push_ambient_context(AmbPred::ArenaOk { src: source })
+        {
+            return Err(KernelError::TooManyAmbientPredicates);
+        }
+        self.push::<R::Error>(
+            Row::new(Node::KindRef {
+                src: source,
+                ix: foreign,
+            }),
+            None,
+        )
     }
 
     /// Appends a type proxy under an explicit foreign-kinding premise.
@@ -882,17 +884,22 @@ impl Kernel {
                 actual: target,
             });
         }
-        self.arena.push_assumption(Meta::Wf {
+        if !self.arena.has_definition_capacity() {
+            return Err(KernelError::TooManyDefinitions);
+        }
+        if !self.arena.push_ambient_context(AmbPred::HolSort {
             src: source,
             ix: foreign,
             sort: kind,
-        });
+        }) {
+            return Err(KernelError::TooManyAmbientPredicates);
+        }
         self.push::<R::Error>(
             Row::new(Node::TyRef {
                 src: source,
                 ix: foreign,
-            })
-            .with_sort(kind),
+            }),
+            Some(kind),
         )
     }
 
@@ -918,17 +925,22 @@ impl Kernel {
                 actual: target,
             });
         }
-        self.arena.push_assumption(Meta::Wf {
+        if !self.arena.has_definition_capacity() {
+            return Err(KernelError::TooManyDefinitions);
+        }
+        if !self.arena.push_ambient_context(AmbPred::HolSort {
             src: source,
             ix: foreign,
             sort: ty,
-        });
+        }) {
+            return Err(KernelError::TooManyAmbientPredicates);
+        }
         self.push::<R::Error>(
             Row::new(Node::TmRef {
                 src: source,
                 ix: foreign,
-            })
-            .with_sort(ty),
+            }),
+            Some(ty),
         )
     }
 
@@ -1090,7 +1102,7 @@ impl Kernel {
                 self.require_category::<Infallible>(right, Sort::Tm)?;
                 let left_ty = self.classifier(left)?;
                 let right_ty = self.classifier(right)?;
-                if left_ty != right_ty {
+                if !self.equivalent(left_ty, right_ty)? {
                     return Err(KernelError::ClassifierMismatch {
                         expected: left_ty,
                         actual: right_ty,
@@ -1128,12 +1140,12 @@ impl Kernel {
         Ok(())
     }
 
-    fn push<E>(&mut self, row: Row) -> Result<Ref, KernelError<E>>
+    fn push<E>(&mut self, row: Row, sort: Option<Ref>) -> Result<Ref, KernelError<E>>
     where
         E: std::error::Error + 'static,
     {
         self.arena
-            .push_row(row)
+            .push_row(row, sort)
             .ok_or(KernelError::TooManyDefinitions)
     }
 
@@ -1146,7 +1158,7 @@ impl Kernel {
             .ok_or(KernelError::TooManyImports)
     }
 
-    fn row<E>(&self, reference: Ref) -> Result<&Row, KernelError<E>>
+    fn row<E>(&self, reference: Ref) -> Result<crate::row::RowView<'_>, KernelError<E>>
     where
         E: std::error::Error + 'static,
     {
@@ -1301,32 +1313,7 @@ impl Kernel {
     where
         E: std::error::Error + 'static,
     {
-        let category = self.category_as::<E>(reference)?;
-        let mut path = SmallVec::<[Ref; 8]>::new();
-        let mut current = reference;
-        loop {
-            if let Some(cycle_start) = path.iter().position(|member| *member == current) {
-                let representative = path[cycle_start..]
-                    .iter()
-                    .copied()
-                    .min()
-                    .expect("a repeated member starts a nonempty cycle");
-                return Ok((representative, path));
-            }
-            path.push(current);
-            let Some(parent) = self.row::<E>(current)?.eq() else {
-                return Ok((current, path));
-            };
-            let parent_category = self.category_as::<E>(parent)?;
-            if parent_category != category {
-                return Err(KernelError::WrongCategory {
-                    reference: parent,
-                    expected: category,
-                    actual: parent_category,
-                });
-            }
-            current = parent;
-        }
+        self.find_path_in(EqColumn::Semantic, reference)
     }
 
     fn find_as<E>(&self, reference: Ref) -> Result<Ref, KernelError<E>>
@@ -1341,13 +1328,7 @@ impl Kernel {
     where
         E: std::error::Error + 'static,
     {
-        let (representative, path) = self.find_path(reference)?;
-        for member in path {
-            let parent = (member != representative).then_some(representative);
-            let recorded = self.arena.set_eq(member, parent);
-            debug_assert!(recorded, "find path contains only resident rows");
-        }
-        Ok(representative)
+        self.find_mut_in(EqColumn::Semantic, reference)
     }
 
     fn equivalent_as<E>(&self, left: Ref, right: Ref) -> Result<bool, KernelError<E>>
@@ -1374,8 +1355,51 @@ impl Kernel {
     where
         E: std::error::Error + 'static,
     {
-        let left_root = self.find_mut_as::<E>(left)?;
-        let right_root = self.find_mut_as::<E>(right)?;
+        self.union_in(EqColumn::Semantic, left, right)
+    }
+
+    fn find_path_in<E>(
+        &self,
+        column: EqColumn,
+        reference: Ref,
+    ) -> Result<(Ref, SmallVec<[Ref; 8]>), KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let category = self.category_as::<E>(reference)?;
+        let mut path = SmallVec::<[Ref; 8]>::new();
+        let mut current = reference;
+        loop {
+            if let Some(cycle_start) = path.iter().position(|member| *member == current) {
+                let representative = path[cycle_start..]
+                    .iter()
+                    .copied()
+                    .min()
+                    .expect("a repeated member starts a nonempty cycle");
+                return Ok((representative, path));
+            }
+            path.push(current);
+            let Some(parent) = self.arena.eq_column(column, current) else {
+                return Ok((current, path));
+            };
+            let parent_category = self.category_as::<E>(parent)?;
+            if parent_category != category {
+                return Err(KernelError::WrongCategory {
+                    reference: parent,
+                    expected: category,
+                    actual: parent_category,
+                });
+            }
+            current = parent;
+        }
+    }
+
+    fn union_in<E>(&mut self, column: EqColumn, left: Ref, right: Ref) -> Result<(), KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let left_root = self.find_mut_in::<E>(column, left)?;
+        let right_root = self.find_mut_in::<E>(column, right)?;
         if left_root == right_root {
             return Ok(());
         }
@@ -1384,9 +1408,22 @@ impl Kernel {
         } else {
             (right_root, left_root)
         };
-        let recorded = self.arena.set_eq(child, Some(parent));
+        let recorded = self.arena.set_eq_column(column, child, Some(parent));
         debug_assert!(recorded, "union roots name resident rows");
         Ok(())
+    }
+
+    fn find_mut_in<E>(&mut self, column: EqColumn, reference: Ref) -> Result<Ref, KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let (representative, path) = self.find_path_in(column, reference)?;
+        for member in path {
+            let parent = (member != representative).then_some(representative);
+            let recorded = self.arena.set_eq_column(column, member, parent);
+            debug_assert!(recorded, "find path contains only resident rows");
+        }
+        Ok(representative)
     }
 
     fn references<E>(&self) -> Result<Vec<Ref>, KernelError<E>>
@@ -1404,7 +1441,7 @@ impl Kernel {
     }
 }
 
-fn remap_row(row: &Row, map: &BTreeMap<Ref, Ref>) -> Row {
+fn remap_row(row: crate::row::RowView<'_>, map: &BTreeMap<Ref, Ref>) -> (Row, Option<Ref>) {
     let remap = |reference: Ref| map[&reference];
     let expr = match *row.expr() {
         Node::KindStar => Node::KindStar,
@@ -1443,11 +1480,7 @@ fn remap_row(row: &Row, map: &BTreeMap<Ref, Ref>) -> Row {
             unreachable!("imported proxies are rejected before copying")
         }
     };
-    let mut copied = Row::new(expr);
-    if let Some(sort) = row.sort() {
-        copied = copied.with_sort(remap(sort));
-    }
-    copied
+    (Row::new(expr), row.sort().map(remap))
 }
 
 #[cfg(test)]
@@ -1636,8 +1669,16 @@ mod tests {
         let mut kernel = Kernel::new();
         let left = kernel.star().unwrap();
         let right = kernel.star().unwrap();
-        assert!(kernel.arena.set_eq(left, Some(right)));
-        assert!(kernel.arena.set_eq(right, Some(left)));
+        assert!(
+            kernel
+                .arena
+                .set_eq_column(EqColumn::Semantic, left, Some(right))
+        );
+        assert!(
+            kernel
+                .arena
+                .set_eq_column(EqColumn::Semantic, right, Some(left))
+        );
 
         assert_eq!(kernel.find(left).unwrap(), left);
         assert_eq!(kernel.find(right).unwrap(), left);
@@ -1670,8 +1711,12 @@ mod tests {
 
         assert_eq!(owner.arena().tag(proxy), Some(Tag::Tm(TmTag::Ref)));
         assert_eq!(
-            owner.arena().assumptions(),
-            [Meta::Wf {
+            owner.arena().ambient_context().to_rows(),
+            vec![LitVec::from_slice(&[Lit::positive(1)])]
+        );
+        assert_eq!(
+            owner.arena().ambient_predicates(),
+            &[AmbPred::HolSort {
                 src: source,
                 ix: imported_truth,
                 sort: bool_ty,
@@ -1765,7 +1810,7 @@ mod tests {
         let self_ref = Ref::new(1).unwrap();
         source
             .arena
-            .push_row(Row::new(Node::App(self_ref, self_ref)).with_sort(self_ref));
+            .push_row(Row::new(Node::App(self_ref, self_ref)), Some(self_ref));
         let mut destination = Kernel::new();
         let existing = destination.star().unwrap();
         let before = destination.len();
@@ -1786,7 +1831,7 @@ mod tests {
         let missing = Ref::new(2).unwrap();
         let root = dangling
             .arena
-            .push_row(Row::new(Node::Bool(true)).with_sort(missing))
+            .push_row(Row::new(Node::Bool(true)), Some(missing))
             .unwrap();
         assert!(matches!(
             destination.copy_term_from(&dangling, root),
@@ -1797,7 +1842,7 @@ mod tests {
         let star = invalid.star().unwrap();
         let root = invalid
             .arena
-            .push_row(Row::new(Node::Bool(true)).with_sort(star))
+            .push_row(Row::new(Node::Bool(true)), Some(star))
             .unwrap();
         assert!(matches!(
             destination.copy_term_from(&invalid, root),
@@ -1808,10 +1853,13 @@ mod tests {
         let source_id = imported.import_literal(Arena::empty()).unwrap();
         let root = imported
             .arena
-            .push_row(Row::new(Node::TmRef {
-                src: source_id,
-                ix: Ref::new(1).unwrap(),
-            }))
+            .push_row(
+                Row::new(Node::TmRef {
+                    src: source_id,
+                    ix: Ref::new(1).unwrap(),
+                }),
+                None,
+            )
             .unwrap();
         assert!(matches!(
             destination.copy_term_from(&imported, root),

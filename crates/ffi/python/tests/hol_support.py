@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 
-from covalence.logic.hol import Arena, Definition, Kernel, Link, Meta, SynFact
+from covalence.logic.hol import AmbPred, Arena, Definition, Kernel, Link, SynFact
 
 __all__ = [
     "BINDER_TAGS",
@@ -41,7 +41,7 @@ __all__ = [
     "implicit_binder",
     "import_view",
     "link_view",
-    "meta_view",
+    "amb_pred_view",
     "prove_congruence",
     "substitute",
     "unify",
@@ -73,12 +73,10 @@ def definition_view(definition: Definition) -> tuple[object, ...]:
         definition.value,
         definition.source,
         definition.foreign,
-        definition.equal,
-        definition.classifier,
     )
 
 
-def meta_view(meta: Meta) -> tuple[str, int, int | None, int | None]:
+def amb_pred_view(meta: AmbPred) -> tuple[str, int, int | None, int | None]:
     """Every member of one premise or conclusion snapshot."""
     return (meta.tag, meta.source, meta.reference, meta.classifier)
 
@@ -108,8 +106,16 @@ def arena_view(arena: Arena) -> dict[str, object]:
         "imports": [import_view(entry) for entry in arena.imports],
         "axioms": list(arena.axioms),
         "context": list(arena.context),
-        "assumptions": [meta_view(meta) for meta in arena.assumptions],
-        "assertions": [meta_view(meta) for meta in arena.assertions],
+        "eq": list(arena.eq),
+        "syn_eq": list(arena.syn_eq),
+        "conv": list(arena.conv),
+        "sort": list(arena.sort),
+        "amb_pred": [amb_pred_view(pred) for pred in arena.amb_pred],
+        "amb_ax": list(arena.amb_ax),
+        "amb_ctx": arena.amb_ctx,
+        "amb_thm": arena.amb_thm,
+        "pred_syl": arena.pred_syl,
+        "hol_thm": arena.hol_thm,
     }
 
 
@@ -263,7 +269,11 @@ def implicit_binder(kernel: Kernel, name: int | None, rows: Rows) -> int:
     if star is None:
         raise CannotProveError("kernel has no kind.star row")
     for row in rows:
-        if row.tag == "ty.fv" and row.name == name and row.classifier == star:
+        if (
+            row.tag == "ty.fv"
+            and row.name == name
+            and kernel.classifier(row.reference) == star
+        ):
             return row.reference
     reference = kernel.ty_fv(name, star)
     rows.refresh()
@@ -296,13 +306,13 @@ def _unify_classifiers(kernel: Kernel, left: int, right: int, rows: Rows) -> Non
         ) from error
 
 
-def _same_variable(one: Definition, other: Definition) -> bool:
+def _same_variable(kernel: Kernel, one: Definition, other: Definition) -> bool:
     """The kernel's notion of binder identity: name and classifier reference."""
     return (
         one.tag in VARIABLE_TAGS
         and one.tag == other.tag
         and one.name == other.name
-        and one.classifier == other.classifier
+        and kernel.classifier(one.reference) == kernel.classifier(other.reference)
     )
 
 
@@ -400,7 +410,7 @@ def _substitute_binder(
     binder, body = row.children
     binder_row, variable = rows[binder], rows[var]
 
-    if _same_variable(binder_row, variable):
+    if _same_variable(kernel, binder_row, variable):
         # The binder shadows the substitution; both premises are direct.
         fact = kernel.syn_binder_congr(
             "syn",
@@ -452,7 +462,7 @@ def _substitute_implicit_binder(
     witness = implicit_binder(kernel, row.name, rows)
     witness_row, variable = rows[witness], rows[var]
 
-    if _same_variable(witness_row, variable):
+    if _same_variable(kernel, witness_row, variable):
         fact = kernel.syn_implicit_binder_congr(
             "syn",
             source,
@@ -488,13 +498,16 @@ def _rebuild(kernel: Kernel, row: Definition, children: list[int], rows: Rows) -
 
 
 def _construct(kernel: Kernel, row: Definition, children: list[int]) -> int:
+    classifier = (
+        None if row.tag.startswith("kind.") else kernel.classifier(row.reference)
+    )
     match row.tag:
         case "kind.star":
             return kernel.star()
         case "kind.arr":
             return kernel.kind_arr(*children)
         case "ty.bool":
-            return kernel.bool_ty(row.classifier)
+            return kernel.bool_ty(classifier)
         case "ty.arr":
             return kernel.ty_arr(*children)
         case "ty.app":
@@ -514,9 +527,9 @@ def _construct(kernel: Kernel, row: Definition, children: list[int]) -> int:
         case "tm.lam":
             return kernel.lam(*children)
         case "tm.bool":
-            return kernel.bool(row.classifier, row.value)
+            return kernel.bool(classifier, row.value)
         case "tm.eq":
-            return kernel.eq(row.classifier, *children)
+            return kernel.eq(classifier, *children)
         case "tm.eps":
             return kernel.eps(*children)
         case _:

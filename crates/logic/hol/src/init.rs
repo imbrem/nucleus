@@ -385,7 +385,7 @@ mod tests {
         assert_eq!(wire::deserialize(bytes.as_slice()).unwrap(), *first.arena());
         assert_eq!(
             first.arena().addr(),
-            O256::from_hex("fdc14876fecbb5c84b5692a88fd3e80c91fc6f72799a91787eb8871d143e0ade")
+            O256::from_hex("426bf49b0df5a6791fe1996f1df44caafedb3428b275da4933cbb04871c67e20")
                 .unwrap()
         );
         assert_eq!(
@@ -446,6 +446,17 @@ mod tests {
             Err(KernelError::InitPrefixMismatch)
         ));
         assert_eq!(*mismatched.arena(), before);
+
+        let mut column_changed = compiled.arena().clone();
+        assert!(column_changed.set_eq_column(
+            crate::EqColumn::Semantic,
+            Ref::new(1).unwrap(),
+            Some(Ref::new(1).unwrap()),
+        ));
+        assert!(
+            !column_changed.has_definition_prefix(compiled.arena()),
+            "definition-prefix identity includes externalized columns"
+        );
 
         let mut empty = Kernel::new();
         assert!(matches!(

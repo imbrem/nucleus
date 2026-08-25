@@ -6,7 +6,7 @@ mod support;
 use covalence_lib_cbor::{Value, into_writer};
 use covalence_lib_hash::O256;
 use covalence_logic_cas::CasFact;
-use covalence_logic_hol::{Arena, Table, wire};
+use covalence_logic_hol::{Arena, Import, Table, wire};
 use support::{ArenaCbor, Fix, direct_slot, encode, fact_id, free_slot, int, map, text};
 
 fn star_row() -> Value {
@@ -36,6 +36,111 @@ fn a_fact_free_arena_stays_off_the_wire_entirely() {
         "the encoder must not add the fields"
     );
     assert_eq!(O256::from_bytes(&canonical), Arena::empty().addr());
+}
+
+#[test]
+fn classical_matrix_tombstones_round_trip_in_every_arena_position() {
+    let lit = Value::Integer((-1).into());
+    let matrix = vec![Value::Null, Value::Array(vec![lit]), Value::Null];
+    let theorem = Value::Array(vec![
+        Value::Array(matrix.clone()),
+        Value::Array(matrix.clone()),
+    ]);
+    let bytes = ArenaCbor::new()
+        .amb_ctx(matrix)
+        .amb_thm(vec![theorem.clone()])
+        .pred_syl(vec![theorem.clone()])
+        .hol_thm(vec![theorem])
+        .bytes();
+
+    let arena = wire::deserialize(bytes.as_slice()).expect("matrix tombstones decode");
+    assert_eq!(arena.ambient_context().rows().count(), 1);
+    assert_eq!(arena.ambient_theorems().live_theorems().count(), 1);
+    assert_eq!(arena.syllogisms().live_theorems().count(), 1);
+    assert_eq!(arena.theorems().live_theorems().count(), 1);
+    assert_eq!(
+        encode(&arena),
+        bytes,
+        "the wire format must preserve every inner matrix tombstone"
+    );
+}
+
+#[test]
+fn dense_columns_are_sparse_canonical_and_row_external() {
+    let noncanonical = ArenaCbor::new()
+        .defs(vec![star_row(), star_row()])
+        .eq(vec![int(1), Value::Null, Value::Null])
+        .syn_eq(vec![int(1), Value::Null])
+        .conv(vec![int(1)])
+        .sort(vec![Value::Null, int(1)])
+        .bytes();
+    let arena = wire::deserialize(noncanonical.as_slice()).expect("sparse columns decode");
+
+    assert_eq!(arena.eq(support::row_id(1)).unwrap().get(), 1);
+    assert_eq!(arena.syn_eq(support::row_id(1)).unwrap().get(), 1);
+    assert_eq!(arena.conv(support::row_id(1)).unwrap().get(), 1);
+    assert_eq!(arena.sort(support::row_id(2)).unwrap().get(), 1);
+    assert_ne!(encode(&arena), noncanonical, "trailing nulls are removed");
+
+    let encoded: Value = covalence_lib_cbor::from_reader(encode(&arena).as_slice()).unwrap();
+    let Value::Map(root) = encoded else {
+        panic!("arena map")
+    };
+    let Value::Map(hol) = &root
+        .iter()
+        .find(|(key, _)| key == &text("hol"))
+        .expect("hol")
+        .1
+    else {
+        panic!("hol map")
+    };
+    let Value::Array(defs) = &hol
+        .iter()
+        .find(|(key, _)| key == &text("defs"))
+        .expect("defs")
+        .1
+    else {
+        panic!("defs array")
+    };
+    assert!(defs.iter().all(|row| {
+        let Value::Map(fields) = row else {
+            return false;
+        };
+        fields
+            .iter()
+            .all(|(key, _)| key != &text("eq") && key != &text("sort"))
+    }));
+}
+
+#[test]
+fn a_non_null_column_member_without_a_row_is_rejected() {
+    rejects(
+        "semantic equality past defs",
+        ArenaCbor::new().eq(vec![int(1)]),
+    );
+    rejects(
+        "syntactic conversion past defs",
+        ArenaCbor::new().conv(vec![Value::Null, int(1)]),
+    );
+}
+
+#[test]
+fn raw_columns_may_name_dangling_values_but_not_dangling_cells() {
+    // Arena decoding establishes representation only. A checked Kernel is the
+    // layer that interprets column targets and therefore requires residency.
+    let arena = accepts(
+        "dangling raw column targets",
+        ArenaCbor::new()
+            .defs(vec![star_row()])
+            .eq(vec![int(900)])
+            .syn_eq(vec![int(901)])
+            .conv(vec![int(902)])
+            .sort(vec![int(903)]),
+    );
+    assert_eq!(arena.eq(support::row_id(1)).unwrap().get(), 900);
+    assert_eq!(arena.syn_eq(support::row_id(1)).unwrap().get(), 901);
+    assert_eq!(arena.conv(support::row_id(1)).unwrap().get(), 902);
+    assert_eq!(arena.sort(support::row_id(1)).unwrap().get(), 903);
 }
 
 #[test]
@@ -319,6 +424,35 @@ fn a_cache_survives_being_nested_as_a_literal_import() {
         panic!("the import must stay literal")
     };
     assert_eq!(**nested, inner);
+}
+
+fn nested_literal_imports(depth: usize) -> Arena {
+    let mut arena = Arena::empty();
+    for _ in 0..depth {
+        let mut outer = Arena::empty();
+        outer
+            .push_import(Import::Literal(Box::new(arena)))
+            .expect("one import remains addressable");
+        arena = outer;
+    }
+    arena
+}
+
+#[test]
+fn literal_import_byte_depth_boundary_is_representation_not_canonicity() {
+    let supported = nested_literal_imports(126);
+    let supported_bytes = encode(&supported);
+    assert_eq!(
+        wire::deserialize(supported_bytes.as_slice()).unwrap(),
+        supported
+    );
+
+    // Rust arenas remain structurally valid and serializable past the byte
+    // decoder's current 127-container recursion budget.  The limitation is a
+    // property of that decoder, not of arena canonicity or the reference space.
+    let deeper = nested_literal_imports(127);
+    let deeper_bytes = encode(&deeper);
+    assert!(wire::deserialize(deeper_bytes.as_slice()).is_err());
 }
 
 #[test]

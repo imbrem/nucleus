@@ -58,6 +58,9 @@ def test_constructors_record_the_classifier_they_derived() -> None:
     assert kernel.classifier(truth) == base.bool_ty
     assert kernel.classifier(applied) == base.bool_ty
     assert kernel.classifier(equation) == base.bool_ty
+    assert kernel.arena.sort[base.star - 1] is None
+    assert kernel.arena.sort[base.bool_ty - 1] == base.star
+    assert kernel.arena.sort[truth - 1] == base.bool_ty
     # `lam` derives and appends its own arrow type rather than trusting one.
     arrow = kernel.classifier(identity)
     assert kernel.arena.definition(arrow).tag == "ty.arr"
@@ -82,8 +85,10 @@ def test_model_is_a_type_and_ty_exists_is_a_term() -> None:
     base = basis()
     kernel = base.kernel
     truth = base.literal(True)
+    model = kernel.model(9, truth)
 
-    assert kernel.category(kernel.model(9, truth)) == "ty"
+    assert kernel.category(model) == "ty"
+    assert kernel.arena.sort[model - 1] == base.star
     assert kernel.category(kernel.ty_exists(9, truth)) == "tm"
 
 
@@ -270,7 +275,7 @@ def test_imports_are_recorded_without_being_believed() -> None:
     assert kernel.arena.imports[1].blake3 == O256.hash(b"unresolved")
     # An import is data. It contributes no rows and no premises on its own.
     assert len(kernel) == 0
-    assert kernel.arena.assumptions == []
+    assert kernel.arena.amb_ctx == []
 
 
 def test_handles_name_a_row_of_the_category_that_minted_them() -> None:
@@ -344,7 +349,7 @@ def test_union_picks_the_smaller_reference_as_representative() -> None:
     assert kernel.equivalent(first, third)
     assert kernel.find_mut(third) == first
     # Compression rewrites the stored parent without changing the class.
-    assert kernel.arena.definition(third).equal == first
+    assert kernel.arena.eq[third - 1] == first
 
 
 def test_the_hol_kernel_is_the_only_production_proof_kernel() -> None:
@@ -355,7 +360,7 @@ def test_the_hol_kernel_is_the_only_production_proof_kernel() -> None:
     assert not hasattr(lrat, "Kernel")
 
 
-def test_row_snapshots_expose_the_checked_members() -> None:
+def test_dense_columns_expose_the_checked_members() -> None:
     base = basis()
     kernel = base.kernel
     variable = base.var(7)
@@ -363,6 +368,6 @@ def test_row_snapshots_expose_the_checked_members() -> None:
 
     assert rows[variable].tag == "tm.fv"
     assert rows[variable].name == 7
-    assert rows[variable].classifier == base.bool_ty
     assert rows[variable].children == [base.bool_ty]
-    assert rows[base.star].classifier is None
+    assert kernel.arena.sort[variable - 1] == base.bool_ty
+    assert kernel.arena.sort[base.star - 1] is None

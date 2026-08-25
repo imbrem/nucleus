@@ -1,6 +1,10 @@
 """Raw and checked one-based Ethane arenas."""
 
 from .._covalence import (
+    AmbPred,
+    load_standard_proof,
+)
+from .._covalence import (
     HolArena as Arena,
 )
 from .._covalence import (
@@ -16,9 +20,6 @@ from .._covalence import (
     HolLink as Link,
 )
 from .._covalence import (
-    HolMeta as Meta,
-)
-from .._covalence import (
     HolSynFact as SynFact,
 )
 from .._covalence import (
@@ -27,7 +28,6 @@ from .._covalence import (
 from .._covalence import (
     HolTy as Ty,
 )
-from .._covalence import load_standard_proof
 
 __all__ = [
     "Arena",
@@ -35,7 +35,7 @@ __all__ = [
     "Kernel",
     "Kind",
     "Link",
-    "Meta",
+    "AmbPred",
     "SynFact",
     "Tm",
     "Ty",
