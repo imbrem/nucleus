@@ -9,7 +9,8 @@
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    AX_INF, AX_SUB, Kernel, KernelError, Lit, Ref, SynRel, Tag, ThmId, TmTag, builtin::Op2,
+    AX_INF, AX_SUB, Kernel, KernelError, Lit, Ref, SynRel, Tag, ThmId, TmTag,
+    builtin::{Op1, Op2},
 };
 
 use crate::{
@@ -57,6 +58,10 @@ pub struct Naturals {
     pub succ_injective: Ref,
     /// Exact theorem `⊢ nat.succ.injective`.
     pub succ_injective_theorem: ThmId,
+    /// `∀n : nat. ¬(nat.zero = nat.succ n)`.
+    pub zero_ne_succ: Ref,
+    /// Exact theorem `⊢ nat.zero_ne_succ`.
+    pub zero_ne_succ_theorem: ThmId,
 }
 
 impl Naturals {
@@ -89,6 +94,7 @@ impl Naturals {
             ("nat.succ", self.succ),
             ("nat.induction", self.induction),
             ("nat.succ.injective", self.succ_injective),
+            ("nat.zero_ne_succ", self.zero_ne_succ),
         ]
         .into_iter()
     }
@@ -324,6 +330,17 @@ fn finish_naturals(
         member_succ_theorem,
         succ,
     )?;
+    let (zero_ne_succ, zero_ne_succ_theorem) = prove_zero_ne_successor(
+        kernel,
+        bool_ty,
+        &infinity,
+        &subtype,
+        zero,
+        zero_member_theorem,
+        rep_member_theorem,
+        member_succ_theorem,
+        succ,
+    )?;
 
     Ok(Naturals {
         infinity,
@@ -344,7 +361,109 @@ fn finish_naturals(
         induction_theorem,
         succ_injective,
         succ_injective_theorem,
+        zero_ne_succ,
+        zero_ne_succ_theorem,
     })
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn prove_zero_ne_successor(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    infinity: &Infinity,
+    subtype: &Subtype,
+    zero: Ref,
+    zero_member_theorem: ThmId,
+    rep_member_theorem: ThmId,
+    member_succ_theorem: ThmId,
+    successor: Ref,
+) -> Result<(Ref, ThmId), NaturalError> {
+    let natural = kernel.tm_fv(kernel.fresh_name(&[zero, successor])?, subtype.sub)?;
+    let successor_natural = kernel.app(successor, natural)?;
+    let natural_equality = kernel.eq(bool_ty, zero, successor_natural)?;
+    let assumed = kernel.identity(positive(natural_equality))?;
+    let represented_equality = kernel.ap_term(assumed, subtype.rep)?;
+
+    let represented_natural = kernel.app(subtype.rep, natural)?;
+    let mapped = kernel.app(infinity.map, represented_natural)?;
+    let mapped_member = prove_mapped_rep_member(
+        kernel,
+        represented_natural,
+        mapped,
+        natural,
+        rep_member_theorem,
+        member_succ_theorem,
+    )?;
+    let successor_round_trip = prove_guarded_round_trip(kernel, subtype, mapped, mapped_member)?;
+    let zero_round_trip =
+        prove_guarded_round_trip(kernel, subtype, infinity.missed, zero_member_theorem)?;
+
+    let zero_shape = join_same_syntax(kernel, zero_round_trip.left, represented_equality.left)?;
+    let zero_target = kernel.eq(bool_ty, represented_equality.left, infinity.missed)?;
+    certify_equality_conversion(kernel, zero_round_trip.equality, zero_target, zero_shape)?;
+    kernel.convert_conclusions(
+        zero_round_trip.theorem,
+        zero_round_trip.equality,
+        zero_target,
+    )?;
+    let zero_round_trip = proved_equality(kernel, zero_round_trip.theorem)?;
+
+    let (expanded_successor, expansion) = expand_represented_successor(
+        kernel,
+        subtype.rep,
+        successor,
+        natural,
+        represented_equality.right,
+    )?;
+    let successor_shape = join_same_syntax(kernel, successor_round_trip.left, expanded_successor)?;
+    let expansion = kernel.syn_symm(None, expansion)?;
+    let successor_endpoint = kernel.syn_trans(None, successor_shape, expansion)?;
+    let successor_target = kernel.eq(bool_ty, represented_equality.right, mapped)?;
+    certify_equality_conversion(
+        kernel,
+        successor_round_trip.equality,
+        successor_target,
+        successor_endpoint,
+    )?;
+    kernel.convert_conclusions(
+        successor_round_trip.theorem,
+        successor_round_trip.equality,
+        successor_target,
+    )?;
+    let successor_round_trip = proved_equality(kernel, successor_round_trip.theorem)?;
+
+    let missed_to_zero = equality_symmetry(kernel, bool_ty, zero_round_trip.theorem)?;
+    let missed_to_successor = equality_transitivity(
+        kernel,
+        bool_ty,
+        missed_to_zero.theorem,
+        represented_equality.theorem,
+    )?;
+    let missed_to_mapped = equality_transitivity(
+        kernel,
+        bool_ty,
+        missed_to_successor.theorem,
+        successor_round_trip.theorem,
+    )?;
+    let mapped_to_missed = equality_symmetry(kernel, bool_ty, missed_to_mapped.theorem)?;
+
+    let avoided = forall_elim(kernel, infinity.avoids_missed_theorem, represented_natural)?;
+    let [_avoided_bool, forbidden_equality, falsehood] =
+        exact_children(kernel, avoided.proposition, Tag::Tm(TmTag::Eq))?;
+    join_same_syntax(kernel, mapped_to_missed.equality, forbidden_equality)?;
+    kernel.convert_conclusions(
+        mapped_to_missed.theorem,
+        mapped_to_missed.equality,
+        forbidden_equality,
+    )?;
+    let false_theorem = kernel.eq_mp(avoided.theorem, mapped_to_missed.theorem)?;
+    let false_left = kernel.false_left(positive(falsehood))?;
+    let contradiction = kernel.cut(false_theorem, false_left, positive(falsehood))?;
+    kernel.not_right(contradiction, positive(natural_equality))?;
+    let separation = kernel.op1(Op1::Not, natural_equality)?;
+    let separation_theorem = kernel.fold_conclusion(contradiction, positive(separation))?;
+    let generalized = kernel.forall_intro(separation_theorem, natural)?;
+    Ok((generalized.universal, generalized.theorem))
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
