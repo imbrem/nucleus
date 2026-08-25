@@ -227,6 +227,7 @@ def syntaxTag [Strategy S Ix] : Codec SyntaxTag :=
       | .tyLam => text names.tyLam
       | .tyFv => text names.tyFv
       | .tyExists => text names.tyExists
+      | .tyForall => text names.tyForall
       | .model => text names.model
       | .primFam => text names.primFam
       | .primTm => text names.primTm
@@ -246,6 +247,7 @@ def syntaxTag [Strategy S Ix] : Codec SyntaxTag :=
       else if value = text names.tyLam then some .tyLam
       else if value = text names.tyFv then some .tyFv
       else if value = text names.tyExists then some .tyExists
+      else if value = text names.tyForall then some .tyForall
       else if value = text names.model then some .model
       else if value = text names.primFam then some .primFam
       else if value = text names.primTm then some .primTm
@@ -263,7 +265,8 @@ def syntaxTag [Strategy S Ix] : Codec SyntaxTag :=
           SyntaxVocabulary.kindArr, SyntaxVocabulary.boolTy,
           SyntaxVocabulary.arr, SyntaxVocabulary.tyApp,
           SyntaxVocabulary.tyLam, SyntaxVocabulary.tyFv,
-          SyntaxVocabulary.tyExists, SyntaxVocabulary.model,
+          SyntaxVocabulary.tyExists, SyntaxVocabulary.tyForall,
+          SyntaxVocabulary.model,
           SyntaxVocabulary.primFam, SyntaxVocabulary.primTm,
           SyntaxVocabulary.tmFv, SyntaxVocabulary.app,
           SyntaxVocabulary.lam, SyntaxVocabulary.bool,

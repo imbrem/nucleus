@@ -36,6 +36,10 @@ pub(crate) enum Expr {
         name: u64,
         predicate: Ref,
     },
+    TyForall {
+        name: u64,
+        predicate: Ref,
+    },
     Model {
         name: u64,
         predicate: Ref,
@@ -83,6 +87,7 @@ impl Expr {
             Self::TyLam(..) => Tag::Ty(TyTag::Lam),
             Self::TyFv { .. } => Tag::Ty(TyTag::Fv),
             Self::TyExists { .. } => Tag::Tm(TmTag::TyExists),
+            Self::TyForall { .. } => Tag::Tm(TmTag::TyForall),
             Self::Model { .. } => Tag::Ty(TyTag::Model),
             Self::TmFv { .. } => Tag::Tm(TmTag::Fv),
             Self::App(..) => Tag::Tm(TmTag::App),
@@ -118,6 +123,9 @@ impl Expr {
             Self::Eps { ty, predicate } => SmallVec::from_slice(&[ty, predicate]),
             Self::TyFv { kind: child, .. }
             | Self::TyExists {
+                predicate: child, ..
+            }
+            | Self::TyForall {
                 predicate: child, ..
             }
             | Self::Model {
@@ -208,6 +216,7 @@ impl TyTag {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum TmTag {
     TyExists,
+    TyForall,
     Fv,
     App,
     Lam,
@@ -224,6 +233,7 @@ impl TmTag {
     pub const fn name(self) -> &'static str {
         match self {
             Self::TyExists => "tm.ty_exists",
+            Self::TyForall => "tm.ty_forall",
             Self::Fv => "tm.fv",
             Self::App => "tm.app",
             Self::Lam => "tm.lam",
@@ -278,6 +288,7 @@ impl Tag {
             "ty.model" => Self::Ty(TyTag::Model),
             "ty.ref" => Self::Ty(TyTag::Ref),
             "tm.ty_exists" => Self::Tm(TmTag::TyExists),
+            "tm.ty_forall" => Self::Tm(TmTag::TyForall),
             "tm.fv" => Self::Tm(TmTag::Fv),
             "tm.app" => Self::Tm(TmTag::App),
             "tm.lam" => Self::Tm(TmTag::Lam),
@@ -403,6 +414,11 @@ impl From<Row> for RowSerde {
                 [predicate],
                 Some(Value::Nat(name)),
             ),
+            Expr::TyForall { name, predicate } => ordinary(
+                Tag::Tm(TmTag::TyForall),
+                [predicate],
+                Some(Value::Nat(name)),
+            ),
             Expr::Model { name, predicate } => {
                 ordinary(Tag::Ty(TyTag::Model), [predicate], Some(Value::Nat(name)))
             }
@@ -472,6 +488,12 @@ impl TryFrom<RowSerde> for Row {
             }
             (Tag::Tm(TmTag::TyExists), Some([predicate]), Some(Value::Nat(name)), None, None) => {
                 Expr::TyExists {
+                    name,
+                    predicate: *predicate,
+                }
+            }
+            (Tag::Tm(TmTag::TyForall), Some([predicate]), Some(Value::Nat(name)), None, None) => {
+                Expr::TyForall {
                     name,
                     predicate: *predicate,
                 }
@@ -569,6 +591,10 @@ mod tests {
             Row::new(Expr::TyFv { name: 2, kind: one }),
             Row::new(Expr::TyExists {
                 name: 3,
+                predicate: one,
+            }),
+            Row::new(Expr::TyForall {
+                name: 5,
                 predicate: one,
             }),
             Row::new(Expr::Model {

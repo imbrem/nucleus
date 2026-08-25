@@ -29,7 +29,8 @@ def children : detail.Expr → List Ref
       .eps left right | .op2 _ left right => [left, right]
   | .eq type left right => [type, left, right]
   | .op1 _ child => [child]
-  | .tyFv _ child | .tyExists _ child | .model _ child | .tmFv _ child => [child]
+  | .tyFv _ child | .tyExists _ child | .tyForall _ child | .model _ child |
+      .tmFv _ child => [child]
 
 @[simp] theorem children_tmRef (source : ImportId) (foreign : Ref) :
     (detail.Expr.tmRef source foreign).children = [] := rfl
@@ -52,7 +53,8 @@ def children (row : detail.Row) : List Ref := row.expr.children
 
 def extras (row : detail.Row) : List RowExtra :=
   let expression := match row.expr with
-    | .tyFv name _ | .tyExists name _ | .model name _ | .tmFv name _ => [.nat name]
+    | .tyFv name _ | .tyExists name _ | .tyForall name _ | .model name _ |
+        .tmFv name _ => [.nat name]
     | .bool value => [.bool value]
     | .op1 op _ => [.nat op.code.toUInt64]
     | .op2 op _ _ => [.nat op.code.toUInt64]

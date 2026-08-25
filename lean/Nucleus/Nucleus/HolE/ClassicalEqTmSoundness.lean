@@ -66,11 +66,15 @@ structure ClassicalEqTmRuleLaws where
     CSemEq (Γ := Γ) x y (.sub A p) →
     CSemEq (Γ := Γ) (.rep A p x) (.rep A p y) A
   tyExists : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
-      {p q : Tm ClassicalSig (.star :: types) 0},
+      {p q : Tm ClassicalSig (.star :: types) depth},
     HasType Γ (.tyExists p) .boolTy → HasType Γ (.tyExists q) .boolTy →
-    CSemEq (Γ := (emptyBound : BoundCtx ClassicalSig (.star :: types) 0))
-      p q .boolTy →
+    CSemEq (Γ := weakenBoundCtx Γ) p q .boolTy →
     CSemEq (Γ := Γ) (.tyExists p) (.tyExists q) .boolTy
+  tyForall : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
+      {p q : Tm ClassicalSig (.star :: types) depth},
+    HasType Γ (.tyForall p) .boolTy → HasType Γ (.tyForall q) .boolTy →
+    CSemEq (Γ := weakenBoundCtx Γ) p q .boolTy →
+    CSemEq (Γ := Γ) (.tyForall p) (.tyForall q) .boolTy
   beta : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
       {A B : Ty ClassicalSig types} {body : Tm ClassicalSig types (depth + 1)}
       {x : Tm ClassicalSig types depth},
@@ -111,6 +115,7 @@ theorem EqTm.sound_of_laws {types : List Kind} {depth : Nat}
   | abs leftRaw rightRaw hA hp values ih => exact laws.abs leftRaw rightRaw hA hp ih
   | rep leftRaw rightRaw hA hp values ih => exact laws.rep leftRaw rightRaw hA hp ih
   | tyExists leftRaw rightRaw predicates ih => exact laws.tyExists leftRaw rightRaw ih
+  | tyForall leftRaw rightRaw predicates ih => exact laws.tyForall leftRaw rightRaw ih
   | @conv types depth Γ left B right A leftTyping rightTyping equality ih =>
       intro convertedLeft convertedRight env bound typed valid expected
       let sourceLeft : HasTypeDefEq Γ left A := equality.typing.1

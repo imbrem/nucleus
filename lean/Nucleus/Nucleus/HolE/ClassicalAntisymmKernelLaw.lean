@@ -18,7 +18,7 @@ theorem classical_antisymm_law
     (left : CEntails (Γ := Γ) (p :: H) q)
     (right : CEntails (Γ := Γ) (q :: H) p) :
     CEntails (Γ := Γ) H (.eq .boolTy p q) := by
-  intro env bound truths
+  intro env bound typed valid truths
   classical
   refine ⟨conclusionTyping.certificate, ?_⟩
   rw [conclusionTyping.certificate.rawView_semantics]
@@ -43,7 +43,7 @@ theorem classical_antisymm_law
         cases hpv : pValue <;> cases hqv : qValue
         · rfl
         · exfalso
-          have pTrue := right env bound (fun candidate member => by
+          have pTrue := right env bound typed valid (fun candidate member => by
             rcases List.mem_cons.mp member with rfl | member
             · refine ⟨.exact qCheck, ?_⟩
               change cSem qCheck env bound cBool = ⟨true⟩
@@ -58,7 +58,7 @@ theorem classical_antisymm_law
           have impossible := congrArg ULift.down this
           contradiction
         · exfalso
-          have qTrue := left env bound (fun candidate member => by
+          have qTrue := left env bound typed valid (fun candidate member => by
             rcases List.mem_cons.mp member with rfl | member
             · refine ⟨.exact pCheck, ?_⟩
               change cSem pCheck env bound cBool = ⟨true⟩

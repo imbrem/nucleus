@@ -44,8 +44,13 @@ inductive EqTm {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig] :
       EqTm Γ (.rep A p x) (.rep A p y) A
   | tyExists (leftRaw : HasType (types := types) Γ (.tyExists p) .boolTy)
       (rightRaw : HasType (types := types) Γ (.tyExists q) .boolTy) :
-      EqTm (types := .star :: types) emptyBound p q .boolTy →
+      EqTm (types := .star :: types) (weakenBoundCtx Γ) p q .boolTy →
       EqTm (types := types) Γ (.tyExists p) (.tyExists q) .boolTy
+  /-- Reindex an equality when both endpoints check at the new type. -/
+  | tyForall (leftRaw : HasType (types := types) Γ (.tyForall p) .boolTy)
+      (rightRaw : HasType (types := types) Γ (.tyForall q) .boolTy) :
+      EqTm (types := .star :: types) (weakenBoundCtx Γ) p q .boolTy →
+      EqTm (types := types) Γ (.tyForall p) (.tyForall q) .boolTy
   /-- Reindex an equality when both endpoints check at the new type. -/
   | conv (leftTyping : HasTypeDefEq Γ left B)
       (rightTyping : HasTypeDefEq Γ right B) :

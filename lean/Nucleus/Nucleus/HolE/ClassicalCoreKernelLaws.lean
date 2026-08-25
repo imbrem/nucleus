@@ -1,5 +1,6 @@
 import Nucleus.HolE.ClassicalEqTmSoundness
 import Nucleus.HolE.ClassicalKernelSoundness
+import Nucleus.HolE.ClassicalFamilySoundness
 
 /-! # Core classical kernel laws -/
 
@@ -77,9 +78,8 @@ theorem classical_eqOfEqTm (eqLaws : ClassicalEqTmRuleLaws)
               (rightTyping.certificate.coherent (.exact rightChecking)
                 env bound (cSem cA env)))
         change ULift.up (alignCValue cBool cBool (decide (_ = _))) = ULift.up true
-        rw [rawOperandsEqual]
-        simp
-        exact congrArg ULift.up (alignCValue_self cBool true)
+        rw [rawOperandsEqual, decide_eq_true (rfl : _ = _), alignCValue_bool]
+        rfl
 
 private theorem entails_at_certificate
     {types : List Kind} {depth : Nat} {Γ : BoundCtx ClassicalSig types depth}
@@ -333,15 +333,33 @@ theorem classical_eqTm_rep
       dsimp [leftCheck, rightCheck, cDefSem, cSem]
       rw [valueContents']
 
+/-- A valid bound environment stays valid past a fresh type variable.  Nothing
+is transported: `CBoundEnv` is indexed only by term depth, which is exactly why
+an *open* type quantifier is cheap. -/
+theorem CBoundValid.weakenTypes {types : List Kind} {kind : Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {typed : TypedCtx Γ}
+    {env : CTypeEnv types} {bound : CBoundEnv depth}
+    (valid : CBoundValid typed env bound) (candidate : CDenoteKind kind) :
+    CBoundValid (Γ := weakenBoundCtx (kind := kind) Γ)
+      (fun i => (typed i).weakenTypes) (extendCTypeEnv candidate env) bound := by
+  intro index expected
+  have transported := denoteChecked_weakenTypes (binderKind := kind)
+    (typed index) candidate env
+  show bound index expected =
+    alignCValue (denoteChecked (typed index).weakenTypes
+      (extendCTypeEnv candidate env)) expected
+      (bound index (denoteChecked (typed index).weakenTypes
+        (extendCTypeEnv candidate env)))
+  rw [transported]
+  exact valid index expected
+
 theorem classical_eqTm_tyExists
     {types : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth}
-    {p q : Tm ClassicalSig (.star :: types) 0}
+    {p q : Tm ClassicalSig (.star :: types) depth}
     (leftRaw : HasType Γ (.tyExists p) .boolTy)
     (rightRaw : HasType Γ (.tyExists q) .boolTy)
-    (predicatesEqual : CSemEq
-      (Γ := (emptyBound : BoundCtx ClassicalSig (.star :: types) 0))
-      p q .boolTy) :
+    (predicatesEqual : CSemEq (Γ := weakenBoundCtx Γ) p q .boolTy) :
     CSemEq (Γ := Γ) (.tyExists p) (.tyExists q) .boolTy := by
   intro leftTyping rightTyping env bound typed valid expected
   cases leftRaw with
@@ -356,22 +374,21 @@ theorem classical_eqTm_tyExists
         rightTyping.certificate.coherent rightCheck env bound expected]
       have predicateValues : ∀ candidate : CPointed,
           cSem leftPredicate.certificate
-              (extendCTypeEnv (kind := .star) candidate env) emptyCBoundEnv cBool =
+              (extendCTypeEnv (kind := .star) candidate env) bound cBool =
             cSem rightPredicate.certificate
-              (extendCTypeEnv (kind := .star) candidate env) emptyCBoundEnv cBool := by
+              (extendCTypeEnv (kind := .star) candidate env) bound cBool := by
         intro candidate
         exact raw_semantics_of_eqTm leftPredicate rightPredicate predicatesEqual
-          (extendCTypeEnv (kind := .star) candidate env) emptyCBoundEnv
-          (fun index => Fin.elim0 index)
-          (emptyCBoundEnv_valid (extendCTypeEnv (kind := .star) candidate env)) cBool
+          (extendCTypeEnv (kind := .star) candidate env) bound
+          typed.weakenTypes (valid.weakenTypes (kind := .star) candidate) cBool
       have witnessesEqual :
           (∃ candidate : CPointed,
             cSem leftPredicate.certificate
-                (extendCTypeEnv (kind := .star) candidate env) emptyCBoundEnv cBool =
+                (extendCTypeEnv (kind := .star) candidate env) bound cBool =
               ⟨true⟩) =
           (∃ candidate : CPointed,
             cSem rightPredicate.certificate
-                (extendCTypeEnv (kind := .star) candidate env) emptyCBoundEnv cBool =
+                (extendCTypeEnv (kind := .star) candidate env) bound cBool =
               ⟨true⟩) := by
         apply propext
         constructor
@@ -381,6 +398,53 @@ theorem classical_eqTm_tyExists
           exact ⟨candidate, (predicateValues candidate).trans witness⟩
       dsimp [leftCheck, rightCheck, cDefSem, cSem]
       rw [witnessesEqual]
+
+theorem classical_eqTm_tyForall
+    {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth}
+    {p q : Tm ClassicalSig (.star :: types) depth}
+    (leftRaw : HasType Γ (.tyForall p) .boolTy)
+    (rightRaw : HasType Γ (.tyForall q) .boolTy)
+    (predicatesEqual : CSemEq (Γ := weakenBoundCtx Γ) p q .boolTy) :
+    CSemEq (Γ := Γ) (.tyForall p) (.tyForall q) .boolTy := by
+  intro leftTyping rightTyping env bound typed valid expected
+  cases leftRaw with
+  | tyForall leftPredicate =>
+    cases rightRaw with
+    | tyForall rightPredicate =>
+      let leftCheck : CDefChecks Γ (.tyForall p) .boolTy :=
+        .exact (.tyForall leftPredicate.certificate)
+      let rightCheck : CDefChecks Γ (.tyForall q) .boolTy :=
+        .exact (.tyForall rightPredicate.certificate)
+      rw [leftTyping.certificate.coherent leftCheck env bound expected,
+        rightTyping.certificate.coherent rightCheck env bound expected]
+      have predicateValues : ∀ candidate : CPointed,
+          cSem leftPredicate.certificate
+              (extendCTypeEnv (kind := .star) candidate env) bound cBool =
+            cSem rightPredicate.certificate
+              (extendCTypeEnv (kind := .star) candidate env) bound cBool := by
+        intro candidate
+        exact raw_semantics_of_eqTm leftPredicate rightPredicate predicatesEqual
+          (extendCTypeEnv (kind := .star) candidate env) bound
+          typed.weakenTypes (valid.weakenTypes (kind := .star) candidate) cBool
+      have witnessesEqual :
+          (∀ candidate : CPointed,
+            cSem leftPredicate.certificate
+                (extendCTypeEnv (kind := .star) candidate env) bound cBool =
+              ⟨true⟩) =
+          (∀ candidate : CPointed,
+            cSem rightPredicate.certificate
+                (extendCTypeEnv (kind := .star) candidate env) bound cBool =
+              ⟨true⟩) := by
+        apply propext
+        constructor
+        · intro every candidate
+          exact (predicateValues candidate).symm.trans (every candidate)
+        · intro every candidate
+          exact (predicateValues candidate).trans (every candidate)
+      dsimp [leftCheck, rightCheck, cDefSem, cSem]
+      rw [witnessesEqual]
+
 
 theorem classical_eqMp
     (hA : Kinded A) (conclusionTyping : HasTypeDefEq Γ (.app p y) .boolTy)
@@ -510,7 +574,7 @@ theorem classical_antisymm
       simp only
       rw [valuesEqual]
       simp
-      exact congrArg ULift.up (alignCValue_self cBool true)
+      rfl
 
 theorem classical_choice
     (_hA : Kinded A)

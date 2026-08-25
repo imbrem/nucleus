@@ -72,7 +72,7 @@ def ActiveSubstitutionLeaf : detail.Expr → Prop
 /-- Roots accepted by active generic congruence.  Binders have dedicated
 rules, and proxies are conservatively opaque. -/
 def ActiveCongruenceRoot : detail.Expr → Prop
-  | .tyLam .. | .lam .. | .tyExists .. | .model .. => False
+  | .tyLam .. | .lam .. | .tyExists .. | .tyForall .. | .model .. => False
   | .tmRef .. | .tyRef .. | .kindRef .. => False
   | _ => True
 
@@ -339,7 +339,7 @@ def children : EmptySyn → List EmptySyn
   | .arr left right | .app left right => [left, right]
   | .tyApp _ _ function argument => [function, argument]
   | .tyLam _ _ _ body => [body]
-  | .tyExists _ body | .model _ body => [body]
+  | .tyExists _ body | .tyForall _ body | .model _ body => [body]
   | .tmFv _ type => [type]
   | .lam _ domain body => [domain, body]
   | .eq type left right => [type, left, right]
@@ -449,6 +449,22 @@ inductive NamedSubstitution (needle replacement : EmptySyn) :
       (bodyStep : NamedSubstitution needle replacement body body') :
       NamedSubstitution needle replacement
         (.tyExists name body) (.tyExists name body')
+  | tyForallShadow {name body}
+      (shadowed : needle = .tyFv name .star) :
+      NamedSubstitution needle replacement
+        (.tyForall name body) (.tyForall name body)
+  | tyForallTyCongr {name body body'}
+      (typeNeedle : NamedSubstitution.IsTyVariable needle)
+      (notShadowed : needle ≠ .tyFv name .star)
+      (fresh : NamedSubstitution.Fresh (.tyFv name .star) replacement)
+      (bodyStep : NamedSubstitution needle replacement body body') :
+      NamedSubstitution needle replacement
+        (.tyForall name body) (.tyForall name body')
+  | tyForallTmCongr {name body body'}
+      (termNeedle : NamedSubstitution.IsTmVariable needle)
+      (bodyStep : NamedSubstitution needle replacement body body') :
+      NamedSubstitution needle replacement
+        (.tyForall name body) (.tyForall name body')
   | modelShadow {name body}
       (shadowed : needle = .tyFv name .star) :
       NamedSubstitution needle replacement (.model name body) (.model name body)
@@ -521,18 +537,34 @@ inductive Substitutes (subVar replacement : Value) : Value → Value → Prop wh
       (replacementIsSyntax : replacement.syntax? = some replacementSyntax)
       (inputIsSyntax : input.syntax? = some inputSyntax)
       (outputIsSyntax : output.syntax? = some outputSyntax)
+      -- `Value.syntax?` is `some` for families *and* terms, so without this the
+      -- relation would allow a family input with a term output.  Rust's
+      -- `require_substitution_result` pins the category unconditionally
+      -- (`require_category(output, category)`), so the premise costs nothing.
+      (sameCategory : input.tagSort = output.tagSort)
       (derivation : NamedSubstitution variableSyntax replacementSyntax inputSyntax outputSyntax) :
       Substitutes subVar replacement input output
+
+/-- Substitution never changes a value's syntax category. -/
+theorem Substitutes.tagSort_eq {subVar replacement input output : Value}
+    (substitutes : Substitutes subVar replacement input output) :
+    input.tagSort = output.tagSort := by
+  cases substitutes with
+  | kind kind => rfl
+  | «syntax» _ _ _ _ sameCategory _ => exact sameCategory
 
 /-- The variable case `[replacement / subVar] subVar = replacement`.
 This is the primitive substitution LCF rule used by Rust `syn_sub_var`. -/
 theorem Substitutes.varCase {subVar replacement : Value}
     {variableSyntax replacementSyntax : EmptySyn}
     (variableIsSyntax : subVar.syntax? = some variableSyntax)
-    (replacementIsSyntax : replacement.syntax? = some replacementSyntax) :
+    (replacementIsSyntax : replacement.syntax? = some replacementSyntax)
+    -- Rust `require_substitution_pair` requires the replacement to inhabit the
+    -- variable's category before any substitution fact is minted.
+    (sameCategory : subVar.tagSort = replacement.tagSort) :
     Substitutes subVar replacement subVar replacement :=
   .syntax variableIsSyntax replacementIsSyntax variableIsSyntax
-    replacementIsSyntax .hit
+    replacementIsSyntax sameCategory .hit
 
 /-- Denotation of one local direct or active-substitution judgment. -/
 def LocalSynMeaning (relation : SynRel) (subVar replacement : Option Value)
@@ -787,10 +819,11 @@ theorem refine_direct (source : SynRel.Holds finer input output)
 theorem substitutionVariable
     (variableIsSyntax : subVar.syntax? = some variableSyntax)
     (replacementIsSyntax : replacement.syntax? = some replacementSyntax)
-    (replacementWellFormed : replacement.WellFormed) :
+    (replacementWellFormed : replacement.WellFormed)
+    (sameCategory : subVar.tagSort = replacement.tagSort) :
     SynInference .syn (some subVar) (some replacement) subVar replacement :=
   .substitution
-    (Value.Substitutes.varCase variableIsSyntax replacementIsSyntax)
+    (Value.Substitutes.varCase variableIsSyntax replacementIsSyntax sameCategory)
     replacementWellFormed (Value.compatible_refl replacementWellFormed)
     (Value.syntaxEqual_refl replacement)
 

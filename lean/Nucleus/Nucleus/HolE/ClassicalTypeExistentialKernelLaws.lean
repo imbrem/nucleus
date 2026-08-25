@@ -29,10 +29,12 @@ private theorem CChecks.erase : CChecks Γ expression classification →
   | .rep hA hp hx => .rep hA.erase hp.erase hx.erase
   | .tyExists hp => .tyExists hp.erase
 
+  | .tyForall hp => .tyForall hp.erase
+
 private theorem cSem_openType
     {types : List Kind} {predicate : Tm ClassicalSig (.star :: types) 0}
     {A : Ty ClassicalSig types}
-    (hp : CChecks (emptyBound : BoundCtx ClassicalSig (.star :: types) 0)
+    (hp : CChecks (weakenBoundCtx (emptyBound : BoundCtx ClassicalSig types 0))
       predicate (.tm .boolTy)) (hA : Kinded A) (cA : CKinded A)
     (opened : CChecks (emptyBound : BoundCtx ClassicalSig types 0)
       (openType predicate A) (.tm .boolTy)) (env : CTypeEnv types) :
@@ -42,14 +44,14 @@ private theorem cSem_openType
   let wf : WellFormedTySub (headTySub A) :=
     wellFormed_headTySub (kind := .star) hA
   have instantiated := hp.instantiateTypes wf
-  rw [instantiateBoundCtx_empty] at instantiated
+  rw [instantiateBoundCtx_head_weakenBoundCtx] at instantiated
   change CChecks emptyBound (openType predicate A) (.tm .boolTy) at instantiated
   rw [opened.unique instantiated]
   have semantic := cSem_instantiateTypes hp wf env
   simp only [CInstantiateEq] at semantic
   have normalize := cSem_instantiate_tm_normalize wf
     (hp.instantiateTypes wf) emptyBound
-    (instantiateBoundCtx_empty (headTySub A)) instantiated env
+    (instantiateBoundCtx_head_weakenBoundCtx A emptyBound) instantiated env
   rw [normalize] at semantic
   rw [CTypeEnv.ofSub_head hA env] at semantic
   exact congrFun (congrFun semantic emptyCBoundEnv) cBool
@@ -96,12 +98,13 @@ theorem tyExistsIntro_sound
         let wf : WellFormedTySub (headTySub A) :=
           wellFormed_headTySub (kind := .star) hA
         have instantiated := hp.instantiateTypes wf
-        rw [instantiateBoundCtx_empty] at instantiated
+        rw [instantiateBoundCtx_head_weakenBoundCtx] at instantiated
         change CChecks emptyBound (openType predicate A) (.tm .boolTy) at instantiated
         have typeEq := instanceRaw.type_unique instantiated
         subst instanceType
         rw [← cSem_openType hp hA hA.certificate instanceRaw env]
         exact instanceTrue
+
 
 theorem modelSpec_sound
     {types : List Kind} {H : List (Tm ClassicalSig types 0)}
@@ -141,12 +144,24 @@ theorem modelSpec_sound
         rw [alignCValue_bool] at existsTrue
         exact ULift.up.inj existsTrue
       obtain ⟨witness, witnessHolds⟩ := of_decide_eq_true decided
+      -- `ty.model` stays a *closed* type binder; only the term quantifiers
+      -- were opened, so the certificate is transported back across
+      -- `weakenBoundCtx emptyBound = emptyBound`.  Phrasing `sat` with the
+      -- closed certificate makes it literally the predicate `cSem` chooses on.
+      let closed : CChecks (emptyBound : BoundCtx ClassicalSig (.star :: types) 0)
+          predicate (.tm .boolTy) := weakenBoundCtx_empty ▸ hp
+      have transported : ∀ candidate : CPointed,
+          cSem closed (extendCTypeEnv candidate env) emptyCBoundEnv cBool =
+            cSem hp (extendCTypeEnv candidate env) emptyCBoundEnv cBool :=
+        fun candidate =>
+          congrFun (congrFun (cSem_transport_ctx weakenBoundCtx_empty hp)
+            (extendCTypeEnv candidate env)) emptyCBoundEnv ▸ rfl
       let sat := fun candidate : CPointed =>
-        cSem hp (extendCTypeEnv candidate env) emptyCBoundEnv cBool = ⟨true⟩
+        cSem closed (extendCTypeEnv candidate env) emptyCBoundEnv cBool = ⟨true⟩
       have chosenHolds : sat (chooseCModel sat) :=
-        chooseCModel_spec sat witness witnessHolds
-      let modelRaw : CKinded (.model predicate) := .model hp
-      have modelKinded : Kinded (.model predicate) := .model hp.erase
+        chooseCModel_spec sat witness ((transported witness).trans witnessHolds)
+      let modelRaw : CKinded (.model predicate) := .model closed
+      have modelKinded : Kinded (.model predicate) := .model closed.erase
       let resultCheck := conclusionTyping.certificate
       refine ⟨resultCheck, ?_⟩
       rw [resultCheck.rawView_semantics]
@@ -155,12 +170,13 @@ theorem modelSpec_sound
         simp only [CDefRawView.sem]
         have instantiated := hp.instantiateTypes
           (wellFormed_headTySub (kind := .star) modelKinded)
-        rw [instantiateBoundCtx_empty] at instantiated
+        rw [instantiateBoundCtx_head_weakenBoundCtx] at instantiated
         change CChecks emptyBound (openType predicate (.model predicate))
           (.tm .boolTy) at instantiated
         have typeEq := resultRaw.type_unique instantiated
         subst resultType
         rw [cSem_openType hp modelKinded modelRaw resultRaw env]
-        exact chosenHolds
+        exact (transported _).symm.trans chosenHolds
+
 
 end Nucleus.HolE

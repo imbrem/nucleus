@@ -112,6 +112,13 @@ theorem CChecks.cSem_expected_valid
       exact congrArg (alignCValue cBool expected)
         (alignCValue_self cBool _).symm
 
+  | tyForall hp =>
+      change ULift.up (alignCValue cBool expected _) = ULift.up
+        (alignCValue cBool expected (alignCValue cBool cBool _))
+      apply congrArg ULift.up
+      exact congrArg (alignCValue cBool expected)
+        (alignCValue_self cBool _).symm
+
 /-- The substitution environment for opening agrees extensionally with the
 environment obtained by evaluating the argument and pushing its value. -/
 private theorem openSub_bound_eq

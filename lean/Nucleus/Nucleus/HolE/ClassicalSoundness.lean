@@ -39,8 +39,11 @@ inductive CDefChecks : {types : List Kind} → {depth : Nat} →
       (hp : CChecks (extendBound A emptyBound) p (.tm .boolTy)) :
       CDefChecks Γ x (.sub A p) → CDefChecks Γ (.rep A p x) A
   | tyExists (raw : CChecks (types := types) Γ (.tyExists p) (.tm .boolTy)) :
-      CDefChecks (types := .star :: types) emptyBound p .boolTy →
+      CDefChecks (types := .star :: types) (weakenBoundCtx Γ) p .boolTy →
       CDefChecks (types := types) Γ (.tyExists p) .boolTy
+  | tyForall (raw : CChecks (types := types) Γ (.tyForall p) (.tm .boolTy)) :
+      CDefChecks (types := .star :: types) (weakenBoundCtx Γ) p .boolTy →
+      CDefChecks (types := types) Γ (.tyForall p) .boolTy
   | conv : CDefChecks Γ term A → CKinded B → FamEq ClassicalSig A B →
       CDefChecks Γ term B
 
@@ -66,11 +69,12 @@ theorem CChecks.toChecks : CChecks Γ expression classification →
   | .abs hA hp value => .abs hA.toChecks hp.toChecks value.toChecks
   | .rep hA hp value => .rep hA.toChecks hp.toChecks value.toChecks
   | .tyExists predicate => .tyExists predicate.toChecks
+  | .tyForall predicate => .tyForall predicate.toChecks
 
 def CDefChecks.typeKinded : CDefChecks Γ term A → CKinded A
   | .exact raw => raw.typeKinded
   | .app raw .. | .lam _ raw .. | .eq raw .. | .eps raw .. |
-      .abs raw .. | .rep raw .. | .tyExists raw _ => raw.typeKinded
+      .abs raw .. | .rep raw .. | .tyExists raw _ | .tyForall raw _ => raw.typeKinded
   | .conv _ hB _ => hB
 
 theorem HasTypeDefEq.toC {types : List Kind} {depth : Nat}
@@ -102,6 +106,9 @@ theorem HasTypeDefEq.toC {types : List Kind} {depth : Nat}
   | tyExists raw _ ih =>
       obtain ⟨cp⟩ := ih
       exact ⟨.tyExists raw.certificate cp⟩
+  | tyForall raw _ ih =>
+      obtain ⟨cp⟩ := ih
+      exact ⟨.tyForall raw.certificate cp⟩
   | conv _ hB conversion ih =>
       obtain ⟨cterm⟩ := ih
       exact ⟨.conv cterm hB.certificate conversion⟩
@@ -122,7 +129,7 @@ noncomputable def cDefSem {types : List Kind} {depth : Nat}
   exact match checking with
   | .exact raw => fun env bound expected => cSem raw env bound expected
   | .app raw .. | .lam _ raw .. | .eq raw .. | .eps raw .. |
-      .abs raw .. | .rep raw .. | .tyExists raw _ =>
+      .abs raw .. | .rep raw .. | .tyExists raw _ | .tyForall raw _ =>
       fun env bound expected => cSem raw env bound expected
   | .conv source hB conversion => cDefSem source
 
@@ -153,6 +160,7 @@ noncomputable def CDefChecks.rawView {types : List Kind} {depth : Nat}
   | .abs raw _ _ _ => ⟨_, raw⟩
   | .rep raw _ _ _ => ⟨_, raw⟩
   | .tyExists raw _ => ⟨_, raw⟩
+  | .tyForall raw _ => ⟨_, raw⟩
   | .conv source _ _ => source.rawView
 
 theorem CDefChecks.rawView_semantics {types : List Kind} {depth : Nat}
@@ -162,7 +170,7 @@ theorem CDefChecks.rawView_semantics {types : List Kind} {depth : Nat}
     cDefSem checking env bound expected = checking.rawView.sem env bound expected := by
   induction checking with
   | conv source hB conversion ih => exact ih env bound
-  | exact | app | lam | eq | eps | abs | rep | tyExists => rfl
+  | exact | app | lam | eq | eps | abs | rep | tyExists | tyForall => rfl
 
 /-- The denotation of a term is independent of both its derivation and its
 advertised definitionally equal type. -/
@@ -217,6 +225,8 @@ theorem EqTm.typing {types : List Kind} {depth : Nat}
       exact ⟨.rep leftRaw hA hp ih.1, .rep rightRaw hA hp ih.2⟩
   | tyExists leftRaw rightRaw _ ih =>
       exact ⟨.tyExists leftRaw ih.1, .tyExists rightRaw ih.2⟩
+  | tyForall leftRaw rightRaw _ ih =>
+      exact ⟨.tyForall leftRaw ih.1, .tyForall rightRaw ih.2⟩
   | conv leftTyping rightTyping _ _ => exact ⟨leftTyping, rightTyping⟩
   | beta body x hA typedContext applicationRaw bodyTyping argumentTyping resultTyping =>
       cases applicationRaw with

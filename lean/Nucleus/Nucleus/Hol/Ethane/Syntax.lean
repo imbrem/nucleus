@@ -29,6 +29,7 @@ inductive Syn (Sig : Signature.{u}) (Name : Type := Nat) : Type (max u 1) where
   | tyLam (domain codomain : Kind) (name : Name) (body : Syn Sig Name)
   | tyFv (name : Name) (kind : Kind)
   | tyExists (name : Name) (predicate : Syn Sig Name)
+  | tyForall (name : Name) (predicate : Syn Sig Name)
   | model (name : Name) (predicate : Syn Sig Name)
   | primFam (kind : Kind) (symbol : Sig (.kind kind))
   | primTm (symbol : Sig .tm)
@@ -51,6 +52,7 @@ inductive Expr (Sig : Signature.{u}) (Name : Type := Nat) : HolSort → Type (ma
       Expr Sig Name (.kind (.arr domain codomain))
   | tyFv (name : Name) (kind : Kind) : Expr Sig Name (.kind kind)
   | tyExists (name : Name) (predicate : Expr Sig Name .tm) : Expr Sig Name .tm
+  | tyForall (name : Name) (predicate : Expr Sig Name .tm) : Expr Sig Name .tm
   | model (name : Name) (predicate : Expr Sig Name .tm) : Expr Sig Name (.kind .star)
   | primFam {kind : Kind} (symbol : Sig (.kind kind)) : Expr Sig Name (.kind kind)
   | primTm (symbol : Sig .tm) : Expr Sig Name .tm
@@ -88,6 +90,7 @@ def mapNames (f : Name → Name') : Syn Sig Name → Syn Sig Name'
       .tyLam domain codomain (f name) (body.mapNames f)
   | .tyFv name kind => .tyFv (f name) kind
   | .tyExists name predicate => .tyExists (f name) (predicate.mapNames f)
+  | .tyForall name predicate => .tyForall (f name) (predicate.mapNames f)
   | .model name predicate => .model (f name) (predicate.mapNames f)
   | .primFam kind symbol => .primFam kind symbol
   | .primTm symbol => .primTm symbol
@@ -104,9 +107,8 @@ def rootSort : Syn Sig Name → HolSort
   | .tyApp _ codomain .. => .kind codomain
   | .tyLam domain codomain .. => .kind (.arr domain codomain)
   | .tyFv _ kind | .primFam kind _ => .kind kind
-  | .tyExists .. | .primTm .. | .tmFv .. | .app .. | .lam .. | .bool .. |
+  | .tyExists .. | .tyForall .. | .primTm .. | .tmFv .. | .app .. | .lam .. | .bool .. |
       .eq .. | .eps .. => .tm
-
 /-- Check an unsorted expression against a caller-supplied syntactic sort. -/
 def check : (sort : HolSort) → Syn Sig Name → Option (Expr Sig Name sort)
   | .kind expected, .boolTy =>
@@ -138,6 +140,7 @@ def check : (sort : HolSort) → Syn Sig Name → Option (Expr Sig Name sort)
   | .kind expected, .primFam actual symbol =>
       if equality : expected = actual then equality ▸ some (.primFam symbol) else none
   | .tm, .tyExists name predicate => return .tyExists name (← check .tm predicate)
+  | .tm, .tyForall name predicate => return .tyForall name (← check .tm predicate)
   | .tm, .primTm symbol => some (.primTm symbol)
   | .tm, .tmFv name type => return .tmFv name (← check (.kind .star) type)
   | .tm, .app function argument => return .app (← check .tm function) (← check .tm argument)
@@ -163,6 +166,7 @@ def toHolE : Syn Sig Name → Nucleus.HolE.Named.Unsorted.Expr Sig Name
   | .tyLam domain codomain name body => .tyLam domain codomain name body.toHolE
   | .tyFv name kind => .tyFv name kind
   | .tyExists name predicate => .tyExists name predicate.toHolE
+  | .tyForall name predicate => .tyForall name predicate.toHolE
   | .model name predicate => .model name predicate.toHolE
   | .primFam kind symbol => .primFam kind symbol
   | .primTm symbol => .primTm symbol
@@ -183,6 +187,7 @@ def ofHolE : Nucleus.HolE.Named.Unsorted.Expr Sig Name → Option (Syn Sig Name)
   | .tyFv name kind => some (.tyFv name kind)
   | .sub .. => none
   | .tyExists name predicate => return .tyExists name (← ofHolE predicate)
+  | .tyForall name predicate => return .tyForall name (← ofHolE predicate)
   | .model name predicate => return .model name (← ofHolE predicate)
   | .primFam kind symbol => some (.primFam kind symbol)
   | .primTm symbol => some (.primTm symbol)
@@ -210,6 +215,7 @@ def mapNames (f : Name → Name') : Expr Sig Name sort → Expr Sig Name' sort
   | .tyLam name body => .tyLam (f name) (body.mapNames f)
   | .tyFv name kind => .tyFv (f name) kind
   | .tyExists name predicate => .tyExists (f name) (predicate.mapNames f)
+  | .tyForall name predicate => .tyForall (f name) (predicate.mapNames f)
   | .model name predicate => .model (f name) (predicate.mapNames f)
   | .primFam symbol => .primFam symbol
   | .primTm symbol => .primTm symbol
@@ -230,6 +236,7 @@ def erase : {sort : HolSort} → Expr Sig Name sort → Syn Sig Name
       .tyLam domain codomain name body.erase
   | .kind kind, .tyFv name _ => .tyFv name kind
   | _, .tyExists name predicate => .tyExists name predicate.erase
+  | _, .tyForall name predicate => .tyForall name predicate.erase
   | _, .model name predicate => .model name predicate.erase
   | .kind kind, .primFam symbol => .primFam kind symbol
   | _, .primTm symbol => .primTm symbol
@@ -248,6 +255,7 @@ def toHolE : {sort : HolSort} → Expr Sig Name sort → Nucleus.HolE.Named.Expr
   | _, .tyLam name body => .tyLam name body.toHolE
   | _, .tyFv name kind => .tyFv name kind
   | _, .tyExists name predicate => .tyExists name predicate.toHolE
+  | _, .tyForall name predicate => .tyForall name predicate.toHolE
   | _, .model name predicate => .model name predicate.toHolE
   | _, .primFam symbol => .primFam symbol
   | _, .primTm symbol => .primTm symbol
@@ -267,6 +275,7 @@ def ofHolE : {sort : HolSort} → Nucleus.HolE.Named.Expr Sig Name sort → Opti
   | _, .tyFv name kind => some (.tyFv name kind)
   | _, .sub .. => none
   | _, .tyExists name predicate => return .tyExists name (← ofHolE predicate)
+  | _, .tyForall name predicate => return .tyForall name (← ofHolE predicate)
   | _, .model name predicate => return .model name (← ofHolE predicate)
   | _, .primFam symbol => some (.primFam symbol)
   | _, .primTm symbol => some (.primTm symbol)

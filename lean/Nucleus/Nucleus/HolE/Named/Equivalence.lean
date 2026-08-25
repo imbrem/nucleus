@@ -148,7 +148,7 @@ theorem TmScope.Above.cons {Sig : Signature} {depth floor : Nat}
 private def rank : Nucleus.HolE.Expr Sig types sort depth → Nat
   | .boolTy | .tyBv _ | .primFam _ | .primTm _ | .bv _ | .bool _ => 1
   | .arr A B | .tyApp A B | .app A B => rank A + rank B + 1
-  | .tyLam body | .tyExists body | .model body => rank body + 1
+  | .tyLam body | .tyExists body | .tyForall body | .model body => rank body + 1
   | .sub A predicate | .lam A predicate | .eps A predicate =>
       rank A + rank predicate + 1
   | .fv _ A => rank A + 1
@@ -267,11 +267,25 @@ theorem lowerTm_quote (floor next : Nat) (floorNext : floor ≤ next)
         apply freeBelow name
         simpa [Nucleus.HolE.fvarIndices] using membership
       simp only [quote, lowerTm]
+      -- The term scope and its names carry across the type binder unchanged.
       rw [lowerTm_quote floor (next + 1) (by omega)
         (.cons (kind := .star) next typeScope) (extendTyNames next typeNames)
         (extendTyNames_valid tyValid tyBelow) (extendTyNames_below tyBelow)
-        .nil emptyTmNames emptyTmNames_valid (emptyTmNames_below (next + 1))
-        (emptyTmScope_above floor) predicate predicateFree]
+        termScope termNames tmValid (fun item => Nat.lt_succ_of_lt (tmBelow item))
+        scopeAbove predicate predicateFree]
+      rfl
+  | .tyForall predicate => by
+      have predicateFree : FVarsBelow floor predicate := by
+        intro name membership
+        apply freeBelow name
+        simpa [Nucleus.HolE.fvarIndices] using membership
+      simp only [quote, lowerTm]
+      -- The term scope and its names carry across the type binder unchanged.
+      rw [lowerTm_quote floor (next + 1) (by omega)
+        (.cons (kind := .star) next typeScope) (extendTyNames next typeNames)
+        (extendTyNames_valid tyValid tyBelow) (extendTyNames_below tyBelow)
+        termScope termNames tmValid (fun item => Nat.lt_succ_of_lt (tmBelow item))
+        scopeAbove predicate predicateFree]
       rfl
   | .primTm symbol => by simp [quote, lowerTm]
   | .bv item => by

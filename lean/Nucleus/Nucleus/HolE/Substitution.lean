@@ -14,11 +14,48 @@ def rename (ρ : Fin m → Fin n) : Tm Sig types m → Tm Sig types n
   | .app f x => .app (rename ρ f) (rename ρ x)
   | .lam A body => .lam A (rename (liftRen ρ) body)
   | .bool value => .bool value
-  | .tyExists predicate => .tyExists predicate
+  -- A type quantifier no longer blocks term renaming: its body carries the
+  -- ambient depth, so the indices inside it are the same ones. Renaming only
+  -- permutes indices, so nothing has to cross the type binder.
+  | .tyExists predicate => .tyExists (rename ρ predicate)
+  | .tyForall predicate => .tyForall (rename ρ predicate)
   | .eq A x y => .eq A (rename ρ x) (rename ρ y)
   | .eps A p => .eps A (rename ρ p)
   | .abs A p x => .abs A p (rename ρ x)
   | .rep A p x => .rep A p (rename ρ x)
+
+/-- Type renaming and bound-term renaming act on independent namespaces. -/
+theorem renameTypes_rename (term : Tm Sig source m)
+    (ρty : TyRen source target) (ρ : Fin m → Fin n) :
+    renameTypes ρty (rename ρ term) = rename ρ (renameTypes ρty term) := by
+  cases term with
+  | primTm | bv | fv | bool => simp [rename, renameTypes]
+  | tyExists predicate | tyForall predicate =>
+      simp only [rename, renameTypes]
+      rw [renameTypes_rename predicate (liftTyRen ρty) ρ]
+  | app function argument =>
+      simp only [rename, renameTypes]
+      rw [renameTypes_rename function ρty ρ, renameTypes_rename argument ρty ρ]
+  | lam A body =>
+      simp only [rename, renameTypes]
+      rw [renameTypes_rename body ρty (liftRen ρ)]
+  | eq A left right =>
+      simp only [rename, renameTypes]
+      rw [renameTypes_rename left ρty ρ, renameTypes_rename right ρty ρ]
+  | eps A predicate =>
+      simp only [rename, renameTypes]
+      rw [renameTypes_rename predicate ρty ρ]
+  | abs A predicate value | rep A predicate value =>
+      simp only [rename, renameTypes]
+      rw [renameTypes_rename value ρty ρ]
+termination_by sizeOf term
+
+/-- Weakening the type context commutes with renaming bound term variables. -/
+@[simp] theorem rename_weakenTypes (term : Tm Sig types m)
+    (ρ : Fin m → Fin n) :
+    rename ρ (weakenTypes (kind := kind) term) =
+      weakenTypes (rename ρ term) :=
+  (renameTypes_rename term _ ρ).symm
 
 def weaken (tm : Tm Sig types depth) : Tm Sig types (depth + 1) :=
   rename Fin.succ tm
@@ -33,7 +70,13 @@ def instantiate (σ : Fin m → Tm Sig types n) : Tm Sig types m → Tm Sig type
   | .app f x => .app (instantiate σ f) (instantiate σ x)
   | .lam A body => .lam A (instantiate (liftSub σ) body)
   | .bool value => .bool value
-  | .tyExists predicate => .tyExists predicate
+  -- Substitution *does* cross the type binder, so the replacement terms are
+  -- weakened into the extended type context on the way in. This is the whole
+  -- semantic content of letting a type quantifier stand under term binders.
+  | .tyExists predicate =>
+      .tyExists (instantiate (fun i => weakenTypes (σ i)) predicate)
+  | .tyForall predicate =>
+      .tyForall (instantiate (fun i => weakenTypes (σ i)) predicate)
   | .eq A x y => .eq A (instantiate σ x) (instantiate σ y)
   | .eps A p => .eps A (instantiate σ p)
   | .abs A p x => .abs A p (instantiate σ x)
@@ -53,7 +96,13 @@ theorem instantiateTypes_rename (term : Tm Sig source m)
     instantiateTypes σ (rename ρ term) =
       rename ρ (instantiateTypes σ term) := by
   cases term with
-  | primTm | bv | fv | bool | tyExists => simp [rename, instantiateTypes]
+  | primTm | bv | fv | bool => simp [rename, instantiateTypes]
+  | tyExists predicate =>
+      simp only [rename, instantiateTypes]
+      rw [instantiateTypes_rename predicate (liftTySub σ) ρ]
+  | tyForall predicate =>
+      simp only [rename, instantiateTypes]
+      rw [instantiateTypes_rename predicate (liftTySub σ) ρ]
   | app function argument =>
       simp only [rename, instantiateTypes]
       rw [instantiateTypes_rename function σ ρ,
@@ -122,7 +171,15 @@ theorem instantiate_rename (term : Tm Sig types m)
     (commute : ∀ i, σ (ρ i) = .bv (τ i)) :
     instantiate σ (rename ρ term) = rename τ term := by
   cases term with
-  | primTm | fv | bool | tyExists => simp [rename, instantiate]
+  | primTm | fv | bool => simp [rename, instantiate]
+  | tyExists predicate =>
+      simp only [rename, instantiate]
+      exact congrArg _ (instantiate_rename predicate ρ _ τ
+        (fun i => by simp [commute i, weakenTypes, renameTypes]))
+  | tyForall predicate =>
+      simp only [rename, instantiate]
+      exact congrArg _ (instantiate_rename predicate ρ _ τ
+        (fun i => by simp [commute i, weakenTypes, renameTypes]))
   | bv i => simpa [rename, instantiate] using commute i
   | app function argument =>
       simp only [rename, instantiate]
@@ -153,7 +210,13 @@ theorem instantiate_rename_fusion (term : Tm Sig types m)
     (ρ : Fin m → Fin n) (σ : Fin n → Tm Sig types k) :
     instantiate σ (rename ρ term) = instantiate (fun i ↦ σ (ρ i)) term := by
   cases term with
-  | primTm | fv | bv | bool | tyExists => simp [rename, instantiate]
+  | primTm | fv | bv | bool => simp [rename, instantiate]
+  | tyExists predicate =>
+      simp only [rename, instantiate]
+      exact congrArg _ (instantiate_rename_fusion predicate ρ _)
+  | tyForall predicate =>
+      simp only [rename, instantiate]
+      exact congrArg _ (instantiate_rename_fusion predicate ρ _)
   | app function argument =>
       simp only [rename, instantiate]
       rw [instantiate_rename_fusion function, instantiate_rename_fusion argument]
@@ -177,7 +240,13 @@ termination_by sizeOf term
 
 @[simp] theorem rename_id (term : Tm Sig types m) : rename id term = term := by
   cases term with
-  | primTm | fv | bv | bool | tyExists => simp [rename]
+  | primTm | fv | bv | bool => simp [rename]
+  | tyExists predicate =>
+      simp only [rename]
+      exact congrArg _ (rename_id predicate)
+  | tyForall predicate =>
+      simp only [rename]
+      exact congrArg _ (rename_id predicate)
   | app function argument =>
       simp only [rename]
       rw [rename_id function, rename_id argument]
@@ -202,7 +271,13 @@ theorem rename_comp (term : Tm Sig types m) (ρ : Fin m → Fin n)
     (τ : Fin n → Fin k) :
     rename τ (rename ρ term) = rename (fun i => τ (ρ i)) term := by
   cases term with
-  | primTm | fv | bv | bool | tyExists => simp [rename]
+  | primTm | fv | bv | bool => simp [rename]
+  | tyExists predicate =>
+      simp only [rename]
+      exact congrArg _ (rename_comp predicate ρ τ)
+  | tyForall predicate =>
+      simp only [rename]
+      exact congrArg _ (rename_comp predicate ρ τ)
   | app function argument =>
       simp only [rename]
       rw [rename_comp function, rename_comp argument]
@@ -230,7 +305,11 @@ theorem rename_instantiate_fusion (term : Tm Sig types m)
     (σ : Fin m → Tm Sig types n) (ρ : Fin n → Fin k) :
     rename ρ (instantiate σ term) = instantiate (fun i ↦ rename ρ (σ i)) term := by
   cases term with
-  | primTm | fv | bv | bool | tyExists => simp [rename, instantiate]
+  | primTm | fv | bv | bool => simp [rename, instantiate]
+  | tyExists predicate | tyForall predicate =>
+      simp only [rename, instantiate]
+      rw [rename_instantiate_fusion predicate _ ρ]
+      simp only [rename_weakenTypes]
   | app function argument =>
       simp only [rename, instantiate]
       rw [rename_instantiate_fusion function, rename_instantiate_fusion argument]
@@ -327,7 +406,8 @@ def FreeIn (name : Nat) : {sort : HolSort} → {depth : Nat} →
       _, _, .bv _ | _, _, .bool _ => False
   | _, _, .arr A B | _, _, .tyApp A B | _, _, .app A B | _, _, .lam A B |
       _, _, .eps A B => FreeIn name A ∨ FreeIn name B
-  | _, _, .tyLam body | _, _, .tyExists body | _, _, .model body => FreeIn name body
+  | _, _, .tyLam body | _, _, .tyExists body | _, _, .tyForall body |
+      _, _, .model body => FreeIn name body
   | _, _, .sub A p => FreeIn name A ∨ FreeIn name p
   | _, _, .fv other A => other = name ∨ FreeIn name A
   | _, _, .eq A x y | _, _, .abs A x y | _, _, .rep A x y =>
@@ -355,7 +435,14 @@ def Checks.renameTm {Sig : Signature} [SigTyping Sig]
       · rfl
       · exact contexts j)))
   | .bool value => by simpa [rename] using (.bool (Γ := Δ) value)
-  | .tyExists hp => by simpa [rename] using (.tyExists (Γ := Δ) hp)
+  -- The predicate lives in the *same* bound context, weakened into an extra
+  -- type variable, so renaming recurses into it under `weakenBoundCtx`.
+  | .tyExists hp => by simpa [rename] using (.tyExists (Γ := Δ)
+      (Checks.renameTm (Δ := weakenBoundCtx Δ) hp ρ
+        (fun i => congrArg weakenTypes (contexts i))))
+  | .tyForall hp => by simpa [rename] using (.tyForall (Γ := Δ)
+      (Checks.renameTm (Δ := weakenBoundCtx Δ) hp ρ
+        (fun i => congrArg weakenTypes (contexts i))))
   | .eq hA hx hy => by simpa [rename] using
       (.eq hA (Checks.renameTm hx ρ contexts) (Checks.renameTm hy ρ contexts))
   | .eps hA hp => by simpa [rename] using (.eps hA (Checks.renameTm hp ρ contexts))
@@ -407,7 +494,15 @@ theorem ofRename {Sig : Signature} [SigTyping Sig]
   | tyExists predicate =>
       simp only [rename] at typing
       cases typing with
-      | tyExists predicateTyping => exact .tyExists predicateTyping
+      | tyExists predicateTyping =>
+          exact .tyExists (ofRename predicateTyping
+            (fun i => congrArg weakenTypes (contexts i)))
+  | tyForall predicate =>
+      simp only [rename] at typing
+      cases typing with
+      | tyForall predicateTyping =>
+          exact .tyForall (ofRename predicateTyping
+            (fun i => congrArg weakenTypes (contexts i)))
   | eq type left right =>
       simp only [rename] at typing
       cases typing with
@@ -445,6 +540,24 @@ theorem HasType.ofWeaken {Sig : Signature} [SigTyping Sig]
   apply typing.ofRename (ρ := Fin.succ)
   intro i
   rfl
+
+/-- A typing derivation survives weakening the type context by a fresh
+variable.  This is what carries a term substitution across a type quantifier. -/
+theorem HasType.weakenTypes {Sig : Signature} [SigTyping Sig] {kind : Kind}
+    {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {t : Tm Sig types depth} {A : Ty Sig types} (typing : HasType Γ t A) :
+    HasType (weakenBoundCtx (kind := kind) Γ) (HolE.weakenTypes t)
+      (HolE.weakenTypes A) :=
+  typing.renameTypes (fun v => .succ v)
+
+/-- Weakening the type context sends a well-typed substitution to a well-typed
+substitution. -/
+theorem WellTypedSub.weakenTypes {Sig : Signature} [SigTyping Sig] {kind : Kind}
+    {types : List Kind} {Γ : BoundCtx Sig types m} {Δ : BoundCtx Sig types n}
+    {σ : Fin m → Tm Sig types n} (wellTyped : ∀ i, HasType Δ (σ i) (Γ i)) :
+    ∀ i, HasType (weakenBoundCtx (kind := kind) Δ)
+      (HolE.weakenTypes (σ i)) (weakenBoundCtx (kind := kind) Γ i) :=
+  fun i => (wellTyped i).weakenTypes
 
 def WellTypedSub {Sig : Signature} [SigTyping Sig]
     (Γ : BoundCtx Sig types m) (Δ : BoundCtx Sig types n)
@@ -484,7 +597,13 @@ def Checks.instantiateTm {Sig : Signature} [SigTyping Sig]
         (Checks.instantiateTm hb (liftSub (Sig := Sig) (types := types) σ)
           (liftWellTypedSub (Sig := Sig) wellTyped hA)))
   | .bool value => by simpa [instantiate] using (.bool (Γ := Δ) value)
-  | .tyExists hp => by simpa [instantiate] using (.tyExists (Γ := Δ) hp)
+  -- Crossing the type binder weakens both the substitution and its typing.
+  | .tyExists hp => by simpa [instantiate] using (.tyExists (Γ := Δ)
+      (Checks.instantiateTm hp (fun i => HolE.weakenTypes (σ i))
+        (WellTypedSub.weakenTypes wellTyped)))
+  | .tyForall hp => by simpa [instantiate] using (.tyForall (Γ := Δ)
+      (Checks.instantiateTm hp (fun i => HolE.weakenTypes (σ i))
+        (WellTypedSub.weakenTypes wellTyped)))
   | .eq hA hx hy => by simpa [instantiate] using
       (.eq hA (Checks.instantiateTm hx σ wellTyped)
         (Checks.instantiateTm hy σ wellTyped))
@@ -497,6 +616,13 @@ def Checks.instantiateTm {Sig : Signature} [SigTyping Sig]
 
 def TypedCtx {Sig : Signature} [SigTyping Sig]
     (Γ : BoundCtx Sig types depth) : Prop := ∀ i, Kinded (Γ i)
+
+/-- A well-kinded bound context stays well-kinded past a fresh type variable,
+which is what lets a typing derivation cross an open type quantifier. -/
+theorem TypedCtx.weakenTypes {Sig : Signature} [SigTyping Sig] {kind : Kind}
+    {Γ : BoundCtx Sig types depth} (typed : TypedCtx Γ) :
+    TypedCtx (weakenBoundCtx (kind := kind) Γ) :=
+  fun i => (typed i).weakenTypes
 
 theorem HasType.openBound {Sig : Signature} [SigTyping Sig]
     {Γ : BoundCtx Sig types depth} {body : Tm Sig types (depth + 1)}
@@ -550,9 +676,14 @@ theorem HasTypeDefEq.renameTm {Sig : Signature} [SigTyping Sig] [SigFamilyEquali
   | rep raw hA hp _ ih => simpa [rename] using
       (HasTypeDefEq.rep (by simpa [rename] using raw.renameTm ρ contexts)
         hA hp (ih ρ contexts))
-  | tyExists raw premise _ => simpa [rename] using
+  | tyExists raw _ ih => simpa [rename] using
       (HasTypeDefEq.tyExists (Γ := Δ)
-        (by simpa [rename] using raw.renameTm ρ contexts) premise)
+        (by simpa [rename] using raw.renameTm ρ contexts)
+        (ih ρ (fun i => congrArg HolE.weakenTypes (contexts i))))
+  | tyForall raw _ ih => simpa [rename] using
+      (HasTypeDefEq.tyForall (Γ := Δ)
+        (by simpa [rename] using raw.renameTm ρ contexts)
+        (ih ρ (fun i => congrArg HolE.weakenTypes (contexts i))))
   | conv _ hB conversion ih => exact .conv (ih ρ contexts) hB conversion
 
 theorem HasTypeDefEq.weaken {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
@@ -597,6 +728,9 @@ theorem HasTypeDefEq.renameTypes {Sig : Signature} [SigTyping Sig]
   | tyExists raw _ ih => simpa using
       (HasTypeDefEq.tyExists (by simpa using raw.renameTypes ρ)
         (by simpa using ih (liftTyRen ρ)))
+  | tyForall raw _ ih => simpa using
+      (HasTypeDefEq.tyForall (by simpa using raw.renameTypes ρ)
+        (by simpa using ih (liftTyRen ρ)))
   | conv sourceTyping hB conversion ih =>
       exact .conv (ih ρ) (by simpa using hB.renameTypes ρ)
         (conversion.renameTypes sourceTyping.typeKinded hB ρ)
@@ -639,6 +773,9 @@ theorem HasTypeDefEq.instantiateTypes {Sig : Signature} [SigTyping Sig]
         (by simpa using hp.instantiateTypes wellFormed) (ih wellFormed))
   | tyExists raw _ ih => simpa using
       (HasTypeDefEq.tyExists (by simpa using raw.instantiateTypes wellFormed)
+        (by simpa using ih wellFormed.lift))
+  | tyForall raw _ ih => simpa using
+      (HasTypeDefEq.tyForall (by simpa using raw.instantiateTypes wellFormed)
         (by simpa using ih wellFormed.lift))
   | conv sourceTyping hB conversion ih =>
       exact .conv (ih wellFormed)

@@ -47,6 +47,28 @@ def Eval {types : List Kind} {depth : Nat} {Γ : Ctx types depth}
     (expected : CPointed) (value : expected.carrier) : Prop :=
   Infinity.IEval term.toIntrinsic env bound expected value
 
+/-- Transporting a checked term along an equality of contexts does not change
+what it evaluates to. -/
+theorem Eval_transport {types : List Kind} {depth : Nat}
+    {Γ Δ : Ctx types depth} {A : Ty types} (contexts : Γ = Δ)
+    (term : Term Γ A) (env : CTypeEnv types) (bound : CBoundEnv depth)
+    (expected : CPointed) (value : expected.carrier) :
+    Eval (contexts ▸ term) env bound expected value ↔
+      Eval term env bound expected value := by
+  cases contexts
+  rfl
+
+/-- Reading a closed term past a fresh type variable does not change what it
+evaluates to: only the *type* context moves. -/
+@[simp] theorem Eval_openEmpty {types : List Kind} {kind : Kind}
+    {A : Ty (kind :: types)}
+    (term : Term (types := kind :: types) Ctx.empty A)
+    (env : CTypeEnv (kind :: types)) (bound : CBoundEnv 0)
+    (expected : CPointed) (value : expected.carrier) :
+    Eval (Term.openEmpty term) env bound expected value ↔
+      Eval term env bound expected value :=
+  Eval_transport Ctx.weakenTypes_empty.symm term env bound expected value
+
 @[simp] theorem Term.toIntrinsic_weaken
     {types : List Kind} {depth : Nat} {Γ : Ctx types depth} {A : Ty types}
     (term : Term Γ A) (C : Ty types) :
@@ -429,13 +451,15 @@ theorem imp_value (left right : BoolTm Γ) (env : CTypeEnv types)
     (leftValue && (!rightValue)) conjunction
   cases leftValue <;> cases rightValue <;> simpa [Empty.imp] using negated
 
-/-- A checked type-existential is true when its body has one semantic witness. -/
+/-- A checked type-existential is true when its body has one semantic witness.
+The predicate is evaluated in the *ambient* bound environment: a type binder
+does not touch it, which is what makes the open quantifier cost nothing. -/
 theorem tyExists (Γ : Ctx types depth)
-    (predicate : Term (types := .star :: types) Ctx.empty FamK.boolTy)
+    (predicate : Term (types := .star :: types) Γ.weakenTypes FamK.boolTy)
     (env : CTypeEnv types) (bound : CBoundEnv depth)
     (candidate : CPointed)
     (predicateTrue : Eval predicate (extendCTypeEnv candidate env)
-      emptyCBoundEnv cBool true) :
+      bound cBool true) :
     Eval (Term.tyExists Γ predicate) env bound cBool true := by
   classical
   unfold Eval Infinity.IEval
@@ -445,7 +469,7 @@ theorem tyExists (Γ : Ctx types depth)
   rw [cSem_certificate_coherent checking explicit env]
   change ULift.up (alignCValue cBool cBool (decide (∃ witness : CPointed,
     cSem predicate.typing.certificate
-      (extendCTypeEnv witness env) emptyCBoundEnv cBool = ⟨true⟩))) = ⟨true⟩
+      (extendCTypeEnv witness env) bound cBool = ⟨true⟩))) = ⟨true⟩
   rw [alignCValue_bool]
   apply congrArg ULift.up
   apply decide_eq_true

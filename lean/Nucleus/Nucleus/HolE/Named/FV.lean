@@ -39,6 +39,8 @@ noncomputable def fvars : Expr Sig Name sort → Support Sig Name
       fvars A ∪ (fvars predicate).erase (tmVariable name A)
   | .tyExists name predicate =>
       (fvars predicate).erase (tyVariable name .star)
+  | .tyForall name predicate =>
+      (fvars predicate).erase (tyVariable name .star)
   | .model name predicate =>
       (fvars predicate).erase (tyVariable name .star)
   | .primFam _ => ∅

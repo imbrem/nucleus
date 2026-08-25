@@ -393,9 +393,9 @@ noncomputable def packageAtProof (A : Ty types)
 
 @[simp] theorem predicate_openType (A : Ty types)
     (P : Term Ctx.empty (A.arr FamK.boolTy)) (B : Ty types) :
-    (predicate A P).openType B = packageAt A B P := by
+    (Term.openEmpty (predicate A P)).openType B = packageAt A B P := by
   apply Term.ext_raw
-  simp [predicate, packageAt, weakenFam, renameFam, weakenClosedTerm,
+  simp [Term.openEmpty_raw, predicate, packageAt, weakenFam, renameFam, weakenClosedTerm,
     renameClosedTerm, FamK.bv, Term.openType, Term.eq, Term.lam, Term.app,
     Term.bv, Term.weaken, Term.eps, Term.falsehood,
     Term.truth, Term.bool, laws, absRepLaw, repAbsLaw, repGuardedLaw,
@@ -409,7 +409,7 @@ noncomputable def existsTypeProof (A : Ty types)
     (P : Term Ctx.empty (A.arr FamK.boolTy)) :
     Proof Ctx.empty [] (existsType A P) := by
   unfold existsType
-  apply Proof.tyExistsIntro (predicate A P) (subViaGuard A P)
+  apply Proof.tyExistsIntro (Term.openEmpty (predicate A P)) (subViaGuard A P)
   rw [predicate_openType]
   exact packageAtProof A P
 

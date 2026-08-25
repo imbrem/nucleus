@@ -23,6 +23,7 @@ theorem classicalEqTmRuleLaws : ClassicalEqTmRuleLaws where
   abs := classical_eqTm_abs
   rep := classical_eqTm_rep
   tyExists := classical_eqTm_tyExists
+  tyForall := classical_eqTm_tyForall
   beta := classical_eqTm_beta
   eta := classical_eqTm_eta
 

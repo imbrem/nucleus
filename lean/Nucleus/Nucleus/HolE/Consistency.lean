@@ -16,15 +16,16 @@ theorem empty_consistency_of_infinity_consistency
     Proves (emptyBound : BoundCtx ClassicalSig [] 0) [] (.bool false) → False := by
   intro proof
   apply withInfinity
-  apply Proves.hypothesisMap
+  -- `mapHypotheses` reads the conclusion's typing off the proof itself, which
+  -- is exactly what weakening an empty hypothesis list needs.
+  refine Proves.mapHypotheses
     (K := [Infinity.infinityAxiom (Sig := ClassicalSig)])
-    (H := [])
+    (H := []) ?_ ?_ proof
   · intro proposition member
     simp only [List.mem_cons, List.not_mem_nil, or_false] at member
     subst proposition
     exact .exact Infinity.axiom_typed
   · intro proposition member
     nomatch member
-  · exact proof
 
 end Nucleus.HolE

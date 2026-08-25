@@ -884,17 +884,33 @@ theorem infinityAxiom_realized :
       emptyCTypeEnv emptyCBoundEnv (infinityAxiom (Sig := ClassicalSig))
       .boolTy cBool true := by
   classical
-  refine ⟨CDefChecks.tyExists (.tyExists predicateChecking) (.exact predicateChecking), ?_⟩
+  -- The axiom is closed, so the open quantifier's context is
+  -- `weakenBoundCtx emptyBound`, which is `emptyBound` up to this transport.
+  let opened : CChecks (weakenBoundCtx (emptyBound : BoundCtx ClassicalSig [] 0))
+      (typePredicate (Sig := ClassicalSig)).tm (.tm .boolTy) :=
+    weakenBoundCtx_empty.symm ▸ predicateChecking
+  have transported : ∀ candidate : CPointed,
+      cSem opened (extendCTypeEnv (kind := .star) candidate emptyCTypeEnv)
+          emptyCBoundEnv cBool =
+        cSem predicateChecking
+          (extendCTypeEnv (kind := .star) candidate emptyCTypeEnv)
+          emptyCBoundEnv cBool :=
+    fun candidate =>
+      congrFun (congrFun (congrFun
+        (cSem_transport_ctx weakenBoundCtx_empty.symm predicateChecking)
+        (extendCTypeEnv (kind := .star) candidate emptyCTypeEnv)) emptyCBoundEnv)
+        cBool
+  refine ⟨CDefChecks.tyExists (.tyExists opened) (.exact opened), ?_⟩
   change ULift.up (alignCValue cBool cBool
     (decide (∃ candidate : CPointed,
-      cSem predicateChecking
+      cSem opened
         (extendCTypeEnv (kind := .star) candidate emptyCTypeEnv)
         emptyCBoundEnv cBool = ⟨true⟩))) = ⟨true⟩
   rw [alignCValue_bool]
   congr 1
   apply decide_eq_true
   refine ⟨natPointed, ?_⟩
-  exact typePredicate_nat_true predicateChecking
+  exact (transported natPointed).trans (typePredicate_nat_true predicateChecking)
 
 end Infinity
 

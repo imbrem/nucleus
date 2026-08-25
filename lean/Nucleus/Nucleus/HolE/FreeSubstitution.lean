@@ -30,6 +30,7 @@ def fsubst (σ : FSub Sig) :
   | .tyBv item => .tyBv item
   | .sub A predicate => .sub (fsubst σ A) (fsubst σ predicate)
   | .tyExists predicate => .tyExists (fsubst σ predicate)
+  | .tyForall predicate => .tyForall (fsubst σ predicate)
   | .model predicate => .model (fsubst σ predicate)
   | .primFam symbol => .primFam symbol
   | .primTm symbol => .primTm symbol

@@ -63,8 +63,14 @@ noncomputable def lowerFam (typeScope : TyScope types) :
 /-- Lower a named term in independent type and term scopes. -/
 noncomputable def lowerTm (typeScope : TyScope types) (termScope : TmScope Sig depth) :
     Tm Sig → Option (Nucleus.HolE.Tm Sig types depth)
+    -- The term scope carries through a type binder: only the *type* scope
+    -- grows, so a quantifier standing under `tm.lam` still sees its variables.
     | .tyExists name predicate =>
-        return .tyExists (← lowerTm (.cons (kind := .star) name typeScope) .nil predicate)
+        return .tyExists
+          (← lowerTm (.cons (kind := .star) name typeScope) termScope predicate)
+    | .tyForall name predicate =>
+        return .tyForall
+          (← lowerTm (.cons (kind := .star) name typeScope) termScope predicate)
     | .primTm symbol => some (.primTm symbol)
     | .tmFv name A =>
         match lookupTm ⟨name, A⟩ termScope with

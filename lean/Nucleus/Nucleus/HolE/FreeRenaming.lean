@@ -22,6 +22,7 @@ def renameFv (ρ : Nat → Nat) :
   | .tyBv item => .tyBv item
   | .sub A predicate => .sub (renameFv ρ A) (renameFv ρ predicate)
   | .tyExists predicate => .tyExists (renameFv ρ predicate)
+  | .tyForall predicate => .tyForall (renameFv ρ predicate)
   | .model predicate => .model (renameFv ρ predicate)
   | .primFam symbol => .primFam symbol
   | .primTm symbol => .primTm symbol

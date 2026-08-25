@@ -176,20 +176,20 @@ def eqOfTermEq {A : Ty types} {left right : Term Γ A}
     equality.raw⟩
 
 def tyExistsIntro {types : List Kind} {H : PropCtx (Ctx.empty : Ctx types 0)}
-    (predicate : BoolTm (types := .star :: types) Ctx.empty)
+    (predicate : BoolTm (types := .star :: types) Ctx.empty.weakenTypes)
     (witness : Ty types)
     (premise : Proof Ctx.empty H (predicate.openType witness)) :
     Proof Ctx.empty H (Term.tyExists Ctx.empty predicate) :=
   ⟨.tyExistsIntro H.typed (.exact (Term.tyExists Ctx.empty predicate).typing)
-    witness.kinded (.exact predicate.typing)
+    witness.kinded (.exact (weakenBoundCtx_empty ▸ predicate.typing))
     (.exact (predicate.openType witness).typing) premise.raw⟩
 
 def modelSpec {types : List Kind} {H : PropCtx (Ctx.empty : Ctx types 0)}
-    (predicate : BoolTm (types := .star :: types) Ctx.empty)
+    (predicate : BoolTm (types := .star :: types) Ctx.empty.weakenTypes)
     (premise : Proof Ctx.empty H (Term.tyExists Ctx.empty predicate)) :
     Proof Ctx.empty H (predicate.openType (Term.model predicate)) :=
   ⟨.modelSpec H.typed (.exact (predicate.openType (Term.model predicate)).typing)
-    (.exact predicate.typing)
+    (.exact (weakenBoundCtx_empty ▸ predicate.typing))
     (.exact (predicate.openType (Term.model predicate)).typing) premise.raw⟩
 
 def absRep (A : Ty types) (predicate : Term (Ctx.empty.extend A) FamK.boolTy)

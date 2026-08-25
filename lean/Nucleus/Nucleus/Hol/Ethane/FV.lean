@@ -36,6 +36,7 @@ noncomputable def fvars : Expr Sig Name sort → Support Sig Name
       body.fvars.erase (tyVariable name domain)
   | .tyFv name kind => {tyVariable name kind}
   | .tyExists name predicate => predicate.fvars.erase (tyVariable name .star)
+  | .tyForall name predicate => predicate.fvars.erase (tyVariable name .star)
   | .model name predicate => predicate.fvars.erase (tyVariable name .star)
   | .primFam _ | .primTm _ | .bool _ => ∅
   | .tmFv name A => insert (tmVariable name A) A.fvars
@@ -78,6 +79,7 @@ noncomputable def nameIndices : Expr Sig Name sort → Finset Name
   | .tyLam name body => insert name body.nameIndices
   | .tyFv name _ => {name}
   | .tyExists name predicate => insert name predicate.nameIndices
+  | .tyForall name predicate => insert name predicate.nameIndices
   | .model name predicate => insert name predicate.nameIndices
   | .tmFv name A => insert name A.nameIndices
   | .app function argument => function.nameIndices ∪ argument.nameIndices

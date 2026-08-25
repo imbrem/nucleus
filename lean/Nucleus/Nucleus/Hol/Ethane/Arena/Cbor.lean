@@ -99,6 +99,8 @@ def encodeRow (names : NameCodec Name) (symbols : SignatureCodec Sig) :
   | .tyFv name kind => array [text "TY_FV", names.encode name, unsigned kind]
   | .tyExists name predicate =>
       array [text "TM_TY_EXISTS", names.encode name, unsigned predicate]
+  | .tyForall name predicate =>
+      array [text "TM_TY_FORALL", names.encode name, unsigned predicate]
   | .model name predicate =>
       array [text "TY_MODEL", names.encode name, unsigned predicate]
   | @Row.primFam _ _ _ kind symbol kindNode =>
@@ -131,6 +133,8 @@ def decodeRow? (names : NameCodec Name) (symbols : SignatureCodec Sig)
       return .tyFv (← names.decode name) (← asNat? kind)
   | [.primitive (.text "TM_TY_EXISTS"), name, predicate] =>
       return .tyExists (← names.decode name) (← asNat? predicate)
+  | [.primitive (.text "TM_TY_FORALL"), name, predicate] =>
+      return .tyForall (← names.decode name) (← asNat? predicate)
   | [.primitive (.text "TY_MODEL"), name, predicate] =>
       return .model (← names.decode name) (← asNat? predicate)
   | [.primitive (.text "PRIM_FAM"), symbolValue, kindNode] =>

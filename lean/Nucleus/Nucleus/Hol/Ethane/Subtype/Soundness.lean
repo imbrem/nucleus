@@ -676,8 +676,8 @@ theorem Eval.existsType_true {types : List Kind} (A : Ty types)
   let meaning := Infinity.iValue P.toIntrinsic env emptyCBoundEnv
     (cArrow carrier cBool)
   let candidate := cGuardedType carrier meaning
-  apply Eval.tyExists Ctx.empty (predicate A P) env emptyCBoundEnv candidate
-  exact Eval.predicate_true A P env
+  apply Eval.tyExists Ctx.empty (Term.openEmpty (predicate A P)) env emptyCBoundEnv candidate
+  exact (Eval_openEmpty _ _ _ _ _).mpr (Eval.predicate_true A P env)
 
 end
 

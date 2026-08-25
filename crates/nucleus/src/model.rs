@@ -167,9 +167,11 @@ fn find_free_type_variable(
         {
             return Ok(None);
         }
-        // `model` and `ty.exists` store their binder name directly.
-        if matches!(tag, Tag::Ty(TyTag::Model) | Tag::Tm(TmTag::TyExists))
-            && kernel.arena().name(input) == Some(name)
+        // `model` and the type quantifiers store their binder name directly.
+        if matches!(
+            tag,
+            Tag::Ty(TyTag::Model) | Tag::Tm(TmTag::TyExists | TmTag::TyForall)
+        ) && kernel.arena().name(input) == Some(name)
         {
             return Ok(None);
         }
@@ -330,7 +332,7 @@ impl TypeSubstitution<'_> {
             Tag::Ty(TyTag::Lam) | Tag::Tm(TmTag::Lam) => {
                 self.explicit_binder(input, tag, &children)
             }
-            Tag::Ty(TyTag::Model) | Tag::Tm(TmTag::TyExists) => {
+            Tag::Ty(TyTag::Model) | Tag::Tm(TmTag::TyExists | TmTag::TyForall) => {
                 self.implicit_binder(input, tag, &children)
             }
             Tag::Kind(KindTag::Ref) | Tag::Ty(TyTag::Ref) | Tag::Tm(TmTag::Ref) => {
@@ -501,6 +503,7 @@ impl TypeSubstitution<'_> {
         let output = match tag {
             Tag::Ty(TyTag::Model) => self.kernel.model(name, output_body)?,
             Tag::Tm(TmTag::TyExists) => self.kernel.ty_exists(name, output_body)?,
+            Tag::Tm(TmTag::TyForall) => self.kernel.ty_forall(name, output_body)?,
             _ => unreachable!("caller matched implicit binder tags"),
         };
         let fact = self.kernel.syn_implicit_binder_congr(

@@ -688,6 +688,13 @@ impl PyKernel {
             .map_err(value_error)
     }
 
+    fn ty_forall(&mut self, name: u64, predicate: i32) -> PyResult<i32> {
+        self.kernel
+            .ty_forall(name, reference(predicate)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
     fn tm_fv(&mut self, name: u64, ty: i32) -> PyResult<i32> {
         self.kernel
             .tm_fv(name, reference(ty)?)
@@ -1606,6 +1613,11 @@ impl PyArena {
     fn ty_exists(&mut self, name: u64, predicate: i32) -> PyResult<i32> {
         let predicate = reference(predicate)?;
         allocated(self.arena.push_ty_exists(name, predicate))
+    }
+
+    fn ty_forall(&mut self, name: u64, predicate: i32) -> PyResult<i32> {
+        let predicate = reference(predicate)?;
+        allocated(self.arena.push_ty_forall(name, predicate))
     }
 
     fn model(&mut self, name: u64, predicate: i32) -> PyResult<i32> {

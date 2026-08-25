@@ -254,6 +254,15 @@ impl GuestArena for HostArena {
         )
     }
 
+    fn ty_forall(&self, name: u64, predicate: u64) -> Result<u64, String> {
+        pushed(
+            self.0
+                .borrow_mut()
+                .push_ty_forall(name, reference(predicate)?),
+            "definition",
+        )
+    }
+
     fn model(&self, name: u64, predicate: u64) -> Result<u64, String> {
         pushed(
             self.0.borrow_mut().push_model(name, reference(predicate)?),
@@ -485,6 +494,10 @@ impl GuestKernel for HostKernel {
 
     fn ty_exists(&self, name: u64, predicate: u64) -> Result<u64, String> {
         checked_ref(self.0.borrow_mut().ty_exists(name, reference(predicate)?))
+    }
+
+    fn ty_forall(&self, name: u64, predicate: u64) -> Result<u64, String> {
+        checked_ref(self.0.borrow_mut().ty_forall(name, reference(predicate)?))
     }
 
     fn model(&self, name: u64, predicate: u64) -> Result<u64, String> {

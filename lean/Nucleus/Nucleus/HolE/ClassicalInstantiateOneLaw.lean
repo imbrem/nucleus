@@ -1,5 +1,7 @@
 import Nucleus.HolE.ClassicalSubtypeKernelLaws
 import Nucleus.HolE.ClassicalBoundTransport
+import Nucleus.HolE.ClassicalTransport
+import Nucleus.HolE.ClassicalFamilySoundness
 
 /-! # Semantic opening for a single bound variable -/
 
@@ -20,6 +22,39 @@ noncomputable def CWellTypedSub.bound {types : List Kind} {m n : Nat}
     {σ : Fin m → Tm ClassicalSig types n} (checked : CWellTypedSub Γ Δ σ)
     (env : CTypeEnv types) (bound : CBoundEnv n) : CBoundEnv m :=
   fun i expected => (cSem (checked i) env bound expected).down
+
+/-- A certificate survives weakening the type context by a fresh variable.
+This is what carries a term substitution across an open type quantifier. -/
+noncomputable def CWellTypedSub.weakenTypes {types : List Kind} {kind : Kind}
+    {m n : Nat} {Γ : BoundCtx ClassicalSig types m}
+    {Δ : BoundCtx ClassicalSig types n}
+    {σ : Fin m → Tm ClassicalSig types n} (checked : CWellTypedSub Γ Δ σ) :
+    CWellTypedSub (weakenBoundCtx (kind := kind) Γ) (weakenBoundCtx Δ)
+      (fun i => HolE.weakenTypes (σ i)) :=
+  fun i => (checked i).renameTypes (fun v => .succ v)
+
+/-- Weakening the type context does not change what a substitution means:
+`CBoundEnv` is indexed only by term depth, so the induced bound environment is
+literally the same one.  This is what lets a substitution cross an open type
+quantifier without any transport. -/
+theorem CWellTypedSub.bound_weakenTypes {types : List Kind}
+    {m n : Nat} {Γ : BoundCtx ClassicalSig types m}
+    {Δ : BoundCtx ClassicalSig types n}
+    {σ : Fin m → Tm ClassicalSig types n} (checked : CWellTypedSub Γ Δ σ)
+    (candidate : CPointed) (env : CTypeEnv types) (bound : CBoundEnv n) :
+    (checked.weakenTypes (kind := .star)).bound
+        (extendCTypeEnv candidate env) bound =
+      checked.bound env bound := by
+  funext index expected
+  have renamed := cSem_renameTypes (checked index) (fun v => .succ v)
+    (extendCTypeEnv (kind := .star) candidate env)
+  simp only [CRenameEq] at renamed
+  have envEq : (extendCTypeEnv (kind := .star) candidate env).rename
+      (fun v => TyVar.succ v) = env := by
+    funext _ v
+    rfl
+  rw [envEq] at renamed
+  exact congrArg (fun result => (result bound expected).down) renamed
 
 /-- Construct the syntax-directed certificate for term substitution. -/
 noncomputable def CChecks.instantiateTmC {types : List Kind} {m n : Nat}
@@ -43,7 +78,13 @@ noncomputable def CChecks.instantiateTmC {types : List Kind} {m n : Nat}
         Fin.cases (.bv hA rfl) (fun j =>
           ((checked j).toChecks.renameTm Fin.succ (fun _ => rfl)).certificate) i))
   | .bool literal => by simpa [instantiate] using (.bool (Γ := Δ) literal)
-  | .tyExists hp => by simpa [instantiate] using (.tyExists (Γ := Δ) hp)
+  -- Crossing the type binder weakens both the substitution and its certificate.
+  | .tyExists hp => by simpa [instantiate] using (.tyExists (Γ := Δ)
+      (CChecks.instantiateTmC hp (fun i => HolE.weakenTypes (σ i))
+        checked.weakenTypes))
+  | .tyForall hp => by simpa [instantiate] using (.tyForall (Γ := Δ)
+      (CChecks.instantiateTmC hp (fun i => HolE.weakenTypes (σ i))
+        checked.weakenTypes))
   | .eq hA hx hy => by simpa [instantiate] using (.eq hA
       (CChecks.instantiateTmC hx σ checked)
       (CChecks.instantiateTmC hy σ checked))
@@ -123,8 +164,28 @@ theorem CChecks.cSem_instantiateTmC
       rfl
   | .tyExists hp => by
       rw [cSem_term_normalize ((CChecks.tyExists hp).instantiateTmC σ checked)
-        (.tyExists _) (by simp [instantiate]) (.tyExists hp)]
-      rfl
+        (.tyExists (instantiate (fun i => HolE.weakenTypes (σ i)) _))
+        (by simp [instantiate])
+        (.tyExists (hp.instantiateTmC (fun i => HolE.weakenTypes (σ i))
+          checked.weakenTypes))]
+      simp only [cSem]
+      refine congrArg ULift.up (congrArg (alignCValue cBool expected)
+        (decide_eq_decide.mpr (exists_congr (fun candidate => ?_))))
+      rw [hp.cSem_instantiateTmC (fun i => HolE.weakenTypes (σ i))
+        checked.weakenTypes (extendCTypeEnv candidate env) bound cBool,
+        checked.bound_weakenTypes candidate env bound]
+  | .tyForall hp => by
+      rw [cSem_term_normalize ((CChecks.tyForall hp).instantiateTmC σ checked)
+        (.tyForall (instantiate (fun i => HolE.weakenTypes (σ i)) _))
+        (by simp [instantiate])
+        (.tyForall (hp.instantiateTmC (fun i => HolE.weakenTypes (σ i))
+          checked.weakenTypes))]
+      simp only [cSem]
+      refine congrArg ULift.up (congrArg (alignCValue cBool expected)
+        (decide_eq_decide.mpr (forall_congr' (fun candidate => ?_))))
+      rw [hp.cSem_instantiateTmC (fun i => HolE.weakenTypes (σ i))
+        checked.weakenTypes (extendCTypeEnv candidate env) bound cBool,
+        checked.bound_weakenTypes candidate env bound]
   | .app hA hB hf hx => by
       let cf := CChecks.instantiateTmC hf σ checked
       let cx := CChecks.instantiateTmC hx σ checked
@@ -217,6 +278,7 @@ theorem CDefChecks.toHasTypeDefEq : CDefChecks Γ term A → HasTypeDefEq Γ ter
   | .rep raw hA hp x =>
       .rep raw.toChecks hA.toChecks hp.toChecks x.toHasTypeDefEq
   | .tyExists raw p => .tyExists raw.toChecks p.toHasTypeDefEq
+  | .tyForall raw p => .tyForall raw.toChecks p.toHasTypeDefEq
   | .conv source hB equality =>
       .conv source.toHasTypeDefEq hB.toChecks equality
 
@@ -226,7 +288,7 @@ noncomputable def CDefChecks.rawTypeEq (checking : CDefChecks Γ term A) :
     FamEq ClassicalSig checking.rawView.type A :=
   match checking with
   | .exact _ | .app .. | .lam .. | .eq .. | .eps .. | .abs .. | .rep .. |
-      .tyExists .. => .refl
+      .tyExists .. | .tyForall .. => .refl
   | .conv source _ equality =>
       .trans source.rawTypeEq source.typeKinded.toChecks equality
 

@@ -35,6 +35,8 @@ private theorem CChecks.eraseForBound : CChecks Γ expression classification →
   | .rep hA hp hx => .rep hA.eraseForBound hp.eraseForBound hx.eraseForBound
   | .tyExists hp => .tyExists hp.eraseForBound
 
+  | .tyForall hp => .tyForall hp.eraseForBound
+
 theorem cSem_term_normalize
     {types : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
@@ -91,7 +93,14 @@ private def CChecks.renameForBound
   | .eps hA hp => by simpa [rename] using (CChecks.eps hA (hp.renameForBound rho contexts))
   | .abs hA hp hx => by simpa [rename] using (CChecks.abs hA hp (hx.renameForBound rho contexts))
   | .rep hA hp hx => by simpa [rename] using (CChecks.rep hA hp (hx.renameForBound rho contexts))
-  | .tyExists hp => by simpa [rename] using CChecks.tyExists (Γ := Δ) hp
+  -- The predicate lives in the same bound context, weakened by one type
+  -- variable, so the renaming recurses into it unchanged.
+  | .tyExists hp => by simpa [rename] using (CChecks.tyExists (Γ := Δ)
+      (hp.renameForBound (Δ := weakenBoundCtx Δ) rho
+        (fun i => congrArg weakenTypes (contexts i))))
+  | .tyForall hp => by simpa [rename] using (CChecks.tyForall (Γ := Δ)
+      (hp.renameForBound (Δ := weakenBoundCtx Δ) rho
+        (fun i => congrArg weakenTypes (contexts i))))
 termination_by sizeOf source
 
 private theorem CChecks.cSem_renameForBound
@@ -114,9 +123,33 @@ private theorem CChecks.cSem_renameForBound
   | .bool literal => by
       rw [cSem_term_normalize ((CChecks.bool literal).renameForBound rho contexts) (.bool literal) (by simp [rename]) (.bool literal)]
       rfl
+  -- A type binder does not touch the bound environment: `CBoundEnv` is indexed
+  -- only by term depth.  So the renaming commutes with the quantifier by
+  -- pointwise appeal to the induction hypothesis under every candidate type.
   | .tyExists hp => by
-      rw [cSem_term_normalize ((CChecks.tyExists hp).renameForBound rho contexts) (.tyExists _) (by simp [rename]) (.tyExists hp)]
-      rfl
+      rw [cSem_term_normalize ((CChecks.tyExists hp).renameForBound rho contexts)
+        (.tyExists (rename rho _)) (by simp [rename])
+        (.tyExists (hp.renameForBound (Δ := weakenBoundCtx Δ) rho
+          (fun i => congrArg weakenTypes (contexts i))))]
+      simp only [cSem]
+      have bodies := fun candidate : CPointed =>
+        hp.cSem_renameForBound (Δ := weakenBoundCtx Δ) rho
+          (fun i => congrArg weakenTypes (contexts i))
+          (extendCTypeEnv candidate env) bound cBool
+      exact congrArg ULift.up (congrArg (alignCValue cBool expected)
+        (decide_eq_decide.mpr (exists_congr (fun candidate => by rw [bodies candidate]))))
+  | .tyForall hp => by
+      rw [cSem_term_normalize ((CChecks.tyForall hp).renameForBound rho contexts)
+        (.tyForall (rename rho _)) (by simp [rename])
+        (.tyForall (hp.renameForBound (Δ := weakenBoundCtx Δ) rho
+          (fun i => congrArg weakenTypes (contexts i))))]
+      simp only [cSem]
+      have bodies := fun candidate : CPointed =>
+        hp.cSem_renameForBound (Δ := weakenBoundCtx Δ) rho
+          (fun i => congrArg weakenTypes (contexts i))
+          (extendCTypeEnv candidate env) bound cBool
+      exact congrArg ULift.up (congrArg (alignCValue cBool expected)
+        (decide_eq_decide.mpr (forall_congr' (fun candidate => by rw [bodies candidate]))))
   | .app hA hB hf hx => by
       rw [cSem_term_normalize ((CChecks.app hA hB hf hx).renameForBound rho contexts)
         (.app (rename rho _) (rename rho _)) (by simp [rename])

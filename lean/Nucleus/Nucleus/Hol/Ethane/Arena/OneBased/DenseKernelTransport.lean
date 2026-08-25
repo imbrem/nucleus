@@ -906,6 +906,46 @@ theorem elaborateExpr_samePayload_on
                     newSortFound]
                 · rw [oldValueEq]
                   exact .term oldAdvertised newAdvertised _ conversion
+  case tyForall name predicate =>
+    cases predicateFound : oldLocal predicate with
+    | none => simp [elaborateExpr, predicateFound] at found
+    | some predicateValue =>
+      cases predicateValue with
+      | kind kind => simp [elaborateExpr, predicateFound] at found
+      | family kind expression => simp [elaborateExpr, predicateFound] at found
+      | term predicateType predicateExpression =>
+        cases declaredFound : oldDeclared with
+        | none => simp [elaborateExpr, predicateFound, declaredFound] at found
+        | some oldSort =>
+          cases sortFound : oldLocal oldSort with
+          | none =>
+              simp [elaborateExpr, predicateFound, declaredFound, sortFound] at found
+          | some sortValue =>
+            cases sortValue with
+            | kind kind =>
+                simp [elaborateExpr, predicateFound, declaredFound, sortFound] at found
+            | term type expression =>
+                simp [elaborateExpr, predicateFound, declaredFound, sortFound] at found
+            | family kind oldAdvertised =>
+              cases kind with
+              | arr domain codomain =>
+                  simp [elaborateExpr, predicateFound, declaredFound,
+                    sortFound] at found
+              | star =>
+                obtain ⟨newPredicateType, newPredicateFound, _⟩ :=
+                  lookups.term (by simp [detail.Expr.children]) predicateFound
+                obtain ⟨newSort, newAdvertised, newDeclaredFound, newSortFound,
+                  conversion⟩ := declared.family declaredFound sortFound
+                have oldValueEq : oldValue = .term oldAdvertised
+                    (.tyForall name.toNat predicateExpression) := by
+                  simpa [elaborateExpr, predicateFound, declaredFound, sortFound]
+                    using found.symm
+                refine ⟨.term newAdvertised
+                  (.tyForall name.toNat predicateExpression), ?_, ?_⟩
+                · simp [elaborateExpr, newPredicateFound, newDeclaredFound,
+                    newSortFound]
+                · rw [oldValueEq]
+                  exact .term oldAdvertised newAdvertised _ conversion
   case tyApp function argument =>
     exact elaborateExpr_samePayload_tyApp lookups found
   case tyLam binder body =>
@@ -973,6 +1013,17 @@ private theorem finalTermClassifier
 private theorem elaborateExpr_tyExists_classifier
     (found : elaborateExpr localLookup foreignLookup (some sort)
       (.tyExists name predicate) = some (.term advertised termExpression)) :
+    localLookup sort = some (.family .star advertised) := by
+  simp only [elaborateExpr, Bind.bind, Option.bind_eq_some_iff] at found
+  obtain ⟨predicateValue, _, rest⟩ := found
+  cases predicateValue with
+  | kind kind => simp at rest
+  | family kind expression => simp at rest
+  | term type expression => exact finalTermClassifier rest
+
+private theorem elaborateExpr_tyForall_classifier
+    (found : elaborateExpr localLookup foreignLookup (some sort)
+      (.tyForall name predicate) = some (.term advertised termExpression)) :
     localLookup sort = some (.family .star advertised) := by
   simp only [elaborateExpr, Bind.bind, Option.bind_eq_some_iff] at found
   obtain ⟨predicateValue, _, rest⟩ := found
@@ -1121,6 +1172,7 @@ private theorem elaborateExpr_term_classifier_of_not_ref
     localLookup sort = some (.family .star advertised) := by
   cases expression with
   | tyExists => exact elaborateExpr_tyExists_classifier found
+  | tyForall => exact elaborateExpr_tyForall_classifier found
   | tmFv => exact elaborateExpr_tmFv_classifier found
   | app => exact elaborateExpr_app_classifier found
   | lam => exact elaborateExpr_lam_classifier found
@@ -1328,6 +1380,16 @@ private theorem elaborateExpr_of_lookup_extension_tyExists
     (found : elaborateExpr oldLocal oldForeign declared (.tyExists name predicate) =
       some value) :
     elaborateExpr newLocal newForeign declared (.tyExists name predicate) =
+      some value := by
+  simp only [elaborateExpr, Bind.bind, Option.bind_eq_some_iff] at found ⊢
+  aesop (add safe forward [localExt]) (add unsafe apply [option_bind_same_of_extension])
+
+private theorem elaborateExpr_of_lookup_extension_tyForall
+    (localExt : ∀ reference value, oldLocal reference = some value →
+      newLocal reference = some value)
+    (found : elaborateExpr oldLocal oldForeign declared (.tyForall name predicate) =
+      some value) :
+    elaborateExpr newLocal newForeign declared (.tyForall name predicate) =
       some value := by
   simp only [elaborateExpr, Bind.bind, Option.bind_eq_some_iff] at found ⊢
   aesop (add safe forward [localExt]) (add unsafe apply [option_bind_same_of_extension])
@@ -1589,6 +1651,7 @@ theorem elaborateExpr_of_lookup_extension
     | exact elaborateExpr_of_lookup_extension_tyLam localExt found
     | exact elaborateExpr_of_lookup_extension_tyFv localExt found
     | exact elaborateExpr_of_lookup_extension_tyExists localExt found
+    | exact elaborateExpr_of_lookup_extension_tyForall localExt found
     | exact elaborateExpr_of_lookup_extension_model localExt found
     | exact elaborateExpr_of_lookup_extension_tmFv localExt found
     | exact elaborateExpr_of_lookup_extension_app localExt found
@@ -1859,14 +1922,27 @@ theorem denseEndpoints
     arena.dense.expr? fact.output ≠ none ∧
     Columns.SameCategory arena.dense fact.input fact.output := by
   rcases valid with ⟨input, output, inputResolved, outputResolved,
-    _inputWellFormed, _outputWellFormed, compatible, _meaning⟩
+    _inputWellFormed, _outputWellFormed, meaning⟩
+  -- `SynMeaning` carries endpoint compatibility in every case.  In the two
+  -- substitution cases it relates the *substituted* value to the output, and
+  -- substitution preserves the syntax category, so the tag sorts still agree.
+  have tagSortEq : input.tagSort = output.tagSort := by
+    cases varEq : fact.var <;> cases valEq : fact.val <;>
+      simp only [varEq, valEq, SynMeaning, Value.LocalSynMeaning] at meaning
+    · exact meaning.1.tagSort_eq
+    · obtain ⟨subVar, _, subVarWellFormed, localMeaning⟩ := meaning
+      obtain ⟨substituted, substitutes, _, compatible, _⟩ :=
+        localMeaning subVar subVarWellFormed (Value.compatible_refl subVarWellFormed)
+      exact substitutes.tagSort_eq.trans compatible.tagSort_eq
+    · obtain ⟨_, _, _, _, _, _, substituted, substitutes, _, compatible, _⟩ := meaning
+      exact substitutes.tagSort_eq.trans compatible.tagSort_eq
   have inputFull : Resolves resolve arena fact.input input :=
     (resolves_withoutSyn_iff resolve arena fact.input input).mp inputResolved
   have outputFull : Resolves resolve arena fact.output output :=
     (resolves_withoutSyn_iff resolve arena fact.output output).mp outputResolved
   refine ⟨inputFull.resident, outputFull.resident, ?_⟩
   refine ⟨input.tagSort, inputFull.tagSort?, ?_⟩
-  rw [compatible.tagSort_eq]
+  rw [tagSortEq]
   exact outputFull.tagSort?
 
 end SynFact.Valid

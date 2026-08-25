@@ -91,12 +91,16 @@ theorem samePayload
       cases outputSame
       exact .kind kind
   | «syntax» variableIsSyntax replacementIsSyntax inputIsSyntax outputIsSyntax
-      derivation =>
+      sameCategory derivation =>
       apply Substitutes.syntax
       · simpa only [subVarSame.syntax?_eq] using variableIsSyntax
       · simpa only [replacementSame.syntax?_eq] using replacementIsSyntax
       · simpa only [inputSame.syntax?_eq] using inputIsSyntax
       · simpa only [outputSame.syntax?_eq] using outputIsSyntax
+      -- Payload-equal values share a syntax category, so the endpoint category
+      -- agreement transports along with everything else.
+      · exact (inputSame.tagSort_eq.symm.trans sameCategory).trans
+          outputSame.tagSort_eq
       · exact derivation
 
 end Value.Substitutes
@@ -175,15 +179,16 @@ theorem samePayload
     (valid : SynFact.Valid resolve before fact) :
     SynFact.Valid resolve after fact := by
   rcases valid with ⟨oldInput, oldOutput, oldInputResolved, oldOutputResolved,
-    oldInputWellFormed, oldOutputWellFormed, oldCompatible, meaning⟩
+    oldInputWellFormed, oldOutputWellFormed, meaning⟩
   obtain ⟨newInput, newInputResolved, inputSame, newInputWellFormed⟩ :=
     transport fact.input oldInput oldInputResolved
   obtain ⟨newOutput, newOutputResolved, outputSame, newOutputWellFormed⟩ :=
     transport fact.output oldOutput oldOutputResolved
+  -- `Valid` states endpoint compatibility inside `SynMeaning` rather than as a
+  -- separate conjunct: an active substitution may rewrite the classifier, so
+  -- the endpoints need not be compatible on their own.
   refine ⟨newInput, newOutput, newInputResolved, newOutputResolved,
-    newInputWellFormed, newOutputWellFormed,
-    inputSame.compatible outputSame oldInputWellFormed oldOutputWellFormed
-      oldCompatible, ?_⟩
+    newInputWellFormed, newOutputWellFormed, ?_⟩
   cases varFound : fact.var <;> cases valFound : fact.val
   · simp only [varFound, valFound] at meaning ⊢
     exact meaning.samePayload .none .none inputSame outputSame

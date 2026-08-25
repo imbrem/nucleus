@@ -50,7 +50,7 @@ __all__ = [
 LEAF_TAGS = frozenset({"kind.star", "ty.bool", "tm.bool"})
 VARIABLE_TAGS = frozenset({"ty.fv", "tm.fv"})
 BINDER_TAGS = frozenset({"ty.lam", "tm.lam"})
-IMPLICIT_BINDER_TAGS = frozenset({"ty.model", "tm.ty_exists"})
+IMPLICIT_BINDER_TAGS = frozenset({"ty.model", "tm.ty_exists", "tm.ty_forall"})
 PROXY_TAGS = frozenset({"kind.ref", "ty.ref", "tm.ref"})
 
 
@@ -511,6 +511,8 @@ def _construct(kernel: Kernel, row: Definition, children: list[int]) -> int:
             return kernel.model(row.name, *children)
         case "tm.ty_exists":
             return kernel.ty_exists(row.name, *children)
+        case "tm.ty_forall":
+            return kernel.ty_forall(row.name, *children)
         case "tm.fv":
             return kernel.tm_fv(row.name, *children)
         case "tm.app":

@@ -421,8 +421,7 @@ theorem cSem_renameTypes {types target : List Kind} {sort : HolSort} {depth : Na
   | tyExists hp ih =>
       simp only [CRenameEq]
       have cp := hp.renameTypes (liftTyRen ρ)
-      rw [renameBoundCtx_empty] at cp
-      change CHasType emptyBound (renameTypes (liftTyRen ρ) _) .boolTy at cp
+      rw [renameBoundCtx_weakenBoundCtx] at cp
       rw [cSem_tm_normalize ρ ((CChecks.tyExists hp).renameTypes ρ) _ rfl
         (CChecks.tyExists cp) env]
       simp only [cSem]
@@ -432,30 +431,87 @@ theorem cSem_renameTypes {types target : List Kind} {sort : HolSort} {depth : Na
       have propositions :
           (∃ candidate : CPointed,
             cSem cp (extendCTypeEnv (kind := .star) candidate env)
-              emptyCBoundEnv cBool = ⟨true⟩) ↔
+              bound cBool = ⟨true⟩) ↔
           (∃ candidate : CPointed,
             cSem hp (extendCTypeEnv (kind := .star) candidate (env.rename ρ))
-              emptyCBoundEnv cBool = ⟨true⟩) := by
+              bound cBool = ⟨true⟩) := by
         constructor <;> rintro ⟨candidate, witness⟩ <;> refine ⟨candidate, ?_⟩
         · let extEnv := extendCTypeEnv (kind := .star) candidate env
           have semP := cSem_tm_normalize (liftTyRen ρ)
-            (hp.renameTypes (liftTyRen ρ)) _ (by rw [renameBoundCtx_empty]) cp extEnv
-          have cleanToRenamed := congrFun (congrFun semP.symm emptyCBoundEnv) cBool
+            (hp.renameTypes (liftTyRen ρ)) _ (by rw [renameBoundCtx_weakenBoundCtx]) cp extEnv
+          have cleanToRenamed := congrFun (congrFun semP.symm bound) cBool
           have renamedToOriginal := congrFun
-            (congrFun (ih (liftTyRen ρ) extEnv) emptyCBoundEnv) cBool
+            (congrFun (ih (liftTyRen ρ) extEnv) bound) cBool
           have evalEq := cleanToRenamed.trans renamedToOriginal
           rw [CTypeEnv.rename_lift (kind := .star) ρ env candidate] at evalEq
           exact evalEq.symm.trans witness
         · let extEnv := extendCTypeEnv (kind := .star) candidate env
           have semP := cSem_tm_normalize (liftTyRen ρ)
-            (hp.renameTypes (liftTyRen ρ)) _ (by rw [renameBoundCtx_empty]) cp extEnv
-          have cleanToRenamed := congrFun (congrFun semP.symm emptyCBoundEnv) cBool
+            (hp.renameTypes (liftTyRen ρ)) _ (by rw [renameBoundCtx_weakenBoundCtx]) cp extEnv
+          have cleanToRenamed := congrFun (congrFun semP.symm bound) cBool
           have renamedToOriginal := congrFun
-            (congrFun (ih (liftTyRen ρ) extEnv) emptyCBoundEnv) cBool
+            (congrFun (ih (liftTyRen ρ) extEnv) bound) cBool
           have evalEq := cleanToRenamed.trans renamedToOriginal
           rw [CTypeEnv.rename_lift (kind := .star) ρ env candidate] at evalEq
           exact evalEq.trans witness
       exact decide_eq_decide.mpr propositions
+  | tyForall hp ih =>
+      simp only [CRenameEq]
+      have cp := hp.renameTypes (liftTyRen ρ)
+      rw [renameBoundCtx_weakenBoundCtx] at cp
+      rw [cSem_tm_normalize ρ ((CChecks.tyForall hp).renameTypes ρ) _ rfl
+        (CChecks.tyForall cp) env]
+      simp only [cSem]
+      funext bound expected
+      apply congrArg ULift.up
+      apply congrArg (alignCValue cBool expected)
+      have propositions :
+          (∀ candidate : CPointed,
+            cSem cp (extendCTypeEnv (kind := .star) candidate env)
+              bound cBool = ⟨true⟩) ↔
+          (∀ candidate : CPointed,
+            cSem hp (extendCTypeEnv (kind := .star) candidate (env.rename ρ))
+              bound cBool = ⟨true⟩) := by
+        constructor <;> intro every candidate <;> have witness := every candidate
+        · let extEnv := extendCTypeEnv (kind := .star) candidate env
+          have semP := cSem_tm_normalize (liftTyRen ρ)
+            (hp.renameTypes (liftTyRen ρ)) _ (by rw [renameBoundCtx_weakenBoundCtx]) cp extEnv
+          have cleanToRenamed := congrFun (congrFun semP.symm bound) cBool
+          have renamedToOriginal := congrFun
+            (congrFun (ih (liftTyRen ρ) extEnv) bound) cBool
+          have evalEq := cleanToRenamed.trans renamedToOriginal
+          rw [CTypeEnv.rename_lift (kind := .star) ρ env candidate] at evalEq
+          exact evalEq.symm.trans witness
+        · let extEnv := extendCTypeEnv (kind := .star) candidate env
+          have semP := cSem_tm_normalize (liftTyRen ρ)
+            (hp.renameTypes (liftTyRen ρ)) _ (by rw [renameBoundCtx_weakenBoundCtx]) cp extEnv
+          have cleanToRenamed := congrFun (congrFun semP.symm bound) cBool
+          have renamedToOriginal := congrFun
+            (congrFun (ih (liftTyRen ρ) extEnv) bound) cBool
+          have evalEq := cleanToRenamed.trans renamedToOriginal
+          rw [CTypeEnv.rename_lift (kind := .star) ρ env candidate] at evalEq
+          exact evalEq.trans witness
+      exact decide_eq_decide.mpr propositions
+
+/-- A family's denotation ignores a fresh type variable it cannot mention. -/
+theorem denoteChecked_weakenTypes {types : List Kind} {kind binderKind : Kind}
+    {family : Fam ClassicalSig types kind} (checking : Kinded family)
+    (candidate : CDenoteKind binderKind) (env : CTypeEnv types) :
+    denoteChecked (checking.weakenTypes (kind := binderKind))
+        (extendCTypeEnv candidate env) =
+      denoteChecked checking env := by
+  have renamed := cSem_renameTypes checking.certificate (fun v => .succ v)
+    (extendCTypeEnv candidate env)
+  simp only [CRenameEq] at renamed
+  have envEq : (extendCTypeEnv candidate env).rename (fun v => TyVar.succ v) = env := by
+    funext _ v
+    rfl
+  rw [envEq] at renamed
+  unfold denoteChecked
+  rw [cSem_kind_normalize (fun v => TyVar.succ v) (checking.certificate.renameTypes _)
+      (weakenTypes family) rfl (checking.weakenTypes (kind := binderKind)).certificate
+      (extendCTypeEnv candidate env)] at renamed
+  exact renamed
 
 /-! ## Semantic type substitution -/
 
@@ -944,8 +1000,7 @@ theorem cSem_instantiateTypes
   | tyExists hp ih =>
       simp only [CInstantiateEq]
       have cp := hp.instantiateTypes wellFormed.lift
-      rw [instantiateBoundCtx_empty] at cp
-      change CHasType emptyBound (instantiateTypes (liftTySub σ) _) .boolTy at cp
+      rw [instantiateBoundCtx_weakenBoundCtx] at cp
       rw [cSem_instantiate_tm_normalize wellFormed
         ((CChecks.tyExists hp).instantiateTypes wellFormed) _ rfl
         (CChecks.tyExists cp) env]
@@ -957,19 +1012,54 @@ theorem cSem_instantiateTypes
       constructor <;> rintro ⟨candidate, witness⟩ <;> refine ⟨candidate, ?_⟩
       · let extEnv := extendCTypeEnv (kind := .star) candidate env
         have semP := cSem_instantiate_tm_normalize wellFormed.lift
-          (hp.instantiateTypes wellFormed.lift) _ (by rw [instantiateBoundCtx_empty]) cp extEnv
-        have cleanToInstantiated := congrFun (congrFun semP.symm emptyCBoundEnv) cBool
+          (hp.instantiateTypes wellFormed.lift) _
+          (by rw [instantiateBoundCtx_weakenBoundCtx]) cp extEnv
+        have cleanToInstantiated := congrFun (congrFun semP.symm bound) cBool
         have instantiatedToOriginal := congrFun
-          (congrFun (ih wellFormed.lift extEnv) emptyCBoundEnv) cBool
+          (congrFun (ih wellFormed.lift extEnv) bound) cBool
         have evalEq := cleanToInstantiated.trans instantiatedToOriginal
         rw [CTypeEnv.ofSub_lift (domain := .star) wellFormed env candidate] at evalEq
         exact evalEq.symm.trans witness
       · let extEnv := extendCTypeEnv (kind := .star) candidate env
         have semP := cSem_instantiate_tm_normalize wellFormed.lift
-          (hp.instantiateTypes wellFormed.lift) _ (by rw [instantiateBoundCtx_empty]) cp extEnv
-        have cleanToInstantiated := congrFun (congrFun semP.symm emptyCBoundEnv) cBool
+          (hp.instantiateTypes wellFormed.lift) _
+          (by rw [instantiateBoundCtx_weakenBoundCtx]) cp extEnv
+        have cleanToInstantiated := congrFun (congrFun semP.symm bound) cBool
         have instantiatedToOriginal := congrFun
-          (congrFun (ih wellFormed.lift extEnv) emptyCBoundEnv) cBool
+          (congrFun (ih wellFormed.lift extEnv) bound) cBool
+        have evalEq := cleanToInstantiated.trans instantiatedToOriginal
+        rw [CTypeEnv.ofSub_lift (domain := .star) wellFormed env candidate] at evalEq
+        exact evalEq.trans witness
+  | tyForall hp ih =>
+      simp only [CInstantiateEq]
+      have cp := hp.instantiateTypes wellFormed.lift
+      rw [instantiateBoundCtx_weakenBoundCtx] at cp
+      rw [cSem_instantiate_tm_normalize wellFormed
+        ((CChecks.tyForall hp).instantiateTypes wellFormed) _ rfl
+        (CChecks.tyForall cp) env]
+      simp only [cSem]
+      funext bound expected
+      apply congrArg ULift.up
+      apply congrArg (alignCValue cBool expected)
+      apply decide_eq_decide.mpr
+      constructor <;> intro every candidate <;> have witness := every candidate
+      · let extEnv := extendCTypeEnv (kind := .star) candidate env
+        have semP := cSem_instantiate_tm_normalize wellFormed.lift
+          (hp.instantiateTypes wellFormed.lift) _
+          (by rw [instantiateBoundCtx_weakenBoundCtx]) cp extEnv
+        have cleanToInstantiated := congrFun (congrFun semP.symm bound) cBool
+        have instantiatedToOriginal := congrFun
+          (congrFun (ih wellFormed.lift extEnv) bound) cBool
+        have evalEq := cleanToInstantiated.trans instantiatedToOriginal
+        rw [CTypeEnv.ofSub_lift (domain := .star) wellFormed env candidate] at evalEq
+        exact evalEq.symm.trans witness
+      · let extEnv := extendCTypeEnv (kind := .star) candidate env
+        have semP := cSem_instantiate_tm_normalize wellFormed.lift
+          (hp.instantiateTypes wellFormed.lift) _
+          (by rw [instantiateBoundCtx_weakenBoundCtx]) cp extEnv
+        have cleanToInstantiated := congrFun (congrFun semP.symm bound) cBool
+        have instantiatedToOriginal := congrFun
+          (congrFun (ih wellFormed.lift extEnv) bound) cBool
         have evalEq := cleanToInstantiated.trans instantiatedToOriginal
         rw [CTypeEnv.ofSub_lift (domain := .star) wellFormed env candidate] at evalEq
         exact evalEq.trans witness

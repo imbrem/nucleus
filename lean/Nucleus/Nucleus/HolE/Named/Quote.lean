@@ -50,9 +50,16 @@ noncomputable def quote (next : Nat) (typeNames : TyNames types)
       let namedA := quote next typeNames emptyTmNames A
       .sub namedA next
         (quote (next + 1) typeNames (extendTmNames ⟨next, namedA⟩ emptyTmNames) predicate)
+  -- Only the type names grow across a type binder; the term names carry
+  -- through, mirroring `lowerTm`.
   | .tyExists predicate =>
       .tyExists next
-        (quote (next + 1) (extendTyNames next typeNames) emptyTmNames predicate)
+        (quote (next + 1) (extendTyNames next typeNames) termNames predicate)
+  -- Only the type names grow across a type binder; the term names carry
+  -- through, mirroring `lowerTm`.
+  | .tyForall predicate =>
+      .tyForall next
+        (quote (next + 1) (extendTyNames next typeNames) termNames predicate)
   | .model predicate =>
       .model next
         (quote (next + 1) (extendTyNames next typeNames) emptyTmNames predicate)

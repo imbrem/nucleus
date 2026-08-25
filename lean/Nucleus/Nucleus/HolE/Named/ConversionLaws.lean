@@ -31,6 +31,7 @@ theorem endpointsTyping {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig
   | abs leftRaw rightRaw _ _ _ => exact ⟨.exact leftRaw, .exact rightRaw⟩
   | rep leftRaw rightRaw _ _ _ => exact ⟨.exact leftRaw, .exact rightRaw⟩
   | tyExists leftRaw rightRaw _ => exact ⟨.exact leftRaw, .exact rightRaw⟩
+  | tyForall leftRaw rightRaw _ => exact ⟨.exact leftRaw, .exact rightRaw⟩
   | conv leftTyping rightTyping _ => exact ⟨leftTyping, rightTyping⟩
   | beta _ _ _ _ applicationRaw _ _ resultTyping =>
       exact ⟨.exact applicationRaw, resultTyping⟩

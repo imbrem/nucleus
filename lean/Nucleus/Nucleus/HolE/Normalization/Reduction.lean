@@ -34,6 +34,8 @@ inductive Beta {Sig : Signature.{u}} : {types : List Kind} → {depth : Nat} →
   | rep : Beta value value' → Beta (.rep A predicate value) (.rep A predicate value')
   | tyExists : Beta predicate predicate' →
       Beta (.tyExists predicate) (.tyExists predicate')
+  | tyForall : Beta predicate predicate' →
+      Beta (.tyForall predicate) (.tyForall predicate')
 
 /-- One full eta-reduction step. The name witnesses the freshness premise of
 the kernel rule; it does not occur in either endpoint. -/
@@ -53,6 +55,8 @@ inductive Eta {Sig : Signature.{u}} : {types : List Kind} → {depth : Nat} →
   | rep : Eta value value' → Eta (.rep A predicate value) (.rep A predicate value')
   | tyExists : Eta predicate predicate' →
       Eta (.tyExists predicate) (.tyExists predicate')
+  | tyForall : Eta predicate predicate' →
+      Eta (.tyForall predicate) (.tyForall predicate')
 
 /-- One beta-or-eta step. -/
 abbrev BetaEta {Sig : Signature} {types : List Kind} {depth : Nat} :
@@ -92,6 +96,7 @@ theorem HasTypeDefEq.preserveFromRaw
   | abs raw _ _ _ => exact .exact (rawPreserve raw)
   | rep raw _ _ _ => exact .exact (rawPreserve raw)
   | tyExists raw _ => exact .exact (rawPreserve raw)
+  | tyForall raw _ => exact .exact (rawPreserve raw)
   | conv typing hA conversion ih => exact .conv (ih rawPreserve) hA conversion
 
 /-- Lift raw equality certificates through every conversion wrapped around the
@@ -113,6 +118,7 @@ theorem HasTypeDefEq.eqTmFromRaw
   | abs raw _ _ _ => exact rawEquality raw
   | rep raw _ _ _ => exact rawEquality raw
   | tyExists raw _ => exact rawEquality raw
+  | tyForall raw _ => exact rawEquality raw
   | conv typing hA conversion ih =>
       let oldTargetTyping := typing.preserveFromRaw rawPreserve
       obtain ⟨equality⟩ := ih oldTargetTyping rawPreserve rawEquality
@@ -166,7 +172,11 @@ theorem preserve {Sig : Signature} [SigTyping Sig]
   | tyExists step ih =>
       cases sourceTyping with
       | tyExists predicateTyping =>
-        exact .tyExists (ih (fun index => Fin.elim0 index) predicateTyping)
+        exact .tyExists (ih typed.weakenTypes predicateTyping)
+  | tyForall step ih =>
+      cases sourceTyping with
+      | tyForall predicateTyping =>
+        exact .tyForall (ih typed.weakenTypes predicateTyping)
 
 /-- Full beta reduction preserves typing modulo family conversion. -/
 theorem preserveDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
@@ -252,11 +262,20 @@ theorem eqTm_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
   | tyExists step ih =>
       cases sourceTyping with
       | tyExists predicateTyping =>
-        let targetTyping := step.preserve (Γ := emptyBound)
-          (fun (index : Fin 0) => Fin.elim0 index) predicateTyping
-        obtain ⟨predicateEquality⟩ := ih (Γ := emptyBound) (A := .boolTy)
-          (fun (index : Fin 0) => Fin.elim0 index) predicateTyping
+        let targetTyping := step.preserve (Γ := weakenBoundCtx _)
+          typed.weakenTypes predicateTyping
+        obtain ⟨predicateEquality⟩ := ih (Γ := weakenBoundCtx _) (A := .boolTy)
+          typed.weakenTypes predicateTyping
         exact ⟨.tyExists (.tyExists predicateTyping) (.tyExists targetTyping)
+          predicateEquality⟩
+  | tyForall step ih =>
+      cases sourceTyping with
+      | tyForall predicateTyping =>
+        let targetTyping := step.preserve (Γ := weakenBoundCtx _)
+          typed.weakenTypes predicateTyping
+        obtain ⟨predicateEquality⟩ := ih (Γ := weakenBoundCtx _) (A := .boolTy)
+          typed.weakenTypes predicateTyping
+        exact ⟨.tyForall (.tyForall predicateTyping) (.tyForall targetTyping)
           predicateEquality⟩
 
 /-- Every definitionally typed beta step is kernel conversion at its
@@ -291,7 +310,8 @@ def nodeCount : {types : List Kind} → {depth : Nat} → Tm Sig types depth →
   | _, _, .primTm _ | _, _, .bv _ | _, _, .fv _ _ | _, _, .bool _ => 1
   | _, _, .app function argument | _, _, .eq _ function argument =>
       nodeCount function + nodeCount argument + 1
-  | _, _, .lam _ body | _, _, .eps _ body | _, _, .tyExists body =>
+  | _, _, .lam _ body | _, _, .eps _ body | _, _, .tyExists body |
+      _, _, .tyForall body =>
       nodeCount body + 1
   | _, _, .abs _ _ value | _, _, .rep _ _ value => nodeCount value + 1
 
@@ -368,7 +388,11 @@ theorem preserve {Sig : Signature} [SigTyping Sig]
   | tyExists step ih =>
       cases sourceTyping with
       | tyExists predicateTyping =>
-        exact .tyExists (ih (fun index => Fin.elim0 index) predicateTyping)
+        exact .tyExists (ih typed.weakenTypes predicateTyping)
+  | tyForall step ih =>
+      cases sourceTyping with
+      | tyForall predicateTyping =>
+        exact .tyForall (ih typed.weakenTypes predicateTyping)
 
 /-- Full eta reduction preserves typing modulo family conversion. -/
 theorem preserveDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
@@ -457,11 +481,20 @@ theorem eqTm_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
   | tyExists step ih =>
       cases sourceTyping with
       | tyExists predicateTyping =>
-        let targetTyping := step.preserve (Γ := emptyBound)
-          (fun (index : Fin 0) => Fin.elim0 index) predicateTyping
-        obtain ⟨predicateEquality⟩ := ih (Γ := emptyBound) (A := .boolTy)
-          (fun (index : Fin 0) => Fin.elim0 index) predicateTyping
+        let targetTyping := step.preserve (Γ := weakenBoundCtx _)
+          typed.weakenTypes predicateTyping
+        obtain ⟨predicateEquality⟩ := ih (Γ := weakenBoundCtx _) (A := .boolTy)
+          typed.weakenTypes predicateTyping
         exact ⟨.tyExists (.tyExists predicateTyping) (.tyExists targetTyping)
+          predicateEquality⟩
+  | tyForall step ih =>
+      cases sourceTyping with
+      | tyForall predicateTyping =>
+        let targetTyping := step.preserve (Γ := weakenBoundCtx _)
+          typed.weakenTypes predicateTyping
+        obtain ⟨predicateEquality⟩ := ih (Γ := weakenBoundCtx _) (A := .boolTy)
+          typed.weakenTypes predicateTyping
+        exact ⟨.tyForall (.tyForall predicateTyping) (.tyForall targetTyping)
           predicateEquality⟩
 
 /-- Every definitionally typed eta step is kernel conversion at its

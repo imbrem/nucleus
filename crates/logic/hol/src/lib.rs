@@ -606,6 +606,7 @@ impl Arena {
         match *self.dense.row(reference)?.expr() {
             row::Expr::TyFv { name, .. }
             | row::Expr::TyExists { name, .. }
+            | row::Expr::TyForall { name, .. }
             | row::Expr::Model { name, .. }
             | row::Expr::TmFv { name, .. } => Some(name),
             _ => None,
@@ -688,6 +689,11 @@ impl Arena {
     /// Append a raw type-existential proposition row.
     pub fn push_ty_exists(&mut self, name: u64, predicate: Ref) -> Option<Ref> {
         self.push_row(Row::new(row::Expr::TyExists { name, predicate }), None)
+    }
+
+    /// Append a raw type-universal proposition row.
+    pub fn push_ty_forall(&mut self, name: u64, predicate: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::TyForall { name, predicate }), None)
     }
 
     /// Append a raw model-type row.

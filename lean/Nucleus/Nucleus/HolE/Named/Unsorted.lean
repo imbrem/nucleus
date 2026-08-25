@@ -24,6 +24,7 @@ inductive Expr (Sig : Signature.{u}) (Name : Type := Nat) : Type (max u 1) where
   | tyFv (name : Name) (kind : Kind)
   | sub (carrier : Expr Sig Name) (name : Name) (predicate : Expr Sig Name)
   | tyExists (name : Name) (predicate : Expr Sig Name)
+  | tyForall (name : Name) (predicate : Expr Sig Name)
   | model (name : Name) (predicate : Expr Sig Name)
   | primFam (kind : Kind) (symbol : Sig (.kind kind))
   | primTm (symbol : Sig .tm)
@@ -48,8 +49,8 @@ def rootSort : Expr Sig Name → HolSort
   | .tyApp _ codomain .. => .kind codomain
   | .tyLam domain codomain .. => .kind (.arr domain codomain)
   | .tyFv _ kind | .primFam kind _ => .kind kind
-  | .tyExists .. | .primTm .. | .tmFv .. | .app .. | .lam .. | .bool .. |
-      .eq .. | .eps .. | .abs .. | .rep .. => .tm
+  | .tyExists .. | .tyForall .. | .primTm .. | .tmFv .. | .app .. | .lam .. |
+      .bool .. | .eq .. | .eps .. | .abs .. | .rep .. => .tm
 
 /-- Check an unsorted expression against a supplied result sort. -/
 def check : (sort : HolSort) → Expr Sig Name → Option (Named.Expr Sig Name sort)
@@ -97,6 +98,7 @@ def check : (sort : HolSort) → Expr Sig Name → Option (Named.Expr Sig Name s
         exact some (.primFam symbol)
       else none
   | .tm, .tyExists name predicate => return .tyExists name (← check .tm predicate)
+  | .tm, .tyForall name predicate => return .tyForall name (← check .tm predicate)
   | .tm, .primTm symbol => some (.primTm symbol)
   | .tm, .tmFv name type => return .tmFv name (← check (.kind .star) type)
   | .tm, .app function argument => return .app (← check .tm function) (← check .tm argument)
@@ -131,6 +133,7 @@ def erase : {sort : HolSort} → Named.Expr Sig Name sort → Expr Sig Name
   | .kind kind, .tyFv name _ => .tyFv name kind
   | _, .sub carrier name predicate => .sub (erase carrier) name (erase predicate)
   | _, .tyExists name predicate => .tyExists name (erase predicate)
+  | _, .tyForall name predicate => .tyForall name (erase predicate)
   | _, .model name predicate => .model name (erase predicate)
   | .kind kind, .primFam symbol => .primFam kind symbol
   | _, .primTm symbol => .primTm symbol

@@ -162,10 +162,22 @@ private theorem loweringEquivariant (rename : Nat → Nat)
   | tyExists name predicate ih =>
       intro types depth typeScope termScope
       simp only [Named.mapNames, lowerTm]
-      have predicateEq := ih (.cons (kind := .star) name typeScope) .nil
-      simp only [TyScope.mapNames, TmScope.mapNames] at predicateEq
+      -- The term scope crosses the type binder unchanged, so the induction
+      -- hypothesis applies at the ambient scope rather than at the empty one.
+      have predicateEq := ih (.cons (kind := .star) name typeScope) termScope
+      simp only [TyScope.mapNames] at predicateEq
       rw [predicateEq]
-      cases lowerTm (.cons name typeScope) .nil predicate <;>
+      cases lowerTm (.cons name typeScope) termScope predicate <;>
+        simp [Nucleus.HolE.renameFv]
+  | tyForall name predicate ih =>
+      intro types depth typeScope termScope
+      simp only [Named.mapNames, lowerTm]
+      -- The term scope crosses the type binder unchanged, so the induction
+      -- hypothesis applies at the ambient scope rather than at the empty one.
+      have predicateEq := ih (.cons (kind := .star) name typeScope) termScope
+      simp only [TyScope.mapNames] at predicateEq
+      rw [predicateEq]
+      cases lowerTm (.cons name typeScope) termScope predicate <;>
         simp [Nucleus.HolE.renameFv]
   | model name predicate ih =>
       intro types typeScope

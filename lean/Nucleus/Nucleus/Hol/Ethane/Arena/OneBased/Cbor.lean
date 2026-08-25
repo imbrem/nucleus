@@ -307,7 +307,7 @@ private def encodeValue : detail.Value → Nucleus.Cbor
 private def decodeValue? (tag : Tag) (value : Nucleus.Cbor) : Option detail.Value :=
   match tag with
   | .tm .bool => return .bool (← asBool? value)
-  | .ty .fv | .ty .model | .tm .tyExists | .tm .fv | .tm .op1 | .tm .op2 =>
+  | .ty .fv | .ty .model | .tm .tyExists | .tm .tyForall | .tm .fv | .tm .op1 | .tm .op2 =>
       return .nat (← asUnsigned? value)
   | _ => none
 
@@ -323,6 +323,11 @@ private def decodeValue? (tag : Tag) (value : Nucleus.Cbor) : Option detail.Valu
 
 @[simp] private theorem decodeOptional_tyExistsValue (value : UInt64) :
     decodeOptional (decodeValue? (.tm .tyExists)) (some (unsigned value)) =
+      some (some (.nat value)) := by
+  simp [decodeOptional, decodeValue?]
+
+@[simp] private theorem decodeOptional_tyForallValue (value : UInt64) :
+    decodeOptional (decodeValue? (.tm .tyForall)) (some (unsigned value)) =
       some (some (.nat value)) := by
   simp [decodeOptional, decodeValue?]
 

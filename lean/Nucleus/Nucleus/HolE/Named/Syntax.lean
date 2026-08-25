@@ -38,6 +38,7 @@ inductive Expr (Sig : Signature) (Name : Type := Nat) : HolSort → Type (max u 
   | sub (carrier : Expr Sig Name (.kind .star)) (name : Name)
       (predicate : Expr Sig Name .tm) : Expr Sig Name (.kind .star)
   | tyExists (name : Name) (predicate : Expr Sig Name .tm) : Expr Sig Name .tm
+  | tyForall (name : Name) (predicate : Expr Sig Name .tm) : Expr Sig Name .tm
   | model (name : Name) (predicate : Expr Sig Name .tm) :
       Expr Sig Name (.kind .star)
   | primFam {kind : Kind} (symbol : Sig (.kind kind)) : Expr Sig Name (.kind kind)
@@ -84,6 +85,7 @@ def mapNames (f : Name → Name') : Expr Sig Name sort → Expr Sig Name' sort
   | .tyFv name kind => .tyFv (f name) kind
   | .sub A name predicate => .sub (mapNames f A) (f name) (mapNames f predicate)
   | .tyExists name predicate => .tyExists (f name) (mapNames f predicate)
+  | .tyForall name predicate => .tyForall (f name) (mapNames f predicate)
   | .model name predicate => .model (f name) (mapNames f predicate)
   | .primFam symbol => .primFam symbol
   | .primTm symbol => .primTm symbol
