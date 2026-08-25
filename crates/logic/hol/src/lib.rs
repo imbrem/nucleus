@@ -13,9 +13,10 @@ mod table;
 pub mod wire;
 
 pub use kernel::{
-    AX_SUB, BINDER_COUNT, Binder, CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules,
-    Cnf, CnfId, CopyMap, Dnf, DnfId, Kernel, KernelError, Lit, LitError, LitVec, Refutation,
-    SubtypeAxiom, ThmId, ThmRef,
+    AX_INF, AX_SUB, BINDER_COUNT, Binder, CheckedArena, ClassicalArena, ClassicalKernel,
+    ClassicalRules, Cnf, CnfId, CopyMap, Dnf, DnfId, INFINITY_BINDER_COUNT, InfinityAxiom,
+    InfinityBinder, Kernel, KernelError, Lit, LitError, LitVec, Refutation, SubtypeAxiom, ThmId,
+    ThmRef,
 };
 pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};

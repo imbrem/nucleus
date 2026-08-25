@@ -471,6 +471,12 @@
           ]
         },
         {
+          "name": "subtype",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "syn_fact_cache",
           "kinds": [
             "test"
@@ -595,7 +601,19 @@
           ]
         },
         {
+          "name": "proof_subtype",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "sqlite",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "subtype",
           "kinds": [
             "test"
           ]
@@ -641,6 +659,21 @@
       "targets": [
         {
           "name": "covalence_proof_invalid_demo",
+          "kinds": [
+            "cdylib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-proof-naturals@0.0.0",
+      "name": "covalence-proof-naturals",
+      "version": "0.0.0",
+      "path": "crates/proof/naturals",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_proof_naturals",
           "kinds": [
             "cdylib"
           ]

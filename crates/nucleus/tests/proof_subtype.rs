@@ -7,6 +7,18 @@
 
 use std::path::PathBuf;
 
+fn component(name: &str) -> PathBuf {
+    workspace_root().join(format!("target/wasm32-wasip1/debug/{name}.wasm"))
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|crates| crates.parent())
+        .expect("workspace root")
+        .to_path_buf()
+}
+
 fn demo_component() -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -33,5 +45,27 @@ fn the_demo_component_takes_on_the_subtype_axiom() {
     assert!(
         !kernel.is_empty(),
         "the component built rows, so the arena is not empty"
+    );
+}
+
+#[test]
+#[ignore = "requires `cargo component build -p covalence-proof-naturals`"]
+fn the_naturals_component_builds_its_arena_from_both_axioms() {
+    let path = component("covalence_proof_naturals");
+    let bytes = std::fs::read(&path)
+        .unwrap_or_else(|error| panic!("{} could not be read: {error}", path.display()));
+
+    let kernel = covalence_nucleus::load_standard_proof(&bytes)
+        .expect("the naturals proof should run to completion");
+
+    let axioms: Vec<&str> = kernel.axioms().collect();
+    assert!(
+        axioms.contains(&"ax.inf") && axioms.contains(&"ax.sub"),
+        "the naturals rest on infinity and the guarded subtype, and the arena \
+         must say so: found {axioms:?}"
+    );
+    assert!(
+        !kernel.is_empty(),
+        "the construction appended rows for the carrier, reachability and the subtype"
     );
 }

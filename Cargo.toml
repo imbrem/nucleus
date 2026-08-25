@@ -31,6 +31,7 @@ members = [
   "crates/neutron",
   "crates/nucleus",
   "crates/proof/demo",
+  "crates/proof/naturals",
   "crates/proof/invalid-demo",
   "crates/proof/host",
   "crates/repl",
