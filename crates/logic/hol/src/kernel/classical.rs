@@ -3,7 +3,8 @@
 #[cfg(test)]
 use covalence_logic_classical::LitError;
 use covalence_logic_classical::{
-    ClassicalArena, Clause, ClauseId, Cnf, Cube, CubeId, Dnf, Lit, LitVec, Thm, ThmId,
+    CheckedArena, ClassicalArena, ClassicalKernel as SyllogismKernel, Cnf, CnfId, Dnf, DnfId, Lit,
+    LitVec, RatPolicy, ThmId, ThmRef,
 };
 
 use super::{Kernel, KernelError};
@@ -11,6 +12,20 @@ use crate::{
     Ref,
     builtin::{Op1, Op2},
 };
+
+#[derive(Clone)]
+struct Thm(Cnf, Dnf);
+
+impl Thm {
+    const fn new(lhs: Cnf, rhs: Dnf) -> Self {
+        Self(lhs, rhs)
+    }
+
+    fn normalize(&mut self) {
+        self.0.normalize();
+        self.1.normalize();
+    }
+}
 
 fn positive(reference: Ref) -> Lit {
     Lit::positive(reference.get())
@@ -21,18 +36,63 @@ fn reference(proposition: Lit) -> Ref {
         .expect("literal magnitude is nonzero")
 }
 
-pub(super) type ClassicalState = ClassicalArena;
-
 impl Kernel {
-    /// Borrows a checked theorem sequent.
+    /// Borrows the universally valid syllogism arena.
+    #[must_use]
+    pub const fn syl(&self) -> &ClassicalArena {
+        &self.syl
+    }
+
+    /// Opens the checked mutable syllogism arena.
+    pub fn syl_mut(&mut self) -> CheckedArena<'_> {
+        CheckedArena::new(&mut self.syl)
+    }
+
+    /// Borrows the HOL theorem arena.
+    #[must_use]
+    pub const fn thm(&self) -> &ClassicalArena {
+        &self.thm
+    }
+
+    /// Opens the checked mutable HOL theorem arena.
+    pub fn thm_mut(&mut self) -> CheckedArena<'_> {
+        CheckedArena::new(&mut self.thm)
+    }
+
+    fn require_thm(&self, id: ThmId) -> Result<ThmRef<'_>, KernelError> {
+        self.thm.get(id).ok_or(KernelError::MissingTheorem { id })
+    }
+
+    /// Imports a universal classical refutation and matches it to one canonical
+    /// HOL AND-of-OR syntax tree.
     ///
     /// # Errors
     ///
-    /// Returns an error if `id` is absent.
-    pub fn theorem(&self, id: ThmId) -> Result<&Thm, KernelError> {
-        self.classical
-            .theorem(id)
-            .map_err(|_| KernelError::MissingTheorem { id })
+    /// Returns an error unless `source` proves exactly the canonical CNF
+    /// denoted by `formula` has an empty DNF conclusion.
+    pub fn seal_cnf_refutation<P: RatPolicy>(
+        &mut self,
+        source: &SyllogismKernel<P>,
+        theorem: ThmId,
+        formula: Lit,
+    ) -> Result<ThmId, KernelError> {
+        let theorem = source.get(theorem).ok_or(KernelError::InvalidTheoremRule {
+            rule: "classical refutation import",
+        })?;
+        if theorem.rhs.rows().next().is_some() {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "classical refutation conclusion",
+            });
+        }
+        let expected = self.decode_canonical_cnf(formula)?;
+        let mut actual = theorem.lhs.to_owned();
+        actual.normalize();
+        if actual != expected {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "canonical CNF refutation match",
+            });
+        }
+        self.push_sequent(&[formula], &[])
     }
 
     /// Introduces the identity sequent `[p] |- [p]`.
@@ -55,17 +115,17 @@ impl Kernel {
         premises: &[Lit],
         conclusions: &[Lit],
     ) -> Result<(), KernelError> {
-        let old = self.theorem(theorem)?.clone();
-        let mut premises_out = old.premises().as_slice().to_vec();
-        premises_out.extend(premises.iter().copied().map(unit_clause));
-        let mut conclusions_out = old.conclusions().as_slice().to_vec();
-        conclusions_out.extend(conclusions.iter().copied().map(unit_cube));
+        let old = self.require_thm(theorem)?;
+        let mut premises_out = old.lhs.to_rows();
+        premises_out.extend(premises.iter().copied().map(unit_row));
+        let mut conclusions_out = old.rhs.to_rows();
+        conclusions_out.extend(conclusions.iter().copied().map(unit_row));
         self.validate_props(premises.iter().chain(conclusions.iter()).copied())?;
         let replacement = Thm::new(Cnf::new(premises_out), Dnf::new(conclusions_out));
         self.replace_theorem(theorem, replacement)
     }
 
-    /// Weakens this theorem with complete left clauses and right cubes.
+    /// Weakens this theorem with complete CNF and DNF rows.
     ///
     /// Adding a clause strengthens the CNF antecedent. Adding a cube weakens
     /// the DNF consequent. Input order and duplicates are normalized after
@@ -78,55 +138,50 @@ impl Kernel {
     pub fn weaken_matrix(
         &mut self,
         theorem: ThmId,
-        premises: &[Clause],
-        conclusions: &[Cube],
+        premises: &[LitVec],
+        conclusions: &[LitVec],
     ) -> Result<(), KernelError> {
-        self.theorem(theorem)?;
+        self.require_thm(theorem)?;
         self.validate_props(
             premises
                 .iter()
-                .flat_map(Clause::literals)
-                .chain(conclusions.iter().flat_map(Cube::literals))
+                .flat_map(|row| row.iter())
+                .chain(conclusions.iter().flat_map(|row| row.iter()))
                 .copied(),
         )?;
-        let mut replacement = self.theorem(theorem)?.clone();
-        let mut left = replacement.premises().as_slice().to_vec();
+        let replacement = self.require_thm(theorem)?;
+        let mut left = replacement.lhs.to_rows();
         left.extend_from_slice(premises);
-        let mut right = replacement.conclusions().as_slice().to_vec();
+        let mut right = replacement.rhs.to_rows();
         right.extend_from_slice(conclusions);
-        replacement = Thm::new(Cnf::new(left), Dnf::new(right));
-        self.replace_theorem(theorem, replacement)
+        self.replace_theorem(theorem, Thm::new(Cnf::new(left), Dnf::new(right)))
     }
 
-    /// Moves one indexed left clause to the right as its pointwise-negated cube.
+    /// Moves one indexed CNF row to the right with pointwise-negated literals.
     ///
     /// # Errors
     ///
     /// Returns an error if the theorem or clause is absent. The theorem is
     /// unchanged on error.
-    pub fn move_clause_right(
-        &mut self,
-        theorem: ThmId,
-        clause: ClauseId,
-    ) -> Result<(), KernelError> {
-        self.classical
-            .move_clause_right(theorem, clause)
+    pub fn move_cnf_right(&mut self, theorem: ThmId, row: CnfId) -> Result<(), KernelError> {
+        self.thm
+            .move_cnf_right(theorem, row)
             .map_err(|_| KernelError::InvalidTheoremRule {
-                rule: "clause transfer right",
+                rule: "CNF transfer right",
             })
     }
 
-    /// Moves one indexed right cube to the left as its pointwise-negated clause.
+    /// Moves one indexed DNF row to the left with pointwise-negated literals.
     ///
     /// # Errors
     ///
     /// Returns an error if the theorem or cube is absent. The theorem is
     /// unchanged on error.
-    pub fn move_cube_left(&mut self, theorem: ThmId, cube: CubeId) -> Result<(), KernelError> {
-        self.classical
-            .move_cube_left(theorem, cube)
+    pub fn move_dnf_left(&mut self, theorem: ThmId, row: DnfId) -> Result<(), KernelError> {
+        self.thm
+            .move_dnf_left(theorem, row)
             .map_err(|_| KernelError::InvalidTheoremRule {
-                rule: "cube transfer left",
+                rule: "DNF transfer left",
             })
     }
 
@@ -136,38 +191,34 @@ impl Kernel {
     ///
     /// Returns an error if the theorem is absent.
     pub fn normalize_theorem(&mut self, theorem: ThmId) -> Result<(), KernelError> {
-        self.classical
+        self.thm
             .normalize(theorem)
             .map_err(|_| KernelError::MissingTheorem { id: theorem })
     }
 
-    /// Canonicalizes one indexed left clause in place.
+    /// Canonicalizes one indexed CNF row in place.
     ///
     /// # Errors
     ///
     /// Returns an error if the theorem or clause is absent.
-    pub fn normalize_clause(
-        &mut self,
-        theorem: ThmId,
-        clause: ClauseId,
-    ) -> Result<(), KernelError> {
-        self.classical
-            .normalize_clause(theorem, clause)
+    pub fn normalize_cnf(&mut self, theorem: ThmId, row: CnfId) -> Result<(), KernelError> {
+        self.thm
+            .normalize_cnf(theorem, row)
             .map_err(|_| KernelError::InvalidTheoremRule {
-                rule: "clause normalization",
+                rule: "CNF row normalization",
             })
     }
 
-    /// Canonicalizes one indexed right cube in place.
+    /// Canonicalizes one indexed DNF row in place.
     ///
     /// # Errors
     ///
     /// Returns an error if the theorem or cube is absent.
-    pub fn normalize_cube(&mut self, theorem: ThmId, cube: CubeId) -> Result<(), KernelError> {
-        self.classical
-            .normalize_cube(theorem, cube)
+    pub fn normalize_dnf(&mut self, theorem: ThmId, row: DnfId) -> Result<(), KernelError> {
+        self.thm
+            .normalize_dnf(theorem, row)
             .map_err(|_| KernelError::InvalidTheoremRule {
-                rule: "cube normalization",
+                rule: "DNF row normalization",
             })
     }
 
@@ -185,19 +236,19 @@ impl Kernel {
         right: ThmId,
         proposition: Lit,
     ) -> Result<ThmId, KernelError> {
-        let lhs = self.theorem(left)?.clone();
-        let rhs = self.theorem(right)?.clone();
-        let mut left_conclusions = lhs.conclusions().as_slice().to_vec();
-        let mut right_premises = rhs.premises().as_slice().to_vec();
-        if !remove_unit_cube(&mut left_conclusions, proposition)
-            || !remove_unit_clause(&mut right_premises, proposition)
+        let lhs = self.require_thm(left)?;
+        let rhs = self.require_thm(right)?;
+        let mut left_conclusions = lhs.rhs.to_rows();
+        let mut right_premises = rhs.lhs.to_rows();
+        if !remove_unit_row(&mut left_conclusions, proposition, LitVec::as_slice)
+            || !remove_unit_row(&mut right_premises, proposition, LitVec::as_slice)
         {
             return Err(KernelError::InvalidTheoremRule { rule: "cut" });
         }
-        let mut premises = lhs.premises().as_slice().to_vec();
+        let mut premises = lhs.lhs.to_rows();
         premises.extend(right_premises);
         let mut conclusions = left_conclusions;
-        conclusions.extend_from_slice(rhs.conclusions().as_slice());
+        conclusions.extend(rhs.rhs.to_rows());
         self.push_theorem(Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
     }
 
@@ -235,13 +286,13 @@ impl Kernel {
     ///
     /// Returns an error unless `p` occurs in the conclusion.
     pub fn not_left(&mut self, theorem: ThmId, p: Lit) -> Result<(), KernelError> {
-        let source = self.theorem(theorem)?.clone();
-        let mut conclusions = source.conclusions().as_slice().to_vec();
-        if !remove_unit_cube(&mut conclusions, p) {
+        let source = self.require_thm(theorem)?;
+        let mut conclusions = source.rhs.to_rows();
+        if !remove_unit(&mut conclusions, p) {
             return Err(KernelError::InvalidTheoremRule { rule: "not left" });
         }
-        let mut premises = source.premises().as_slice().to_vec();
-        premises.push(unit_clause(p.negated()));
+        let mut premises = source.lhs.to_rows();
+        premises.push(unit_row(p.negated()));
         let replacement = Thm::new(Cnf::new(premises), Dnf::new(conclusions));
         self.replace_theorem(theorem, replacement)
     }
@@ -254,13 +305,13 @@ impl Kernel {
     ///
     /// Returns an error unless `p` occurs in the premise.
     pub fn not_right(&mut self, theorem: ThmId, p: Lit) -> Result<(), KernelError> {
-        let source = self.theorem(theorem)?.clone();
-        let mut premises = source.premises().as_slice().to_vec();
-        if !remove_unit_clause(&mut premises, p) {
+        let source = self.require_thm(theorem)?;
+        let mut premises = source.lhs.to_rows();
+        if !remove_unit(&mut premises, p) {
             return Err(KernelError::InvalidTheoremRule { rule: "not right" });
         }
-        let mut conclusions = source.conclusions().as_slice().to_vec();
-        conclusions.push(unit_cube(p.negated()));
+        let mut conclusions = source.rhs.to_rows();
+        conclusions.push(unit_row(p.negated()));
         let replacement = Thm::new(Cnf::new(premises), Dnf::new(conclusions));
         self.replace_theorem(theorem, replacement)
     }
@@ -273,13 +324,13 @@ impl Kernel {
     /// `conjunction` is their positive `tm.and` opcode.
     pub fn and_left(&mut self, theorem: ThmId, conjunction: Lit) -> Result<ThmId, KernelError> {
         let (left, right) = self.require_binary(conjunction, Op2::And)?;
-        let source = self.theorem(theorem)?.clone();
-        let mut premises = source.premises().as_slice().to_vec();
-        if !remove_unit_clause_pair(&mut premises, left, right) {
+        let source = self.require_thm(theorem)?;
+        let mut premises = source.lhs.to_rows();
+        if !remove_unit_pair(&mut premises, left, right) {
             return Err(KernelError::InvalidTheoremRule { rule: "and left" });
         }
-        premises.push(unit_clause(conjunction));
-        self.push_theorem(Thm::new(Cnf::new(premises), source.conclusions().clone()))
+        premises.push(unit_row(conjunction));
+        self.push_theorem(Thm::new(Cnf::new(premises), source.rhs.to_owned()))
     }
 
     /// Introduces a checked conjunction on the right, concatenating contexts.
@@ -294,18 +345,18 @@ impl Kernel {
         conjunction: Lit,
     ) -> Result<ThmId, KernelError> {
         let (left, right) = self.require_binary(conjunction, Op2::And)?;
-        let lhs = self.theorem(left_theorem)?.clone();
-        let rhs = self.theorem(right_theorem)?.clone();
-        let mut left_conc = lhs.conclusions().as_slice().to_vec();
-        let mut right_conc = rhs.conclusions().as_slice().to_vec();
-        if !remove_unit_cube(&mut left_conc, left) || !remove_unit_cube(&mut right_conc, right) {
+        let lhs = self.require_thm(left_theorem)?;
+        let rhs = self.require_thm(right_theorem)?;
+        let mut left_conc = lhs.rhs.to_rows();
+        let mut right_conc = rhs.rhs.to_rows();
+        if !remove_unit(&mut left_conc, left) || !remove_unit(&mut right_conc, right) {
             return Err(KernelError::InvalidTheoremRule { rule: "and right" });
         }
-        let mut premises = lhs.premises().as_slice().to_vec();
-        premises.extend_from_slice(rhs.premises().as_slice());
+        let mut premises = lhs.lhs.to_rows();
+        premises.extend(rhs.lhs.to_rows());
         let mut conclusions = left_conc;
         conclusions.extend(right_conc);
-        conclusions.push(unit_cube(conjunction));
+        conclusions.push(unit_row(conjunction));
         self.push_theorem(Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
     }
 
@@ -321,19 +372,18 @@ impl Kernel {
         disjunction: Lit,
     ) -> Result<ThmId, KernelError> {
         let (left, right) = self.require_binary(disjunction, Op2::Or)?;
-        let lhs = self.theorem(left_theorem)?.clone();
-        let rhs = self.theorem(right_theorem)?.clone();
-        let mut left_prem = lhs.premises().as_slice().to_vec();
-        let mut right_prem = rhs.premises().as_slice().to_vec();
-        if !remove_unit_clause(&mut left_prem, left) || !remove_unit_clause(&mut right_prem, right)
-        {
+        let lhs = self.require_thm(left_theorem)?;
+        let rhs = self.require_thm(right_theorem)?;
+        let mut left_prem = lhs.lhs.to_rows();
+        let mut right_prem = rhs.lhs.to_rows();
+        if !remove_unit(&mut left_prem, left) || !remove_unit(&mut right_prem, right) {
             return Err(KernelError::InvalidTheoremRule { rule: "or left" });
         }
         let mut premises = left_prem;
         premises.extend(right_prem);
-        premises.push(unit_clause(disjunction));
-        let mut conclusions = lhs.conclusions().as_slice().to_vec();
-        conclusions.extend_from_slice(rhs.conclusions().as_slice());
+        premises.push(unit_row(disjunction));
+        let mut conclusions = lhs.rhs.to_rows();
+        conclusions.extend(rhs.rhs.to_rows());
         self.push_theorem(Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
     }
 
@@ -345,13 +395,13 @@ impl Kernel {
     /// `disjunction` is their positive `tm.or` opcode.
     pub fn or_right(&mut self, theorem: ThmId, disjunction: Lit) -> Result<ThmId, KernelError> {
         let (left, right) = self.require_binary(disjunction, Op2::Or)?;
-        let source = self.theorem(theorem)?.clone();
-        let mut conclusions = source.conclusions().as_slice().to_vec();
-        if !remove_unit_cube_pair(&mut conclusions, left, right) {
+        let source = self.require_thm(theorem)?;
+        let mut conclusions = source.rhs.to_rows();
+        if !remove_unit_pair(&mut conclusions, left, right) {
             return Err(KernelError::InvalidTheoremRule { rule: "or right" });
         }
-        conclusions.push(unit_cube(disjunction));
-        self.push_theorem(Thm::new(source.premises().clone(), Dnf::new(conclusions)))
+        conclusions.push(unit_row(disjunction));
+        self.push_theorem(Thm::new(source.lhs.to_owned(), Dnf::new(conclusions)))
     }
 
     /// Introduces a checked implication on the left.
@@ -367,20 +417,18 @@ impl Kernel {
         implication: Lit,
     ) -> Result<ThmId, KernelError> {
         let (antecedent, consequent) = self.require_binary(implication, Op2::Imp)?;
-        let lhs = self.theorem(left_theorem)?.clone();
-        let rhs = self.theorem(right_theorem)?.clone();
-        let mut left_conc = lhs.conclusions().as_slice().to_vec();
-        let mut right_prem = rhs.premises().as_slice().to_vec();
-        if !remove_unit_cube(&mut left_conc, antecedent)
-            || !remove_unit_clause(&mut right_prem, consequent)
-        {
+        let lhs = self.require_thm(left_theorem)?;
+        let rhs = self.require_thm(right_theorem)?;
+        let mut left_conc = lhs.rhs.to_rows();
+        let mut right_prem = rhs.lhs.to_rows();
+        if !remove_unit(&mut left_conc, antecedent) || !remove_unit(&mut right_prem, consequent) {
             return Err(KernelError::InvalidTheoremRule { rule: "imp left" });
         }
-        let mut premises = lhs.premises().as_slice().to_vec();
+        let mut premises = lhs.lhs.to_rows();
         premises.extend(right_prem);
-        premises.push(unit_clause(implication));
+        premises.push(unit_row(implication));
         let mut conclusions = left_conc;
-        conclusions.extend_from_slice(rhs.conclusions().as_slice());
+        conclusions.extend(rhs.rhs.to_rows());
         self.push_theorem(Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
     }
 
@@ -392,15 +440,13 @@ impl Kernel {
     /// consequent occurs in the conclusion.
     pub fn imp_right(&mut self, theorem: ThmId, implication: Lit) -> Result<ThmId, KernelError> {
         let (antecedent, consequent) = self.require_binary(implication, Op2::Imp)?;
-        let source = self.theorem(theorem)?.clone();
-        let mut premises = source.premises().as_slice().to_vec();
-        let mut conclusions = source.conclusions().as_slice().to_vec();
-        if !remove_unit_clause(&mut premises, antecedent)
-            || !remove_unit_cube(&mut conclusions, consequent)
-        {
+        let source = self.require_thm(theorem)?;
+        let mut premises = source.lhs.to_rows();
+        let mut conclusions = source.rhs.to_rows();
+        if !remove_unit(&mut premises, antecedent) || !remove_unit(&mut conclusions, consequent) {
             return Err(KernelError::InvalidTheoremRule { rule: "imp right" });
         }
-        conclusions.push(unit_cube(implication));
+        conclusions.push(unit_row(implication));
         self.push_theorem(Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
     }
 
@@ -411,17 +457,15 @@ impl Kernel {
     /// Returns an error unless `pivot` and its complement occur on the
     /// respective right sides.
     pub fn resolve(&mut self, left: ThmId, right: ThmId, pivot: Lit) -> Result<ThmId, KernelError> {
-        let lhs = self.theorem(left)?.clone();
-        let rhs = self.theorem(right)?.clone();
-        let mut left_conc = lhs.conclusions().as_slice().to_vec();
-        let mut right_conc = rhs.conclusions().as_slice().to_vec();
-        if !remove_unit_cube(&mut left_conc, pivot)
-            || !remove_unit_cube(&mut right_conc, pivot.negated())
-        {
+        let lhs = self.require_thm(left)?;
+        let rhs = self.require_thm(right)?;
+        let mut left_conc = lhs.rhs.to_rows();
+        let mut right_conc = rhs.rhs.to_rows();
+        if !remove_unit(&mut left_conc, pivot) || !remove_unit(&mut right_conc, pivot.negated()) {
             return Err(KernelError::InvalidTheoremRule { rule: "resolution" });
         }
-        let mut premises = lhs.premises().as_slice().to_vec();
-        premises.extend_from_slice(rhs.premises().as_slice());
+        let mut premises = lhs.lhs.to_rows();
+        premises.extend(rhs.lhs.to_rows());
         let mut conclusions = left_conc;
         conclusions.extend(right_conc);
         self.push_theorem(Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
@@ -442,16 +486,16 @@ impl Kernel {
         formula: Lit,
         branch: Option<bool>,
     ) -> Result<ThmId, KernelError> {
-        let source = self.theorem(theorem)?.clone();
-        let mut conc = source.conclusions().as_slice().to_vec();
-        if !remove_unit_cube(&mut conc, formula) {
+        let source = self.require_thm(theorem)?;
+        let mut conc = source.rhs.to_rows();
+        if !remove_unit(&mut conc, formula) {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "conclusion expansion",
             });
         }
         let replacement = self.expand_right(formula, branch)?;
-        conc.extend(replacement.into_iter().map(unit_cube));
-        self.push_theorem(Thm::new(source.premises().clone(), Dnf::new(conc)))
+        conc.extend(replacement.into_iter().map(unit_row));
+        self.push_theorem(Thm::new(source.lhs.to_owned(), Dnf::new(conc)))
     }
 
     /// Recursively flattens a disjunctive opcode tree on the right side.
@@ -469,9 +513,9 @@ impl Kernel {
         theorem: ThmId,
         formula: Lit,
     ) -> Result<ThmId, KernelError> {
-        let source = self.theorem(theorem)?.clone();
-        let mut conclusions = source.conclusions().as_slice().to_vec();
-        if !remove_unit_cube(&mut conclusions, formula) {
+        let source = self.require_thm(theorem)?;
+        let mut conclusions = source.rhs.to_rows();
+        if !remove_unit(&mut conclusions, formula) {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "conclusion flattening",
             });
@@ -484,8 +528,8 @@ impl Kernel {
                 None => leaves.push(current),
             }
         }
-        conclusions.extend(leaves.into_iter().map(unit_cube));
-        self.push_theorem(Thm::new(source.premises().clone(), Dnf::new(conclusions)))
+        conclusions.extend(leaves.into_iter().map(unit_row));
+        self.push_theorem(Thm::new(source.lhs.to_owned(), Dnf::new(conclusions)))
     }
 
     /// Recursively flattens a conjunctive opcode tree on the left side.
@@ -495,16 +539,16 @@ impl Kernel {
     /// Returns an error unless `formula` occurs in the premise and every
     /// compound node has a conjunctive normalized form.
     pub fn flatten_premise(&mut self, theorem: ThmId, formula: Lit) -> Result<ThmId, KernelError> {
-        let source = self.theorem(theorem)?.clone();
-        let mut premises = source.premises().as_slice().to_vec();
-        if !remove_unit_clause(&mut premises, formula) {
+        let source = self.require_thm(theorem)?;
+        let mut premises = source.lhs.to_rows();
+        if !remove_unit(&mut premises, formula) {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "premise flattening",
             });
         }
         let leaves = self.collect_tree(formula, TreeSide::Conjunctive)?;
-        premises.extend(leaves.into_iter().map(unit_clause));
-        self.push_theorem(Thm::new(Cnf::new(premises), source.conclusions().clone()))
+        premises.extend(leaves.into_iter().map(unit_row));
+        self.push_theorem(Thm::new(Cnf::new(premises), source.rhs.to_owned()))
     }
 
     /// Folds the leaves of a conjunctive opcode tree on the left side.
@@ -531,7 +575,7 @@ impl Kernel {
     ///
     /// Returns an error if the source is absent.
     pub fn copy_theorem(&mut self, source: ThmId) -> Result<ThmId, KernelError> {
-        self.classical
+        self.thm
             .copy(source)
             .map_err(|_| KernelError::MissingTheorem { id: source })
     }
@@ -539,7 +583,7 @@ impl Kernel {
     /// Removes one theorem. Removed slots are reused by later allocations.
     #[must_use]
     pub fn remove_theorem(&mut self, id: ThmId) -> bool {
-        self.classical.remove(id).is_ok()
+        self.thm.remove(id)
     }
 
     fn validate_prop(&self, proposition: Lit) -> Result<(), KernelError> {
@@ -548,8 +592,8 @@ impl Kernel {
     }
     fn push_theorem(&mut self, mut theorem: Thm) -> Result<ThmId, KernelError> {
         theorem.normalize();
-        self.classical
-            .insert(theorem)
+        self.thm
+            .insert(theorem.0, theorem.1)
             .map_err(|_| KernelError::TooManyTheorems)
     }
     fn push_sequent(
@@ -565,15 +609,15 @@ impl Kernel {
         let premises = self.canonical_props(premises)?;
         let conclusions = self.canonical_props(conclusions)?;
         Ok(Thm::new(
-            Cnf::new(premises.into_iter().map(unit_clause)),
-            Dnf::new(conclusions.into_iter().map(unit_cube)),
+            Cnf::new(premises.into_iter().map(unit_row)),
+            Dnf::new(conclusions.into_iter().map(unit_row)),
         ))
     }
 
     fn replace_theorem(&mut self, id: ThmId, mut theorem: Thm) -> Result<(), KernelError> {
         theorem.normalize();
-        self.classical
-            .replace(id, theorem)
+        self.thm
+            .replace(id, theorem.0, theorem.1)
             .map_err(|_| KernelError::MissingTheorem { id })
     }
     fn signed_bool_value(&self, proposition: Lit) -> Result<Option<bool>, KernelError> {
@@ -613,6 +657,100 @@ impl Kernel {
     ) -> Result<(), KernelError> {
         for proposition in propositions {
             self.validate_prop(proposition)?;
+        }
+        Ok(())
+    }
+
+    fn decode_canonical_cnf(&self, formula: Lit) -> Result<Cnf, KernelError> {
+        if !formula.is_positive() {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "canonical CNF polarity",
+            });
+        }
+        let mut rest = reference(formula);
+        let mut rows = Vec::new();
+        loop {
+            if self.arena.bool_value(rest) == Some(true) {
+                break;
+            }
+            if self.arena.op2(rest) != Some(Op2::And) {
+                return Err(KernelError::InvalidTheoremRule {
+                    rule: "canonical CNF spine",
+                });
+            }
+            let mut children = self
+                .arena
+                .children(rest)
+                .ok_or(KernelError::MissingDefinition { reference: rest })?;
+            let row = children.next().ok_or(KernelError::InvalidTheoremRule {
+                rule: "canonical CNF spine",
+            })?;
+            rest = children.next().ok_or(KernelError::InvalidTheoremRule {
+                rule: "canonical CNF spine",
+            })?;
+            rows.push(self.decode_canonical_disjunction(row)?);
+        }
+        let mut cnf = Cnf::new(rows);
+        cnf.normalize();
+        Ok(cnf)
+    }
+
+    fn decode_canonical_disjunction(&self, mut rest: Ref) -> Result<LitVec, KernelError> {
+        let mut row = LitVec::new();
+        loop {
+            if self.arena.bool_value(rest) == Some(false) {
+                break;
+            }
+            if self.arena.op2(rest) != Some(Op2::Or) {
+                return Err(KernelError::InvalidTheoremRule {
+                    rule: "canonical CNF row",
+                });
+            }
+            let mut children = self
+                .arena
+                .children(rest)
+                .ok_or(KernelError::MissingDefinition { reference: rest })?;
+            let literal = children.next().ok_or(KernelError::InvalidTheoremRule {
+                rule: "canonical CNF row",
+            })?;
+            rest = children.next().ok_or(KernelError::InvalidTheoremRule {
+                rule: "canonical CNF row",
+            })?;
+            row.push(self.decode_canonical_literal(literal)?);
+        }
+        if row.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "canonical CNF literal order",
+            });
+        }
+        Ok(row)
+    }
+
+    fn decode_canonical_literal(&self, term: Ref) -> Result<Lit, KernelError> {
+        if self.arena.op1(term) == Some(Op1::Not) {
+            let child = self
+                .arena
+                .children(term)
+                .and_then(|mut children| children.next())
+                .ok_or(KernelError::InvalidTheoremRule {
+                    rule: "canonical negative literal",
+                })?;
+            self.validate_cnf_atom(child)?;
+            return Ok(positive(child).negated());
+        }
+        self.validate_cnf_atom(term)?;
+        Ok(positive(term))
+    }
+
+    fn validate_cnf_atom(&self, atom: Ref) -> Result<(), KernelError> {
+        self.validate_prop(positive(atom))?;
+        if self.arena.op1(atom).is_some()
+            || self.arena.op2(atom).is_some()
+            || self.arena.bool_value(atom).is_some()
+        {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "canonical CNF atom",
+            });
         }
         Ok(())
     }
@@ -784,19 +922,17 @@ impl Kernel {
         formula: Lit,
         side: TreeSide,
     ) -> Result<ThmId, KernelError> {
-        let source = self.theorem(theorem)?.clone();
+        let source = self.require_thm(theorem)?;
         let mut leaves = self.collect_tree(formula, side)?;
         leaves.sort_unstable();
         leaves.dedup();
-        let mut premises = source.premises().as_slice().to_vec();
-        let mut conclusions = source.conclusions().as_slice().to_vec();
+        let mut premises = source.lhs.to_rows();
+        let mut conclusions = source.rhs.to_rows();
         let matched = match side {
-            TreeSide::Conjunctive => leaves
-                .iter()
-                .all(|leaf| remove_unit_clause(&mut premises, *leaf)),
+            TreeSide::Conjunctive => leaves.iter().all(|leaf| remove_unit(&mut premises, *leaf)),
             TreeSide::Disjunctive => leaves
                 .iter()
-                .all(|leaf| remove_unit_cube(&mut conclusions, *leaf)),
+                .all(|leaf| remove_unit(&mut conclusions, *leaf)),
         };
         if !matched {
             return Err(KernelError::InvalidTheoremRule {
@@ -804,8 +940,8 @@ impl Kernel {
             });
         }
         match side {
-            TreeSide::Conjunctive => premises.push(unit_clause(formula)),
-            TreeSide::Disjunctive => conclusions.push(unit_cube(formula)),
+            TreeSide::Conjunctive => premises.push(unit_row(formula)),
+            TreeSide::Disjunctive => conclusions.push(unit_row(formula)),
         }
         self.push_theorem(Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
     }
@@ -817,20 +953,12 @@ enum TreeSide {
     Disjunctive,
 }
 
-fn unit_clause(proposition: Lit) -> Clause {
-    Clause::new([proposition])
+fn unit_row(proposition: Lit) -> LitVec {
+    std::iter::once(proposition).collect()
 }
 
-fn unit_cube(proposition: Lit) -> Cube {
-    Cube::new([proposition])
-}
-
-fn remove_unit_clause(clauses: &mut Vec<Clause>, proposition: Lit) -> bool {
-    remove_unit_row(clauses, proposition, Clause::as_slice)
-}
-
-fn remove_unit_cube(cubes: &mut Vec<Cube>, proposition: Lit) -> bool {
-    remove_unit_row(cubes, proposition, Cube::as_slice)
+fn remove_unit(rows: &mut Vec<LitVec>, proposition: Lit) -> bool {
+    remove_unit_row(rows, proposition, LitVec::as_slice)
 }
 
 fn remove_unit_row<T>(rows: &mut Vec<T>, proposition: Lit, literals: fn(&T) -> &[Lit]) -> bool {
@@ -841,18 +969,11 @@ fn remove_unit_row<T>(rows: &mut Vec<T>, proposition: Lit, literals: fn(&T) -> &
     true
 }
 
-fn remove_unit_clause_pair(clauses: &mut Vec<Clause>, left: Lit, right: Lit) -> bool {
-    if !remove_unit_clause(clauses, left) {
+fn remove_unit_pair(rows: &mut Vec<LitVec>, left: Lit, right: Lit) -> bool {
+    if !remove_unit(rows, left) {
         return false;
     }
-    left == right || remove_unit_clause(clauses, right)
-}
-
-fn remove_unit_cube_pair(cubes: &mut Vec<Cube>, left: Lit, right: Lit) -> bool {
-    if !remove_unit_cube(cubes, left) {
-        return false;
-    }
-    left == right || remove_unit_cube(cubes, right)
+    left == right || remove_unit(rows, right)
 }
 
 #[cfg(test)]
@@ -879,44 +1000,34 @@ mod tests {
         }
     }
 
-    fn clause_id(position: usize) -> ClauseId {
+    fn cnf_id(position: usize) -> CnfId {
         let one_based = position.checked_add(1).unwrap();
-        ClauseId::new(i32::try_from(one_based).unwrap()).unwrap()
+        CnfId::new(i32::try_from(one_based).unwrap()).unwrap()
     }
 
-    fn cube_id(position: usize) -> CubeId {
+    fn dnf_id(position: usize) -> DnfId {
         let one_based = position.checked_add(1).unwrap();
-        CubeId::new(i32::try_from(one_based).unwrap()).unwrap()
+        DnfId::new(i32::try_from(one_based).unwrap()).unwrap()
     }
 
-    fn unit_premises(theorem: &Thm) -> Vec<Lit> {
+    fn unit_premises(theorem: ThmRef<'_>) -> Vec<Lit> {
         theorem
-            .premises()
-            .clauses()
-            .iter()
-            .map(|clause| {
-                *clause
-                    .literals()
-                    .first()
-                    .filter(|_| clause.literals().len() == 1)
-                    .unwrap()
-            })
+            .lhs
+            .rows()
+            .map(|row| *row.first().filter(|_| row.len() == 1).unwrap())
             .collect()
     }
 
-    fn unit_conclusions(theorem: &Thm) -> Vec<Lit> {
+    fn unit_conclusions(theorem: ThmRef<'_>) -> Vec<Lit> {
         theorem
-            .conclusions()
-            .cubes()
-            .iter()
-            .map(|cube| {
-                *cube
-                    .literals()
-                    .first()
-                    .filter(|_| cube.literals().len() == 1)
-                    .unwrap()
-            })
+            .rhs
+            .rows()
+            .map(|row| *row.first().filter(|_| row.len() == 1).unwrap())
             .collect()
+    }
+
+    fn snapshot(theorem: ThmRef<'_>) -> (Vec<LitVec>, Vec<LitVec>) {
+        (theorem.lhs.to_rows(), theorem.rhs.to_rows())
     }
 
     #[test]
@@ -927,10 +1038,10 @@ mod tests {
         assert!(positive.is_positive());
         assert_eq!(reference(positive), term);
         assert_eq!(positive.negated().get(), 7);
-        assert_eq!(Lit::from_raw(0), Err(LitError { value: 0 }));
-        assert_eq!(Lit::from_raw(i32::MIN), Err(LitError { value: i32::MIN }));
-        assert_eq!(Lit::from_raw(i32::MAX), Err(LitError { value: i32::MAX }));
-        assert_eq!(Lit::from_raw(-i32::MAX), Err(LitError { value: -i32::MAX }));
+        assert_eq!(Lit::try_new(0), Err(LitError { value: 0 }));
+        assert_eq!(Lit::try_new(i32::MIN), Err(LitError { value: i32::MIN }));
+        assert_eq!(Lit::try_new(i32::MAX), Err(LitError { value: i32::MAX }));
+        assert_eq!(Lit::try_new(-i32::MAX), Err(LitError { value: -i32::MAX }));
     }
 
     #[test]
@@ -940,14 +1051,22 @@ mod tests {
         kernel.weaken(identity, &[q, p, q], &[q, p, q]).unwrap();
         let mut expected = [p, q];
         expected.sort_unstable();
-        assert_eq!(unit_premises(kernel.theorem(identity).unwrap()), expected);
         assert_eq!(
-            unit_conclusions(kernel.theorem(identity).unwrap()),
+            unit_premises(kernel.require_thm(identity).unwrap()),
+            expected
+        );
+        assert_eq!(
+            unit_conclusions(kernel.require_thm(identity).unwrap()),
             expected
         );
         assert!(
-            !kernel.theorem(identity).unwrap().premises().clauses()[0]
-                .literals()
+            !kernel
+                .require_thm(identity)
+                .unwrap()
+                .lhs
+                .rows()
+                .next()
+                .unwrap()
                 .is_empty()
         );
     }
@@ -964,11 +1083,11 @@ mod tests {
         let mut expected_conclusions = vec![p, q, q.negated()];
         expected_conclusions.sort_unstable();
         assert_eq!(
-            unit_premises(kernel.theorem(identity).unwrap()),
+            unit_premises(kernel.require_thm(identity).unwrap()),
             expected_premises
         );
         assert_eq!(
-            unit_conclusions(kernel.theorem(identity).unwrap()),
+            unit_conclusions(kernel.require_thm(identity).unwrap()),
             expected_conclusions
         );
     }
@@ -977,56 +1096,52 @@ mod tests {
     fn matrix_weakening_and_indexed_transfer_preserve_non_unit_rows() {
         let Fixture { mut kernel, p, q } = fixture();
         let theorem = kernel.identity(p).unwrap();
-        let mut clause = Clause::new([q, p.negated()]);
-        clause.normalize();
-        let mut cube = Cube::new([q.negated(), p]);
-        cube.normalize();
+        let mut cnf_row: LitVec = [q, p.negated()].into_iter().collect();
+        cnf_row.sort_unstable();
+        cnf_row.dedup();
+        let mut dnf_row: LitVec = [q.negated(), p].into_iter().collect();
+        dnf_row.sort_unstable();
+        dnf_row.dedup();
         kernel
             .weaken_matrix(
                 theorem,
-                std::slice::from_ref(&clause),
-                std::slice::from_ref(&cube),
+                std::slice::from_ref(&cnf_row),
+                std::slice::from_ref(&dnf_row),
             )
             .unwrap();
 
-        let clause_index = kernel
-            .theorem(theorem)
+        let cnf_index = kernel
+            .require_thm(theorem)
             .unwrap()
-            .premises()
-            .clauses()
-            .iter()
-            .position(|candidate| candidate == &clause)
+            .lhs
+            .rows()
+            .position(|candidate| candidate == cnf_row.as_slice())
             .unwrap();
-        kernel
-            .move_clause_right(theorem, clause_id(clause_index))
-            .unwrap();
+        kernel.move_cnf_right(theorem, cnf_id(cnf_index)).unwrap();
         assert!(
             kernel
-                .theorem(theorem)
+                .require_thm(theorem)
                 .unwrap()
-                .conclusions()
-                .cubes()
-                .iter()
-                .any(|candidate| candidate.literals() == [q.negated(), p])
+                .rhs
+                .rows()
+                .any(|candidate| candidate == [q.negated(), p])
         );
 
-        let cube_index = kernel
-            .theorem(theorem)
+        let dnf_index = kernel
+            .require_thm(theorem)
             .unwrap()
-            .conclusions()
-            .cubes()
-            .iter()
-            .position(|candidate| candidate == &cube)
+            .rhs
+            .rows()
+            .position(|candidate| candidate == dnf_row.as_slice())
             .unwrap();
-        kernel.move_cube_left(theorem, cube_id(cube_index)).unwrap();
+        kernel.move_dnf_left(theorem, dnf_id(dnf_index)).unwrap();
         assert!(
             kernel
-                .theorem(theorem)
+                .require_thm(theorem)
                 .unwrap()
-                .premises()
-                .clauses()
-                .iter()
-                .any(|candidate| candidate.literals() == [p.negated(), q])
+                .lhs
+                .rows()
+                .any(|candidate| candidate == [p.negated(), q])
         );
         assert_valid(&kernel, theorem, &[p, q]);
     }
@@ -1035,25 +1150,25 @@ mod tests {
     fn matrix_mutations_reject_bad_inputs_transactionally() {
         let Fixture { mut kernel, p, .. } = fixture();
         let theorem = kernel.identity(p).unwrap();
-        let before = kernel.theorem(theorem).unwrap().clone();
-        let missing = Lit::from_raw(-999_999).unwrap();
+        let before = snapshot(kernel.require_thm(theorem).unwrap());
+        let missing = Lit::new(-999_999);
         assert!(
             kernel
-                .weaken_matrix(theorem, &[Clause::new([missing])], &[])
+                .weaken_matrix(theorem, &[std::iter::once(missing).collect()], &[])
                 .is_err()
         );
-        assert_eq!(kernel.theorem(theorem).unwrap(), &before);
+        assert_eq!(snapshot(kernel.require_thm(theorem).unwrap()), before);
         assert!(
             kernel
-                .move_clause_right(theorem, ClauseId::new(i32::MAX).unwrap())
+                .move_cnf_right(theorem, CnfId::new(i32::MAX).unwrap())
                 .is_err()
         );
         assert!(
             kernel
-                .move_cube_left(theorem, CubeId::new(i32::MAX).unwrap())
+                .move_dnf_left(theorem, DnfId::new(i32::MAX).unwrap())
                 .is_err()
         );
-        assert_eq!(kernel.theorem(theorem).unwrap(), &before);
+        assert_eq!(snapshot(kernel.require_thm(theorem).unwrap()), before);
     }
 
     #[test]
@@ -1063,13 +1178,13 @@ mod tests {
         let q_id = kernel.identity(q).unwrap();
         assert!(kernel.remove_theorem(p_id));
         assert!(!kernel.remove_theorem(p_id));
-        assert!(kernel.theorem(q_id).is_ok());
+        assert!(kernel.require_thm(q_id).is_ok());
         assert!(matches!(
-            kernel.theorem(p_id),
+            kernel.require_thm(p_id),
             Err(KernelError::MissingTheorem { .. })
         ));
         assert_eq!(kernel.identity(q.negated()).unwrap(), p_id);
-        assert!(kernel.theorem(q_id).is_ok());
+        assert!(kernel.require_thm(q_id).is_ok());
     }
 
     #[test]
@@ -1079,13 +1194,13 @@ mod tests {
         let second = kernel.identity(q).unwrap();
         let absent = ThmId::new(second.get() + 1).unwrap();
         assert!(!kernel.remove_theorem(absent));
-        assert!(kernel.theorem(first).is_ok());
-        assert!(kernel.theorem(second).is_ok());
+        assert!(kernel.require_thm(first).is_ok());
+        assert!(kernel.require_thm(second).is_ok());
 
         assert!(kernel.remove_theorem(first));
         assert!(kernel.remove_theorem(second));
-        assert!(kernel.theorem(first).is_err());
-        assert!(kernel.theorem(second).is_err());
+        assert!(kernel.require_thm(first).is_err());
+        assert!(kernel.require_thm(second).is_err());
         assert_eq!(kernel.identity(p.negated()).unwrap(), second);
         assert_eq!(kernel.identity(q.negated()).unwrap(), first);
     }
@@ -1095,7 +1210,7 @@ mod tests {
         let Fixture { mut kernel, p, .. } = fixture();
         let before = kernel.arena().clone();
         let theorem = kernel.identity(p).unwrap();
-        assert!(kernel.theorem(theorem).is_ok());
+        assert!(kernel.require_thm(theorem).is_ok());
         assert_eq!(kernel.arena(), &before);
         assert_eq!(kernel.into_arena(), before);
     }
@@ -1115,11 +1230,12 @@ mod tests {
                 .unwrap();
             assert!(
                 kernel
-                    .theorem(expanded)
+                    .require_thm(expanded)
                     .unwrap()
-                    .conclusions()
-                    .cubes()
-                    .is_empty()
+                    .rhs
+                    .rows()
+                    .next()
+                    .is_none()
             );
         }
 
@@ -1142,7 +1258,7 @@ mod tests {
         kernel.weaken(assumed_not_p, &[], &[q]).unwrap();
         let (left, right) = (assumed_p, assumed_not_p);
         let resolved = kernel.resolve(left, right, p).unwrap();
-        assert_eq!(unit_conclusions(kernel.theorem(resolved).unwrap()), [q]);
+        assert_eq!(unit_conclusions(kernel.require_thm(resolved).unwrap()), [q]);
 
         let assumed_p = kernel.identity(p).unwrap();
         let assumed_not_p = kernel.identity(p.negated()).unwrap();
@@ -1150,7 +1266,7 @@ mod tests {
         kernel.weaken(contradiction, &[q], &[]).unwrap();
         kernel.not_right(contradiction, q).unwrap();
         assert_eq!(
-            unit_conclusions(kernel.theorem(contradiction).unwrap()),
+            unit_conclusions(kernel.require_thm(contradiction).unwrap()),
             [q.negated()]
         );
     }
@@ -1169,9 +1285,9 @@ mod tests {
         let not_clause = kernel.expand_conclusion(root, formula, Some(true)).unwrap();
         let neg_p_clause = kernel.expand_conclusion(not_clause, not_p, None).unwrap();
         let refutation = kernel.resolve(p_clause, neg_p_clause, p).unwrap();
-        let sequent = kernel.theorem(refutation).unwrap();
+        let sequent = kernel.require_thm(refutation).unwrap();
         assert_eq!(unit_premises(sequent), [formula]);
-        assert!(sequent.conclusions().cubes().is_empty());
+        assert!(sequent.rhs.rows().next().is_none());
     }
 
     #[test]
@@ -1184,7 +1300,7 @@ mod tests {
         let theorem = kernel.identity(nested).unwrap();
         let flattened = kernel.flatten_conclusion(theorem, nested).unwrap();
         assert_eq!(
-            unit_conclusions(kernel.theorem(flattened).unwrap()),
+            unit_conclusions(kernel.require_thm(flattened).unwrap()),
             [q, p.negated()]
         );
 
@@ -1197,11 +1313,12 @@ mod tests {
             .unwrap();
         assert!(
             kernel
-                .theorem(eliminated)
+                .require_thm(eliminated)
                 .unwrap()
-                .conclusions()
-                .cubes()
-                .is_empty()
+                .rhs
+                .rows()
+                .next()
+                .is_none()
         );
     }
 
@@ -1213,8 +1330,8 @@ mod tests {
         let flat_left = kernel.flatten_premise(conjunction_id, conjunction).unwrap();
         let folded_left = kernel.fold_premise(flat_left, conjunction).unwrap();
         assert_eq!(
-            kernel.theorem(folded_left).unwrap(),
-            kernel.theorem(conjunction_id).unwrap()
+            kernel.require_thm(folded_left).unwrap(),
+            kernel.require_thm(conjunction_id).unwrap()
         );
 
         let disjunction = positive(kernel.op2(Op2::Or, reference(p), reference(q)).unwrap());
@@ -1224,8 +1341,8 @@ mod tests {
             .unwrap();
         let folded_right = kernel.fold_conclusion(flat_right, disjunction).unwrap();
         assert_eq!(
-            kernel.theorem(folded_right).unwrap(),
-            kernel.theorem(disjunction_id).unwrap()
+            kernel.require_thm(folded_right).unwrap(),
+            kernel.require_thm(disjunction_id).unwrap()
         );
     }
 
@@ -1240,11 +1357,11 @@ mod tests {
         );
         let and_identity = kernel.identity(nested_and).unwrap();
         let flat_left = kernel.flatten_premise(and_identity, nested_and).unwrap();
-        assert_eq!(unit_premises(kernel.theorem(flat_left).unwrap()), [p]);
+        assert_eq!(unit_premises(kernel.require_thm(flat_left).unwrap()), [p]);
         let folded_left = kernel.fold_premise(flat_left, nested_and).unwrap();
         assert_eq!(
-            kernel.theorem(folded_left).unwrap(),
-            kernel.theorem(and_identity).unwrap()
+            kernel.require_thm(folded_left).unwrap(),
+            kernel.require_thm(and_identity).unwrap()
         );
 
         let repeated_or = positive(kernel.op2(Op2::Or, reference(p), reference(p)).unwrap());
@@ -1255,11 +1372,14 @@ mod tests {
         );
         let or_identity = kernel.identity(nested_or).unwrap();
         let flat_right = kernel.flatten_conclusion(or_identity, nested_or).unwrap();
-        assert_eq!(unit_conclusions(kernel.theorem(flat_right).unwrap()), [p]);
+        assert_eq!(
+            unit_conclusions(kernel.require_thm(flat_right).unwrap()),
+            [p]
+        );
         let folded_right = kernel.fold_conclusion(flat_right, nested_or).unwrap();
         assert_eq!(
-            kernel.theorem(folded_right).unwrap(),
-            kernel.theorem(or_identity).unwrap()
+            kernel.require_thm(folded_right).unwrap(),
+            kernel.require_thm(or_identity).unwrap()
         );
     }
 
@@ -1274,16 +1394,22 @@ mod tests {
         let result = kernel.resolve(left, right, p).unwrap();
         for p_value in [false, true] {
             for q_value in [false, true] {
-                assert!(valid(kernel.theorem(left).unwrap(), p, p_value, q, q_value));
                 assert!(valid(
-                    kernel.theorem(right).unwrap(),
+                    kernel.require_thm(left).unwrap(),
                     p,
                     p_value,
                     q,
                     q_value
                 ));
                 assert!(valid(
-                    kernel.theorem(result).unwrap(),
+                    kernel.require_thm(right).unwrap(),
+                    p,
+                    p_value,
+                    q,
+                    q_value
+                ));
+                assert!(valid(
+                    kernel.require_thm(result).unwrap(),
                     p,
                     p_value,
                     q,
@@ -1425,14 +1551,14 @@ mod tests {
         kernel.weaken(unary, &[q], &[]).unwrap();
         let mut expected = [p, q];
         expected.sort_unstable();
-        assert_eq!(unit_premises(kernel.theorem(unary).unwrap()), expected);
-        assert_eq!(unit_premises(kernel.theorem(preserved).unwrap()), [p]);
-        let before = kernel.theorem(unary).unwrap().clone();
-        let missing = Lit::from_raw(-999_999).unwrap();
+        assert_eq!(unit_premises(kernel.require_thm(unary).unwrap()), expected);
+        assert_eq!(unit_premises(kernel.require_thm(preserved).unwrap()), [p]);
+        let before = snapshot(kernel.require_thm(unary).unwrap());
+        let missing = Lit::new(-999_999);
         assert!(kernel.weaken(unary, &[missing], &[]).is_err());
-        assert_eq!(kernel.theorem(unary).unwrap(), &before);
+        assert_eq!(snapshot(kernel.require_thm(unary).unwrap()), before);
         assert!(kernel.and_left(unary, q).is_err());
-        assert_eq!(kernel.theorem(unary).unwrap(), &before);
+        assert_eq!(snapshot(kernel.require_thm(unary).unwrap()), before);
 
         let left = kernel.identity(p).unwrap();
         let right = kernel.identity(p.negated()).unwrap();
@@ -1440,20 +1566,21 @@ mod tests {
         assert_ne!(resolved, left);
         assert_ne!(resolved, right);
         assert_eq!(
-            unit_premises(kernel.theorem(resolved).unwrap()),
+            unit_premises(kernel.require_thm(resolved).unwrap()),
             [p, p.negated()]
         );
         assert!(
             kernel
-                .theorem(resolved)
+                .require_thm(resolved)
                 .unwrap()
-                .conclusions()
-                .cubes()
-                .is_empty()
+                .rhs
+                .rows()
+                .next()
+                .is_none()
         );
-        assert_eq!(unit_conclusions(kernel.theorem(left).unwrap()), [p]);
+        assert_eq!(unit_conclusions(kernel.require_thm(left).unwrap()), [p]);
         assert_eq!(
-            unit_conclusions(kernel.theorem(right).unwrap()),
+            unit_conclusions(kernel.require_thm(right).unwrap()),
             [p.negated()]
         );
     }
@@ -1462,17 +1589,57 @@ mod tests {
     fn every_in_place_rule_preserves_the_exact_theorem_on_rejection() {
         let Fixture { mut kernel, p, q } = fixture();
         let theorem = kernel.identity(p).unwrap();
-        let original = kernel.theorem(theorem).unwrap().clone();
-        let missing = Lit::from_raw(-999_999).unwrap();
+        let original = snapshot(kernel.require_thm(theorem).unwrap());
+        let missing = Lit::new(-999_999);
 
         assert!(kernel.weaken(theorem, &[missing], &[]).is_err());
-        assert_eq!(kernel.theorem(theorem).unwrap(), &original);
+        assert_eq!(snapshot(kernel.require_thm(theorem).unwrap()), original);
 
         assert!(kernel.not_left(theorem, q).is_err());
-        assert_eq!(kernel.theorem(theorem).unwrap(), &original);
+        assert_eq!(snapshot(kernel.require_thm(theorem).unwrap()), original);
 
         assert!(kernel.not_right(theorem, q).is_err());
-        assert_eq!(kernel.theorem(theorem).unwrap(), &original);
+        assert_eq!(snapshot(kernel.require_thm(theorem).unwrap()), original);
+    }
+
+    #[test]
+    fn universal_syllogisms_allow_atoms_without_resident_boolean_rows() {
+        let atom = Lit::new(i32::MAX - 1);
+        let mut source: SyllogismKernel<covalence_logic_classical::RupOnly> =
+            SyllogismKernel::new();
+        let universal = source.identity(atom).unwrap();
+        let mut kernel = Kernel::new();
+
+        let syllogism = kernel.syl_mut().copy_from(&source, universal).unwrap();
+        let theorem = kernel.thm_mut().copy_from(&source, universal).unwrap();
+
+        assert_eq!(
+            kernel.syl().get(syllogism).unwrap(),
+            source.get(universal).unwrap()
+        );
+        assert_eq!(
+            kernel.require_thm(theorem).unwrap(),
+            source.get(universal).unwrap()
+        );
+        assert!(kernel.identity(atom).is_err());
+    }
+
+    #[test]
+    fn completed_refutations_copy_into_syl_and_thm_through_checked_views() {
+        let atom = Lit::new(i32::MAX - 1);
+        let source: SyllogismKernel<covalence_logic_classical::RupOnly> = SyllogismKernel::new();
+        let refutation = source
+            .refute(Cnf::new([LitVec::new(), std::iter::once(atom).collect()]))
+            .done(&source, None)
+            .unwrap();
+        let mut kernel = Kernel::new();
+
+        let syllogism = kernel.syl_mut().copy_refutation(&refutation).unwrap();
+        let theorem = kernel.thm_mut().copy_refutation(&refutation).unwrap();
+
+        assert_eq!(kernel.syl().get(syllogism), Some(refutation.theorem()));
+        assert_eq!(kernel.require_thm(theorem).unwrap(), refutation.theorem());
+        assert!(kernel.identity(atom).is_err());
     }
 
     #[test]
@@ -1484,8 +1651,8 @@ mod tests {
         let target = kernel.copy_theorem(source).unwrap();
         assert_eq!(target, reusable);
         assert_eq!(
-            kernel.theorem(target).unwrap(),
-            kernel.theorem(source).unwrap()
+            kernel.require_thm(target).unwrap(),
+            kernel.require_thm(source).unwrap()
         );
         assert!(kernel.remove_theorem(target));
         assert!(kernel.weaken(target, &[q], &[]).is_err());
@@ -1507,7 +1674,7 @@ mod tests {
         assert_valid(&kernel, or_right, &[p, q]);
     }
 
-    fn valid(sequent: &Thm, p: Lit, p_value: bool, q: Lit, q_value: bool) -> bool {
+    fn valid(sequent: ThmRef<'_>, p: Lit, p_value: bool, q: Lit, q_value: bool) -> bool {
         let value = |proposition: Lit| {
             let atom = if reference(proposition) == reference(p) {
                 p_value
@@ -1522,15 +1689,13 @@ mod tests {
             }
         };
         !sequent
-            .premises()
-            .clauses()
-            .iter()
-            .all(|clause| clause.literals().iter().copied().any(&value))
+            .lhs
+            .rows()
+            .all(|row| row.iter().copied().any(&value))
             || sequent
-                .conclusions()
-                .cubes()
-                .iter()
-                .any(|cube| cube.literals().iter().copied().all(&value))
+                .rhs
+                .rows()
+                .any(|row| row.iter().copied().all(&value))
     }
 
     fn assert_valid(kernel: &Kernel, theorem: ThmId, atoms: &[Lit]) {
@@ -1540,18 +1705,16 @@ mod tests {
                 .enumerate()
                 .map(|(index, atom)| (reference(*atom), mask & (1 << index) != 0))
                 .collect();
-            let sequent = kernel.theorem(theorem).unwrap();
+            let sequent = kernel.require_thm(theorem).unwrap();
             assert!(
-                !sequent.premises().clauses().iter().all(|clause| clause
-                    .literals()
-                    .iter()
-                    .copied()
-                    .any(|p| evaluate(kernel, p, &values)))
-                    || sequent.conclusions().cubes().iter().any(|cube| cube
-                        .literals()
-                        .iter()
-                        .copied()
-                        .all(|p| evaluate(kernel, p, &values))),
+                !sequent
+                    .lhs
+                    .rows()
+                    .all(|row| row.iter().copied().any(|p| evaluate(kernel, p, &values)))
+                    || sequent
+                        .rhs
+                        .rows()
+                        .any(|row| row.iter().copied().all(|p| evaluate(kernel, p, &values))),
                 "invalid sequent {sequent:?} under mask {mask}"
             );
         }

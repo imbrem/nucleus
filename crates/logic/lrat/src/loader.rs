@@ -3,8 +3,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use covalence_lib_error::snafu::{self, Snafu};
+use covalence_logic_classical::{
+    ClassicalKernel, CnfId, Error as ClassicalError, Rat, RatGroup as ClassicalRatGroup, Refuter,
+};
 use covalence_logic_hol::{
-    Cnf, Kernel, KernelError, Lit, Ref, Thm, ThmId,
+    Cnf, Kernel, KernelError, Lit, Ref, ThmId, ThmRef,
     builtin::{Op1, Op2},
 };
 
@@ -13,9 +16,8 @@ use crate::{Clause, ClauseId, Literal, Step};
 /// A clause retained alongside its checked consequence theorem.
 #[derive(Clone, Debug)]
 struct ClauseRecord {
-    literals: Box<[Lit]>,
     term: Ref,
-    theorem: ThmId,
+    row: CnfId,
 }
 
 /// A rejected CNF construction or LRAT proof step.
@@ -26,6 +28,9 @@ pub enum Error {
     /// The checked HOL operation rejected the requested construction.
     #[snafu(transparent)]
     Kernel { source: KernelError },
+    /// The classical refutation checker rejected the requested step.
+    #[snafu(transparent)]
+    Classical { source: ClassicalError },
     /// An LRAT literal cannot be interpreted as a signed HOL reference.
     #[snafu(display("LRAT literal {literal} is not a signed HOL literal"))]
     InvalidLiteral { literal: i64 },
@@ -53,9 +58,6 @@ pub enum Error {
     /// Ordered reverse unit propagation does not reach a conflict.
     #[snafu(display("step {step} does not propagate to a conflict"))]
     NoConflict { step: ClauseId },
-    /// General RAT is deliberately outside the consequence-theorem interface.
-    #[snafu(display("step {step} uses unsupported RAT admission"))]
-    UnsupportedRat { step: ClauseId },
     /// The proof ends without a checked empty-clause consequence.
     #[snafu(display("the proof does not derive the empty clause"))]
     NoRefutation,
@@ -151,42 +153,24 @@ impl CnfBuilder {
             terms.push(build_clause(&mut self.kernel, literals, false_ref)?);
         }
         let formula = build_binary(&mut self.kernel, Op2::And, &terms, true_ref)?;
-        let formula_prop = positive(formula);
-        let root = self.kernel.identity(formula_prop)?;
-        let mut projected = Vec::with_capacity(canonical_clauses.len());
-        project_clauses(&mut self.kernel, root, formula, &terms, &mut projected)?;
-
-        let mut canonical = BTreeMap::new();
-        for ((literals, term), theorem) in canonical_clauses
+        let canonical: BTreeMap<_, _> = canonical_clauses
             .iter()
             .cloned()
             .zip(terms.iter().copied())
-            .zip(projected)
-        {
-            let theorem = self.kernel.flatten_conclusion(theorem, positive(term))?;
-            canonical.insert(literals, (term, theorem));
-        }
-
+            .collect();
+        let goal = Cnf::new(self.clauses.iter().map(|row| row.iter().copied().collect()));
+        let syllogisms = ClassicalKernel::new().enable_rat();
+        let refuter = syllogisms.refute(goal);
         let mut live = BTreeMap::new();
-        let mut refutation = None;
         for (index, literals) in self.clauses.into_iter().enumerate() {
-            let (term, source) = canonical[&literals];
-            let theorem = self.kernel.copy_theorem(source)?;
+            let term = canonical[&literals];
             let id = u64::try_from(index)
                 .ok()
                 .and_then(|value| value.checked_add(1))
                 .ok_or(Error::TooManyClauses)?;
-            if literals.is_empty() {
-                refutation = Some(self.kernel.copy_theorem(theorem)?);
-            }
-            live.insert(
-                id,
-                ClauseRecord {
-                    literals,
-                    term,
-                    theorem,
-                },
-            );
+            let row = CnfId::new(i32::try_from(index + 1).map_err(|_| Error::TooManyClauses)?)
+                .ok_or(Error::TooManyClauses)?;
+            live.insert(id, ClauseRecord { term, row });
         }
         let high_water = u64::try_from(live.len()).map_err(|_| Error::TooManyClauses)?;
         Ok(LratProver {
@@ -197,7 +181,8 @@ impl CnfBuilder {
             variables: self.variables,
             live,
             high_water,
-            refutation,
+            syllogisms,
+            refuter,
         })
     }
 }
@@ -212,7 +197,8 @@ pub struct LratProver {
     variables: BTreeMap<u64, Ref>,
     live: BTreeMap<ClauseId, ClauseRecord>,
     high_water: ClauseId,
-    refutation: Option<ThmId>,
+    syllogisms: ClassicalKernel<Rat>,
+    refuter: Refuter<Rat>,
 }
 
 impl LratProver {
@@ -250,7 +236,7 @@ impl LratProver {
     ///
     /// # Errors
     ///
-    /// Returns a typed rejection. RAT steps are always rejected in this version.
+    /// Returns a typed rejection for malformed, invalid RUP, or invalid RAT evidence.
     pub fn apply(&mut self, step: &Step) -> Result<(), Error> {
         match step {
             Step::LearnRup {
@@ -258,7 +244,13 @@ impl LratProver {
                 clause,
                 ordered_hints,
             } => self.learn_rup(*id, clause, ordered_hints),
-            Step::LearnRat { id, .. } => Err(Error::UnsupportedRat { step: *id }),
+            Step::LearnRat {
+                id,
+                clause,
+                pivot,
+                prefix_rup_hints,
+                groups,
+            } => self.learn_rat(*id, clause, *pivot, prefix_rup_hints, groups),
             Step::Forget { ids } => self.forget(ids),
         }
     }
@@ -298,150 +290,65 @@ impl LratProver {
         for literal in &literals {
             validate_atom(&self.kernel, *literal)?;
         }
-        let mut temporary = Vec::new();
-        let result = self.derive_rup(id, &literals, ordered_hints, &mut temporary);
-
-        let theorem = match result {
-            Ok(theorem) => theorem,
-            Err(error) => {
-                self.reclaim(&mut temporary, None);
-                return Err(error);
-            }
-        };
-
-        let term = match build_clause(&mut self.kernel, &literals, self.false_ref) {
-            Ok(term) => term,
-            Err(error) => {
-                self.reclaim(&mut temporary, None);
-                return Err(error);
-            }
-        };
-        let refutation = if literals.is_empty() {
-            match self.kernel.copy_theorem(theorem) {
-                Ok(refutation) => Some(refutation),
-                Err(source) => {
-                    self.reclaim(&mut temporary, None);
-                    return Err(Error::Kernel { source });
-                }
-            }
-        } else {
-            None
-        };
-        self.reclaim(&mut temporary, Some(theorem));
-
-        let is_empty = literals.is_empty();
-        self.live.insert(
-            id,
-            ClauseRecord {
-                literals: literals.into_boxed_slice(),
-                term,
-                theorem,
-            },
-        );
+        let hints = self.rows(id, ordered_hints)?;
+        let row = self.refuter.learn_rup(literals.clone().into(), &hints)?;
+        let term = build_clause(&mut self.kernel, &literals, self.false_ref)?;
+        self.live.insert(id, ClauseRecord { term, row });
         self.high_water = id;
-        if is_empty {
-            self.refutation = refutation;
-        }
         Ok(())
     }
 
-    fn reclaim(&mut self, temporary: &mut Vec<ThmId>, keep: Option<ThmId>) {
-        temporary.sort_unstable();
-        temporary.dedup();
-        if let Some(keep) = keep {
-            temporary.retain(|candidate| *candidate != keep);
-        }
-        for theorem in temporary.drain(..) {
-            let removed = self.kernel.remove_theorem(theorem);
-            debug_assert!(removed, "temporary theorem handles are live and distinct");
-        }
+    fn rows(&self, step: ClauseId, ids: &[ClauseId]) -> Result<Vec<CnfId>, Error> {
+        ids.iter()
+            .map(|id| {
+                self.live
+                    .get(id)
+                    .map(|record| record.row)
+                    .ok_or(Error::UnknownClause { step, clause: *id })
+            })
+            .collect()
     }
 
-    fn derive_rup(
+    /// Admits one fresh clause by checked RAT.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if identifiers, literals, or RAT evidence are invalid.
+    pub fn learn_rat(
         &mut self,
         id: ClauseId,
-        literals: &[Lit],
-        ordered_hints: &[ClauseId],
-        temporary: &mut Vec<ThmId>,
-    ) -> Result<ThmId, Error> {
-        let mut trail = BTreeMap::<Lit, ThmId>::new();
-        let mut conflict = None;
-        for literal in literals {
-            let falsifying = literal.negated();
-            let theorem = self.kernel.identity(falsifying)?;
-            temporary.push(theorem);
-            if let Some(opposite) = trail.get(literal) {
-                let contradiction = self.kernel.resolve(*opposite, theorem, *literal)?;
-                temporary.push(contradiction);
-                conflict = Some(contradiction);
-            }
-            trail.insert(falsifying, theorem);
+        clause: &Clause,
+        pivot: Literal,
+        prefix_hints: &[ClauseId],
+        groups: &[crate::RatGroup],
+    ) -> Result<(), Error> {
+        if id <= self.high_water {
+            return Err(Error::NonFreshId { id });
         }
-
-        if conflict.is_none() {
-            for hint in ordered_hints {
-                let record = self.live.get(hint).ok_or(Error::UnknownClause {
-                    step: id,
-                    clause: *hint,
-                })?;
-                if record
-                    .literals
-                    .iter()
-                    .any(|literal| trail.contains_key(literal))
-                {
-                    return Err(Error::UselessHint {
-                        step: id,
-                        clause: *hint,
-                    });
-                }
-                let mut theorem = record.theorem;
-                let mut open = Vec::new();
-                for literal in record.literals.iter().copied() {
-                    if let Some(reason) = trail.get(&literal.negated()) {
-                        theorem = self.kernel.resolve(theorem, *reason, literal)?;
-                        temporary.push(theorem);
-                    } else {
-                        open.push(literal);
-                    }
-                }
-                match open.as_slice() {
-                    [] => {
-                        conflict = Some(theorem);
-                        break;
-                    }
-                    [unit] => {
-                        trail.insert(*unit, theorem);
-                    }
-                    _ => {
-                        return Err(Error::UselessHint {
-                            step: id,
-                            clause: *hint,
-                        });
-                    }
-                }
-            }
+        let mut literals = map_dimacs(&self.variables, clause.iter())?;
+        let pivot = map_dimacs(&self.variables, [pivot])?[0];
+        for literal in &literals {
+            validate_atom(&self.kernel, *literal)?;
         }
-
-        let conflict = conflict.ok_or(Error::NoConflict { step: id })?;
-        // Hinted conflicts can be persistent live-clause theorems. All subsequent
-        // polarity transfer and weakening rules mutate in place, so take a private
-        // copy before changing any evidence.
-        let theorem = self.kernel.copy_theorem(conflict)?;
-        temporary.push(theorem);
-        for literal in literals {
-            let falsifying = literal.negated();
-            let premises = self.kernel.theorem(theorem)?.premises();
-            if cnf_contains_unit(premises, falsifying) {
-                self.kernel.not_right(theorem, falsifying)?;
-            } else {
-                self.kernel.weaken(theorem, &[], &[*literal])?;
-            }
-        }
-        let formula = positive(self.formula);
-        if !cnf_contains_unit(self.kernel.theorem(theorem)?.premises(), formula) {
-            self.kernel.weaken(theorem, &[formula], &[])?;
-        }
-        Ok(theorem)
+        let prefix = self.rows(id, prefix_hints)?;
+        let groups = groups
+            .iter()
+            .map(|group| {
+                Ok(ClassicalRatGroup {
+                    opposing: self.rows(id, &[group.opposing_clause_id])?[0],
+                    hints: self.rows(id, &group.resolvent_rup_hints)?,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        let row = self
+            .refuter
+            .learn_rat(literals.clone().into(), pivot, &prefix, &groups)?;
+        literals.sort_unstable();
+        literals.dedup();
+        let term = build_clause(&mut self.kernel, &literals, self.false_ref)?;
+        self.live.insert(id, ClauseRecord { term, row });
+        self.high_water = id;
+        Ok(())
     }
 
     /// Forgets live clauses and their ephemeral theorem handles atomically.
@@ -462,24 +369,20 @@ impl LratProver {
                 clause,
             });
         }
-        let theorems = ids
+        let rows = ids
             .iter()
             .map(|id| {
                 self.live
                     .get(id)
-                    .map(|record| record.theorem)
+                    .map(|record| record.row)
                     .ok_or(Error::UnknownClause {
                         step: self.high_water,
                         clause: *id,
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        for theorem in &theorems {
-            self.kernel.theorem(*theorem)?;
-        }
-        for theorem in theorems {
-            let removed = self.kernel.remove_theorem(theorem);
-            debug_assert!(removed, "live clauses own distinct theorem handles");
+        for row in rows {
+            self.refuter.remove(row)?;
         }
         for id in ids {
             self.live.remove(id);
@@ -493,13 +396,13 @@ impl LratProver {
     ///
     /// Returns [`Error::NoRefutation`] unless the witness is exactly
     /// `[[formula]] ⊢ []`.
-    pub fn done(self) -> Result<UnsatFormula, Error> {
-        let theorem = self.refutation.ok_or(Error::NoRefutation)?;
-        let sequent = self.kernel.theorem(theorem)?;
-        let formula = positive(self.formula);
-        if !is_unit_refutation(sequent, formula) {
-            return Err(Error::NoRefutation);
-        }
+    pub fn done(mut self) -> Result<UnsatFormula, Error> {
+        let refutation = self.refuter.done(&self.syllogisms, None)?;
+        let universal = self.syllogisms.rules().copy_refutation(&refutation)?;
+        self.kernel.syl_mut().copy_refutation(&refutation)?;
+        let theorem =
+            self.kernel
+                .seal_cnf_refutation(&self.syllogisms, universal, positive(self.formula))?;
         Ok(UnsatFormula {
             kernel: self.kernel,
             formula: self.formula,
@@ -544,7 +447,11 @@ impl UnsatFormula {
     ///
     /// Returns an error if the checked witness invariant is absent.
     pub fn verify(&self) -> Result<(), Error> {
-        let sequent = self.kernel.theorem(self.refutation)?;
+        let sequent = self
+            .kernel
+            .thm()
+            .get(self.refutation)
+            .ok_or(Error::NoRefutation)?;
         let formula = positive(self.formula);
         if is_unit_refutation(sequent, formula) {
             Ok(())
@@ -588,29 +495,11 @@ fn reference(proposition: Lit) -> Ref {
         .expect("literal magnitude is nonzero")
 }
 
-fn cnf_contains_unit(cnf: &Cnf, literal: Lit) -> bool {
-    cnf.as_slice()
-        .iter()
-        .any(|clause| clause.as_slice() == [literal])
-}
-
-fn is_unit_refutation(theorem: &Thm, formula: Lit) -> bool {
-    theorem.premises().as_slice().len() == 1
-        && theorem.premises().as_slice()[0].as_slice() == [formula]
-        && theorem.conclusions().as_slice().is_empty()
-}
-
-#[cfg(test)]
-fn unit_conclusions(theorem: &Thm) -> Option<Vec<Lit>> {
-    theorem
-        .conclusions()
-        .as_slice()
-        .iter()
-        .map(|cube| match cube.as_slice() {
-            [literal] => Some(*literal),
-            _ => None,
-        })
-        .collect()
+fn is_unit_refutation(theorem: ThmRef<'_>, formula: Lit) -> bool {
+    let mut premises = theorem.lhs.rows();
+    premises.next() == Some(&[formula][..])
+        && premises.next().is_none()
+        && theorem.rhs.rows().next().is_none()
 }
 
 fn map_dimacs(
@@ -666,29 +555,6 @@ fn build_binary(kernel: &mut Kernel, op: Op2, terms: &[Ref], identity: Ref) -> R
     terms.iter().rev().try_fold(identity, |right, left| {
         kernel.op2(op, *left, right).map_err(Error::from)
     })
-}
-
-fn project_clauses(
-    kernel: &mut Kernel,
-    theorem: ThmId,
-    formula: Ref,
-    clauses: &[Ref],
-    output: &mut Vec<ThmId>,
-) -> Result<(), Error> {
-    match clauses {
-        [] => Ok(()),
-        [_, rest @ ..] => {
-            let proposition = positive(formula);
-            let children: Vec<_> = kernel
-                .children(formula)
-                .ok_or(Error::NonCanonicalFormula { formula })?
-                .collect();
-            let left = kernel.expand_conclusion(theorem, proposition, Some(false))?;
-            let right = kernel.expand_conclusion(theorem, proposition, Some(true))?;
-            output.push(left);
-            project_clauses(kernel, right, children[1], rest, output)
-        }
-    }
 }
 
 fn flatten_formula(kernel: &Kernel, formula: Ref, output: &mut Vec<Ref>) -> Result<(), Error> {
@@ -898,15 +764,10 @@ mod tests {
 
         prover.learn_rup_props(1, &[p, p.negated()], &[]).unwrap();
 
-        let theorem = prover.kernel.theorem(prover.live[&1].theorem).unwrap();
+        let row = prover.live[&1].row;
         let mut expected = [p, p.negated()];
         expected.sort_unstable();
-        assert_eq!(theorem.premises().as_slice().len(), 1);
-        assert_eq!(
-            theorem.premises().as_slice()[0].as_slice(),
-            [positive(prover.formula)]
-        );
-        assert_eq!(unit_conclusions(theorem).unwrap(), expected);
+        assert_eq!(prover.refuter.row(row).unwrap(), expected);
     }
 
     #[test]
@@ -928,56 +789,50 @@ mod tests {
         builder.clause(&[p]).unwrap();
         let mut prover = builder.refute().unwrap();
         prover.learn_rup(2, &dimacs([1, 2]), &[1]).unwrap();
-        let theorem = prover.live[&2].theorem;
+        let row = prover.live[&2].row;
         let mut expected = [p, q];
         expected.sort_unstable();
-        assert_eq!(
-            unit_conclusions(prover.kernel.theorem(theorem).unwrap()).unwrap(),
-            expected
-        );
+        assert_eq!(prover.refuter.row(row).unwrap(), expected);
     }
 
     #[test]
-    fn learned_clause_owns_its_theorem_across_deletion_and_slot_reuse() {
+    fn learned_clause_survives_deleting_a_source_row() {
         let (kernel, bool_ty, _, _) = fixture();
         let mut builder = CnfBuilder::new(kernel, bool_ty);
         builder.clause(&[]).unwrap();
         let mut prover = builder.refute().unwrap();
 
         prover.learn_rup_props(2, &[], &[1]).unwrap();
-        let source = prover.live[&1].theorem;
-        let learned = prover.live[&2].theorem;
+        let source = prover.live[&1].row;
+        let learned = prover.live[&2].row;
         assert_ne!(source, learned);
 
         prover.forget(&[1]).unwrap();
-        assert!(prover.kernel.theorem(learned).is_ok());
-        let reused = prover.kernel.identity(positive(prover.true_ref)).unwrap();
-        assert_eq!(reused, source);
-        assert!(prover.kernel.theorem(learned).is_ok());
+        assert!(prover.refuter.row(source).is_err());
+        assert!(prover.refuter.row(learned).is_ok());
     }
 
     #[test]
-    fn rup_mutation_uses_a_copy_before_reusing_the_learned_slot() {
+    fn rup_learning_does_not_mutate_its_source_row() {
         let (kernel, bool_ty, p, q) = fixture();
         let mut builder = CnfBuilder::new(kernel, bool_ty);
         builder.clause(&[p]).unwrap();
         let mut prover = builder.refute().unwrap();
-        let source = prover.live[&1].theorem;
-        let source_before = prover.kernel.theorem(source).unwrap().clone();
+        let source = prover.live[&1].row;
+        let source_before = prover.refuter.row(source).unwrap().to_vec();
 
         prover.learn_rup_props(2, &[p, q], &[1]).unwrap();
-        let learned = prover.live[&2].theorem;
+        let learned = prover.live[&2].row;
         assert_ne!(source, learned);
-        assert_eq!(prover.kernel.theorem(source).unwrap(), &source_before);
+        assert_eq!(prover.refuter.row(source).unwrap(), source_before);
 
         prover.forget(&[2]).unwrap();
-        let reused = prover.kernel.identity(p).unwrap();
-        assert_eq!(reused, learned);
-        assert_eq!(prover.kernel.theorem(source).unwrap(), &source_before);
+        assert!(prover.refuter.row(learned).is_err());
+        assert_eq!(prover.refuter.row(source).unwrap(), source_before);
     }
 
     #[test]
-    fn duplicate_initial_clauses_own_distinct_handles_across_slot_reuse() {
+    fn duplicate_initial_clauses_own_distinct_stable_rows() {
         let (kernel, bool_ty, p, _) = fixture();
         let mut builder = CnfBuilder::new(kernel, bool_ty);
         builder.clause(&[p]).unwrap();
@@ -985,37 +840,36 @@ mod tests {
         builder.clause(&[p.negated()]).unwrap();
         let mut prover = builder.refute().unwrap();
 
-        let forgotten = prover.live[&1].theorem;
-        let retained = prover.live[&2].theorem;
+        let forgotten = prover.live[&1].row;
+        let retained = prover.live[&2].row;
         assert_ne!(forgotten, retained);
         prover.forget(&[1]).unwrap();
 
-        // The next derived theorem may reuse the forgotten slot.  Clause 2 must
-        // still name its independently owned theorem throughout the replay.
+        // Clause 2 retains its independent row throughout replay.
         prover.learn_rup_props(4, &[], &[2, 3]).unwrap();
-        assert!(prover.kernel.theorem(retained).is_ok());
+        assert!(prover.refuter.row(retained).is_ok());
         prover.done().unwrap().verify().unwrap();
     }
 
     #[test]
-    fn rejected_rup_reclaims_every_temporary_theorem() {
+    fn rejected_rup_does_not_mutate_the_refuter() {
         let (kernel, bool_ty, p, _) = fixture();
         let mut builder = CnfBuilder::new(kernel, bool_ty);
         builder.clause(&[p]).unwrap();
         let mut prover = builder.refute().unwrap();
-        let reusable = prover.kernel.identity(p).unwrap();
-        assert!(prover.kernel.remove_theorem(reusable));
+        let before = prover.refuter.state().clone();
         assert!(matches!(
             prover.learn_rup_props(2, &[p], &[99]),
             Err(Error::UnknownClause { .. })
         ));
-        assert_eq!(prover.kernel.identity(p).unwrap(), reusable);
+        assert_eq!(prover.refuter.state(), &before);
     }
 
     #[test]
-    fn rat_is_explicitly_outside_the_consequence_api() {
+    fn rat_is_checked_by_the_userspace_refuter() {
         let (kernel, bool_ty, p, _) = fixture();
         let mut builder = CnfBuilder::new(kernel, bool_ty);
+        builder.bind_variable(1, reference(p)).unwrap();
         builder.clause(&[p]).unwrap();
         let mut prover = builder.refute().unwrap();
         let step = Step::LearnRat {
@@ -1025,9 +879,60 @@ mod tests {
             prefix_rup_hints: vec![],
             groups: vec![],
         };
+        prover.apply(&step).unwrap();
+    }
+
+    #[test]
+    fn rat_requires_every_live_opposing_clause_and_accepts_retry() {
+        let (kernel, bool_ty, p, q) = fixture();
+        let mut builder = CnfBuilder::new(kernel, bool_ty);
+        builder.bind_variable(1, reference(p)).unwrap();
+        builder.bind_variable(2, reference(q)).unwrap();
+        builder.clause(&[p.negated(), q]).unwrap();
+        builder.clause(&[p]).unwrap();
+        let mut prover = builder.refute().unwrap();
+        let before = prover.refuter.state().clone();
+
         assert!(matches!(
-            prover.apply(&step),
-            Err(Error::UnsupportedRat { step: 2 })
+            prover.learn_rat(3, &dimacs([1]), Literal::new(1).unwrap(), &[], &[]),
+            Err(Error::Classical {
+                source: ClassicalError::IncompleteRat { id: 1 }
+            })
+        ));
+        assert_eq!(prover.refuter.state(), &before);
+        assert_eq!(prover.high_water, 2);
+
+        prover
+            .learn_rat(
+                3,
+                &dimacs([1]),
+                Literal::new(1).unwrap(),
+                &[],
+                &[crate::RatGroup {
+                    opposing_clause_id: 1,
+                    resolvent_rup_hints: vec![2],
+                }],
+            )
+            .unwrap();
+        assert_eq!(prover.high_water, 3);
+    }
+
+    #[test]
+    fn deleting_an_opposing_clause_removes_its_rat_coverage_obligation() {
+        let (kernel, bool_ty, p, q) = fixture();
+        let mut builder = CnfBuilder::new(kernel, bool_ty);
+        builder.bind_variable(1, reference(p)).unwrap();
+        builder.clause(&[p.negated(), q]).unwrap();
+        let mut prover = builder.refute().unwrap();
+        prover.forget(&[1]).unwrap();
+
+        prover
+            .learn_rat(2, &dimacs([1]), Literal::new(1).unwrap(), &[], &[])
+            .unwrap();
+        assert!(prover.clause_term(2).is_some());
+        assert!(matches!(
+            prover.learn_rup_props(3, &[p], &[1]),
+            Err(Error::UnknownClause { step: 3, clause: 1 })
         ));
     }
 
