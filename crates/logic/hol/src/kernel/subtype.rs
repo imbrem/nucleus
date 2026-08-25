@@ -278,6 +278,7 @@ impl Kernel {
             if let Node::TyFv { name, .. }
             | Node::TmFv { name, .. }
             | Node::TyExists { name, .. }
+            | Node::TyForall { name, .. }
             | Node::Model { name, .. } = node
             {
                 highest = Some(highest.map_or(name, |seen| seen.max(name)));

@@ -887,7 +887,11 @@ impl Kernel {
     const fn is_binder(node: Node) -> bool {
         matches!(
             node,
-            Node::TyLam(..) | Node::Lam(..) | Node::TyExists { .. } | Node::Model { .. }
+            Node::TyLam(..)
+                | Node::Lam(..)
+                | Node::TyExists { .. }
+                | Node::TyForall { .. }
+                | Node::Model { .. }
         )
     }
 
@@ -1051,6 +1055,16 @@ impl Kernel {
                 },
             ) if left_name == right_name => Some((left_name, left_body, right_body, false)),
             (
+                Node::TyForall {
+                    name: left_name,
+                    predicate: left_body,
+                },
+                Node::TyForall {
+                    name: right_name,
+                    predicate: right_body,
+                },
+            ) if left_name == right_name => Some((left_name, left_body, right_body, false)),
+            (
                 Node::Model {
                     name: left_name,
                     predicate: left_body,
@@ -1072,6 +1086,16 @@ impl Kernel {
                     predicate: left_body,
                 },
                 Node::TyExists {
+                    name: right_name,
+                    predicate: right_body,
+                },
+            )
+            | (
+                Node::TyForall {
+                    name: left_name,
+                    predicate: left_body,
+                },
+                Node::TyForall {
                     name: right_name,
                     predicate: right_body,
                 },

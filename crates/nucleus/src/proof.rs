@@ -520,6 +520,25 @@ impl nucleus::proof::host::HostArena for ProofState {
         ))
     }
 
+    fn ty_forall(
+        &mut self,
+        arena: Resource<HostArena>,
+        name: u64,
+        predicate: u64,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        let predicate = match reference(predicate) {
+            Ok(predicate) => predicate,
+            Err(error) => return Ok(Err(error)),
+        };
+        Ok(pushed(
+            self.table
+                .get_mut(&arena)?
+                .0
+                .push_ty_forall(name, predicate),
+            "definition",
+        ))
+    }
+
     fn model(
         &mut self,
         arena: Resource<HostArena>,
@@ -1007,6 +1026,21 @@ impl nucleus::proof::host::HostKernel for ProofState {
         };
         Ok(checked_ref(
             self.table.get_mut(&kernel)?.0.ty_exists(name, predicate),
+        ))
+    }
+
+    fn ty_forall(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        name: u64,
+        predicate: u64,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        let predicate = match reference(predicate) {
+            Ok(predicate) => predicate,
+            Err(error) => return Ok(Err(error)),
+        };
+        Ok(checked_ref(
+            self.table.get_mut(&kernel)?.0.ty_forall(name, predicate),
         ))
     }
 

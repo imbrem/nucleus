@@ -614,6 +614,25 @@ impl Kernel {
         self.push::<Infallible>(Row::new(Node::TyExists { name, predicate }), Some(bool_ty))
     }
 
+    /// Appends type-level universal quantification.
+    ///
+    /// The dual of [`ty_exists`](Self::ty_exists), and identical in shape: the
+    /// predicate is a Boolean term with the bound type variable free, and the
+    /// result is the Boolean proposition that *every* type satisfies it.
+    ///
+    /// Universals are what characterise a type up to isomorphism — a
+    /// coproduct's mediating map has to be unique for every target, and "every
+    /// target" is this quantifier. An existential alone can say a type with
+    /// some structure exists, never that it is *the* one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `predicate` is a Boolean term.
+    pub fn ty_forall(&mut self, name: u64, predicate: Ref) -> Result<Ref, KernelError> {
+        let bool_ty = self.require_bool_term::<Infallible>(predicate)?;
+        self.push::<Infallible>(Row::new(Node::TyForall { name, predicate }), Some(bool_ty))
+    }
+
     /// Appends an intrinsically typed free term variable.
     ///
     /// # Errors
@@ -1054,7 +1073,7 @@ impl Kernel {
                 let bool_ty = self.require_bool_term::<Infallible>(predicate)?;
                 Some(self.classifier(bool_ty)?)
             }
-            Node::TyExists { predicate, .. } => {
+            Node::TyExists { predicate, .. } | Node::TyForall { predicate, .. } => {
                 Some(self.require_bool_term::<Infallible>(predicate)?)
             }
             Node::TmFv { ty, .. } => {
@@ -1632,6 +1651,10 @@ fn remap_row(row: &Row, sort: Option<Ref>, map: &BTreeMap<Ref, Ref>) -> (Row, Op
         Node::TyFv { name, kind } => Node::TyFv {
             name,
             kind: remap(kind),
+        },
+        Node::TyForall { name, predicate } => Node::TyForall {
+            name,
+            predicate: remap(predicate),
         },
         Node::TyExists { name, predicate } => Node::TyExists {
             name,

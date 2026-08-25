@@ -151,6 +151,7 @@ interface host {
         ty-lam: func(binder: u64, body: u64) -> result<u64, string>;
         ty-fv: func(name: u64, kind: u64) -> result<u64, string>;
         ty-exists: func(name: u64, predicate: u64) -> result<u64, string>;
+        ty-forall: func(name: u64, predicate: u64) -> result<u64, string>;
         model: func(name: u64, predicate: u64) -> result<u64, string>;
         tm-fv: func(name: u64, ty: u64) -> result<u64, string>;
         app: func(function: u64, argument: u64) -> result<u64, string>;
@@ -215,6 +216,7 @@ interface host {
         ty-lam: func(binder: u64, body: u64) -> result<u64, string>;
         ty-fv: func(name: u64, kind: u64) -> result<u64, string>;
         ty-exists: func(name: u64, predicate: u64) -> result<u64, string>;
+        ty-forall: func(name: u64, predicate: u64) -> result<u64, string>;
         model: func(name: u64, predicate: u64) -> result<u64, string>;
         tm-fv: func(name: u64, ty: u64) -> result<u64, string>;
         app: func(function: u64, argument: u64) -> result<u64, string>;

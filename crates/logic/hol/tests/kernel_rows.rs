@@ -21,6 +21,7 @@ fn each_constructor_records_its_own_tag_and_classifier() {
     let choice = fix.eps(bool_ty, predicate).expect("choice");
     let model = fix.model(2, truth).expect("model");
     let existential = fix.ty_exists(3, truth).expect("existential");
+    let universal = fix.ty_forall(5, truth).expect("universal");
 
     for (row, tag, classifier) in [
         (star, Tag::Kind(KindTag::Star), None),
@@ -33,6 +34,7 @@ fn each_constructor_records_its_own_tag_and_classifier() {
         (choice, Tag::Tm(TmTag::Eps), Some(bool_ty)),
         (model, Tag::Ty(TyTag::Model), Some(star)),
         (existential, Tag::Tm(TmTag::TyExists), Some(bool_ty)),
+        (universal, Tag::Tm(TmTag::TyForall), Some(bool_ty)),
     ] {
         assert_eq!(fix.arena().tag(row), Some(tag), "{row:?}");
         assert_eq!(fix.classifier(row).ok(), classifier, "{row:?}");
@@ -394,4 +396,29 @@ fn the_kernel_hands_back_exactly_the_arena_it_built() {
     let owned = fix.kernel.into_arena();
     assert_eq!(borrowed, owned);
     support::assert_round_trips(&owned);
+}
+
+#[test]
+fn type_quantifiers_are_boolean_propositions_over_a_bound_type_variable() {
+    // The universal is the dual of the existential and shares its shape: a
+    // Boolean term with a type variable free, quantified into a proposition.
+    // What differs is only what it asserts, which is invisible to the row.
+    let mut fix = Fix::new();
+    let bool_ty = fix.bool_ty;
+    let truth = fix.lit(true);
+
+    let universal = fix.ty_forall(11, truth).expect("universal");
+    assert_eq!(fix.category(universal).expect("resident"), Sort::Tm);
+    assert_eq!(fix.classifier(universal).ok(), Some(bool_ty));
+    assert_eq!(fix.arena().name(universal), Some(11));
+
+    // A non-Boolean body is refused, as for the existential.
+    assert!(fix.ty_forall(12, bool_ty).is_err());
+
+    // Two quantifiers over the same body are distinct rows and distinct
+    // propositions: Ethane does not hash-cons, and in any case "some type
+    // satisfies P" is not "every type satisfies P".
+    let existential = fix.ty_exists(11, truth).expect("existential");
+    assert_ne!(universal, existential);
+    assert_ne!(fix.arena().tag(universal), fix.arena().tag(existential));
 }
