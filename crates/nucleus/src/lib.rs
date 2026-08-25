@@ -15,13 +15,9 @@ mod proof;
 #[cfg(not(target_arch = "wasm32"))]
 pub use proof::{ProofError, load_standard_proof};
 
-mod subtype;
-
-pub use subtype::{Subtype, SubtypeError, SubtypeExt};
-
-mod model;
-
-pub use model::{ChosenModel, ModelError, ModelExt};
+pub use covalence_logic_hol_derived::{
+    ChosenModel, ModelError, ModelExt, Subtype, SubtypeError, SubtypeExt,
+};
 
 mod connection;
 

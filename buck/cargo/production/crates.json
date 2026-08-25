@@ -509,6 +509,33 @@
       ]
     },
     {
+      "id": "workspace#covalence-logic-hol-derived@0.0.0",
+      "name": "covalence-logic-hol-derived",
+      "version": "0.0.0",
+      "path": "crates/logic/hol-derived",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_logic_hol_derived",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "model",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "subtype",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-logic-hol-script@0.0.0",
       "name": "covalence-logic-hol-script",
       "version": "0.0.0",
@@ -628,12 +655,6 @@
           ]
         },
         {
-          "name": "model",
-          "kinds": [
-            "test"
-          ]
-        },
-        {
           "name": "proof_subtype",
           "kinds": [
             "test"
@@ -641,12 +662,6 @@
         },
         {
           "name": "sqlite",
-          "kinds": [
-            "test"
-          ]
-        },
-        {
-          "name": "subtype",
           "kinds": [
             "test"
           ]
@@ -1067,6 +1082,20 @@
       ]
     },
     {
+      "source": "workspace#covalence-logic-hol-derived@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol-derived@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-logic-hol-script@0.0.0",
       "target": "workspace#covalence-lib-error@0.0.0",
       "kinds": [
@@ -1251,6 +1280,13 @@
     {
       "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-logic-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-logic-hol-derived@0.0.0",
       "kinds": [
         "normal"
       ]

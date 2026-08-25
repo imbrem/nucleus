@@ -725,6 +725,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-logic-hol-derived"
+version = "0.0.0"
+dependencies = [
+ "covalence-lib-error",
+ "covalence-logic-hol",
+]
+
+[[package]]
 name = "covalence-logic-hol-script"
 version = "0.0.0"
 dependencies = [
@@ -784,6 +792,7 @@ dependencies = [
  "covalence-lib-wasm",
  "covalence-logic-cas",
  "covalence-logic-hol",
+ "covalence-logic-hol-derived",
  "covalence-neutron",
  "wasm-bindgen",
  "wit-bindgen-rt",

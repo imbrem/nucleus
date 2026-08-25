@@ -1,0 +1,15 @@
+[package]
+name = "covalence-logic-hol-derived"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Untrusted derived constructions over the checked HOL kernel"
+publish = false
+
+[dependencies]
+covalence-lib-error = { path = "../../lib/error" }
+covalence-logic-hol = { path = "../hol" }
+
+[lints]
+workspace = true
