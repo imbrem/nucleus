@@ -337,6 +337,24 @@ impl HolProver {
             .map_err(to_js)
     }
 
+    /// Introduces object-language equality reflexivity.
+    ///
+    /// Returns `[equality, theorem]` using native signed 32-bit identifiers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `bool_ty` is Boolean and `term` is checked.
+    #[wasm_bindgen(js_name = refl)]
+    pub fn refl(&mut self, bool_ty: i32, term: i32) -> Result<Vec<i32>, JsError> {
+        self.kernel
+            .refl(
+                parse_ref(bool_ty).map_err(to_js)?,
+                parse_ref(term).map_err(to_js)?,
+            )
+            .map(|result| vec![result.equality.get(), result.theorem.get()])
+            .map_err(to_js)
+    }
+
     /// Applies a proved function equality to one term, preserving its premises.
     ///
     /// The returned `Int32Array` is `[left, right, equality, theorem]`.
@@ -1257,6 +1275,10 @@ mod tests {
         let p_ref = Ref::new(i32::try_from(p.magnitude()).unwrap()).unwrap();
         let q_ref = Ref::new(i32::try_from(q.magnitude()).unwrap()).unwrap();
         let bool_ty = prover.bool_ty;
+
+        let reflexive = prover.refl(bool_ty.get(), p_ref.get()).unwrap();
+        assert_eq!(reflexive.len(), 2);
+        assert!(reflexive.iter().all(|value| *value > 0));
 
         let equality = prover.kernel.eq(bool_ty, p_ref, q_ref).unwrap();
         let equality_assumption = prover
