@@ -453,6 +453,12 @@
           ]
         },
         {
+          "name": "infinity",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "kernel_rows",
           "kinds": [
             "test"

@@ -97,7 +97,7 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error if the arena does not carry the [`AX_INF`] capability,
-    /// unless `bool_ty` is Boolean, or if no names remain.
+    /// if `bool_ty` is not Boolean, or if no names remain.
     pub fn inf_exists(&mut self, bool_ty: Ref) -> Result<InfinityAxiom, KernelError> {
         if !self.arena.axioms().any(|name| name == AX_INF) {
             return Err(KernelError::MissingAxiom { name: AX_INF });
