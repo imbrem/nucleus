@@ -12,7 +12,6 @@ import pytest
 from covalence.lib.hash import O256
 from covalence.logic.hol import Arena, Kernel, Link
 from hol_support import (
-    CannotProveError,
     basis,
     child_facts,
     fact_view,
@@ -188,16 +187,8 @@ def test_removal_reports_success_because_a_handle_is_checked_first() -> None:
         kernel.remove_syn_fact(fact)
 
 
-def test_type_substitution_into_a_term_is_out_of_reach() -> None:
-    """A substitution that changes a term's type cannot satisfy the rules.
-
-    Every mint rule ends in `compatible(input, output)`, which asks for
-    union-find-equivalent classifiers. Replacing a type variable inside a term
-    changes that classifier by construction, so `[bool/a](x : a) = (x : bool)`
-    has no derivation, and `syn_binder_congr`'s type-through-`tm.lam` branch
-    is unreachable from here. This is a completeness boundary, not a
-    soundness one: nothing false is provable, some true things are not.
-    """
+def test_type_substitution_retypes_a_term() -> None:
+    """Active substitution may transform a term's classifier."""
     base = basis()
     kernel = base.kernel
     parameter = kernel.ty_fv(1, base.star)
@@ -205,17 +196,19 @@ def test_type_substitution_into_a_term_is_out_of_reach() -> None:
     retyped = kernel.tm_fv(2, base.bool_ty)
     replacement = kernel.syn_sub_var(parameter, base.bool_ty)
 
-    with pytest.raises(ValueError, match="is not equal to expected"):
-        kernel.syn_congr(
-            "syn",
-            typed,
-            retyped,
-            child_facts([replacement]),
-            var=parameter,
-            val=base.bool_ty,
-        )
-    with pytest.raises(CannotProveError, match="unrelated classifiers"):
-        substitute(kernel, parameter, base.bool_ty, typed)
+    fact = kernel.syn_congr(
+        "syn",
+        typed,
+        retyped,
+        child_facts([replacement]),
+        var=parameter,
+        val=base.bool_ty,
+    )
+    assert fact_view(fact) == ("syn", parameter, base.bool_ty, typed, retyped)
+
+    output, rebuilt = substitute(kernel, parameter, base.bool_ty, typed)
+    assert output == retyped
+    assert fact_view(rebuilt) == ("syn", parameter, base.bool_ty, typed, retyped)
 
 
 def test_freshness_scanning_stays_conservative_under_shadowing() -> None:
