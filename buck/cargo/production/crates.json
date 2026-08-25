@@ -534,6 +534,12 @@
           ]
         },
         {
+          "name": "natural",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "subtype",
           "kinds": [
             "test"

@@ -15,6 +15,12 @@ use covalence_lib_parse::winnow::{
 };
 use covalence_logic_hol::{Kernel, KernelError, Ref};
 
+/// Source of the first opcode-free init-library schemata.
+///
+/// This is ordinary userspace input to [`compile_theory`], not a trusted
+/// manifest and not a kernel primitive.
+pub const INIT_SOURCE: &str = include_str!("../theories/init.sexpr");
+
 /// A checked kernel and the public roots named by its source module.
 #[derive(Debug)]
 pub struct CompiledTheory {

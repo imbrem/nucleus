@@ -8,9 +8,11 @@
 mod exists;
 mod infinity;
 mod model;
+mod natural;
 mod subtype;
 
 pub use exists::{ExistsError, OpenedExists, open_exists};
 pub use infinity::{Infinity, InfinityError, InfinityExt};
 pub use model::{ChosenModel, ModelError, ModelExt, Substitution, substitute};
+pub use natural::{NaturalError, NaturalExt, Naturals};
 pub use subtype::{Subtype, SubtypeError, SubtypeExt};
