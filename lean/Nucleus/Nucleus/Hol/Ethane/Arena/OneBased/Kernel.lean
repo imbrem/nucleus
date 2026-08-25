@@ -231,8 +231,14 @@ def ContextClaim (resolve : Resolver) (arena : Arena) (reference : Ref) : Prop :
   ∃ expression, Resolves resolve arena reference (.term .boolTy expression) ∧
     Value.WellFormed (.term .boolTy expression)
 
+/-- Object-logic axiom capabilities an arena may declare.
+
+`ax.inf` is the axiom of infinity.  `ax.sub` is the guarded subtype-package
+sentence, whose classical truth for every checked predicate is
+`Nucleus.HolE.Empty.SubtypePackage.Eval.existsType_true`. -/
 def AllowedAxiom : String → Prop
   | "ax.inf" => True
+  | "ax.sub" => True
   | _ => False
 
 /-- Semantic invariant of the cache-free logical portion of an arena. -/

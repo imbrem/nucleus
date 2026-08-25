@@ -13,8 +13,9 @@ mod table;
 pub mod wire;
 
 pub use kernel::{
-    CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, CopyMap, Dnf, DnfId,
-    Kernel, KernelError, Lit, LitError, LitVec, Refutation, ThmId, ThmRef,
+    AX_SUB, BINDER_COUNT, Binder, CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules,
+    Cnf, CnfId, CopyMap, Dnf, DnfId, Kernel, KernelError, Lit, LitError, LitVec, Refutation,
+    Subtype, ThmId, ThmRef,
 };
 pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};

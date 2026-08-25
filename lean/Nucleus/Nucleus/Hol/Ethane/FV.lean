@@ -63,6 +63,35 @@ noncomputable def fvarsByIndex (expression : Expr Sig Name sort) :
     Nucleus.Dict Name (Finset (FVarSort (Ty Sig Name))) :=
   FVar.byIndex expression.fvars
 
+/-- Every name an expression mentions, in binding or occurrence position.
+
+Distinct from `fvarIndices`, and deliberately so: a binder erases its own name
+from the free support, but `mapNames` renames binders too.  Anything choosing
+fresh names for a construction that will later be materialized through
+`mapNames` therefore has to clear the *bound* names as well, which is what this
+measures.  It also forgets the type annotation that `fvars` keeps, because a
+name collision after renaming is a collision whatever the annotation said. -/
+noncomputable def nameIndices : Expr Sig Name sort → Finset Name
+  | .boolTy | .primFam _ | .primTm _ | .bool _ => ∅
+  | .arr A B => A.nameIndices ∪ B.nameIndices
+  | .tyApp F A => F.nameIndices ∪ A.nameIndices
+  | .tyLam name body => insert name body.nameIndices
+  | .tyFv name _ => {name}
+  | .tyExists name predicate => insert name predicate.nameIndices
+  | .model name predicate => insert name predicate.nameIndices
+  | .tmFv name A => insert name A.nameIndices
+  | .app function argument => function.nameIndices ∪ argument.nameIndices
+  | .lam name A body => insert name (A.nameIndices ∪ body.nameIndices)
+  | .eq A left right => A.nameIndices ∪ left.nameIndices ∪ right.nameIndices
+  | .eps A predicate => A.nameIndices ∪ predicate.nameIndices
+
+/-- Renaming an expression renames exactly the names it mentions. -/
+@[simp] theorem nameIndices_mapNames (f : Name → Name')
+    (expression : Expr Sig Name sort) :
+    (expression.mapNames f).nameIndices = expression.nameIndices.image f := by
+  induction expression <;>
+    simp_all [mapNames, nameIndices, Finset.image_union, Finset.image_insert]
+
 def NoNameConfusion (expression : Expr Sig Name sort) : Prop :=
   FVar.NoNameConfusion expression.fvars
 

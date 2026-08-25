@@ -19,12 +19,15 @@ use crate::{
 };
 
 mod classical;
+mod logic;
+mod subtype;
 mod syn_facts;
 
 pub use covalence_logic_classical::{
     CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, Dnf, DnfId, Lit,
     LitError, LitVec, Refutation, ThmId, ThmRef,
 };
+pub use subtype::{AX_SUB, BINDER_COUNT, Binder, Subtype};
 
 /// A recoverable failure at the checked kernel boundary.
 #[derive(Debug, Snafu)]
@@ -124,6 +127,15 @@ where
         /// Supplied classifier.
         actual: Ref,
     },
+    /// A rule needed an axiom capability the arena does not carry.
+    #[snafu(display("rule requires the {name} axiom capability, which the arena does not carry"))]
+    MissingAxiom {
+        /// The capability the rule needed.
+        name: &'static str,
+    },
+    /// A derived construction ran out of free variable names.
+    #[snafu(display("no free variable names remain above the terms in use"))]
+    TooManyNames,
     /// The requested axiom capability is unavailable in Ethane.
     #[snafu(display("unsupported axiom capability {name}"))]
     UnsupportedAxiom {
@@ -931,13 +943,18 @@ impl Kernel {
         Ok(())
     }
 
-    /// Enables the Ethane infinity axiom capability.
+    /// Enables one Ethane axiom capability.
+    ///
+    /// `ax.inf` is the axiom of infinity and `ax.sub` the guarded
+    /// subtype-package sentence ([`Kernel::sub_exists`]). Recording a
+    /// capability is how an arena declares, auditably, which object-logic
+    /// assumptions its conclusions may rest on.
     ///
     /// # Errors
     ///
     /// Returns an error for every currently unsupported name.
     pub fn add_axiom(&mut self, name: &str) -> Result<(), KernelError> {
-        if name != "ax.inf" {
+        if !matches!(name, "ax.inf" | subtype::AX_SUB) {
             return Err(KernelError::UnsupportedAxiom {
                 name: name.to_owned(),
             });
