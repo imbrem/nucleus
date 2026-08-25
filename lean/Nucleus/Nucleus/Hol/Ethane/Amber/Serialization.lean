@@ -67,6 +67,7 @@ inductive SyntaxConstant where
   | tyLam
   | tyFv
   | tyExists
+  | tyForall
   | model
   | primFam
   | primTm
@@ -125,12 +126,13 @@ syntax "syntaxVocabulary!" ppLine
   str ppLine str ppLine str ppLine str ppLine str ppLine str ppLine
   str ppLine str ppLine str ppLine str ppLine str ppLine str ppLine
   str ppLine str ppLine str ppLine str ppLine str ppLine str ppLine
-  str ppLine str ppLine str ppLine str : term
+  str ppLine str ppLine str ppLine str ppLine str : term
 
 macro_rules
   | `(syntaxVocabulary!
       $pair:str $kindStar:str $kindArr:str $boolTy:str $arr:str $tyApp:str
-      $tyLam:str $tyFv:str $tyExists:str $model:str $primFam:str $primTm:str
+      $tyLam:str $tyFv:str $tyExists:str $tyForall:str $model:str
+      $primFam:str $primTm:str
       $tmFv:str $app:str $lam:str $bool:str $eq:str $eps:str $nameExtra:str
       $famExtra:str $tmExtra:str $boolExtra:str) =>
     `(SyntaxVocabulary.mk (fun
@@ -143,6 +145,7 @@ macro_rules
         | .tyLam => $tyLam
         | .tyFv => $tyFv
         | .tyExists => $tyExists
+        | .tyForall => $tyForall
         | .model => $model
         | .primFam => $primFam
         | .primTm => $primTm
@@ -228,6 +231,7 @@ def syntaxVocabularyV0 : SyntaxVocabulary := syntaxVocabulary!
   "ty.lam"
   "ty.fv"
   "tm.ty_exists"
+  "tm.ty_forall"
   "ty.model"
   "fam.prim"
   "tm.prim"

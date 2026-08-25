@@ -166,6 +166,9 @@ noncomputable def elaborateExpr
   | .tyExists name predicate => do
       let Value.term _ predicate ← lookupLocal predicate | none
       elaborateTerm lookupLocal declaredSort (.tyExists name.toNat predicate)
+  | .tyForall name predicate => do
+      let Value.term _ predicate ← lookupLocal predicate | none
+      elaborateTerm lookupLocal declaredSort (.tyForall name.toNat predicate)
   | .model name predicate => do
       let Value.term _ predicate ← lookupLocal predicate | none
       return Value.family .star (.model name.toNat predicate)
@@ -364,6 +367,11 @@ theorem elaborateExpr_tagSort
       intro kindValue
       simp [HasTagSort, Value.tagSort]
   | tyExists name predicate =>
+      simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
+      apply HasTagSort.bindTerm
+      intro _ predicateValue
+      exact HasTagSort.elaborateTerm lookupLocal declaredSort _
+  | tyForall name predicate =>
       simp only [elaborateExpr, detail.Expr.tag, Tag.sort]
       apply HasTagSort.bindTerm
       intro _ predicateValue

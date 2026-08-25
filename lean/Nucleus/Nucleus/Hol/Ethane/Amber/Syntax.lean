@@ -26,6 +26,7 @@ inductive SyntaxTag where
   | tyLam
   | tyFv
   | tyExists
+  | tyForall
   | model
   | primFam
   | primTm
@@ -63,6 +64,7 @@ def tag : T Sig Name Ix → SyntaxTag
   | .tyLam .. => .tyLam
   | .tyFv .. => .tyFv
   | .tyExists .. => .tyExists
+  | .tyForall .. => .tyForall
   | .model .. => .model
   | .primFam .. => .primFam
   | .primTm .. => .primTm
@@ -107,6 +109,7 @@ def ofView? : View Sig Name Ix → Option (T Sig Name Ix)
   | ⟨.tyLam, [kinds, body], [.name name]⟩ => some (.tyLam name kinds body)
   | ⟨.tyFv, [kind], [.name name]⟩ => some (.tyFv name kind)
   | ⟨.tyExists, [predicate], [.name name]⟩ => some (.tyExists name predicate)
+  | ⟨.tyForall, [predicate], [.name name]⟩ => some (.tyForall name predicate)
   | ⟨.model, [predicate], [.name name]⟩ => some (.model name predicate)
   | ⟨.primFam, [kindNode], [.fam ⟨_kind, symbol⟩]⟩ =>
       some (.primFam symbol kindNode)

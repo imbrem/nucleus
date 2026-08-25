@@ -382,6 +382,56 @@ theorem classical_eqTm_tyExists
       dsimp [leftCheck, rightCheck, cDefSem, cSem]
       rw [witnessesEqual]
 
+theorem classical_eqTm_tyForall
+    {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth}
+    {p q : Tm ClassicalSig (.star :: types) 0}
+    (leftRaw : HasType Γ (.tyForall p) .boolTy)
+    (rightRaw : HasType Γ (.tyForall q) .boolTy)
+    (predicatesEqual : CSemEq
+      (Γ := (emptyBound : BoundCtx ClassicalSig (.star :: types) 0))
+      p q .boolTy) :
+    CSemEq (Γ := Γ) (.tyForall p) (.tyForall q) .boolTy := by
+  intro leftTyping rightTyping env bound typed valid expected
+  cases leftRaw with
+  | tyForall leftPredicate =>
+    cases rightRaw with
+    | tyForall rightPredicate =>
+      let leftCheck : CDefChecks Γ (.tyForall p) .boolTy :=
+        .exact (.tyForall leftPredicate.certificate)
+      let rightCheck : CDefChecks Γ (.tyForall q) .boolTy :=
+        .exact (.tyForall rightPredicate.certificate)
+      rw [leftTyping.certificate.coherent leftCheck env bound expected,
+        rightTyping.certificate.coherent rightCheck env bound expected]
+      have predicateValues : ∀ candidate : CPointed,
+          cSem leftPredicate.certificate
+              (extendCTypeEnv (kind := .star) candidate env) emptyCBoundEnv cBool =
+            cSem rightPredicate.certificate
+              (extendCTypeEnv (kind := .star) candidate env) emptyCBoundEnv cBool := by
+        intro candidate
+        exact raw_semantics_of_eqTm leftPredicate rightPredicate predicatesEqual
+          (extendCTypeEnv (kind := .star) candidate env) emptyCBoundEnv
+          (fun index => Fin.elim0 index)
+          (emptyCBoundEnv_valid (extendCTypeEnv (kind := .star) candidate env)) cBool
+      have witnessesEqual :
+          (∀ candidate : CPointed,
+            cSem leftPredicate.certificate
+                (extendCTypeEnv (kind := .star) candidate env) emptyCBoundEnv cBool =
+              ⟨true⟩) =
+          (∀ candidate : CPointed,
+            cSem rightPredicate.certificate
+                (extendCTypeEnv (kind := .star) candidate env) emptyCBoundEnv cBool =
+              ⟨true⟩) := by
+        apply propext
+        constructor
+        · intro every candidate
+          exact (predicateValues candidate).symm.trans (every candidate)
+        · intro every candidate
+          exact (predicateValues candidate).trans (every candidate)
+      dsimp [leftCheck, rightCheck, cDefSem, cSem]
+      rw [witnessesEqual]
+
+
 theorem classical_eqMp
     (hA : Kinded A) (conclusionTyping : HasTypeDefEq Γ (.app p y) .boolTy)
     (_hp : HasTypeDefEq Γ p (.arr A .boolTy))

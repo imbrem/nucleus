@@ -121,6 +121,11 @@ noncomputable def CChecks.renameTypes {Γ : BoundCtx ClassicalSig source depth}
       rw [renameBoundCtx_empty] at cp
       exact .tyExists cp
 
+  | .tyForall hp => by
+      have cp := hp.renameTypes (liftTyRen ρ)
+      rw [renameBoundCtx_empty] at cp
+      exact .tyForall cp
+
 /-- The proof-relevant checking mirror is stable under well-formed type
 substitution.  This equation-style definition is the certificate counterpart
 of `Checks.instantiateTypes` and exposes usable reduction rules for semantic
@@ -222,6 +227,11 @@ noncomputable def CChecks.instantiateTypes
       have cp := hp.instantiateTypes wellFormed.lift
       rw [instantiateBoundCtx_empty] at cp
       exact .tyExists cp
+
+  | .tyForall hp => by
+      have cp := hp.instantiateTypes wellFormed.lift
+      rw [instantiateBoundCtx_empty] at cp
+      exact .tyForall cp
 
 @[simp] theorem cSem_boolTy (env : CTypeEnv types) :
     cSem (CChecks.boolTy (types := types)) env = cBool := rfl

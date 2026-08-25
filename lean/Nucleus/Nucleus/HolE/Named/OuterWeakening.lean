@@ -177,6 +177,16 @@ private theorem lowering_appendOuter (expression : Expr Sig Nat sort) :
       rw [predicateWeakened]
       rw [appendRightRen_cons]
       rfl
+  | tyForall name predicate ih =>
+      intro inner outer depth lowered innerScope outerScope termScope found
+      simp only [lowerTm] at found ⊢
+      rcases Option.bind_eq_some_iff.mp found with ⟨p, hp, result⟩
+      cases Option.some.inj result
+      have predicateWeakened := ih (TyScope.cons name innerScope) outerScope .nil hp
+      simp only [TyScope.appendOuter_cons] at predicateWeakened
+      rw [predicateWeakened]
+      rw [appendRightRen_cons]
+      rfl
   | model name predicate ih =>
       intro inner outer lowered innerScope outerScope found
       simp only [lowerFam] at found ⊢

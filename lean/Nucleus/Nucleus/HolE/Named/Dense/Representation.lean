@@ -233,6 +233,10 @@ def encode : HolE Sig Name → M Sig Name Nat
       let variableIndex ← emit (.tyVar name .star) []
       let predicateIndex ← encode predicate
       emit .tyExists [variableIndex, predicateIndex]
+  | .tyForall name predicate => do
+      let variableIndex ← emit (.tyVar name .star) []
+      let predicateIndex ← encode predicate
+      emit .tyForall [variableIndex, predicateIndex]
   | .model name predicate => do
       let variableIndex ← emit (.tyVar name .star) []
       let predicateIndex ← encode predicate
@@ -277,7 +281,7 @@ def nodeCount : HolE Sig Name → Nat
   | .boolTy | .tyFv .. | .primFam .. | .primTm .. | .bool .. => 1
   | .arr left right | .tyApp _ _ left right | .app left right |
       .eps left right => nodeCount left + nodeCount right + 1
-  | .tyLam _ _ _ body | .tyExists _ body | .model _ body => nodeCount body + 2
+  | .tyLam _ _ _ body | .tyExists _ body | .tyForall _ body | .model _ body => nodeCount body + 2
   | .sub carrier _ predicate =>
       nodeCount carrier + nodeCount carrier + nodeCount predicate + 2
   | .lam _ carrier predicate => nodeCount carrier + nodeCount predicate + 2
@@ -968,6 +972,15 @@ theorem encode_syntaxCorrect (tree : HolE Sig Name) :
       simpa only [encode, encodeTmVar] using
         syntaxEncodes_binary (.tyFv name .star) predicate (.tyExists name predicate)
           .tyExists variableCorrect predicateIH (by
+            intro forest i j hi hj
+            simp [Node.elaborateSyntax, hi, hj])
+  | tyForall name predicate predicateIH =>
+      have variableCorrect : SyntaxEncodes
+          (encode (.tyFv name .star : HolE Sig Name)) (.tyFv name .star) :=
+        syntaxEncodes_emit ⟨.tyVar name .star, []⟩ (.tyFv name .star) (fun _ => rfl)
+      simpa only [encode, encodeTmVar] using
+        syntaxEncodes_binary (.tyFv name .star) predicate (.tyForall name predicate)
+          .tyForall variableCorrect predicateIH (by
             intro forest i j hi hj
             simp [Node.elaborateSyntax, hi, hj])
   | model name predicate predicateIH =>

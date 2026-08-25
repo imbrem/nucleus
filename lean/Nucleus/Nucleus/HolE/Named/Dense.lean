@@ -52,6 +52,7 @@ inductive Tag (Sig : Signature.{u}) (Name : Type) where
   | tyVar (name : Name) (kind : Kind)
   | tySub
   | tyExists
+  | tyForall
   | tyModel
   | primFam (kind : Kind) (symbol : Sig (.kind kind))
   | primTm (symbol : Sig .tm)
@@ -170,6 +171,7 @@ def elaborateSyntax (forest : ι → Option (HolE Sig Name)) (node : Node Sig Na
     | .tyVar name kind, [] => some (.tyFv name kind)
     | .tySub, [carrier, .tmFv name _, predicate] => some (.sub carrier name predicate)
     | .tyExists, [.tyFv name .star, predicate] => some (.tyExists name predicate)
+    | .tyForall, [.tyFv name .star, predicate] => some (.tyForall name predicate)
     | .tyModel, [.tyFv name .star, predicate] => some (.model name predicate)
     | .primFam kind symbol, [] => some (.primFam kind symbol)
     | .primTm symbol, [] => some (.primTm symbol)

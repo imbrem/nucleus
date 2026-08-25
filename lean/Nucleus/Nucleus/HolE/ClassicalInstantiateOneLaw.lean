@@ -44,6 +44,7 @@ noncomputable def CChecks.instantiateTmC {types : List Kind} {m n : Nat}
           ((checked j).toChecks.renameTm Fin.succ (fun _ => rfl)).certificate) i))
   | .bool literal => by simpa [instantiate] using (.bool (Γ := Δ) literal)
   | .tyExists hp => by simpa [instantiate] using (.tyExists (Γ := Δ) hp)
+  | .tyForall hp => by simpa [instantiate] using (.tyForall (Γ := Δ) hp)
   | .eq hA hx hy => by simpa [instantiate] using (.eq hA
       (CChecks.instantiateTmC hx σ checked)
       (CChecks.instantiateTmC hy σ checked))
@@ -124,6 +125,10 @@ theorem CChecks.cSem_instantiateTmC
   | .tyExists hp => by
       rw [cSem_term_normalize ((CChecks.tyExists hp).instantiateTmC σ checked)
         (.tyExists _) (by simp [instantiate]) (.tyExists hp)]
+      rfl
+  | .tyForall hp => by
+      rw [cSem_term_normalize ((CChecks.tyForall hp).instantiateTmC σ checked)
+        (.tyForall _) (by simp [instantiate]) (.tyForall hp)]
       rfl
   | .app hA hB hf hx => by
       let cf := CChecks.instantiateTmC hf σ checked
@@ -217,6 +222,7 @@ theorem CDefChecks.toHasTypeDefEq : CDefChecks Γ term A → HasTypeDefEq Γ ter
   | .rep raw hA hp x =>
       .rep raw.toChecks hA.toChecks hp.toChecks x.toHasTypeDefEq
   | .tyExists raw p => .tyExists raw.toChecks p.toHasTypeDefEq
+  | .tyForall raw p => .tyForall raw.toChecks p.toHasTypeDefEq
   | .conv source hB equality =>
       .conv source.toHasTypeDefEq hB.toChecks equality
 
@@ -226,7 +232,7 @@ noncomputable def CDefChecks.rawTypeEq (checking : CDefChecks Γ term A) :
     FamEq ClassicalSig checking.rawView.type A :=
   match checking with
   | .exact _ | .app .. | .lam .. | .eq .. | .eps .. | .abs .. | .rep .. |
-      .tyExists .. => .refl
+      .tyExists .. | .tyForall .. => .refl
   | .conv source _ equality =>
       .trans source.rawTypeEq source.typeKinded.toChecks equality
 

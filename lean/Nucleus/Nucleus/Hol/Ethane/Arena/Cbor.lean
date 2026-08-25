@@ -99,6 +99,8 @@ def encodeRow (names : NameCodec Name) (symbols : SignatureCodec Sig) :
   | .tyFv name kind => array [text "TY_FV", names.encode name, unsigned kind]
   | .tyExists name predicate =>
       array [text "TM_TY_EXISTS", names.encode name, unsigned predicate]
+  | .tyForall name predicate =>
+      array [text "TM_TY_EXISTS", names.encode name, unsigned predicate]
   | .model name predicate =>
       array [text "TY_MODEL", names.encode name, unsigned predicate]
   | @Row.primFam _ _ _ kind symbol kindNode =>

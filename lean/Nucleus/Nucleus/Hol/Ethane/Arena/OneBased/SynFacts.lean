@@ -72,7 +72,7 @@ def ActiveSubstitutionLeaf : detail.Expr → Prop
 /-- Roots accepted by active generic congruence.  Binders have dedicated
 rules, and proxies are conservatively opaque. -/
 def ActiveCongruenceRoot : detail.Expr → Prop
-  | .tyLam .. | .lam .. | .tyExists .. | .model .. => False
+  | .tyLam .. | .lam .. | .tyExists .. | .tyForall .. | .model .. => False
   | .tmRef .. | .tyRef .. | .kindRef .. => False
   | _ => True
 
@@ -339,7 +339,7 @@ def children : EmptySyn → List EmptySyn
   | .arr left right | .app left right => [left, right]
   | .tyApp _ _ function argument => [function, argument]
   | .tyLam _ _ _ body => [body]
-  | .tyExists _ body | .model _ body => [body]
+  | .tyExists _ body | .tyForall _ body | .model _ body => [body]
   | .tmFv _ type => [type]
   | .lam _ domain body => [domain, body]
   | .eq type left right => [type, left, right]

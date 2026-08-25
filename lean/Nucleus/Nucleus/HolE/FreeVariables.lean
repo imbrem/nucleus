@@ -23,6 +23,7 @@ def fvarIndices : Expr Sig types sort depth → Finset Nat
   | .tyBv _ => ∅
   | .sub A predicate => fvarIndices A ∪ fvarIndices predicate
   | .tyExists predicate => fvarIndices predicate
+  | .tyForall predicate => fvarIndices predicate
   | .model predicate => fvarIndices predicate
   | .primFam _ => ∅
   | .primTm _ => ∅

@@ -1120,7 +1120,7 @@ private theorem elaborateExpr_term_classifier_of_not_ref
       some (.term advertised termExpression)) :
     localLookup sort = some (.family .star advertised) := by
   cases expression with
-  | tyExists => exact elaborateExpr_tyExists_classifier found
+  | tyExists | tyForall | tyForall => exact elaborateExpr_tyExists_classifier found
   | tmFv => exact elaborateExpr_tmFv_classifier found
   | app => exact elaborateExpr_app_classifier found
   | lam => exact elaborateExpr_lam_classifier found

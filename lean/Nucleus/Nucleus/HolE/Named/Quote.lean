@@ -53,6 +53,9 @@ noncomputable def quote (next : Nat) (typeNames : TyNames types)
   | .tyExists predicate =>
       .tyExists next
         (quote (next + 1) (extendTyNames next typeNames) emptyTmNames predicate)
+  | .tyForall predicate =>
+      .tyForall next
+        (quote (next + 1) (extendTyNames next typeNames) emptyTmNames predicate)
   | .model predicate =>
       .model next
         (quote (next + 1) (extendTyNames next typeNames) emptyTmNames predicate)

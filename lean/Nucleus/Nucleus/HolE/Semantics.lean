@@ -145,6 +145,24 @@ mutual
         Eval typeEnv Γ boundEnv (.tyExists predicate) .boolTy boolPointed true
     | tyExistsFalse :
         Eval typeEnv Γ boundEnv (.tyExists predicate) .boolTy boolPointed false
+    -- The universal's clauses are the honest duals, with a premise on each
+    -- side. `tyExistsFalse` above is premise-free — it lets `semantic_total`
+    -- pick a value without deciding the existential, at the cost of the
+    -- relation not being functional there. Copying that shape here would
+    -- relate *every* type-universal to `true`, which is the direction that
+    -- makes reading `Eval … true` as truth vacuous, so the price is paid
+    -- instead in `semantic_total`, which now needs a classical case split.
+    | tyForallTrue
+        (predicateEval : ∀ candidate : Pointed,
+          Eval (extendTypeEnv (kind := .star) candidate typeEnv)
+            emptyBound emptyRawBoundEnv predicate .boolTy boolPointed true) :
+        Eval typeEnv Γ boundEnv (.tyForall predicate) .boolTy boolPointed true
+    | tyForallFalse
+        (candidate : Pointed)
+        (predicateEval : Eval (extendTypeEnv (kind := .star) candidate typeEnv)
+          emptyBound emptyRawBoundEnv
+          predicate .boolTy boolPointed false) :
+        Eval typeEnv Γ boundEnv (.tyForall predicate) .boolTy boolPointed false
 end
 
 theorem DenotesFam.bool_inv
@@ -308,6 +326,34 @@ theorem Checks.semantic_total {types : List Kind} {sort : HolSort} {depth : Nat}
       have equal := DenotesFam.bool_inv typeEnv denotes
       subst semantic
       exact ⟨false, .tyExistsFalse⟩
+
+  | @tyForall _ predicate _ _ hp ih =>
+      intro typeEnv
+      refine ⟨⟨boolPointed, .bool typeEnv⟩, ?_⟩
+      intro boundEnv semantic denotes
+      have equal := DenotesFam.bool_inv typeEnv denotes
+      subst semantic
+      -- Unlike the existential, neither value is free here: the universal has
+      -- to be decided. Every candidate gives the predicate *some* value by the
+      -- induction hypothesis, and one of them being `false` is exactly what
+      -- refutes the universal.
+      by_cases every : ∀ candidate : Pointed,
+          Eval (extendTypeEnv (kind := .star) candidate typeEnv)
+            emptyBound emptyRawBoundEnv predicate .boolTy boolPointed true
+      · exact ⟨true, .tyForallTrue every⟩
+      · obtain ⟨candidate, notTrue⟩ : ∃ candidate : Pointed,
+            ¬ Eval (extendTypeEnv (kind := .star) candidate typeEnv)
+                emptyBound emptyRawBoundEnv predicate .boolTy boolPointed true :=
+          Classical.byContradiction fun none =>
+            every fun candidate =>
+              Classical.byContradiction fun missing => none ⟨candidate, missing⟩
+        obtain ⟨value, valueEval⟩ :=
+          (ih (extendTypeEnv (kind := .star) candidate typeEnv)).2
+            emptyRawBoundEnv boolPointed
+            (.bool (extendTypeEnv (kind := .star) candidate typeEnv))
+        cases value with
+        | true => exact absurd valueEval notTrue
+        | false => exact ⟨false, .tyForallFalse candidate valueEval⟩
 
 theorem Kinded.denotes_exists {types : List Kind} (typeEnv : TypeEnv types)
     {family : Fam EmptySig types kind} (checking : Kinded family) :

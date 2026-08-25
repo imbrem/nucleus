@@ -227,6 +227,7 @@ def syntaxTag [Strategy S Ix] : Codec SyntaxTag :=
       | .tyLam => text names.tyLam
       | .tyFv => text names.tyFv
       | .tyExists => text names.tyExists
+      | .tyForall => text names.tyForall
       | .model => text names.model
       | .primFam => text names.primFam
       | .primTm => text names.primTm

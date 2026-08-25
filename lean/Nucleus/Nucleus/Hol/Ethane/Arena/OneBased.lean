@@ -229,6 +229,7 @@ end TyTag
 
 inductive TmTag where
   | tyExists
+  | tyForall
   | fv
   | app
   | lam
@@ -244,6 +245,7 @@ namespace TmTag
 
 def name : TmTag → String
   | .tyExists => "tm.ty_exists"
+  | .tyForall => "tm.ty_forall"
   | .fv => "tm.fv"
   | .app => "tm.app"
   | .lam => "tm.lam"
@@ -326,6 +328,7 @@ inductive Expr where
   | tyLam (binder body : Ref)
   | tyFv (name : UInt64) (kind : Ref)
   | tyExists (name : UInt64) (predicate : Ref)
+  | tyForall (name : UInt64) (predicate : Ref)
   | model (name : UInt64) (predicate : Ref)
   | tmFv (name : UInt64) (type : Ref)
   | app (function argument : Ref)
@@ -350,6 +353,7 @@ def Expr.tag : Expr → Tag
   | .tyLam .. => .ty .lam
   | .tyFv .. => .ty .fv
   | .tyExists .. => .tm .tyExists
+  | .tyForall .. => .tm .tyForall
   | .model .. => .ty .model
   | .tmFv .. => .tm .fv
   | .app .. => .tm .app
@@ -392,6 +396,7 @@ def Row.toView (row : Row) : RowView :=
   | .tyLam binder body => ordinary (.ty .lam) [binder, body]
   | .tyFv name kind => ordinary (.ty .fv) [kind] (some (.nat name))
   | .tyExists name predicate => ordinary (.tm .tyExists) [predicate] (some (.nat name))
+  | .tyForall name predicate => ordinary (.tm .tyForall) [predicate] (some (.nat name))
   | .model name predicate => ordinary (.ty .model) [predicate] (some (.nat name))
   | .tmFv name type => ordinary (.tm .fv) [type] (some (.nat name))
   | .app f a => ordinary (.tm .app) [f, a]

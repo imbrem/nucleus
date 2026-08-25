@@ -162,6 +162,7 @@ def syntaxTag : Codec SyntaxTag where
     | .tyLam => text "TY_LAM"
     | .tyFv => text "TY_FV"
     | .tyExists => text "TM_TY_EXISTS"
+    | .tyForall => text "TM_TY_FORALL"
     | .model => text "TY_MODEL"
     | .primFam => text "PRIM_FAM"
     | .primTm => text "PRIM_TM"
@@ -181,6 +182,7 @@ def syntaxTag : Codec SyntaxTag where
     | .primitive (.text "TY_LAM") => some .tyLam
     | .primitive (.text "TY_FV") => some .tyFv
     | .primitive (.text "TM_TY_EXISTS") => some .tyExists
+    | .primitive (.text "TM_TY_FORALL") => some .tyForall
     | .primitive (.text "TY_MODEL") => some .model
     | .primitive (.text "PRIM_FAM") => some .primFam
     | .primitive (.text "PRIM_TM") => some .primTm

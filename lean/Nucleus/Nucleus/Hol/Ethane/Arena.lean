@@ -36,6 +36,7 @@ inductive Row (Sig : Signature.{u}) (Name : Type) (ι : Type) where
   | tyLam (name : Name) (kinds body : ι)
   | tyFv (name : Name) (kind : ι)
   | tyExists (name : Name) (predicate : ι)
+  | tyForall (name : Name) (predicate : ι)
   | model (name : Name) (predicate : ι)
   | primFam (symbol : Sig (.kind kind)) (kindNode : ι)
   | primTm (symbol : Sig .tm)
@@ -74,6 +75,7 @@ def map (f : ι → κ) : Row Sig Name ι → Row Sig Name κ
   | .tyLam name kinds body => .tyLam name (f kinds) (f body)
   | .tyFv name kind => .tyFv name (f kind)
   | .tyExists name predicate => .tyExists name (f predicate)
+  | .tyForall name predicate => .tyForall name (f predicate)
   | .model name predicate => .model name (f predicate)
   | .primFam symbol kind => .primFam symbol (f kind)
   | .primTm symbol => .primTm symbol
@@ -126,6 +128,11 @@ def elaborate (forest : ι → Option (Value Sig Name)) :
       let predicate ← forest predicate
       match predicate with
       | Value.syntax predicate => some (.syntax (.tyExists name predicate))
+      | _ => none
+  | .tyForall name predicate => do
+      let predicate ← forest predicate
+      match predicate with
+      | Value.syntax predicate => some (.syntax (.tyForall name predicate))
       | _ => none
   | .model name predicate => do
       let predicate ← forest predicate
@@ -259,6 +266,7 @@ def encode : Syn Sig Name → M Sig Name Nat
         (encode body) (.tyLam name)
   | .tyFv name kind => unary (encodeKind kind) (.tyFv name)
   | .tyExists name predicate => unary (encode predicate) (.tyExists name)
+  | .tyForall name predicate => unary (encode predicate) (.tyForall name)
   | .model name predicate => unary (encode predicate) (.model name)
   | .primFam kind symbol => unary (encodeKind kind) (.primFam symbol)
   | .primTm symbol => emit (.primTm symbol)
@@ -490,6 +498,11 @@ theorem encode_correct (expression : Syn Sig Name) :
       simp [Row.elaborate, kindLookup]
   | tyExists name predicate predicateIH =>
       apply encodes_unary (.syntax predicate) (.syntax (.tyExists name predicate))
+        _ _ predicateIH
+      intro forest predicateIndex predicateLookup
+      simp [Row.elaborate, predicateLookup]
+  | tyForall name predicate predicateIH =>
+      apply encodes_unary (.syntax predicate) (.syntax (.tyForall name predicate))
         _ _ predicateIH
       intro forest predicateIndex predicateLookup
       simp [Row.elaborate, predicateLookup]

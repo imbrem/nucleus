@@ -48,6 +48,8 @@ inductive Expr (Sig : Signature) : List Kind → HolSort → Nat → Type u wher
       (predicate : Expr Sig types .tm 1) : Expr Sig types (.kind .star) 0
   | tyExists {depth : Nat} (predicate : Expr Sig (.star :: types) .tm 0) :
       Expr Sig types .tm depth
+  | tyForall {depth : Nat} (predicate : Expr Sig (.star :: types) .tm 0) :
+      Expr Sig types .tm depth
   | model (predicate : Expr Sig (.star :: types) .tm 0) :
       Expr Sig types (.kind .star) 0
   | primFam {kind : Kind} (symbol : Sig (.kind kind)) : Expr Sig types (.kind kind) 0
@@ -88,6 +90,7 @@ def renameTypes (ρ : TyRen source target) :
   | .tyBv v => .tyBv (ρ v)
   | .sub A p => .sub (renameTypes ρ A) (renameTypes ρ p)
   | .tyExists p => .tyExists (renameTypes (liftTyRen ρ) p)
+  | .tyForall p => .tyForall (renameTypes (liftTyRen ρ) p)
   | .model p => .model (renameTypes (liftTyRen ρ) p)
   | .primFam symbol => .primFam symbol
   | .primTm symbol => .primTm symbol
@@ -121,6 +124,7 @@ def instantiateTypes (σ : TySub Sig source target) :
   | .tyBv v => σ v
   | .sub A p => .sub (instantiateTypes σ A) (instantiateTypes σ p)
   | .tyExists p => .tyExists (instantiateTypes (liftTySub σ) p)
+  | .tyForall p => .tyForall (instantiateTypes (liftTySub σ) p)
   | .model p => .model (instantiateTypes (liftTySub σ) p)
   | .primFam symbol => .primFam symbol
   | .primTm symbol => .primTm symbol
@@ -172,7 +176,7 @@ theorem instantiateTypes_renameTypes_cancel
       cases v with
       | zero => rfl
       | succ v => simp [liftTyRen, liftTySub, cancel v, weakenTypes, renameTypes]
-  | tyExists body ih | model body ih =>
+  | tyExists body ih | tyForall body ih | model body ih =>
       simp only [renameTypes, instantiateTypes]
       congr 1
       apply ih (liftTyRen ρ) (liftTySub σ)
@@ -275,6 +279,8 @@ inductive Checks {Sig : Signature} [SigTyping Sig] : {types : List Kind} →
       Checks emptyBound (.sub A p) .kind
   | tyExists : Checks (types := .star :: types) emptyBound p (.tm .boolTy) →
       Checks (types := types) Γ (.tyExists p) (.tm .boolTy)
+  | tyForall : Checks (types := .star :: types) emptyBound p (.tm .boolTy) →
+      Checks (types := types) Γ (.tyForall p) (.tm .boolTy)
   | model : Checks (types := .star :: types) emptyBound p (.tm .boolTy) →
       Checks (types := types) emptyBound (.model p) .kind
   | primFam (symbol : Sig (.kind kind)) : Checks emptyBound (.primFam symbol) .kind
@@ -314,7 +320,7 @@ theorem Checks.typeKinded {Sig : Signature} [SigTyping Sig]
       cases hf.typeKinded with
       | arr _ hB => exact hB
   | .lam _ hA hb => .arr hA hb.typeKinded
-  | .bool _ | .eq _ _ _ | .tyExists _ => .boolTy
+  | .bool _ | .eq _ _ _ | .tyExists _ | .tyForall _ => .boolTy
   | .eps hA _ | .rep hA _ _ => hA
   | .abs hA hp _ => .sub hA hp
 
@@ -383,6 +389,9 @@ inductive HasTypeDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
   | tyExists (raw : HasType (types := types) Γ (.tyExists p) .boolTy) :
       HasTypeDefEq (types := .star :: types) emptyBound p .boolTy →
       HasTypeDefEq (types := types) Γ (.tyExists p) .boolTy
+  | tyForall (raw : HasType (types := types) Γ (.tyForall p) .boolTy) :
+      HasTypeDefEq (types := .star :: types) emptyBound p .boolTy →
+      HasTypeDefEq (types := types) Γ (.tyForall p) .boolTy
   | conv (typing : HasTypeDefEq Γ term A) (hB : Kinded B)
       (conversion : FamEq Sig A B) : HasTypeDefEq Γ term B
 
@@ -396,7 +405,7 @@ theorem HasTypeDefEq.typeKinded {Sig : Signature} [SigTyping Sig]
       cases ihf with
       | arr _ hB => exact hB
   | lam _ _ hA _ ih => exact .arr hA ih
-  | eq | tyExists => exact .boolTy
+  | eq | tyExists | tyForall => exact .boolTy
   | eps _ hA _ _ | rep _ hA _ _ _ => exact hA
   | abs _ hA hp _ _ => exact .sub hA hp
   | conv _ hB _ _ => exact hB
@@ -466,6 +475,9 @@ theorem Checks.renameTypes {Sig : Signature} [SigTyping Sig]
   | tyExists hp ihp =>
       simpa [Classification.rename] using
         (Checks.tyExists (by simpa using (ihp (liftTyRen ρ))))
+  | tyForall hp ihp =>
+      simpa [Classification.rename] using
+        (Checks.tyForall (by simpa using (ihp (liftTyRen ρ))))
   | model hp ihp => simpa [Classification.rename] using
       (Checks.model (by simpa using ihp (liftTyRen ρ)))
   | primFam symbol =>
@@ -551,6 +563,8 @@ theorem Checks.instantiateTypes {Sig : Signature} [SigTyping Sig]
       (by simpa using ihp wellFormed))
   | tyExists hp ihp =>
       simpa using (Checks.tyExists (by simpa using (ihp wellFormed.lift)))
+  | tyForall hp ihp =>
+      simpa using (Checks.tyForall (by simpa using (ihp wellFormed.lift)))
   | model hp ihp => simpa using (.model (by simpa using ihp wellFormed.lift))
   | primFam symbol => simpa using (Checks.primFam (Sig := Sig) symbol)
   | primTm hA rule ihA => exact (.primTm (by simpa using ihA wellFormed)

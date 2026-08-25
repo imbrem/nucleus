@@ -98,6 +98,14 @@ private theorem cSem_align_expected
       symm
       apply alignCValue_self
 
+  | tyForall hp =>
+      rw [hOut.unique .boolTy]
+      simp only [cSem]
+      apply congrArg ULift.up
+      apply congrArg (alignCValue _ expected)
+      symm
+      apply alignCValue_self
+
 theorem classical_eqTm_eta
     {Γ : BoundCtx ClassicalSig types depth}
     {A B : Ty ClassicalSig types} {f : Tm ClassicalSig types depth}

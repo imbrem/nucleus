@@ -167,6 +167,14 @@ private theorem loweringEquivariant (rename : Nat → Nat)
       rw [predicateEq]
       cases lowerTm (.cons name typeScope) .nil predicate <;>
         simp [Nucleus.HolE.renameFv]
+  | tyForall name predicate ih =>
+      intro types depth typeScope termScope
+      simp only [Named.mapNames, lowerTm]
+      have predicateEq := ih (.cons (kind := .star) name typeScope) .nil
+      simp only [TyScope.mapNames, TmScope.mapNames] at predicateEq
+      rw [predicateEq]
+      cases lowerTm (.cons name typeScope) .nil predicate <;>
+        simp [Nucleus.HolE.renameFv]
   | model name predicate ih =>
       intro types typeScope
       simp only [Named.mapNames, lowerFam]

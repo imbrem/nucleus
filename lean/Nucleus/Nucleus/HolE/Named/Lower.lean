@@ -65,6 +65,8 @@ noncomputable def lowerTm (typeScope : TyScope types) (termScope : TmScope Sig d
     Tm Sig → Option (Nucleus.HolE.Tm Sig types depth)
     | .tyExists name predicate =>
         return .tyExists (← lowerTm (.cons (kind := .star) name typeScope) .nil predicate)
+    | .tyForall name predicate =>
+        return .tyForall (← lowerTm (.cons (kind := .star) name typeScope) .nil predicate)
     | .primTm symbol => some (.primTm symbol)
     | .tmFv name A =>
         match lookupTm ⟨name, A⟩ termScope with

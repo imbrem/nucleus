@@ -29,6 +29,8 @@ private theorem CChecks.erase : CChecks Γ expression classification →
   | .rep hA hp hx => .rep hA.erase hp.erase hx.erase
   | .tyExists hp => .tyExists hp.erase
 
+  | .tyForall hp => .tyForall hp.erase
+
 private theorem cSem_openType
     {types : List Kind} {predicate : Tm ClassicalSig (.star :: types) 0}
     {A : Ty ClassicalSig types}
@@ -103,6 +105,7 @@ theorem tyExistsIntro_sound
         rw [← cSem_openType hp hA hA.certificate instanceRaw env]
         exact instanceTrue
 
+
 theorem modelSpec_sound
     {types : List Kind} {H : List (Tm ClassicalSig types 0)}
     {predicate : Tm ClassicalSig (.star :: types) 0}
@@ -162,5 +165,6 @@ theorem modelSpec_sound
         subst resultType
         rw [cSem_openType hp modelKinded modelRaw resultRaw env]
         exact chosenHolds
+
 
 end Nucleus.HolE
