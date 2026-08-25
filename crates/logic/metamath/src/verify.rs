@@ -50,8 +50,6 @@
 
 use std::collections::BTreeSet;
 
-use fnv::FnvHashMap;
-
 use crate::database::{Assertion, Database, Frame, Proof, Statement};
 use crate::error::MmError;
 use crate::expr::{Expr, Symbol, render};
@@ -63,64 +61,14 @@ use crate::subst::{Subst, apply_subst, vars_in_body};
 ///
 /// Returns the first failure: any proof that does not check.
 pub fn verify_all(db: &Database) -> Result<usize, MmError> {
-    // One shared position table for the whole run: every proof needs it, and it
-    // depends only on the database.
-    let order = LabelOrder::new(db);
     let mut count = 0;
     for assertion in db.assertions() {
         if assertion.proof.is_some() {
-            replay_ordered(db, assertion, &order, &mut ())?;
+            replay(db, assertion, &mut ())?;
             count += 1;
         }
     }
     Ok(count)
-}
-
-/// Where each labelled statement sits in [`Database::statements`].
-///
-/// The checker rejects a proof that cites a label declared no earlier than the
-/// theorem being proved (see the module docs), which needs both statements'
-/// source positions. The table is derived from the public statement list rather
-/// than read out of the database, and is built **once** per [`verify_all`] —
-/// the standalone [`replay`] / [`verify_assertion`] entry points build one for
-/// their single call, which is why bulk verification should go through
-/// [`verify_all`].
-struct LabelOrder<'a> {
-    positions: FnvHashMap<&'a str, usize>,
-}
-
-impl<'a> LabelOrder<'a> {
-    fn new(db: &'a Database) -> Self {
-        let statements = db.statements();
-        let mut positions = FnvHashMap::with_capacity_and_hasher(statements.len(), <_>::default());
-        for (index, statement) in statements.iter().enumerate() {
-            if let Some(label) = statement_label(statement) {
-                positions.insert(label, index);
-            }
-        }
-        Self { positions }
-    }
-
-    /// The source position of `label`, if the database declares it.
-    fn lookup(&self, label: &str) -> Option<usize> {
-        self.positions.get(label).copied()
-    }
-
-    /// The source position of `label`, or `usize::MAX` if the database declares
-    /// no such label — nothing in the database then precedes it.
-    fn position(&self, label: &str) -> usize {
-        self.lookup(label).unwrap_or(usize::MAX)
-    }
-}
-
-/// The label a statement declares, if any. `$c`, `$v`, and `$d` are unlabelled.
-fn statement_label(statement: &Statement) -> Option<&str> {
-    match statement {
-        Statement::Float(f) => Some(&f.label),
-        Statement::Essential(h) => Some(&h.label),
-        Statement::Assert(a) => Some(&a.label),
-        Statement::Constant(_) | Statement::Variable(_) | Statement::Disjoint(_) => None,
-    }
 }
 
 /// An observer notified of every event of a proof replay, in order.
@@ -190,21 +138,11 @@ pub fn replay(
     assertion: &Assertion,
     obs: &mut dyn ReplayObserver,
 ) -> Result<(), MmError> {
-    replay_ordered(db, assertion, &LabelOrder::new(db), obs)
-}
-
-/// [`replay`] against a position table the caller already has.
-fn replay_ordered(
-    db: &Database,
-    assertion: &Assertion,
-    order: &LabelOrder<'_>,
-    obs: &mut dyn ReplayObserver,
-) -> Result<(), MmError> {
     let Some(proof) = &assertion.proof else {
         return Ok(());
     };
     let theorem = &assertion.label;
-    let ctx = Context::new(db, assertion, order);
+    let ctx = Context::new(db, assertion);
 
     let mut stack: Vec<Expr> = Vec::new();
 
@@ -241,26 +179,25 @@ fn replay_ordered(
                                 len: heap.len(),
                             })?
                             .clone();
+                        obs.heap(*idx, &e, stack.len() + 1);
                         stack.push(e);
-                        obs.heap(*idx, stack.last().unwrap(), stack.len());
                     }
                 }
             }
         }
     }
 
-    if stack.len() != 1 {
+    let [result] = stack.as_slice() else {
         return Err(MmError::StackResidue {
             theorem: theorem.clone(),
             count: stack.len(),
         });
-    }
-    let result = stack.pop().unwrap();
-    if result != assertion.conclusion {
+    };
+    if *result != assertion.conclusion {
         return Err(MmError::ResultMismatch {
             theorem: theorem.clone(),
             expected: render(&assertion.conclusion),
-            found: render(&result),
+            found: render(result),
         });
     }
     Ok(())
@@ -276,7 +213,6 @@ struct Context<'a> {
     db: &'a Database,
     /// The theorem whose proof is being replayed.
     current: &'a Assertion,
-    order: &'a LabelOrder<'a>,
     /// `current`'s own position in the statement list: a cited label must come
     /// strictly before it. `usize::MAX` when `current` is not itself a statement
     /// of `db` (a synthetic assertion — then nothing in `db` is a forward
@@ -287,12 +223,11 @@ struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
-    fn new(db: &'a Database, current: &'a Assertion, order: &'a LabelOrder<'a>) -> Self {
+    fn new(db: &'a Database, current: &'a Assertion) -> Self {
         Self {
             db,
             current,
-            order,
-            position: order.position(&current.label),
+            position: db.statement_index(&current.label).unwrap_or(usize::MAX),
             disjoints: current
                 .scope_disjoints
                 .iter()
@@ -319,8 +254,8 @@ fn step_label(
     // One lookup both resolves the label and locates it: the position *is* the
     // index of the statement it names.
     let position = ctx
-        .order
-        .lookup(label)
+        .db
+        .statement_index(label)
         .ok_or_else(|| MmError::UnknownLabel {
             theorem: theorem.to_string(),
             label: label.to_string(),

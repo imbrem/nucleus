@@ -204,6 +204,18 @@ impl Database {
         })
     }
 
+    /// The position of `label` in [`statements`](Self::statements), if the
+    /// database declares it.
+    ///
+    /// The index *is* the reading order, which is what the checker's
+    /// citation-order discipline and the [`trace`](crate::trace) module's
+    /// forward pass both need: a label declared at a smaller index was read
+    /// earlier.
+    #[must_use]
+    pub fn statement_index(&self, label: &str) -> Option<usize> {
+        self.labels.get(label).copied()
+    }
+
     /// Look up a labelled statement.
     #[must_use]
     pub fn statement_by_label(&self, label: &str) -> Option<&Statement> {

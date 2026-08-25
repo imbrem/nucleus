@@ -10,6 +10,7 @@ mod error;
 mod expr;
 mod parse;
 mod subst;
+pub mod trace;
 mod verify;
 
 pub use database::{
