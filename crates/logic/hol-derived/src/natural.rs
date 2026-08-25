@@ -7,17 +7,14 @@
 //! the two small kernel capabilities consumed by [`InfinityExt`] and
 //! [`SubtypeExt`].
 
-use std::collections::BTreeMap;
-
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    AX_INF, AX_SUB, Kernel, KernelError, Lit, Ref, SynFactId, SynRel, Tag, ThmId, TmTag, TyTag,
-    builtin::Op2,
+    AX_INF, AX_SUB, Kernel, KernelError, Lit, Ref, SynRel, Tag, ThmId, TmTag, builtin::Op2,
 };
 
 use crate::{
     ForallError, Infinity, InfinityError, InfinityExt, ModelError, Subtype, SubtypeError,
-    SubtypeExt, forall_elim, substitute,
+    SubtypeExt, SyntaxError, forall_elim, join_same_syntax, substitute,
 };
 
 /// The first object-language natural-number package.
@@ -131,6 +128,12 @@ pub enum NaturalError {
         /// Underlying checked derived failure.
         source: ForallError,
     },
+    /// Structural syntax certification failed.
+    #[snafu(display("natural-number syntax certification failed: {source}"))]
+    Syntax {
+        /// Underlying userspace certification failure.
+        source: SyntaxError,
+    },
 }
 
 impl From<KernelError> for NaturalError {
@@ -160,6 +163,12 @@ impl From<ModelError> for NaturalError {
 impl From<ForallError> for NaturalError {
     fn from(source: ForallError) -> Self {
         Self::Forall { source }
+    }
+}
+
+impl From<SyntaxError> for NaturalError {
+    fn from(source: SyntaxError) -> Self {
+        Self::Syntax { source }
     }
 }
 
@@ -921,81 +930,6 @@ fn exact_children<const N: usize>(
         .map_err(|_| NaturalError::WrongForm {
             expected: "the natural schema's exact arity",
         })
-}
-
-fn join_same_syntax(kernel: &mut Kernel, left: Ref, right: Ref) -> Result<SynFactId, NaturalError> {
-    fn derive(
-        kernel: &mut Kernel,
-        left: Ref,
-        right: Ref,
-        memo: &mut BTreeMap<(Ref, Ref), SynFactId>,
-    ) -> Result<SynFactId, NaturalError> {
-        if let Some(fact) = memo.get(&(left, right)) {
-            return Ok(*fact);
-        }
-        if left == right {
-            let fact = kernel.syn_refl(None, SynRel::Syn, left)?;
-            memo.insert((left, right), fact);
-            return Ok(fact);
-        }
-        let tag = kernel.arena().tag(left);
-        if tag.is_none()
-            || tag != kernel.arena().tag(right)
-            || kernel.arena().name(left) != kernel.arena().name(right)
-            || kernel.arena().bool_value(left) != kernel.arena().bool_value(right)
-            || kernel.arena().op1(left) != kernel.arena().op1(right)
-            || kernel.arena().op2(left) != kernel.arena().op2(right)
-        {
-            return Err(NaturalError::WrongForm {
-                expected: "syntactically identical checked propositions",
-            });
-        }
-        let left_children = kernel
-            .arena()
-            .children(left)
-            .ok_or(NaturalError::WrongForm {
-                expected: "resident syntax for equality checking",
-            })?
-            .collect::<Vec<_>>();
-        let right_children = kernel
-            .arena()
-            .children(right)
-            .ok_or(NaturalError::WrongForm {
-                expected: "resident syntax for equality checking",
-            })?
-            .collect::<Vec<_>>();
-        if left_children.len() != right_children.len() {
-            return Err(NaturalError::WrongForm {
-                expected: "equal syntax arity",
-            });
-        }
-        let facts = left_children
-            .iter()
-            .zip(&right_children)
-            .map(|(&left, &right)| derive(kernel, left, right, memo))
-            .collect::<Result<Vec<_>, _>>()?;
-        let fact_result = match tag {
-            Some(Tag::Tm(TmTag::Lam) | Tag::Ty(TyTag::Lam)) if facts.len() == 2 => kernel
-                .syn_binder_congr(
-                    None,
-                    SynRel::Syn,
-                    None,
-                    None,
-                    left,
-                    right,
-                    facts[0],
-                    facts[1],
-                ),
-            _ => kernel.syn_congr(None, SynRel::Syn, None, None, left, right, &facts),
-        };
-        let fact = fact_result?;
-        memo.insert((left, right), fact);
-        Ok(fact)
-    }
-
-    let fact = derive(kernel, left, right, &mut BTreeMap::new())?;
-    kernel.union_syn_fact(fact)?;
-    Ok(fact)
 }
 
 fn induction_member(
