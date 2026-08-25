@@ -244,11 +244,13 @@ pub struct ArenaCbor {
     imports: Vec<Value>,
     axs: Vec<Value>,
     defs: Vec<Value>,
+    eq: Option<Vec<Value>>,
+    syn_eq: Option<Vec<Value>>,
+    conv: Option<Vec<Value>>,
+    sort: Option<Vec<Value>>,
     syn_facts: Option<Vec<Value>>,
     syn_free: Option<Value>,
     ctx: Vec<Value>,
-    assume: Vec<Value>,
-    assert: Vec<Value>,
     extra: Vec<(Value, Value)>,
 }
 
@@ -264,11 +266,13 @@ impl ArenaCbor {
             imports: Vec::new(),
             axs: Vec::new(),
             defs: Vec::new(),
+            eq: None,
+            syn_eq: None,
+            conv: None,
+            sort: None,
             syn_facts: None,
             syn_free: None,
             ctx: Vec::new(),
-            assume: Vec::new(),
-            assert: Vec::new(),
             extra: Vec::new(),
         }
     }
@@ -276,6 +280,30 @@ impl ArenaCbor {
     #[must_use]
     pub fn defs(mut self, rows: Vec<Value>) -> Self {
         self.defs = rows;
+        self
+    }
+
+    #[must_use]
+    pub fn eq(mut self, values: Vec<Value>) -> Self {
+        self.eq = Some(values);
+        self
+    }
+
+    #[must_use]
+    pub fn syn_eq(mut self, values: Vec<Value>) -> Self {
+        self.syn_eq = Some(values);
+        self
+    }
+
+    #[must_use]
+    pub fn conv(mut self, values: Vec<Value>) -> Self {
+        self.conv = Some(values);
+        self
+    }
+
+    #[must_use]
+    pub fn sort(mut self, values: Vec<Value>) -> Self {
+        self.sort = Some(values);
         self
     }
 
@@ -318,21 +346,47 @@ impl ArenaCbor {
 
     #[must_use]
     pub fn bytes(self) -> Vec<u8> {
-        let mut fields = vec![
-            (text("tag"), text("arena")),
-            (text("imports"), Value::Array(self.imports)),
-            (text("axs"), Value::Array(self.axs)),
-            (text("defs"), Value::Array(self.defs)),
-        ];
+        let mut syn = Vec::new();
         if let Some(slots) = self.syn_facts {
-            fields.push((text("syn_facts"), Value::Array(slots)));
+            syn.push((text("subst1"), Value::Array(slots)));
         }
         if let Some(free) = self.syn_free {
-            fields.push((text("syn_free"), free));
+            syn.push((text("subst1_free"), free));
         }
-        fields.push((text("ctx"), Value::Array(self.ctx)));
-        fields.push((text("assume"), Value::Array(self.assume)));
-        fields.push((text("assert"), Value::Array(self.assert)));
+        if let Some(values) = self.syn_eq {
+            syn.push((text("eq"), Value::Array(values)));
+        }
+        if let Some(values) = self.conv {
+            syn.push((text("conv"), Value::Array(values)));
+        }
+        if let Some(values) = self.sort {
+            syn.push((text("sort"), Value::Array(values)));
+        }
+        let amb = Value::Map(vec![
+            (text("pred"), Value::Array(Vec::new())),
+            (text("ax"), Value::Array(Vec::new())),
+            (text("ctx"), Value::Array(Vec::new())),
+            (text("thm"), Value::Array(Vec::new())),
+        ]);
+        let pred = Value::Map(vec![(text("syl"), Value::Array(Vec::new()))]);
+        let mut hol_fields = vec![
+            (text("defs"), Value::Array(self.defs)),
+            (text("ax"), Value::Array(self.axs)),
+            (text("ctx"), Value::Array(self.ctx)),
+            (text("thm"), Value::Array(Vec::new())),
+            (text("syn"), Value::Map(syn)),
+        ];
+        if let Some(values) = self.eq {
+            hol_fields.push((text("eq"), Value::Array(values)));
+        }
+        let hol = Value::Map(hol_fields);
+        let mut fields = vec![
+            (text("tag"), text("arena")),
+            (text("import"), Value::Array(self.imports)),
+            (text("amb"), amb),
+            (text("pred"), pred),
+            (text("hol"), hol),
+        ];
         fields.extend(self.extra);
         let mut bytes = Vec::new();
         into_writer(&Value::Map(fields), &mut bytes).expect("hand-built CBOR encodes");

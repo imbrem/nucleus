@@ -35,27 +35,30 @@ impl Kernel {
     /// Borrows the universally valid syllogism arena.
     #[must_use]
     pub const fn syl(&self) -> &ClassicalArena {
-        &self.syl
+        self.arena.syllogisms()
     }
 
     /// Opens the checked mutable syllogism arena.
     pub fn syl_mut(&mut self) -> CheckedArena<'_> {
-        CheckedArena::new(&mut self.syl)
+        CheckedArena::new(self.arena.syllogisms_mut())
     }
 
     /// Borrows the HOL theorem arena.
     #[must_use]
     pub const fn thm(&self) -> &ClassicalArena {
-        &self.thm
+        self.arena.theorems()
     }
 
     /// Opens the checked mutable HOL theorem arena.
     pub fn thm_mut(&mut self) -> CheckedArena<'_> {
-        CheckedArena::new(&mut self.thm)
+        CheckedArena::new(self.arena.theorems_mut())
     }
 
     fn require_thm(&self, id: ThmId) -> Result<ThmRef<'_>, KernelError> {
-        self.thm.get(id).ok_or(KernelError::MissingTheorem { id })
+        self.arena
+            .theorems()
+            .get(id)
+            .ok_or(KernelError::MissingTheorem { id })
     }
 
     /// Imports a universal classical refutation and matches it to one canonical
@@ -160,7 +163,8 @@ impl Kernel {
     /// Returns an error if the theorem or clause is absent. The theorem is
     /// unchanged on error.
     pub fn move_cnf_right(&mut self, theorem: ThmId, row: CnfId) -> Result<(), KernelError> {
-        self.thm
+        self.arena
+            .theorems_mut()
             .move_cnf_right(theorem, row)
             .map_err(|_| KernelError::InvalidTheoremRule {
                 rule: "CNF transfer right",
@@ -174,7 +178,8 @@ impl Kernel {
     /// Returns an error if the theorem or cube is absent. The theorem is
     /// unchanged on error.
     pub fn move_dnf_left(&mut self, theorem: ThmId, row: DnfId) -> Result<(), KernelError> {
-        self.thm
+        self.arena
+            .theorems_mut()
             .move_dnf_left(theorem, row)
             .map_err(|_| KernelError::InvalidTheoremRule {
                 rule: "DNF transfer left",
@@ -187,7 +192,8 @@ impl Kernel {
     ///
     /// Returns an error if the theorem or clause is absent.
     pub fn normalize_cnf(&mut self, theorem: ThmId, row: CnfId) -> Result<(), KernelError> {
-        self.thm
+        self.arena
+            .theorems_mut()
             .normalize_cnf(theorem, row)
             .map_err(|_| KernelError::InvalidTheoremRule {
                 rule: "CNF row normalization",
@@ -200,7 +206,8 @@ impl Kernel {
     ///
     /// Returns an error if the theorem or cube is absent.
     pub fn normalize_dnf(&mut self, theorem: ThmId, row: DnfId) -> Result<(), KernelError> {
-        self.thm
+        self.arena
+            .theorems_mut()
             .normalize_dnf(theorem, row)
             .map_err(|_| KernelError::InvalidTheoremRule {
                 rule: "DNF row normalization",
@@ -577,7 +584,8 @@ impl Kernel {
     ///
     /// Returns an error if the source is absent.
     pub fn copy_theorem(&mut self, source: ThmId) -> Result<ThmId, KernelError> {
-        self.thm
+        self.arena
+            .theorems_mut()
             .copy(source)
             .map_err(|_| KernelError::MissingTheorem { id: source })
     }
@@ -585,7 +593,7 @@ impl Kernel {
     /// Removes one theorem. Removed slots are reused by later allocations.
     #[must_use]
     pub fn remove_theorem(&mut self, id: ThmId) -> bool {
-        self.thm.remove(id)
+        self.arena.theorems_mut().remove(id)
     }
 
     fn validate_prop(&self, proposition: Lit) -> Result<(), KernelError> {
@@ -593,7 +601,8 @@ impl Kernel {
             .map(|_| ())
     }
     fn push_theorem(&mut self, theorem: Thm) -> Result<ThmId, KernelError> {
-        self.thm
+        self.arena
+            .theorems_mut()
             .insert(theorem.0, theorem.1)
             .map_err(|_| KernelError::TooManyTheorems)
     }
@@ -616,7 +625,8 @@ impl Kernel {
     }
 
     fn replace_theorem(&mut self, id: ThmId, theorem: Thm) -> Result<(), KernelError> {
-        self.thm
+        self.arena
+            .theorems_mut()
             .replace(id, theorem.0, theorem.1)
             .map_err(|_| KernelError::MissingTheorem { id })
     }
@@ -1183,13 +1193,22 @@ mod tests {
     }
 
     #[test]
-    fn checked_theorems_never_enter_the_raw_arena_wire_state() {
+    fn checked_theorems_are_owned_and_serialized_by_the_arena() {
         let Fixture { mut kernel, p, .. } = fixture();
         let before = kernel.arena().clone();
         let theorem = kernel.identity(p).unwrap();
         assert!(kernel.require_thm(theorem).is_ok());
-        assert_eq!(kernel.arena(), &before);
-        assert_eq!(kernel.into_arena(), before);
+        assert_ne!(kernel.arena(), &before);
+
+        let arena = kernel.into_arena();
+        assert_eq!(arena.theorems().get(theorem).unwrap().lhs.rows().count(), 1);
+        let mut encoded = Vec::new();
+        crate::wire::serialize(&arena, &mut encoded).unwrap();
+        let decoded = crate::wire::deserialize(encoded.as_slice()).unwrap();
+        assert_eq!(
+            decoded.theorems().get(theorem),
+            arena.theorems().get(theorem)
+        );
     }
 
     #[test]

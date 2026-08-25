@@ -5,7 +5,7 @@
 
 use std::{collections::BTreeSet, convert::Infallible};
 
-use crate::{Ref, Sort, SynFact, SynFactId, SynRel, init::Compiled, row::Expr as Node};
+use crate::{EqColumn, Ref, Sort, SynFact, SynFactId, SynRel, init::Compiled, row::Expr as Node};
 
 use super::{Kernel, KernelError};
 
@@ -630,6 +630,10 @@ impl Kernel {
     /// Returns an error for an active substitution fact.
     pub fn union_syn_fact(&mut self, fact: SynFactId) -> Result<(), KernelError> {
         let fact = self.direct_fact::<Infallible>(fact, "equality union")?;
+        if fact.rel() == SynRel::Syn {
+            self.union_in::<Infallible>(EqColumn::Syn, fact.input(), fact.output())?;
+        }
+        self.union_in::<Infallible>(EqColumn::Conv, fact.input(), fact.output())?;
         self.union::<Infallible>(fact.input(), fact.output())
     }
 }
@@ -1205,6 +1209,32 @@ mod tests {
         assert_eq!(kernel.syn_fact(beta).unwrap().output(), truth);
         kernel.union_syn_fact(beta).unwrap();
         assert!(kernel.tm_eq(application, truth).unwrap());
+    }
+
+    #[test]
+    fn union_materializes_exactly_the_relation_refinement_chain() {
+        let (mut kernel, _, bool_ty) = bool_kernel();
+        let left = kernel.bool(bool_ty, true).unwrap();
+        let right = kernel.bool(bool_ty, true).unwrap();
+        let syntax = kernel
+            .syn_congr(None, SynRel::Syn, None, None, left, right, &[])
+            .unwrap();
+        kernel.union_syn_fact(syntax).unwrap();
+
+        assert_eq!(kernel.arena().syn_eq(right), Some(left));
+        assert_eq!(kernel.arena().conv(right), Some(left));
+        assert_eq!(kernel.arena().eq(right), Some(left));
+
+        let third = kernel.bool(bool_ty, true).unwrap();
+        let syntax = kernel
+            .syn_congr(None, SynRel::Syn, None, None, left, third, &[])
+            .unwrap();
+        let conversion = kernel.syn_refine(None, syntax, SynRel::Conv).unwrap();
+        kernel.union_syn_fact(conversion).unwrap();
+
+        assert_eq!(kernel.arena().syn_eq(third), None);
+        assert_eq!(kernel.arena().conv(third), Some(left));
+        assert_eq!(kernel.arena().eq(third), Some(left));
     }
 
     #[test]

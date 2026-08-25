@@ -71,7 +71,7 @@ impl std::error::Error for EncodeError {}
 mod tests {
     use super::*;
     use crate::{
-        Import, ImportId, Link, LinkFormat, Meta, Ref,
+        AmbPred, Import, ImportId, Link, LinkFormat, Ref,
         row::{Expr, Row},
     };
     use covalence_lib_cbor::{Value, from_reader, into_writer};
@@ -97,17 +97,19 @@ mod tests {
             ],
             ["ax.z".into(), "ax.a".into(), "ax.z".into()],
             vec![
-                Row::new(Expr::KindStar),
-                Row::new(Expr::TmRef {
-                    src: import(2),
-                    ix: reference(3),
-                })
-                .with_eq(reference(1))
-                .with_sort(reference(1)),
+                (Row::new(Expr::KindStar), None, None),
+                (
+                    Row::new(Expr::TmRef {
+                        src: import(2),
+                        ix: reference(3),
+                    }),
+                    Some(reference(1)),
+                    Some(reference(1)),
+                ),
             ],
             [reference(2), reference(1), reference(2)],
-            vec![Meta::Valid { src: import(3) }],
-            vec![Meta::Wf {
+            vec![AmbPred::ArenaOk { src: import(3) }],
+            vec![AmbPred::HolSort {
                 src: import(2),
                 ix: reference(3),
                 sort: reference(1),
@@ -132,6 +134,29 @@ mod tests {
             panic!("arena must be a CBOR map")
         };
         assert!(fields.contains(&(Value::Text("tag".into()), Value::Text("arena".into()))));
+        assert!(
+            fields
+                .iter()
+                .any(|(key, _)| key == &Value::Text("import".into()))
+        );
+        assert!(
+            fields
+                .iter()
+                .any(|(key, _)| key == &Value::Text("amb".into()))
+        );
+        assert!(
+            fields
+                .iter()
+                .any(|(key, _)| key == &Value::Text("pred".into()))
+        );
+        assert!(
+            fields
+                .iter()
+                .any(|(key, _)| key == &Value::Text("hol".into()))
+        );
+        assert!(!fields.iter().any(|(key, _)| {
+            matches!(key, Value::Text(name) if ["imports", "defs", "eq", "sort", "syn_facts"].contains(&name.as_str()))
+        }));
     }
 
     #[test]
@@ -150,37 +175,39 @@ mod tests {
 
     #[test]
     fn zero_references_and_unknown_metadata_are_rejected() {
-        fn invalid(field: &str, value: Value) -> bool {
-            let object = Value::Map(vec![
-                (Value::Text("tag".into()), Value::Text("arena".into())),
-                (Value::Text("imports".into()), Value::Array(Vec::new())),
-                (Value::Text("axs".into()), Value::Array(Vec::new())),
-                (Value::Text("defs".into()), Value::Array(Vec::new())),
-                (Value::Text("ctx".into()), Value::Array(Vec::new())),
-                (Value::Text("assume".into()), Value::Array(Vec::new())),
-                (Value::Text("assert".into()), Value::Array(Vec::new())),
-            ]);
-            let Value::Map(mut fields) = object else {
+        fn invalid(section: &str, field: &str, value: Value) -> bool {
+            let mut encoded = Vec::new();
+            serialize(&sample(), &mut encoded).unwrap();
+            let Value::Map(mut fields) = from_reader(encoded.as_slice()).unwrap() else {
                 unreachable!()
             };
-            let entry = fields
+            let (_, Value::Map(section_fields)) = fields
+                .iter_mut()
+                .find(|(key, _)| key == &Value::Text(section.into()))
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            section_fields
                 .iter_mut()
                 .find(|(key, _)| key == &Value::Text(field.into()))
-                .unwrap();
-            entry.1 = value;
+                .unwrap()
+                .1 = value;
             let mut bytes = Vec::new();
             into_writer(&Value::Map(fields), &mut bytes).unwrap();
             deserialize(bytes.as_slice()).is_err()
         }
 
-        assert!(invalid("ctx", Value::Array(vec![Value::Integer(0.into())])));
         assert!(invalid(
-            "assume",
+            "hol",
+            "ctx",
+            Value::Array(vec![Value::Integer(0.into())])
+        ));
+        assert!(invalid(
+            "amb",
+            "ctx",
             Value::Array(vec![Value::Map(vec![
-                (
-                    Value::Text("tag".into()),
-                    Value::Text("meta.unknown".into())
-                ),
+                (Value::Text("tag".into()), Value::Text("amb.unknown".into())),
                 (Value::Text("src".into()), Value::Integer(1.into())),
             ])]),
         ));

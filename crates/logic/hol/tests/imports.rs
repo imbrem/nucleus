@@ -3,8 +3,8 @@
 mod support;
 
 use covalence_logic_hol::{
-    Arena, Import, ImportId, Kernel, KernelError, Link, LinkFormat, Meta, ResolveError, Sort,
-    Table, Tag, TmTag, TyTag,
+    AmbPred, Arena, Import, ImportId, Kernel, KernelError, Link, LinkFormat, Lit, LitVec,
+    ResolveError, Sort, Table, Tag, TmTag, TyTag,
 };
 use support::{Always, Counting, Fix, Never, Offline, row_id};
 
@@ -85,7 +85,7 @@ fn a_resolver_answering_for_another_address_is_rejected() {
         other => panic!("expected an address mismatch, got {other:?}"),
     }
     assert!(
-        fix.arena().assumptions().is_empty(),
+        fix.arena().ambient_context().rows().next().is_none(),
         "a rejected proxy must record no premise"
     );
 }
@@ -128,19 +128,27 @@ fn each_proxy_records_exactly_the_premise_it_relies_on() {
         .expect("term proxy");
 
     assert_eq!(
-        fix.arena().assumptions(),
-        [
-            Meta::Valid { src: source },
-            Meta::Wf {
+        fix.arena().ambient_predicates(),
+        &[
+            AmbPred::ArenaOk { src: source },
+            AmbPred::HolSort {
                 src: source,
                 ix: row_id(2),
                 sort: star,
             },
-            Meta::Wf {
+            AmbPred::HolSort {
                 src: source,
                 ix: row_id(3),
                 sort: bool_ty,
             },
+        ]
+    );
+    assert_eq!(
+        fix.arena().ambient_context().to_rows(),
+        vec![
+            LitVec::from_slice(&[Lit::positive(1)]),
+            LitVec::from_slice(&[Lit::positive(2)]),
+            LitVec::from_slice(&[Lit::positive(3)]),
         ]
     );
     assert_eq!(fix.category(kind).expect("resident"), Sort::Kind);
@@ -181,7 +189,7 @@ fn a_proxy_must_agree_with_the_category_of_its_target() {
         })
     ));
     assert!(
-        fix.arena().assumptions().is_empty(),
+        fix.arena().ambient_context().rows().next().is_none(),
         "no premise survives a rejected proxy"
     );
 }
