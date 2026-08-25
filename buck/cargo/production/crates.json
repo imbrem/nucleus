@@ -509,6 +509,27 @@
       ]
     },
     {
+      "id": "workspace#covalence-logic-hol-script@0.0.0",
+      "name": "covalence-logic-hol-script",
+      "version": "0.0.0",
+      "path": "crates/logic/hol-script",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_logic_hol_script",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "theory",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-logic-lrat@0.0.0",
       "name": "covalence-logic-lrat",
       "version": "0.0.0",
@@ -1041,6 +1062,27 @@
     {
       "source": "workspace#covalence-logic-classical@0.0.0",
       "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol-script@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol-script@0.0.0",
+      "target": "workspace#covalence-lib-parse@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol-script@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
       "kinds": [
         "normal"
       ]

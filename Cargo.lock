@@ -725,6 +725,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-logic-hol-script"
+version = "0.0.0"
+dependencies = [
+ "covalence-lib-error",
+ "covalence-lib-parse",
+ "covalence-logic-hol",
+]
+
+[[package]]
 name = "covalence-logic-lrat"
 version = "0.0.0"
 dependencies = [
