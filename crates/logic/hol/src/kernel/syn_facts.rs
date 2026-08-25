@@ -3,7 +3,10 @@
 //! Lookup policy and proof search are intentionally absent. Userspace may
 //! index these slots however it likes and may discard temporary suffixes.
 
-use std::{collections::BTreeSet, convert::Infallible};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    convert::Infallible,
+};
 
 use crate::{EqColumn, Ref, Sort, SynFact, SynFactId, SynRel, init::Compiled, row::Expr as Node};
 
@@ -191,6 +194,50 @@ impl Kernel {
         )
     }
 
+    /// Returns whether raw named syntax proves `var` absent from `input`.
+    ///
+    /// This is deliberately conservative around import proxies: an opaque
+    /// row may resolve to the variable, so it is never reported fresh. Local
+    /// duplicate syntax is compared structurally rather than by row identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `var` is a local free variable and `input` is a
+    /// resident local row.
+    pub fn substitution_fresh(&self, var: Ref, input: Ref) -> Result<bool, KernelError> {
+        self.require_substitution_variable::<Infallible>(var)?;
+        self.row::<Infallible>(input)?;
+        Ok(!self.may_contain_variable::<Infallible>(input, var)?)
+    }
+
+    /// Establishes that substitution leaves one fresh expression unchanged.
+    ///
+    /// Unlike [`syn_sub_leaf`](Self::syn_sub_leaf), this rule accepts an
+    /// arbitrary compound expression after checking the substituted variable
+    /// is absent from its complete raw named syntax. It is the executable
+    /// counterpart of `NamedSubstitution.miss` in the Lean model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `var` and `val` form a valid substitution pair
+    /// and [`substitution_fresh`](Self::substitution_fresh) holds for `input`.
+    pub fn syn_sub_fresh(
+        &mut self,
+        target: Option<SynFactId>,
+        var: Ref,
+        val: Ref,
+        input: Ref,
+    ) -> Result<SynFactId, KernelError> {
+        self.require_substitution_pair::<Infallible>(var, val)?;
+        if self.may_contain_variable::<Infallible>(input, var)? {
+            return Err(Self::invalid_fact("fresh substitution"));
+        }
+        self.put_fact(
+            target,
+            SynFact::new(SynRel::Syn, Some(var), Some(val), input, input),
+        )
+    }
+
     /// Establishes that every compatible substitution leaves one
     /// non-target leaf unchanged.
     ///
@@ -350,7 +397,7 @@ impl Kernel {
             // a kind, which no substitution can touch.
             if let (Some(var), Node::Lam(..)) = (var, input_node) {
                 let classifier = self.classifier_as::<Infallible>(shape.input_binder)?;
-                if self.contains_variable::<Infallible>(classifier, var)? {
+                if self.may_contain_variable::<Infallible>(classifier, var)? {
                     return Err(Self::invalid_fact("binder classifier"));
                 }
             }
@@ -846,6 +893,125 @@ impl Kernel {
             return Err(Self::invalid_fact("substitution leaf"));
         }
         Ok(())
+    }
+
+    /// Conservative raw-syntax occurrence check used by `syn_sub_fresh`.
+    ///
+    /// Two local rows may denote the same syntax without sharing a `Ref`, so
+    /// variable classifiers are compared recursively. Any import proxy is
+    /// treated as a possible match because this kernel does not own its bytes.
+    fn may_contain_variable<E>(&self, input: Ref, var: Ref) -> Result<bool, KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let needle = *self.row::<E>(var)?.expr();
+        let mut pending = vec![input];
+        let mut visited = BTreeSet::new();
+        let mut syntax = BTreeMap::new();
+        while let Some(reference) = pending.pop() {
+            if !visited.insert(reference) {
+                continue;
+            }
+            let node = *self.row::<E>(reference)?.expr();
+            if Self::is_proxy(node) {
+                return Ok(true);
+            }
+            let same_variable = match (needle, node) {
+                (
+                    Node::TyFv {
+                        name: needle_name,
+                        kind: needle_kind,
+                    },
+                    Node::TyFv { name, kind },
+                ) if needle_name == name => {
+                    self.may_same_syntax::<E>(needle_kind, kind, &mut syntax)?
+                }
+                (
+                    Node::TmFv {
+                        name: needle_name,
+                        ty: needle_ty,
+                    },
+                    Node::TmFv { name, ty },
+                ) if needle_name == name => {
+                    self.may_same_syntax::<E>(needle_ty, ty, &mut syntax)?
+                }
+                _ => false,
+            };
+            if same_variable {
+                return Ok(true);
+            }
+            pending.extend(node.children());
+        }
+        Ok(false)
+    }
+
+    /// Whether two local subtrees may resolve to identical raw syntax.
+    ///
+    /// `false` is a proof of constructor or child inequality. Proxies yield
+    /// `true` unless their exact payloads match, conservatively preserving the
+    /// soundness of the freshness result.
+    fn may_same_syntax<E>(
+        &self,
+        left: Ref,
+        right: Ref,
+        memo: &mut BTreeMap<(Ref, Ref), bool>,
+    ) -> Result<bool, KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        if left == right {
+            return Ok(true);
+        }
+        if let Some(&same) = memo.get(&(left, right)) {
+            return Ok(same);
+        }
+        let left_node = *self.row::<E>(left)?.expr();
+        let right_node = *self.row::<E>(right)?.expr();
+        if Self::is_proxy(left_node) || Self::is_proxy(right_node) {
+            memo.insert((left, right), true);
+            return Ok(true);
+        }
+        let same_head = match (left_node, right_node) {
+            (Node::KindStar, Node::KindStar)
+            | (Node::BoolTy, Node::BoolTy)
+            | (Node::KindArr(..), Node::KindArr(..))
+            | (Node::TyArr(..), Node::TyArr(..))
+            | (Node::TyApp(..), Node::TyApp(..))
+            | (Node::TyLam(..), Node::TyLam(..))
+            | (Node::App(..), Node::App(..))
+            | (Node::Lam(..), Node::Lam(..))
+            | (Node::Eq(..), Node::Eq(..))
+            | (Node::Eps { .. }, Node::Eps { .. }) => true,
+            (Node::TyFv { name: left, .. }, Node::TyFv { name: right, .. })
+            | (Node::TmFv { name: left, .. }, Node::TmFv { name: right, .. })
+            | (Node::TyExists { name: left, .. }, Node::TyExists { name: right, .. })
+            | (Node::TyForall { name: left, .. }, Node::TyForall { name: right, .. })
+            | (Node::Model { name: left, .. }, Node::Model { name: right, .. }) => left == right,
+            (Node::Bool(left), Node::Bool(right)) => left == right,
+            (Node::Op1(left, ..), Node::Op1(right, ..)) => left.code() == right.code(),
+            (Node::Op2(left, ..), Node::Op2(right, ..)) => left.code() == right.code(),
+            _ => false,
+        };
+        if !same_head {
+            memo.insert((left, right), false);
+            return Ok(false);
+        }
+        // Mark optimistically before recursion; local syntax is a backwards
+        // DAG, but this also makes malformed private cycles terminate.
+        memo.insert((left, right), true);
+        let left_children = left_node.children();
+        let right_children = right_node.children();
+        if left_children.len() != right_children.len() {
+            memo.insert((left, right), false);
+            return Ok(false);
+        }
+        for (left_child, right_child) in left_children.into_iter().zip(right_children) {
+            if !self.may_same_syntax::<E>(left_child, right_child, memo)? {
+                memo.insert((left, right), false);
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     fn require_compatible_endpoints<E>(
@@ -1604,6 +1770,38 @@ mod tests {
                     duplicate,
                     &[classifier],
                 )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn fresh_substitution_uses_complete_structural_named_syntax() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let first_bool = kernel.bool_ty(star).unwrap();
+        let duplicate_bool = kernel.bool_ty(star).unwrap();
+        let function_ty = kernel.ty_arr(first_bool, first_bool).unwrap();
+        let variable = kernel.tm_fv(4, first_bool).unwrap();
+        let duplicate = kernel.tm_fv(4, duplicate_bool).unwrap();
+        let distinct = kernel.tm_fv(4, function_ty).unwrap();
+        let truth = kernel.bool(first_bool, true).unwrap();
+        let falsity = kernel.bool(first_bool, false).unwrap();
+        let compound = kernel.eq(first_bool, truth, falsity).unwrap();
+
+        assert!(kernel.substitution_fresh(variable, compound).unwrap());
+        let unchanged = kernel
+            .syn_sub_fresh(None, variable, truth, compound)
+            .unwrap();
+        let fact = kernel.syn_fact(unchanged).unwrap();
+        assert_eq!(fact.input(), compound);
+        assert_eq!(fact.output(), compound);
+
+        assert!(!kernel.substitution_fresh(variable, variable).unwrap());
+        assert!(!kernel.substitution_fresh(variable, duplicate).unwrap());
+        assert!(kernel.substitution_fresh(variable, distinct).unwrap());
+        assert!(
+            kernel
+                .syn_sub_fresh(None, variable, truth, duplicate)
                 .is_err()
         );
     }

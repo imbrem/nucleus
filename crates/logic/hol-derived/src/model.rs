@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    Kernel, KernelError, KindTag, Ref, SynFactId, SynRel, Tag, ThmId, TmTag, TyTag,
+    Kernel, KernelError, KindTag, Ref, Sort, SynFactId, SynRel, Tag, ThmId, TmTag, TyTag,
 };
 
 /// A chosen type together with the checked theorem that specifies it.
@@ -31,6 +31,15 @@ pub struct ChosenModel {
     pub substitution: SynFactId,
     /// The name bound by the source type existential.
     pub name: u64,
+}
+
+/// One checked capture-avoiding substitution and its syntactic certificate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Substitution {
+    /// Rebuilt expression after substitution.
+    pub output: Ref,
+    /// Checked syntactic fact relating the input to [`output`](Self::output).
+    pub fact: SynFactId,
 }
 
 /// A failure in the derived chosen-model construction.
@@ -111,14 +120,10 @@ impl ModelExt for Kernel {
             None => self.ty_fv(name, star)?,
         };
 
-        let mut substitution = TypeSubstitution {
-            kernel: self,
-            variable,
-            replacement: ty,
-            memo: BTreeMap::new(),
-        };
-        let (specification, fact) = substitution.derive(predicate)?;
-        let specification_theorem = substitution.kernel.model_spec(theorem, fact)?;
+        let substitution = substitute(self, variable, ty, predicate)?;
+        let specification = substitution.output;
+        let fact = substitution.fact;
+        let specification_theorem = self.model_spec(theorem, fact)?;
 
         Ok(ChosenModel {
             ty,
@@ -129,6 +134,32 @@ impl ModelExt for Kernel {
             name,
         })
     }
+}
+
+/// Rebuilds `input[var := val]` and constructs the checked syntactic fact.
+///
+/// This traversal carries no authority: every rebuilt row and every step of
+/// its substitution certificate is checked by [`Kernel`]. It is shared by
+/// chosen-model opening, beta reduction, and derived packages.
+///
+/// # Errors
+///
+/// Returns an error if any reachable row is opaque or unsupported, or if the
+/// checked kernel rejects a reconstructed row or certificate step.
+pub fn substitute(
+    kernel: &mut Kernel,
+    variable: Ref,
+    replacement: Ref,
+    input: Ref,
+) -> Result<Substitution, ModelError> {
+    let (output, fact) = TypeSubstitution {
+        kernel,
+        variable,
+        replacement,
+        memo: BTreeMap::new(),
+    }
+    .derive(input)?;
+    Ok(Substitution { output, fact })
 }
 
 fn find_free_type_variable(
@@ -245,6 +276,11 @@ impl TypeSubstitution<'_> {
                 .kernel
                 .syn_sub_var(None, self.variable, self.replacement)?;
             (self.replacement, fact)
+        } else if self.kernel.substitution_fresh(self.variable, input)? {
+            let fact = self
+                .kernel
+                .syn_sub_fresh(None, self.variable, self.replacement, input)?;
+            (input, fact)
         } else {
             self.derive_node(input)?
         };
@@ -430,7 +466,9 @@ impl TypeSubstitution<'_> {
             });
         };
         let shadowed = binder == self.variable;
-        let (output_binder, binder_fact) = if shadowed {
+        let substitutes_binder_classifier =
+            tag == Tag::Tm(TmTag::Lam) && self.kernel.category(self.variable)? == Sort::Ty;
+        let (output_binder, binder_fact) = if shadowed || !substitutes_binder_classifier {
             (binder, self.kernel.syn_refl(None, SynRel::Syn, binder)?)
         } else {
             self.derive(binder)?
@@ -480,19 +518,24 @@ impl TypeSubstitution<'_> {
             });
         };
         let name = self.name(input, tag)?;
-        let variable_name =
+        let variable_tag =
             self.kernel
                 .arena()
-                .name(self.variable)
-                .ok_or(ModelError::UnsupportedSyntax {
+                .tag(self.variable)
+                .ok_or(KernelError::MissingDefinition {
                     reference: self.variable,
-                    tag: Tag::Ty(TyTag::Fv),
                 })?;
-        let shadowed = name == variable_name;
+        let shadowed = variable_tag == Tag::Ty(TyTag::Fv)
+            && self.kernel.arena().name(self.variable) == Some(name);
         let witness = if shadowed {
             self.variable
         } else {
-            let star = self.kernel.classifier(self.replacement)?;
+            let classifier = self.kernel.classifier(input)?;
+            let star = match tag {
+                Tag::Ty(TyTag::Model) => classifier,
+                Tag::Tm(TmTag::TyExists | TmTag::TyForall) => self.kernel.classifier(classifier)?,
+                _ => unreachable!("caller matched implicit binder tags"),
+            };
             self.kernel.ty_fv(name, star)?
         };
         let (output_body, body_fact) = if shadowed {

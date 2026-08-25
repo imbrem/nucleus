@@ -82,6 +82,37 @@ rust_test(
 )
 
 rust_test(
+    name = "infinity",
+    crate = "infinity",
+    crate_root = "tests/infinity.rs",
+    edition = "2024",
+    srcs = _RUST_SOURCES,
+    named_deps = {
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
+        "covalence_logic_hol_derived": ":covalence_logic_hol_derived",
+    },
+    env = {
+        "CARGO_PKG_AUTHORS": "",
+        "CARGO_PKG_DESCRIPTION": "Untrusted derived constructions over the checked HOL kernel",
+        "CARGO_PKG_HOMEPAGE": "",
+        "CARGO_PKG_LICENSE": "CC0-1.0",
+        "CARGO_PKG_LICENSE_FILE": "",
+        "CARGO_PKG_NAME": "covalence-logic-hol-derived",
+        "CARGO_PKG_README": "",
+        "CARGO_PKG_REPOSITORY": "",
+        "CARGO_PKG_RUST_VERSION": "",
+        "CARGO_PKG_VERSION": "0.0.0",
+        "CARGO_PKG_VERSION_MAJOR": "0",
+        "CARGO_PKG_VERSION_MINOR": "0",
+        "CARGO_PKG_VERSION_PATCH": "0",
+        "CARGO_PKG_VERSION_PRE": "",
+        "CARGO_MANIFEST_DIR": "$(location :package_files)",
+    },
+    visibility = ["PUBLIC"],
+)
+
+rust_test(
     name = "model",
     crate = "model",
     crate_root = "tests/model.rs",

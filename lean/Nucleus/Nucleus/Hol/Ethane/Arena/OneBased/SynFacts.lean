@@ -836,6 +836,20 @@ theorem substitutionUnchanged
   .substitution substitutes inputWellFormed
     (Value.compatible_refl inputWellFormed) (Value.syntaxEqual_refl input)
 
+/-- Proof-relevant form of Rust `Kernel::syn_sub_fresh`: raw named-syntax
+occurrence checking may establish that an arbitrary compound expression is
+unchanged by substitution. -/
+theorem substitutionFresh
+    (variableIsSyntax : subVar.syntax? = some variableSyntax)
+    (replacementIsSyntax : replacement.syntax? = some replacementSyntax)
+    (inputIsSyntax : input.syntax? = some inputSyntax)
+    (inputWellFormed : input.WellFormed)
+    (absent : ¬ Value.NamedSubstitution.Occurs variableSyntax inputSyntax) :
+    SynInference .syn (some subVar) (some replacement) input input :=
+  substitutionUnchanged
+    (.syntax variableIsSyntax replacementIsSyntax inputIsSyntax inputIsSyntax
+      rfl (.miss absent)) inputWellFormed
+
 /-- Proof-relevant form shared by Rust `syn_sub_leaf_forall` and future
 closed-import rules. -/
 theorem universalSubstitutionUnchanged

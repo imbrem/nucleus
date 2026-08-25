@@ -522,6 +522,12 @@
           ]
         },
         {
+          "name": "infinity",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "model",
           "kinds": [
             "test"
