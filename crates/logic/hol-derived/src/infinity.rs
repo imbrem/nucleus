@@ -1,7 +1,9 @@
 //! A usable userspace package projected from the axiom of infinity.
 
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{InfinityAxiom, Kernel, KernelError, Ref, Sort, SynFactId, ThmId};
+use covalence_logic_hol::{
+    InfinityAxiom, Kernel, KernelError, Lit, Ref, Sort, SynFactId, ThmId, builtin::Op2,
+};
 
 use crate::{ChosenModel, ExistsError, ModelError, ModelExt, open_exists};
 
@@ -20,8 +22,16 @@ pub struct Infinity {
     pub missed: Ref,
     /// Equality-reflection and missed-point property for the chosen structure.
     pub property: Ref,
-    /// The theorem whose conclusion is conversion-equal to [`property`](Self::property).
+    /// `∀x y. map x = map y = (x = y)`.
+    pub reflects_equality: Ref,
+    /// `∀x. ¬(map x = missed)`.
+    pub avoids_missed: Ref,
+    /// The theorem concluding exactly [`property`](Self::property).
     pub theorem: ThmId,
+    /// The theorem concluding exactly [`reflects_equality`](Self::reflects_equality).
+    pub reflects_equality_theorem: ThmId,
+    /// The theorem concluding exactly [`avoids_missed`](Self::avoids_missed).
+    pub avoids_missed_theorem: ThmId,
     /// Outer beta certificate selecting [`map`](Self::map).
     pub map_beta: SynFactId,
     /// Inner beta certificate selecting [`missed`](Self::missed).
@@ -100,6 +110,35 @@ impl InfinityExt for Kernel {
             .into());
         }
 
+        if self.arena().op2(missed.body) != Some(Op2::And) {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "infinity package conjunction",
+            }
+            .into());
+        }
+        let properties: Vec<_> = self
+            .arena()
+            .children(missed.body)
+            .ok_or(KernelError::MissingDefinition {
+                reference: missed.body,
+            })?
+            .collect();
+        let [reflects_equality, avoids_missed] = properties.as_slice() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "infinity package conjunction",
+            }
+            .into());
+        };
+
+        // Retain the chosen-model theorem as evidence for `ChosenModel`; the
+        // package theorem is a converted copy whose physical atom is exactly
+        // the beta-opened conjunction.
+        let theorem = self.copy_theorem(model.theorem)?;
+        self.convert_theorem(theorem, model.specification, missed.body)?;
+        let property = Lit::positive(missed.body.get());
+        let reflects_equality_theorem = self.expand_conclusion(theorem, property, Some(false))?;
+        let avoids_missed_theorem = self.expand_conclusion(theorem, property, Some(true))?;
+
         Ok(Infinity {
             axiom,
             model,
@@ -107,7 +146,11 @@ impl InfinityExt for Kernel {
             map: map.witness,
             missed: missed.witness,
             property: missed.body,
-            theorem: model.theorem,
+            reflects_equality: *reflects_equality,
+            avoids_missed: *avoids_missed,
+            theorem,
+            reflects_equality_theorem,
+            avoids_missed_theorem,
             map_beta: map.beta,
             missed_beta: missed.beta,
         })

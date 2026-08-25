@@ -17,9 +17,10 @@
 //! because the two coincide and reflection is what equality-only HOL states
 //! naturally: the implication direction is free.
 //!
-//! Mirrors `Nucleus.HolE.Infinity.infinityAxiom` term for term, in the same
-//! way and for the same reason as the subtype package — see
-//! [`subtype`](super::subtype) for the hygiene discipline, which is shared.
+//! Mirrors the meaning of `Nucleus.HolE.Infinity.infinityAxiom`. The Rust
+//! sentence uses the compact logical opcode for its conjunction; resolving
+//! that macro yields the opcode-free definition used by the init slice.
+//! See [`subtype`](super::subtype) for the shared hygiene discipline.
 //!
 //! ## What is trusted, and what it does not yet reach
 //!
@@ -37,7 +38,7 @@
 use std::convert::Infallible;
 
 use super::{Kernel, KernelError, ThmId};
-use crate::Ref;
+use crate::{Ref, builtin::Op2};
 
 /// The name of the axiom capability [`Kernel::inf_exists`] consumes.
 pub const AX_INF: &str = "ax.inf";
@@ -56,12 +57,10 @@ pub enum InfinityBinder {
     Left = 3,
     /// The inner value bound by equality reflection.
     Right = 4,
-    /// The function variable of the equality-only conjunction encoding.
-    Conjunction = 5,
 }
 
 /// How many names the sentence reserves above [`InfinityAxiom::base_name`].
-pub const INFINITY_BINDER_COUNT: u64 = 6;
+pub const INFINITY_BINDER_COUNT: u64 = 5;
 
 /// The infinity sentence and the handles an outside layer needs to talk about
 /// the same carrier.
@@ -138,8 +137,13 @@ impl Kernel {
             self.forall_tm(bool_ty, left, body)?
         };
 
-        let conjunction = self.infinity_conjunction_binder(bool_ty, base_name)?;
-        let infinite = self.and_tm(bool_ty, conjunction, reflects, avoids_point)?;
+        // The sentence may use the compact connective even though the init
+        // slice defining its meaning remains opcode-free. `tm.op2.and` is a
+        // macro whose resolved HOL expression is that direct definition, and
+        // using it here makes the proved conjunction available to the checked
+        // Gentzen projection rules without a trusted pattern matcher for the
+        // expanded lambda/equality tree.
+        let infinite = self.op2(Op2::And, reflects, avoids_point)?;
         let choose_missed = self.exists_tm(missed, infinite)?;
         let body = self.exists_tm(map, choose_missed)?;
         let exists_type = self.ty_exists(carrier_name, body)?;
@@ -152,16 +156,5 @@ impl Kernel {
             base_name,
             theorem,
         })
-    }
-
-    /// The bound function variable of the equality-only conjunction encoding.
-    fn infinity_conjunction_binder(
-        &mut self,
-        bool_ty: Ref,
-        base_name: u64,
-    ) -> Result<Ref, KernelError> {
-        let unary = self.ty_arr(bool_ty, bool_ty)?;
-        let binary = self.ty_arr(bool_ty, unary)?;
-        self.tm_fv(base_name + InfinityBinder::Conjunction as u64, binary)
     }
 }

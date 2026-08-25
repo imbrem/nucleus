@@ -37,11 +37,38 @@ fn infinity_projects_the_chosen_carrier_map_point_and_property() {
             .expect("beta conversion union")
     );
 
-    let theorem = kernel.thm().get(package.theorem).expect("specification");
+    let theorem = kernel.thm().get(package.theorem).expect("property theorem");
     let rows = theorem.rhs.to_rows();
     assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].as_slice(), [Lit::positive(package.property.get())]);
     assert_eq!(
-        rows[0].as_slice(),
+        kernel
+            .thm()
+            .get(package.reflects_equality_theorem)
+            .expect("reflection theorem")
+            .rhs
+            .to_rows()[0]
+            .as_slice(),
+        [Lit::positive(package.reflects_equality.get())]
+    );
+    assert_eq!(
+        kernel
+            .thm()
+            .get(package.avoids_missed_theorem)
+            .expect("missed-point theorem")
+            .rhs
+            .to_rows()[0]
+            .as_slice(),
+        [Lit::positive(package.avoids_missed.get())]
+    );
+    assert_eq!(
+        kernel
+            .thm()
+            .get(package.model.theorem)
+            .expect("chosen-model theorem")
+            .rhs
+            .to_rows()[0]
+            .as_slice(),
         [Lit::positive(package.model.specification.get())]
     );
 }
