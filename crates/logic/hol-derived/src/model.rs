@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    Kernel, KernelError, KindTag, Ref, Sort, SynFactId, SynRel, Tag, ThmId, TmTag, TyTag,
+    Kernel, KernelError, KindTag, Ref, SynFactId, SynRel, Tag, ThmId, TmTag, TyTag,
 };
 
 /// A chosen type together with the checked theorem that specifies it.
@@ -396,8 +396,12 @@ impl TypeSubstitution<'_> {
                 let (ty, ty_fact) = self.derive(children[0])?;
                 let (left, left_fact) = self.derive(children[1])?;
                 let (right, right_fact) = self.derive(children[2])?;
-                let bool_ty = self.kernel.classifier(input)?;
-                let output = self.kernel.eq(bool_ty, left, right)?;
+                let output = if [ty, left, right] == children.as_slice() {
+                    input
+                } else {
+                    let bool_ty = self.kernel.classifier(input)?;
+                    self.kernel.eq(bool_ty, left, right)?
+                };
                 let fact = self.kernel.syn_congr(
                     None,
                     SynRel::Syn,
@@ -407,7 +411,6 @@ impl TypeSubstitution<'_> {
                     output,
                     &[ty_fact, left_fact, right_fact],
                 )?;
-                let _ = ty;
                 Ok((output, fact))
             }
             Tag::Tm(TmTag::Eps) => self.binary(input, &children, Kernel::eps),
@@ -454,7 +457,11 @@ impl TypeSubstitution<'_> {
             });
         };
         let (child, child_fact) = self.derive(child)?;
-        let output = build(self.kernel, child)?;
+        let output = if child == children[0] {
+            input
+        } else {
+            build(self.kernel, child)?
+        };
         let fact = self.congr(input, output, &[child_fact])?;
         Ok((output, fact))
     }
@@ -477,7 +484,11 @@ impl TypeSubstitution<'_> {
         };
         let (left, left_fact) = self.derive(left)?;
         let (right, right_fact) = self.derive(right)?;
-        let output = build(self.kernel, left, right)?;
+        let output = if [left, right] == children {
+            input
+        } else {
+            build(self.kernel, left, right)?
+        };
         let fact = self.congr(input, output, &[left_fact, right_fact])?;
         Ok((output, fact))
     }
@@ -512,8 +523,12 @@ impl TypeSubstitution<'_> {
             });
         };
         let shadowed = binder == self.variable;
-        let substitutes_binder_classifier =
-            tag == Tag::Tm(TmTag::Lam) && self.kernel.category(self.variable)? == Sort::Ty;
+        let substitutes_binder_classifier = if tag == Tag::Tm(TmTag::Lam) {
+            let classifier = self.kernel.classifier(binder)?;
+            !self.kernel.substitution_fresh(self.variable, classifier)?
+        } else {
+            false
+        };
         let (output_binder, binder_fact) = if shadowed || !substitutes_binder_classifier {
             (binder, self.kernel.syn_refl(None, SynRel::Syn, binder)?)
         } else {
@@ -524,19 +539,23 @@ impl TypeSubstitution<'_> {
         } else {
             self.derive(body)?
         };
-        let output = match tag {
-            Tag::Ty(TyTag::Lam) => self.kernel.ty_lam(output_binder, output_body)?,
-            Tag::Tm(TmTag::Lam) => {
-                // Reuse the recursively substituted classifier rather than
-                // letting `lam` append a parallel arrow row. Applications of
-                // this lambda refer to the former, and Ethane intentionally
-                // does not identify structurally duplicate type rows.
-                let input_classifier = self.kernel.classifier(input)?;
-                let (output_classifier, _) = self.derive(input_classifier)?;
-                self.kernel
-                    .lam_at(output_classifier, output_binder, output_body)?
+        let output = if output_binder == binder && output_body == body {
+            input
+        } else {
+            match tag {
+                Tag::Ty(TyTag::Lam) => self.kernel.ty_lam(output_binder, output_body)?,
+                Tag::Tm(TmTag::Lam) => {
+                    // Reuse the recursively substituted classifier rather than
+                    // letting `lam` append a parallel arrow row. Applications of
+                    // this lambda refer to the former, and Ethane intentionally
+                    // does not identify structurally duplicate type rows.
+                    let input_classifier = self.kernel.classifier(input)?;
+                    let (output_classifier, _) = self.derive(input_classifier)?;
+                    self.kernel
+                        .lam_at(output_classifier, output_binder, output_body)?
+                }
+                _ => unreachable!("caller matched explicit binder tags"),
             }
-            _ => unreachable!("caller matched explicit binder tags"),
         };
         let fact = self.kernel.syn_binder_congr(
             None,
@@ -589,11 +608,15 @@ impl TypeSubstitution<'_> {
         } else {
             self.derive(body)?
         };
-        let output = match tag {
-            Tag::Ty(TyTag::Model) => self.kernel.model(name, output_body)?,
-            Tag::Tm(TmTag::TyExists) => self.kernel.ty_exists(name, output_body)?,
-            Tag::Tm(TmTag::TyForall) => self.kernel.ty_forall(name, output_body)?,
-            _ => unreachable!("caller matched implicit binder tags"),
+        let output = if output_body == body {
+            input
+        } else {
+            match tag {
+                Tag::Ty(TyTag::Model) => self.kernel.model(name, output_body)?,
+                Tag::Tm(TmTag::TyExists) => self.kernel.ty_exists(name, output_body)?,
+                Tag::Tm(TmTag::TyForall) => self.kernel.ty_forall(name, output_body)?,
+                _ => unreachable!("caller matched implicit binder tags"),
+            }
         };
         let fact = self.kernel.syn_implicit_binder_congr(
             None,

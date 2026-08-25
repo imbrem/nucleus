@@ -207,7 +207,7 @@ impl Kernel {
     pub fn substitution_fresh(&self, var: Ref, input: Ref) -> Result<bool, KernelError> {
         self.require_substitution_variable::<Infallible>(var)?;
         self.row::<Infallible>(input)?;
-        Ok(!self.may_contain_variable::<Infallible>(input, var)?)
+        Ok(!self.may_contain_variable_as::<Infallible>(input, var)?)
     }
 
     /// Establishes that substitution leaves one fresh expression unchanged.
@@ -229,7 +229,7 @@ impl Kernel {
         input: Ref,
     ) -> Result<SynFactId, KernelError> {
         self.require_substitution_pair::<Infallible>(var, val)?;
-        if self.may_contain_variable::<Infallible>(input, var)? {
+        if self.may_contain_variable_as::<Infallible>(input, var)? {
             return Err(Self::invalid_fact("fresh substitution"));
         }
         self.put_fact(
@@ -375,12 +375,18 @@ impl Kernel {
         let shape = Self::binder_shape::<Infallible>(input_node, output_node)?;
         let body_substitution =
             self.binder_substitution::<Infallible>(shape.input_binder, var, val)?;
-        let type_substitution_through_term_binder = matches!(input_node, Node::Lam(..))
-            && match var {
-                Some(var) => self.category_as::<Infallible>(var)? == Sort::Ty,
-                None => false,
-            };
-        let binder_substitution = if type_substitution_through_term_binder {
+        let substitution_through_term_binder = if let (Some(var), Node::Lam(..)) = (var, input_node)
+        {
+            let classifier = self.classifier_as::<Infallible>(shape.input_binder)?;
+            self.may_contain_variable_as::<Infallible>(classifier, var)?
+        } else {
+            false
+        };
+        let binder_substitution = if substitution_through_term_binder {
+            let binder_fact = self.fact::<Infallible>(binder)?;
+            if binder_fact.var() != var || binder_fact.val() != val {
+                return Err(Self::invalid_fact("binder classifier"));
+            }
             if !Self::same_variable_name(
                 *self.row::<Infallible>(shape.input_binder)?.expr(),
                 *self.row::<Infallible>(shape.output_binder)?.expr(),
@@ -392,15 +398,9 @@ impl Kernel {
             if !self.same_variable::<Infallible>(shape.input_binder, shape.output_binder)? {
                 return Err(Self::invalid_fact("binder congruence"));
             }
-            // The binder row is carried through unchanged, so the replacement
-            // must not reach the type it advertises. A `ty.lam` binder carries
-            // a kind, which no substitution can touch.
-            if let (Some(var), Node::Lam(..)) = (var, input_node) {
-                let classifier = self.classifier_as::<Infallible>(shape.input_binder)?;
-                if self.may_contain_variable::<Infallible>(classifier, var)? {
-                    return Err(Self::invalid_fact("binder classifier"));
-                }
-            }
+            // The binder annotation is out of reach and is carried through
+            // unchanged. A `ty.lam` binder carries a kind, which cannot
+            // contain either kind of substituted variable.
             (None, None)
         };
         self.require_fact_match::<Infallible>(
@@ -900,7 +900,7 @@ impl Kernel {
     /// Two local rows may denote the same syntax without sharing a `Ref`, so
     /// variable classifiers are compared recursively. Any import proxy is
     /// treated as a possible match because this kernel does not own its bytes.
-    fn may_contain_variable<E>(&self, input: Ref, var: Ref) -> Result<bool, KernelError<E>>
+    fn may_contain_variable_as<E>(&self, input: Ref, var: Ref) -> Result<bool, KernelError<E>>
     where
         E: std::error::Error + 'static,
     {
@@ -1299,7 +1299,11 @@ impl Kernel {
     /// visited set: without one a term of `n` rows can present exponentially
     /// many paths. An unresolved proxy is conservatively reported as an
     /// occurrence, which is the rejecting answer for every caller.
-    fn contains_variable<E>(&self, root: Ref, variable: Ref) -> Result<bool, KernelError<E>>
+    pub(super) fn contains_variable<E>(
+        &self,
+        root: Ref,
+        variable: Ref,
+    ) -> Result<bool, KernelError<E>>
     where
         E: std::error::Error + 'static,
     {

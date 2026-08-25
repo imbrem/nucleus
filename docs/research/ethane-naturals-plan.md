@@ -56,12 +56,13 @@ theorems in an arena whose `axs` is exactly `{ax.inf, ax.sub}`.
 Implementation checkpoint: `covalence-logic-hol-derived::NaturalExt` now
 constructs the chosen `ind`, the induction-closure predicate, the guarded
 `nat` subtype, `nat.zero`, `nat.succ`, and the exact induction statement with
-those two capabilities. The init S-expression source lives in the separate
-untrusted `covalence-logic-hol-script` crate. The remaining distinction is
-intentional: `nat.induction` is currently a well-typed statement, not yet a
-projected theorem. Issue #997 tracks the minimal standard HOL equality and
-instantiation calculus needed to turn the package theorem into that result;
-the API must not label the row proved before that bridge exists.
+those two capabilities. `nat.induction` is an exact premise-free theorem,
+derived in userspace through the checked Gentzen, equality, choice, and
+generalization rules. The init S-expression source lives in the separate
+untrusted `covalence-logic-hol-script` crate and can drive the same package
+through public checked APIs; the language contributes no kernel rule or parser
+to the TCB. The remaining phase-1 work is the explicit Lean bridge identifying
+this object-language package with `CNatModel`.
 
 Open universals land here. `nat`'s defining predicate quantifies over
 `P : ind → bool`, a _term_ quantifier, so it does not need `ty.forall`. But the

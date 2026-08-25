@@ -337,7 +337,7 @@ impl HolProver {
             .map_err(to_js)
     }
 
-    /// Applies an exact premise-free function equality to one term.
+    /// Applies a proved function equality to one term, preserving its premises.
     ///
     /// The returned `Int32Array` is `[left, right, equality, theorem]`.
     ///
@@ -362,7 +362,176 @@ impl HolProver {
             .map_err(to_js)
     }
 
-    /// Eliminates an exact theorem `⊢ p = true` to `⊢ p`.
+    /// Applies one function to both sides of a proved equality.
+    ///
+    /// Returns `[left, right, equality, theorem]`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed or mismatched evidence.
+    #[wasm_bindgen(js_name = apTerm)]
+    pub fn ap_term(&mut self, theorem: i32, function: i32) -> Result<Vec<i32>, JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        let function = parse_ref(function).map_err(to_js)?;
+        self.kernel
+            .ap_term(theorem, function)
+            .map(|result| {
+                vec![
+                    result.left.get(),
+                    result.right.get(),
+                    result.equality.get(),
+                    result.theorem.get(),
+                ]
+            })
+            .map_err(to_js)
+    }
+
+    /// Rewrites a proved proposition through a proved Boolean equality.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed or mismatched evidence.
+    #[wasm_bindgen(js_name = eqMp)]
+    pub fn eq_mp(&mut self, equality: i32, premise: i32) -> Result<i32, JsError> {
+        self.kernel
+            .eq_mp(
+                parse_thm(equality).map_err(to_js)?,
+                parse_thm(premise).map_err(to_js)?,
+            )
+            .map(format_thm)
+            .map_err(to_js)
+    }
+
+    /// Generalizes one theorem over a fresh term variable.
+    ///
+    /// Returns `[universal, theorem]`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the freshness or theorem-shape check fails.
+    #[wasm_bindgen(js_name = forallIntro)]
+    pub fn forall_intro(&mut self, theorem: i32, binder: i32) -> Result<Vec<i32>, JsError> {
+        self.kernel
+            .forall_intro(
+                parse_thm(theorem).map_err(to_js)?,
+                parse_ref(binder).map_err(to_js)?,
+            )
+            .map(|result| vec![result.universal.get(), result.theorem.get()])
+            .map_err(to_js)
+    }
+
+    /// Generalizes into an existing equality-encoded universal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target or freshness check fails.
+    #[wasm_bindgen(js_name = forallIntroAt)]
+    pub fn forall_intro_at(
+        &mut self,
+        theorem: i32,
+        binder: i32,
+        universal: i32,
+    ) -> Result<i32, JsError> {
+        self.kernel
+            .forall_intro_at(
+                parse_thm(theorem).map_err(to_js)?,
+                parse_ref(binder).map_err(to_js)?,
+                parse_ref(universal).map_err(to_js)?,
+            )
+            .map(format_thm)
+            .map_err(to_js)
+    }
+
+    /// Introduces Hilbert choice, returning `[witness, proposition, theorem]`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the theorem concludes a predicate application.
+    #[wasm_bindgen(js_name = choiceIntro)]
+    pub fn choice_intro(&mut self, theorem: i32) -> Result<Vec<i32>, JsError> {
+        self.kernel
+            .choice_intro(parse_thm(theorem).map_err(to_js)?)
+            .map(|result| {
+                vec![
+                    result.witness.get(),
+                    result.proposition.get(),
+                    result.theorem.get(),
+                ]
+            })
+            .map_err(to_js)
+    }
+
+    /// Introduces Hilbert choice into an existing target proposition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the target is the matching choice application.
+    #[wasm_bindgen(js_name = choiceIntroAt)]
+    pub fn choice_intro_at(&mut self, theorem: i32, target: i32) -> Result<i32, JsError> {
+        self.kernel
+            .choice_intro_at(
+                parse_thm(theorem).map_err(to_js)?,
+                parse_ref(target).map_err(to_js)?,
+            )
+            .map(format_thm)
+            .map_err(to_js)
+    }
+
+    /// Rewrites every occurrence of one semantically equal theorem atom.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the theorem and semantic equality exist.
+    #[wasm_bindgen(js_name = convertTheorem)]
+    pub fn convert_theorem(
+        &mut self,
+        theorem: i32,
+        source: i32,
+        target: i32,
+    ) -> Result<(), JsError> {
+        self.kernel
+            .convert_theorem(
+                parse_thm(theorem).map_err(to_js)?,
+                parse_ref(source).map_err(to_js)?,
+                parse_ref(target).map_err(to_js)?,
+            )
+            .map_err(to_js)
+    }
+
+    /// Rewrites one semantically equal atom only in theorem conclusions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the theorem and semantic equality exist.
+    #[wasm_bindgen(js_name = convertConclusions)]
+    pub fn convert_conclusions(
+        &mut self,
+        theorem: i32,
+        source: i32,
+        target: i32,
+    ) -> Result<(), JsError> {
+        self.kernel
+            .convert_conclusions(
+                parse_thm(theorem).map_err(to_js)?,
+                parse_ref(source).map_err(to_js)?,
+                parse_ref(target).map_err(to_js)?,
+            )
+            .map_err(to_js)
+    }
+
+    /// Contracts duplicate theorem rows and literals in place.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the theorem handle is absent.
+    #[wasm_bindgen(js_name = contractTheorem)]
+    pub fn contract_theorem(&mut self, theorem: i32) -> Result<(), JsError> {
+        self.kernel
+            .contract_theorem(parse_thm(theorem).map_err(to_js)?)
+            .map_err(to_js)
+    }
+
+    /// Eliminates `Γ ⊢ p = true` to `Γ ⊢ p`.
     ///
     /// # Errors
     ///
@@ -1078,5 +1247,62 @@ mod tests {
             [q, p, q]
         );
         assert!(parse_context(&[-1, 0]).is_err());
+    }
+
+    #[test]
+    fn standard_hol_rules_cross_the_i32_browser_boundary() {
+        let mut prover = prover();
+        let p = prover.proposition("1").unwrap();
+        let q = prover.proposition("2").unwrap();
+        let p_ref = Ref::new(i32::try_from(p.magnitude()).unwrap()).unwrap();
+        let q_ref = Ref::new(i32::try_from(q.magnitude()).unwrap()).unwrap();
+        let bool_ty = prover.bool_ty;
+
+        let equality = prover.kernel.eq(bool_ty, p_ref, q_ref).unwrap();
+        let equality_assumption = prover
+            .kernel
+            .identity(Lit::positive(equality.get()))
+            .unwrap();
+        let function_ty = prover.kernel.ty_arr(bool_ty, bool_ty).unwrap();
+        let function = prover.kernel.tm_fv(20, function_ty).unwrap();
+        let applied = prover
+            .ap_term(equality_assumption.get(), function.get())
+            .unwrap();
+        assert_eq!(applied.len(), 4);
+        assert!(applied.iter().all(|value| *value > 0));
+
+        let premise = prover.kernel.identity(p).unwrap();
+        let rewritten = prover
+            .eq_mp(equality_assumption.get(), premise.get())
+            .unwrap();
+        assert_eq!(
+            unit_conclusions(
+                prover
+                    .kernel
+                    .thm()
+                    .get(ThmId::new(rewritten).unwrap())
+                    .unwrap()
+            ),
+            [q]
+        );
+
+        let binder = prover.kernel.tm_fv(21, bool_ty).unwrap();
+        let truth = prover.kernel.bool(bool_ty, true).unwrap();
+        let body = prover
+            .kernel
+            .true_right(Lit::positive(truth.get()))
+            .unwrap();
+        let generalized = prover.forall_intro(body.get(), binder.get()).unwrap();
+        assert_eq!(generalized.len(), 2);
+
+        let predicate = prover.kernel.tm_fv(22, function_ty).unwrap();
+        let application = prover.kernel.app(predicate, p_ref).unwrap();
+        let witnessed = prover
+            .kernel
+            .identity(Lit::positive(application.get()))
+            .unwrap();
+        let choice = prover.choice_intro(witnessed.get()).unwrap();
+        assert_eq!(choice.len(), 3);
+        assert!(choice.iter().all(|value| *value > 0));
     }
 }

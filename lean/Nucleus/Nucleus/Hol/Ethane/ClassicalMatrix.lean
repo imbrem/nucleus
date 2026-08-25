@@ -82,6 +82,9 @@ structure Sequent (Atom : Type) where
   right : Dnf Atom
   deriving DecidableEq
 
+def Cnf.append {Atom : Type} (left right : Cnf Atom) : Cnf Atom :=
+  ⟨left.clauses ++ right.clauses⟩
+
 /-- A valuation is deliberately over unsigned atoms. -/
 abbrev Valuation (Atom : Type) := Atom → Prop
 
@@ -99,6 +102,21 @@ def Clause.Holds {Atom : Type} (valuation : Valuation Atom) (clause : Clause Ato
 
 def Cnf.Holds {Atom : Type} (valuation : Valuation Atom) (cnf : Cnf Atom) : Prop :=
   ∀ clause ∈ cnf.clauses, clause.Holds valuation
+
+@[simp] theorem Cnf.append_holds {Atom : Type} (valuation : Valuation Atom)
+    (left right : Cnf Atom) : (left.append right).Holds valuation ↔
+      left.Holds valuation ∧ right.Holds valuation := by
+  constructor
+  · intro holds
+    constructor
+    · intro clause member
+      exact holds clause (List.mem_append_left _ member)
+    · intro clause member
+      exact holds clause (List.mem_append_right _ member)
+  · rintro ⟨leftHolds, rightHolds⟩ clause member
+    obtain member | member := List.mem_append.mp member
+    · exact leftHolds clause member
+    · exact rightHolds clause member
 
 def Cube.Holds {Atom : Type} (valuation : Valuation Atom) (cube : Cube Atom) : Prop :=
   ∀ literal ∈ cube.literals, literal.Holds valuation
@@ -119,6 +137,10 @@ def Sequent.assert {Atom : Type} (atom : Atom) : Sequent Atom :=
 @[simp] theorem Sequent.assert_holds {Atom : Type} (valuation : Valuation Atom)
     (atom : Atom) : (Sequent.assert atom).Holds valuation ↔ valuation atom := by
   simp [Sequent.assert, Sequent.Holds, Cnf.Holds, Dnf.Holds, Cube.Holds, Lit.Holds]
+
+@[simp] theorem Sequent.assertRight_holds {Atom : Type} (valuation : Valuation Atom)
+    (atom : Atom) : (Sequent.assert atom).right.Holds valuation ↔ valuation atom := by
+  simp [Sequent.assert, Dnf.Holds, Cube.Holds, Lit.Holds]
 
 /-! ## Atom transport
 
@@ -208,6 +230,13 @@ def Sequent.replaceAtom [DecidableEq Atom] (sequent : Sequent Atom)
     (source target : Atom) : Sequent Atom :=
   sequent.mapAtom (replaceOneAtom source target)
 
+/-- Replace atoms only in the conclusion matrix. This is the selective form
+used by proof rewriting when a premise and conclusion happen to share the
+same physical atom. -/
+def Sequent.replaceRightAtom [DecidableEq Atom] (sequent : Sequent Atom)
+    (source target : Atom) : Sequent Atom :=
+  ⟨sequent.left, sequent.right.mapAtom (replaceOneAtom source target)⟩
+
 theorem replaceOneAtom_preserves [DecidableEq Atom] (source target : Atom)
     (valuation : Valuation Atom) (equivalent : valuation source ↔ valuation target) :
     ∀ atom, valuation (replaceOneAtom source target atom) ↔ valuation atom := by
@@ -227,6 +256,19 @@ theorem Sequent.replaceAtom_holds [DecidableEq Atom] (sequent : Sequent Atom)
     funext atom
     exact propext (replaceOneAtom_preserves source target valuation equivalent atom)
   simpa [same] using sound
+
+theorem Sequent.replaceRightAtom_holds [DecidableEq Atom] (sequent : Sequent Atom)
+    {valuation : Valuation Atom} (source target : Atom) (sound : sequent.Holds valuation)
+    (equivalent : valuation source ↔ valuation target) :
+    (sequent.replaceRightAtom source target).Holds valuation := by
+  intro leftHolds
+  have rightHolds := sound leftHolds
+  change (sequent.right.mapAtom (replaceOneAtom source target)).Holds valuation
+  rw [Dnf.mapAtom_holds]
+  have same : valuation ∘ replaceOneAtom source target = valuation := by
+    funext atom
+    exact propext (replaceOneAtom_preserves source target valuation equivalent atom)
+  simpa [same] using rightHolds
 
 /-! ## Untyped atoms and partial HOL interpretations
 

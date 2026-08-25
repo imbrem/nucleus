@@ -140,3 +140,50 @@ def test_negation_and_expansion_have_no_unchecked_admission_path() -> None:
     assert kernel.theorem(expanded)[1] == [[-p]]
     with pytest.raises(ValueError):
         kernel.identity(kernel.lit(999_999))
+
+
+def test_standard_hol_rules_preserve_i32_ids_and_checked_contexts() -> None:
+    kernel, bool_ty, p, q, p_ref = fixture()
+    q_ref = abs(q)
+    equality = kernel.eq(bool_ty, p_ref, q_ref)
+    equality_assumption = kernel.identity(kernel.lit(equality))
+
+    function_ty = kernel.ty_arr(bool_ty, bool_ty)
+    function = kernel.tm_fv(20, function_ty)
+    left, right, applied_equality, applied_theorem = kernel.ap_term(
+        equality_assumption, function
+    )
+    assert all(
+        isinstance(value, int) and value > 0
+        for value in (left, right, applied_equality)
+    )
+    assert kernel.theorem(applied_theorem) == (
+        [[kernel.lit(equality)]],
+        [[kernel.lit(applied_equality)]],
+    )
+
+    rewritten = kernel.eq_mp(equality_assumption, kernel.identity(p))
+    assert kernel.theorem(rewritten) == ([[kernel.lit(equality)], [p]], [[q]])
+
+    binder = kernel.tm_fv(21, bool_ty)
+    truth = kernel.bool(bool_ty, True)
+    universal, generalized = kernel.forall_intro(
+        kernel.true_right(kernel.lit(truth)), binder
+    )
+    assert kernel.theorem(generalized) == ([], [[kernel.lit(universal)]])
+    with pytest.raises(ValueError):
+        kernel.forall_intro(generalized, bool_ty)
+
+    predicate = kernel.tm_fv(22, function_ty)
+    application = kernel.app(predicate, p_ref)
+    witness, proposition, selected = kernel.choice_intro(
+        kernel.identity(kernel.lit(application))
+    )
+    assert all(
+        isinstance(value, int) and value > 0
+        for value in (witness, proposition, selected)
+    )
+    assert kernel.theorem(selected) == (
+        [[kernel.lit(application)]],
+        [[kernel.lit(proposition)]],
+    )

@@ -1051,6 +1051,83 @@ impl PyKernel {
             .map_err(value_error)
     }
 
+    fn ap_term(&mut self, theorem: i32, function: i32) -> PyResult<(i32, i32, i32, i32)> {
+        self.kernel
+            .ap_term(theorem_id(theorem)?, reference(function)?)
+            .map(|result| {
+                (
+                    result.left.get(),
+                    result.right.get(),
+                    result.equality.get(),
+                    result.theorem.get(),
+                )
+            })
+            .map_err(value_error)
+    }
+
+    fn eq_mp(&mut self, equality: i32, premise: i32) -> PyResult<i32> {
+        self.kernel
+            .eq_mp(theorem_id(equality)?, theorem_id(premise)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn forall_intro(&mut self, theorem: i32, binder: i32) -> PyResult<(i32, i32)> {
+        self.kernel
+            .forall_intro(theorem_id(theorem)?, reference(binder)?)
+            .map(|result| (result.universal.get(), result.theorem.get()))
+            .map_err(value_error)
+    }
+
+    fn forall_intro_at(&mut self, theorem: i32, binder: i32, universal: i32) -> PyResult<i32> {
+        self.kernel
+            .forall_intro_at(
+                theorem_id(theorem)?,
+                reference(binder)?,
+                reference(universal)?,
+            )
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn choice_intro(&mut self, theorem: i32) -> PyResult<(i32, i32, i32)> {
+        self.kernel
+            .choice_intro(theorem_id(theorem)?)
+            .map(|result| {
+                (
+                    result.witness.get(),
+                    result.proposition.get(),
+                    result.theorem.get(),
+                )
+            })
+            .map_err(value_error)
+    }
+
+    fn choice_intro_at(&mut self, theorem: i32, target: i32) -> PyResult<i32> {
+        self.kernel
+            .choice_intro_at(theorem_id(theorem)?, reference(target)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn convert_theorem(&mut self, theorem: i32, source: i32, target: i32) -> PyResult<()> {
+        self.kernel
+            .convert_theorem(theorem_id(theorem)?, reference(source)?, reference(target)?)
+            .map_err(value_error)
+    }
+
+    fn convert_conclusions(&mut self, theorem: i32, source: i32, target: i32) -> PyResult<()> {
+        self.kernel
+            .convert_conclusions(theorem_id(theorem)?, reference(source)?, reference(target)?)
+            .map_err(value_error)
+    }
+
+    fn contract_theorem(&mut self, theorem: i32) -> PyResult<()> {
+        self.kernel
+            .contract_theorem(theorem_id(theorem)?)
+            .map_err(value_error)
+    }
+
     fn eqt_elim(&mut self, theorem: i32) -> PyResult<i32> {
         self.kernel
             .eqt_elim(theorem_id(theorem)?)

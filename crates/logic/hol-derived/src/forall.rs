@@ -5,7 +5,7 @@ use covalence_logic_hol::{Kernel, KernelError, Ref, SynFactId, SynRel, Tag, ThmI
 
 use crate::{ModelError, substitute};
 
-/// A premise-free theorem concluding one checked proposition.
+/// A theorem with one positive conclusion and its checked proposition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProvedTerm {
     /// The proposition concluded by [`theorem`](Self::theorem).
@@ -47,7 +47,7 @@ impl From<ModelError> for ForallError {
     }
 }
 
-/// Specializes an exact theorem of an equality-encoded universal.
+/// Specializes a single-conclusion theorem of an equality-encoded universal.
 ///
 /// This is ordinary userspace orchestration over `AP_THM`, checked beta
 /// conversion, theorem transport, and `EQT_ELIM`. It introduces no new trusted
@@ -55,9 +55,10 @@ impl From<ModelError> for ForallError {
 ///
 /// # Errors
 ///
-/// Returns an error unless `theorem` is exactly `⊢ ∀x. body`, `argument` has
-/// the quantified type, and every checked substitution/conversion step is
-/// accepted.
+/// Returns an error unless `theorem` has the form `Γ ⊢ ∀x. body`, with no
+/// other conclusion, `argument` has the quantified type, and every checked
+/// substitution/conversion step is accepted. The premise matrix `Γ` is
+/// preserved unchanged.
 pub fn forall_elim(
     kernel: &mut Kernel,
     theorem: ThmId,
@@ -148,9 +149,6 @@ fn sole_positive_assertion(kernel: &Kernel, theorem: ThmId) -> Result<Ref, Foral
         .thm()
         .get(theorem)
         .ok_or(KernelError::MissingTheorem { id: theorem })?;
-    if theorem.lhs.rows().next().is_some() {
-        return Err(ForallError::WrongForm);
-    }
     let mut rows = theorem.rhs.rows();
     let row = rows.next().ok_or(ForallError::WrongForm)?;
     if rows.next().is_some() || row.len() != 1 || !row[0].is_positive() {
