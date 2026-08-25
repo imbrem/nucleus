@@ -170,6 +170,13 @@ fn checked_init_source_is_a_deterministic_untrusted_compilation_unit() {
 
     assert!(first.get("IsCoprod").is_some());
     assert!(first.get("NatMember").is_some());
+    let recursor = first.get("NatRecSpec").expect("recursion specification");
+    assert_eq!(
+        first.kernel().arena().tag(recursor),
+        Some(Tag::Tm(TmTag::Lam))
+    );
+    assert!(first.get("NatRecSpec/'a").is_some());
+    assert!(first.get("NatRecSpec/'c").is_some());
     assert_eq!(
         first.kernel().arena().addr(),
         second.kernel().arena().addr()
