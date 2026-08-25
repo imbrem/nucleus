@@ -509,13 +509,23 @@ def Arena.HolKernelSound (trusted : Arena → Prop) (resolve : Resolver) (arena 
       valuation →
     arena.holCore.KernelValid (coreResolver resolve)
 
+/-- Syntactic cache facts are interpreted in the same reconstructed HOL arena
+as ordinary kernel facts.  In particular, the fused conversion column also
+supplies their classifiers, so cache soundness is conditional on exactly the
+same admitted ambient valuation as `HolKernelSound`. -/
+def Arena.SynFactsSound (trusted : Arena → Prop) (resolve : Resolver) (arena : Arena) : Prop :=
+  ∀ valuation,
+    arena.ambientTheory.Admits (arena.ImportOk trusted resolve) (arena.ImportSort resolve)
+      valuation →
+    SynArena.Sound (coreResolver resolve) arena.holCore
+
 /-- Complete soundness invariant of the nested checked kernel.  The first
 field reuses all existing HOL constructor/equality/context soundness proofs on
 the exact row view reconstructed from columns. -/
 structure Arena.KernelValid (trusted : Arena → Prop) (resolve : Resolver) (arena : Arena)
     (interpretation : PartialValuation Ref) : Prop where
   columns : arena.ColumnsChecked
-  synFacts : SynArena.Sound (coreResolver resolve) arena.holCore
+  synFacts : arena.SynFactsSound trusted resolve
   synFree : SynArena.FreeListSafe arena.holCore
   hol : arena.HolKernelSound trusted resolve
   equalityRefines : arena.EqualityRefines
@@ -535,6 +545,18 @@ def Arena.KernelValid.coreKernel {trusted : Arena → Prop} {resolve : Resolver}
     (admitted : arena.ambientTheory.Admits (arena.ImportOk trusted resolve)
       (arena.ImportSort resolve) valuation) : OneBased.Kernel (coreResolver resolve) :=
   ⟨arena.holCore, valid.hol valuation admitted⟩
+
+/-- Under an admitted ambient valuation, the nested state specializes to the
+complete checked HOL kernel, including every cached substitution and
+conversion fact. -/
+def Arena.KernelValid.fullKernel {trusted : Arena → Prop} {resolve : Resolver} {arena : Arena}
+    {interpretation : PartialValuation Ref}
+    (valid : arena.KernelValid trusted resolve interpretation)
+    (valuation : Valuation Ref)
+    (admitted : arena.ambientTheory.Admits (arena.ImportOk trusted resolve)
+      (arena.ImportSort resolve) valuation) : OneBased.FullKernel (coreResolver resolve) :=
+  ⟨arena.holCore, valid.hol valuation admitted,
+    valid.synFacts valuation admitted, valid.synFree⟩
 
 /-- Any semantic-column class is exactly an equality class consumed by the
 existing kernel proof. -/
