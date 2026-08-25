@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import init, { HolProver, Repl } from "../generated/nucleus.js";
+import init, {
+  ClassicalKernel,
+  Cnf,
+  Dnf,
+  HolProver,
+  Refutation,
+  Repl,
+} from "../generated/nucleus.js";
 
 async function load() {
   await init({
@@ -50,6 +57,36 @@ test("generated HOL declarations contain no string or BigInt IDs", async () => {
     hol,
     /weaken\(theorem: number, premises: Int32Array, conclusions: Int32Array\): void/,
   );
+});
+
+test("WASM replays text and binary LRAT over text and binary DIMACS", async () => {
+  await load();
+  const textCnf = Cnf.fromDimacs(
+    new TextEncoder().encode("p cnf 1 2\n1 0\n-1 0\n"),
+  );
+  const binaryCnf = Cnf.fromBinaryDimacs(Uint8Array.of(2, 0, 3, 0));
+  assert.equal(textCnf.rowsJson(), binaryCnf.rowsJson());
+
+  const text = Refutation.fromTextLrat(textCnf, "3 0 1 2 0\n");
+  const binary = Refutation.fromBinaryLrat(
+    binaryCnf,
+    Uint8Array.of("a".charCodeAt(0), 6, 0, 2, 4, 0),
+  );
+  assert.equal(text.cnfJson(), binary.cnfJson());
+  const kernel = new ClassicalKernel();
+  const theorem = kernel.copyRefutation(text);
+  assert.deepEqual(JSON.parse(kernel.theoremJson(theorem)), [[[1], [-1]], []]);
+});
+
+test("WASM matrices normalize only on demand", async () => {
+  await load();
+  const cnf = new Cnf("[[2,1,2],[2,1,2]]");
+  const dnf = new Dnf("[[-1,-2,-1]]");
+  assert.equal(cnf.rowsJson(), "[[2,1,2],[2,1,2]]");
+  cnf.normalize();
+  dnf.normalize();
+  assert.equal(cnf.rowsJson(), "[[1,2]]");
+  assert.equal(dnf.rowsJson(), "[[-2,-1]]");
 });
 
 /** Evaluates a form and returns its printed value, asserting it was one. */

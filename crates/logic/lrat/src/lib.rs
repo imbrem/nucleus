@@ -5,7 +5,9 @@ mod loader;
 #[path = "kernel.rs"]
 mod oracle;
 pub use covalence_logic_sat::cnf::{Clause, Formula, Literal};
-pub use loader::{CnfBuilder, Error, LratProver, UnsatFormula, reconstruct};
+pub use loader::{
+    ClassicalProver, CnfBuilder, Error, LratProver, UnsatFormula, load_cnf, reconstruct, replay,
+};
 
 /// A monotonically allocated LRAT clause identifier.
 pub type ClauseId = u64;

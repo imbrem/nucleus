@@ -11,9 +11,10 @@
 //! status their inputs already have. An LCF kernel must keep the arena private
 //! and expose only checked rule methods.
 //!
-//! On the wire an arena is only the normalized list of its live theorem rows,
-//! in slot order. Deleted slots and free-list history are omitted; decoding
-//! rebuilds dense, all-live slots and an empty free list.
+//! On the wire an arena is the non-normal list of its live theorem rows in slot
+//! order. Literal and row order and duplicates are preserved. Deleted slots and
+//! free-list history are omitted; decoding rebuilds dense, all-live slots and
+//! an empty free list.
 
 use std::{collections::BTreeSet, num::NonZeroI32};
 
@@ -297,11 +298,9 @@ impl Serialize for ThmRow {
     where
         S: Serializer,
     {
-        let mut theorem = self.clone();
-        theorem.normalize();
         let mut tuple = serializer.serialize_tuple(2)?;
-        tuple.serialize_element(&theorem.0)?;
-        tuple.serialize_element(&theorem.1)?;
+        tuple.serialize_element(&self.0)?;
+        tuple.serialize_element(&self.1)?;
         tuple.end()
     }
 }
@@ -311,17 +310,8 @@ impl<'de> Deserialize<'de> for ThmRow {
     where
         D: Deserializer<'de>,
     {
-        let theorem = <(Cnf, Dnf)>::deserialize(deserializer)?;
-        let theorem = Self(theorem.0, theorem.1);
-        let mut normalized = theorem.clone();
-        normalized.normalize();
-        if theorem == normalized {
-            Ok(theorem)
-        } else {
-            Err(de::Error::custom(
-                "classical theorem matrix is not normalized",
-            ))
-        }
+        let (left, right) = <(Cnf, Dnf)>::deserialize(deserializer)?;
+        Ok(Self(left, right))
     }
 }
 
@@ -338,12 +328,6 @@ impl ThmRow {
     #[cfg(test)]
     const fn right(&self) -> &Dnf {
         &self.1
-    }
-
-    /// Sorts and deduplicates rows and matrices on both sides.
-    pub fn normalize(&mut self) {
-        self.0.normalize();
-        self.1.normalize();
     }
 }
 
@@ -487,8 +471,6 @@ pub trait ClassicalRules {
     fn move_cnf_right(&mut self, id: ThmId, row: CnfId) -> Result<(), Error>;
     /// Moves an indexed DNF row across the turnstile.
     fn move_dnf_left(&mut self, id: ThmId, row: DnfId) -> Result<(), Error>;
-    /// Normalizes a resident sequent.
-    fn normalize(&mut self, id: ThmId) -> Result<(), Error>;
     /// Normalizes one CNF row.
     fn normalize_cnf(&mut self, id: ThmId, row: CnfId) -> Result<(), Error>;
     /// Normalizes one DNF row.
@@ -574,9 +556,6 @@ impl ClassicalRules for CheckedArena<'_> {
     }
     fn move_dnf_left(&mut self, id: ThmId, row: DnfId) -> Result<(), Error> {
         self.arena.move_dnf_left(id, row)
-    }
-    fn normalize(&mut self, id: ThmId) -> Result<(), Error> {
-        self.arena.normalize(id)
     }
     fn normalize_cnf(&mut self, id: ThmId, row: CnfId) -> Result<(), Error> {
         self.arena.normalize_cnf(id, row)
@@ -863,16 +842,6 @@ impl ClassicalArena {
             .0
             .push(Some(source.into_iter().map(Lit::negated).collect()));
         self.replace_row(id, replacement)
-    }
-
-    /// Normalizes both matrices of one theorem in place.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `id` is absent.
-    pub fn normalize(&mut self, id: ThmId) -> Result<(), Error> {
-        self.theorem_mut(id)?.normalize();
-        Ok(())
     }
 
     /// Normalizes one indexed CNF row in place.
@@ -1332,7 +1301,7 @@ mod tests {
     }
 
     #[test]
-    fn identity_weakening_and_normalization_are_sound() {
+    fn identity_weakening_and_row_normalization_are_sound() {
         let mut arena = ClassicalArena::new();
         let theorem = arena.identity(lit(1)).unwrap();
         arena
@@ -1343,7 +1312,8 @@ mod tests {
             )
             .unwrap();
         assert!(sound(arena.theorem(theorem).unwrap(), 3));
-        arena.normalize(theorem).unwrap();
+        arena.normalize_cnf(theorem, cnf_id(2)).unwrap();
+        arena.normalize_dnf(theorem, dnf_id(2)).unwrap();
         assert!(sound(arena.theorem(theorem).unwrap(), 3));
         assert!(
             arena
@@ -1524,7 +1494,7 @@ mod tests {
     }
 
     #[test]
-    fn theorem_wire_format_is_canonical_and_has_golden_cbor_bytes() {
+    fn theorem_wire_format_preserves_non_normal_rows() {
         let theorem = ThmRow::new(
             Cnf::new([row([lit(2), lit(-1)])]),
             Dnf::new([row([]), row([lit(3)])]),
@@ -1533,13 +1503,11 @@ mod tests {
         covalence_lib_cbor::into_writer(&theorem, &mut bytes).unwrap();
         assert_eq!(
             bytes,
-            [0x82, 0x81, 0x82, 0x20, 0x02, 0x82, 0x80, 0x81, 0x03]
+            [0x82, 0x81, 0x82, 0x02, 0x20, 0x82, 0x80, 0x81, 0x03]
         );
 
         let decoded: ThmRow = covalence_lib_cbor::from_reader(bytes.as_slice()).unwrap();
-        let mut normalized = theorem.clone();
-        normalized.normalize();
-        assert_eq!(decoded, normalized);
+        assert_eq!(decoded, theorem);
         let value: covalence_lib_cbor::Value =
             covalence_lib_cbor::from_reader(bytes.as_slice()).unwrap();
         assert!(matches!(value, covalence_lib_cbor::Value::Array(parts) if parts.len() == 2));
@@ -1570,23 +1538,24 @@ mod tests {
         covalence_lib_cbor::into_writer(&arena, &mut bytes).unwrap();
         assert_eq!(
             bytes,
-            [0x81, 0x82, 0x81, 0x82, 0x20, 0x02, 0x82, 0x80, 0x81, 0x03]
+            [0x81, 0x82, 0x81, 0x82, 0x02, 0x20, 0x82, 0x80, 0x81, 0x03]
         );
 
         let mut decoded: ClassicalArena =
             covalence_lib_cbor::from_reader(bytes.as_slice()).unwrap();
         let dense = ThmId::new(1).unwrap();
-        let mut retained_theorem = arena.theorem(retained).unwrap().clone();
-        retained_theorem.normalize();
-        assert_eq!(decoded.theorem(dense).unwrap(), &retained_theorem);
+        assert_eq!(
+            decoded.theorem(dense).unwrap(),
+            arena.theorem(retained).unwrap()
+        );
         assert_eq!(decoded.identity(lit(2)).unwrap(), ThmId::new(2).unwrap());
     }
 
     #[test]
-    fn wire_decode_rejects_noncanonical_theorems() {
-        // [[2, -1]] is not in the canonical literal order.
+    fn wire_decode_accepts_non_normal_theorems() {
         let noncanonical = [0x82, 0x81, 0x82, 0x02, 0x20, 0x80];
-        assert!(covalence_lib_cbor::from_reader::<ThmRow, _>(&noncanonical[..]).is_err());
+        let theorem = covalence_lib_cbor::from_reader::<ThmRow, _>(&noncanonical[..]).unwrap();
+        assert_eq!(theorem.left().rows().next().unwrap(), [lit(2), lit(-1)]);
     }
 
     #[test]
@@ -1598,7 +1567,8 @@ mod tests {
         let before: Vec<_> = (0..4)
             .map(|valuation| sequent_value(&theorem, valuation))
             .collect();
-        theorem.normalize();
+        theorem.0.normalize();
+        theorem.1.normalize();
         let after: Vec<_> = (0..4)
             .map(|valuation| sequent_value(&theorem, valuation))
             .collect();
@@ -1634,7 +1604,8 @@ mod tests {
             let before: Vec<_> = (0..4)
                 .map(|valuation| sequent_value(&theorem, valuation))
                 .collect();
-            theorem.normalize();
+            theorem.0.normalize();
+            theorem.1.normalize();
             let after: Vec<_> = (0..4)
                 .map(|valuation| sequent_value(&theorem, valuation))
                 .collect();

@@ -40,12 +40,10 @@ def test_nested_cnf_dnf_inspection_weakening_transfers_and_normalization() -> No
     assert kernel.theorem(theorem) == ([[p]], [[p]])
 
     kernel.weaken_matrix(theorem, [[q, p, q]], [[-q, p, -q]])
-    assert kernel.theorem(theorem) == ([[q, p], [p]], [[p], [p, -q]])
+    assert kernel.theorem(theorem) == ([[p], [q, p, q]], [[p], [-q, p, -q]])
     kernel.move_cnf_right(theorem, 2)
-    assert [p, -q] in kernel.theorem(theorem)[1]
+    assert [-q, -p, -q] in kernel.theorem(theorem)[1]
     kernel.move_dnf_left(theorem, 1)
-    kernel.normalize_theorem(theorem)
-
     before = kernel.theorem(theorem)
     with pytest.raises(ValueError):
         kernel.move_cnf_right(theorem, 0)

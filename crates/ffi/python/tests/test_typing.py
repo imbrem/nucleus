@@ -14,6 +14,7 @@ from covalence import _covalence
 from covalence import cas as public_cas
 from covalence.data import cbor as public_cbor
 from covalence.lib import hash as public_hash
+from covalence.logic import classical as public_classical
 from covalence.logic import hol as public_hol
 from covalence.logic import lrat as public_lrat
 from covalence.logic import metamath as public_metamath
@@ -72,6 +73,7 @@ def test_every_public_name_is_reexported() -> None:
         public_cas,
         public_cbor,
         public_hash,
+        public_classical,
         public_lrat,
         public_hol,
         public_metamath,
@@ -81,6 +83,17 @@ def test_every_public_name_is_reexported() -> None:
         if public_module is public_cas:
             # The duck-typed provider protocols are intentionally pure Python.
             names -= {"Cas", "CheckedCas"}
+        if public_module is public_lrat:
+            # Solver orchestration is intentionally pure Python.
+            names -= {
+                "replay_into_classical",
+                "replay_into_syllogisms",
+                "replay_into_theorems",
+                "solve_cadical",
+                "solve_cadical_into_classical",
+                "solve_cadical_into_syllogisms",
+                "solve_cadical_into_theorems",
+            }
         if public_module is public_hol:
             # The public HOL module removes the extension's `Hol` prefix.
             for name in names - {"load_standard_proof"}:

@@ -6,6 +6,8 @@ use covalence_logic_hol::{
 };
 use wasm_bindgen::prelude::*;
 
+use crate::classical::Refutation;
+
 use crate::to_js;
 
 /// A checked classical HOL prover for browser tactics.
@@ -356,6 +358,37 @@ impl HolProver {
         self.snapshot(theorem).map_err(to_js)
     }
 
+    /// Copies a checked propositional refutation into the universal syllogism arena.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if theorem storage is exhausted.
+    #[wasm_bindgen(js_name = copyRefutationToSyllogisms)]
+    pub fn copy_refutation_to_syllogisms(
+        &mut self,
+        refutation: &Refutation,
+    ) -> Result<i32, JsError> {
+        self.kernel
+            .syl_mut()
+            .copy_refutation(&refutation.0)
+            .map(ThmId::get)
+            .map_err(to_js)
+    }
+
+    /// Copies a checked propositional refutation into the HOL theorem arena.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if theorem storage is exhausted.
+    #[wasm_bindgen(js_name = copyRefutationToTheorems)]
+    pub fn copy_refutation_to_theorems(&mut self, refutation: &Refutation) -> Result<i32, JsError> {
+        self.kernel
+            .thm_mut()
+            .copy_refutation(&refutation.0)
+            .map(ThmId::get)
+            .map_err(to_js)
+    }
+
     /// Weakens a theorem with complete CNF clauses and DNF cubes.
     ///
     /// Both matrix arguments are JSON arrays of rows containing signed
@@ -402,17 +435,6 @@ impl HolProver {
         let theorem = parse_thm(theorem).map_err(to_js)?;
         let row = parse_dnf(index).map_err(to_js)?;
         self.kernel.move_dnf_left(theorem, row).map_err(to_js)
-    }
-
-    /// Canonicalizes every clause, cube, and matrix row of one theorem.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for a malformed or absent theorem ID.
-    #[wasm_bindgen(js_name = normalizeTheorem)]
-    pub fn normalize_theorem(&mut self, theorem: i32) -> Result<(), JsError> {
-        let theorem = parse_thm(theorem).map_err(to_js)?;
-        self.kernel.normalize_theorem(theorem).map_err(to_js)
     }
 
     /// Sorts and deduplicates the selected one-based left clause in place.
@@ -618,7 +640,7 @@ mod tests {
     }
 
     #[test]
-    fn lossless_signed_ids_and_canonical_contexts() {
+    fn lossless_signed_ids_and_non_normal_contexts() {
         assert!(parse_prop(0).is_err());
         assert!(parse_prop(i32::MIN).is_err());
         assert!(parse_prop(i32::MAX).is_err());
@@ -634,11 +656,14 @@ mod tests {
         assert_eq!(
             snapshot,
             format!(
-                "{{\"premises\":[[{}],[{}]],\"conclusions\":[[{}],[{}]]}}",
-                p.get().min(q.get()),
-                p.get().max(q.get()),
-                p.get().min(q.get()),
-                p.get().max(q.get())
+                "{{\"premises\":[[{}],[{}],[{}],[{}]],\"conclusions\":[[{}],[{}],[{}]]}}",
+                p.get(),
+                q.get(),
+                p.get(),
+                q.get(),
+                p.get(),
+                q.get(),
+                p.get()
             )
         );
     }
@@ -712,7 +737,7 @@ mod tests {
             .unwrap();
         let snapshot = prover.theorem_json(theorem_id).unwrap();
         assert!(snapshot.contains(&format!(r"[{},{}]", q.get(), p.negated().get())));
-        assert!(snapshot.contains(&format!(r"[{},{}]", p.get(), q.negated().get())));
+        assert!(snapshot.contains(&format!(r"[{},{}]", q.negated().get(), p.get())));
 
         let clause_index = prover
             .kernel
@@ -767,24 +792,53 @@ mod tests {
         );
         prover.weaken_matrix(theorem_id, &clauses, &cubes).unwrap();
 
-        let expected = format!(
+        let raw = format!(
             concat!(
-                "{{\"premises\":[[{},{}],[{}]],",
-                "\"conclusions\":[[{},{}],[{}]]}}"
+                "{{\"premises\":[[{}],[{},{},{}],[{}],[{},{},{}]],",
+                "\"conclusions\":[[{}],[{},{},{}],[{}],[{},{},{}]]}}"
             ),
+            p.get(),
+            q.get(),
+            p.get(),
             q.get(),
             p.get(),
             p.get(),
             q.get(),
             p.get(),
-            p.get()
+            p.get(),
+            p.get(),
+            q.get(),
+            p.get(),
+            p.get(),
+            q.get(),
+            p.get(),
+            q.get()
         );
-        assert_eq!(prover.theorem_json(theorem_id).unwrap(), expected);
+        assert_eq!(prover.theorem_json(theorem_id).unwrap(), raw);
 
-        prover.normalize_cnf(theorem_id, 1).unwrap();
-        prover.normalize_dnf(theorem_id, 1).unwrap();
-        prover.normalize_theorem(theorem_id).unwrap();
-        assert_eq!(prover.theorem_json(theorem_id).unwrap(), expected);
+        prover.normalize_cnf(theorem_id, 2).unwrap();
+        prover.normalize_dnf(theorem_id, 2).unwrap();
+        let normalized_rows = format!(
+            concat!(
+                "{{\"premises\":[[{}],[{},{}],[{}],[{},{},{}]],",
+                "\"conclusions\":[[{}],[{},{}],[{}],[{},{},{}]]}}"
+            ),
+            p.get(),
+            q.get(),
+            p.get(),
+            p.get(),
+            p.get(),
+            q.get(),
+            p.get(),
+            p.get(),
+            q.get(),
+            p.get(),
+            p.get(),
+            q.get(),
+            p.get(),
+            q.get()
+        );
+        assert_eq!(prover.theorem_json(theorem_id).unwrap(), normalized_rows);
     }
 
     #[test]
@@ -834,13 +888,6 @@ mod tests {
             prover
                 .kernel
                 .move_dnf_left(theorem, DnfId::new(99).unwrap())
-                .is_err()
-        );
-        assert_eq!(prover.theorem_json(theorem_id).unwrap(), before);
-        assert!(
-            prover
-                .kernel
-                .normalize_theorem(ThmId::new(999).unwrap())
                 .is_err()
         );
         assert_eq!(prover.theorem_json(theorem_id).unwrap(), before);

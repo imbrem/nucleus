@@ -4,14 +4,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use covalence_lib_error::snafu::{self, Snafu};
 use covalence_logic_classical::{
-    ClassicalKernel, CnfId, Error as ClassicalError, RatGroup as ClassicalRatGroup, Refuter,
+    ClassicalKernel, CnfId, Error as ClassicalError, RatGroup as ClassicalRatGroup, Refutation,
+    Refuter,
 };
 use covalence_logic_hol::{
-    Cnf, Kernel, KernelError, Lit, Ref, ThmId, ThmRef,
+    Cnf, Kernel, KernelError, Lit, LitVec, Ref, ThmId, ThmRef,
     builtin::{Op1, Op2},
 };
 
-use crate::{Clause, ClauseId, Literal, Step};
+use crate::{Clause, ClauseId, Formula, Literal, Step};
 
 /// A clause retained alongside its checked consequence theorem.
 #[derive(Clone, Debug)]
@@ -64,6 +65,189 @@ pub enum Error {
     /// The supplied root is not a canonical CNF opcode tree.
     #[snafu(display("reference {formula:?} is not a canonical CNF formula"))]
     NonCanonicalFormula { formula: Ref },
+}
+
+/// Converts a DIMACS formula to the classical kernel's dense CNF representation.
+///
+/// Literal and row order, including duplicates, is preserved.
+///
+/// # Errors
+///
+/// Returns an error if a literal or row index does not fit the classical `i32` representation.
+pub fn load_cnf(formula: &Formula) -> Result<Cnf, Error> {
+    formula
+        .clauses()
+        .iter()
+        .map(|clause| {
+            clause
+                .iter()
+                .map(|literal| {
+                    i32::try_from(literal.get())
+                        .ok()
+                        .and_then(|value| Lit::try_new(value).ok())
+                        .ok_or(Error::InvalidLiteral {
+                            literal: literal.get(),
+                        })
+                })
+                .collect::<Result<_, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Cnf::new)
+}
+
+/// Incremental userspace replay of LRAT over uninterpreted classical atoms.
+#[derive(Debug)]
+pub struct ClassicalProver {
+    refuter: Refuter,
+    live: BTreeMap<ClauseId, CnfId>,
+    high_water: ClauseId,
+}
+
+impl ClassicalProver {
+    /// Opens the initial DIMACS formula for checked LRAT replay.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the formula does not fit the classical representation.
+    pub fn new(formula: &Formula) -> Result<Self, Error> {
+        let goal = load_cnf(formula)?;
+        let mut live = BTreeMap::new();
+        for index in 0..formula.len() {
+            let id = u64::try_from(index)
+                .ok()
+                .and_then(|value| value.checked_add(1))
+                .ok_or(Error::TooManyClauses)?;
+            let row = i32::try_from(index)
+                .ok()
+                .and_then(|value| value.checked_add(1))
+                .and_then(CnfId::new)
+                .ok_or(Error::TooManyClauses)?;
+            live.insert(id, row);
+        }
+        Ok(Self {
+            refuter: Refuter::new(goal),
+            live,
+            high_water: u64::try_from(formula.len()).map_err(|_| Error::TooManyClauses)?,
+        })
+    }
+
+    fn rows(&self, step: ClauseId, ids: &[ClauseId]) -> Result<Vec<CnfId>, Error> {
+        ids.iter()
+            .map(|id| {
+                self.live
+                    .get(id)
+                    .copied()
+                    .ok_or(Error::UnknownClause { step, clause: *id })
+            })
+            .collect()
+    }
+
+    /// Applies one parsed LRAT step.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first structural, RUP, or RAT rejection without admitting the step.
+    pub fn apply(&mut self, step: &Step) -> Result<(), Error> {
+        match step {
+            Step::LearnRup {
+                id,
+                clause,
+                ordered_hints,
+            } => {
+                if *id <= self.high_water {
+                    return Err(Error::NonFreshId { id: *id });
+                }
+                let row = load_cnf(&Formula::new([clause.clone()]))?
+                    .rows()
+                    .next()
+                    .map(LitVec::from_slice)
+                    .unwrap_or_default();
+                let hints = self.rows(*id, ordered_hints)?;
+                let row = self.refuter.learn_rup(row, &hints)?;
+                self.live.insert(*id, row);
+                self.high_water = *id;
+            }
+            Step::LearnRat {
+                id,
+                clause,
+                pivot,
+                prefix_rup_hints,
+                groups,
+            } => {
+                if *id <= self.high_water {
+                    return Err(Error::NonFreshId { id: *id });
+                }
+                let row = load_cnf(&Formula::new([clause.clone()]))?
+                    .rows()
+                    .next()
+                    .map(LitVec::from_slice)
+                    .unwrap_or_default();
+                let pivot = i32::try_from(pivot.get())
+                    .ok()
+                    .and_then(|value| Lit::try_new(value).ok())
+                    .ok_or(Error::InvalidLiteral {
+                        literal: pivot.get(),
+                    })?;
+                let prefix = self.rows(*id, prefix_rup_hints)?;
+                let groups = groups
+                    .iter()
+                    .map(|group| {
+                        Ok(ClassicalRatGroup {
+                            opposing: self.rows(*id, &[group.opposing_clause_id])?[0],
+                            hints: self.rows(*id, &group.resolvent_rup_hints)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let row = self.refuter.learn_rat(row, pivot, &prefix, &groups)?;
+                self.live.insert(*id, row);
+                self.high_water = *id;
+            }
+            Step::Forget { ids } => {
+                let unique: BTreeSet<_> = ids.iter().copied().collect();
+                if unique.len() != ids.len() {
+                    let clause = ids
+                        .iter()
+                        .copied()
+                        .find(|id| ids.iter().filter(|other| *other == id).count() > 1)
+                        .unwrap_or(0);
+                    return Err(Error::UnknownClause {
+                        step: self.high_water,
+                        clause,
+                    });
+                }
+                let rows = self.rows(self.high_water, ids)?;
+                for row in rows {
+                    self.refuter.remove(row)?;
+                }
+                for id in ids {
+                    self.live.remove(id);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Completes replay after an empty clause has been derived.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if replay has not derived an empty clause.
+    pub fn done(self) -> Result<Refutation, Error> {
+        self.refuter.done().map_err(Into::into)
+    }
+}
+
+/// Replays all steps and returns a universally valid classical refutation.
+///
+/// # Errors
+///
+/// Returns the first rejected formula, proof step, or incomplete proof.
+pub fn replay(formula: &Formula, steps: &[Step]) -> Result<Refutation, Error> {
+    let mut prover = ClassicalProver::new(formula)?;
+    for step in steps {
+        prover.apply(step)?;
+    }
+    prover.done()
 }
 
 /// Incrementally constructs a deterministic CNF term around a checked kernel.
@@ -963,4 +1147,17 @@ mod tests {
         assert!(prover.done().is_ok());
         assert!(oracle.refuted());
     }
+}
+#[test]
+fn standalone_text_and_binary_replay_produce_the_same_refutation() {
+    let formula = Formula::from_signed([vec![1], vec![-1]]).unwrap();
+    let text = crate::parse::parse_text("3 0 1 2 0\n").unwrap();
+    let binary = crate::parse::parse_binary(&[b'a', 6, 0, 2, 4, 0]).unwrap();
+    let text = replay(&formula, &text).unwrap();
+    let binary = replay(&formula, &binary).unwrap();
+    assert_eq!(text.theorem(), binary.theorem());
+    assert_eq!(
+        text.theorem().lhs.to_rows(),
+        load_cnf(&formula).unwrap().to_rows()
+    );
 }
