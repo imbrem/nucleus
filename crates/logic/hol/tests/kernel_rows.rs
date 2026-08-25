@@ -422,3 +422,12 @@ fn type_quantifiers_are_boolean_propositions_over_a_bound_type_variable() {
     assert_ne!(universal, existential);
     assert_ne!(fix.arena().tag(universal), fix.arena().tag(existential));
 }
+
+#[test]
+fn a_type_universal_reserves_its_binder_name() {
+    let mut fix = Fix::new();
+    let truth = fix.lit(true);
+    let universal = fix.ty_forall(41, truth).expect("universal");
+
+    assert_eq!(fix.fresh_name(&[universal]).expect("fresh name"), 42);
+}

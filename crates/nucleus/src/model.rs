@@ -171,8 +171,7 @@ fn find_free_type_variable(
         if matches!(
             tag,
             Tag::Ty(TyTag::Model) | Tag::Tm(TmTag::TyExists | TmTag::TyForall)
-        )
-            && kernel.arena().name(input) == Some(name)
+        ) && kernel.arena().name(input) == Some(name)
         {
             return Ok(None);
         }

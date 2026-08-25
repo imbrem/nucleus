@@ -8,14 +8,14 @@ and in the init slice, and the property that decides whether the phase is done.
 
 ## Where we actually are
 
-The distinction that matters is between the *semantic* naturals and the
-*object-language* naturals.
+The distinction that matters is between the _semantic_ naturals and the
+_object-language_ naturals.
 
 `lean/Nucleus/Nucleus/HolE/ClassicalNaturals.lean` already carries the semantic
 side in full: `CNatModel`, the carving of a model out of any infinite type
 (`natModelOfInjectiveNotSurjective`), `natrec` with its uniqueness theorem,
 `add` and `mul` with commutativity and associativity, and `transport` between
-any two models. That is a theorem *about the meaning* of `ax.inf`.
+any two models. That is a theorem _about the meaning_ of `ax.inf`.
 
 Nothing of that exists as Ethane syntax. There is no `nat` row, no `nat.rec`
 definition in the executable init slice, and no object-language theorem whose
@@ -54,7 +54,7 @@ Done when: `nat.zero`, `nat.succ` and `nat.induction` are object-language
 theorems in an arena whose `axs` is exactly `{ax.inf, ax.sub}`.
 
 Open universals land here. `nat`'s defining predicate quantifies over
-`P : ind → bool`, a *term* quantifier, so it does not need `ty.forall`. But the
+`P : ind → bool`, a _term_ quantifier, so it does not need `ty.forall`. But the
 algebraic hierarchy in phase 5 does, and the coproduct rule that motivated
 `ty.forall` is the same shape. The quantifier is now open — its predicate
 carries the ambient term depth — so a `ty.forall` may appear under `tm.lam`,
@@ -96,7 +96,7 @@ and it is the one that certifies everything after it.
 ## Phase 4 — `tm.nat` literals and accelerated builtins
 
 Only now do literals make sense, because only now is there something for a
-literal to *mean*.
+literal to _mean_.
 
 **Representation.** `Node::Nat(u64)`, an inline unsigned literal in `Expr`, tag
 `tm.nat`. Inline rather than a reference because the value is not syntax with
@@ -104,14 +104,14 @@ children; `row.rs` already has the shape for this in `Node::Bool`. u64 is the
 deliberate first cut: bignat and then bigint are follow-ups, and the wire tag
 must be versioned (`tm.nat.v1`) so widening the domain is a new tag rather than
 a reinterpretation of an old one. `crates/logic/hol/src/init.rs` already has a
-test asserting the checked manifest *rejects* `tm.nat`; that test encodes the
+test asserting the checked manifest _rejects_ `tm.nat`; that test encodes the
 current invariant and must be updated deliberately, not deleted.
 
 **Acceleration.** `tm.succ`, `tm.pred`, `tm.add`, `tm.sub`, `tm.mul`, `tm.div`,
 `tm.mod` as builtins in the existing `Op1`/`Op2` families in
 `crates/logic/hol/src/builtin.rs`. That file's contract already says what a
-builtin is: *a macro whose sole meaning is canonical recursive expansion to the
-opcode-free init definitions*. Arithmetic builtins keep that contract — `tm.add`
+builtin is: _a macro whose sole meaning is canonical recursive expansion to the
+opcode-free init definitions_. Arithmetic builtins keep that contract — `tm.add`
 on two `tm.nat` literals lowers to the phase-3 `nat.add` applied to the unary
 expansions, and the accelerated evaluator must agree with that lowering. The
 acceleration is a fast path for a meaning that is already fixed, never a new
@@ -119,30 +119,23 @@ meaning. `pred`, `sub`, `div` and `mod` need their total-fallback conventions
 pinned in the registry (truncated subtraction, `div` and `mod` by zero) since
 Ethane has no partiality.
 
-**Trust.** This is the phase that changes the trust story, which is why it gets
-its own capability:
+**Trust.** Literals and arithmetic opcodes do not add an axiom. They are compact
+syntax for the opcode-free definitions already present in the init slice. A
+checked operation must either lower the compact row to that canonical syntax or
+produce a syntactic certificate relating it to the lowering. An accelerated
+evaluator may compute the same result more cheaply, but its answer is not proof
+authority by itself.
 
-**`amb.ax` gains `acc.nat`.** `arena.amb.ax` already exists and is currently
-required to be empty for a kernel-valid arena
-(`AllowedAmbientAxiom _ := False` in `Arena/OneBased/Layout.lean`). `acc.nat`
-becomes the first inhabitant. The point is exactly the one that makes it worth
-doing: any proof whose axiom set omits `acc.nat` demonstrably does not depend on
-literal arithmetic or on the accelerated evaluator, so the phase-3 unary
-`1 + 1 = 2` remains checkable without trusting a u64 adder.
+This keeps the phase-3 unary proof and the accelerated spelling in the same
+logic: neither depends on trusting a host u64 implementation. The agreement
+test remains essential as an implementation regression test, while soundness
+comes from checking the lowering rather than from a capability that blesses the
+fast path.
 
-**Axiom sets as bitflags.** `arena.axs` is a `BTreeSet<String>` today. Replace
-it with a bitflag set over a closed registry (`ax.inf`, `ax.sub`, `acc.nat`, …)
-keeping the string names only at the wire boundary. Three payoffs: subset and
-union queries — "does this proof depend on `ax.inf`?" — become one instruction;
-the Metamath `AxiomIndex` work already uses dense bitsets, so the two agree;
-and an unknown axiom name becomes a decode error rather than a silently carried
-capability. `AllowedAxiom` in Lean becomes a decidable predicate on the flag
-set, which is strictly easier to reason about than a `Finset String`.
-
-Done when: `tm.nat 1 + tm.nat 1 = tm.nat 2` is provable in an arena carrying
-`acc.nat`, the phase-3 unary proof still checks in an arena without it, and a
-differential test asserts the accelerated result equals the lowered result on a
-range of inputs including the u64 boundary.
+Done when: `tm.nat 1 + tm.nat 1 = tm.nat 2` lowers to the phase-3 definitions,
+the lowered proof checks in an opcode-free kernel, and differential tests assert
+that accelerated construction agrees with lowering on a range of inputs
+including the u64 boundary.
 
 ## Phase 5 — the algebraic hierarchy
 
@@ -152,7 +145,7 @@ predicate on a type together with its operations. Then prove `nat` satisfies
 them, discharging each obligation from the phase-3 laws.
 
 This is where `ty.forall` earns its place. An algebraic property is a statement
-about *some* carrier, and the natural encoding quantifies over the carrier:
+about _some_ carrier, and the natural encoding quantifies over the carrier:
 
     IsMonoid := λ op. λ unit. ∀ᵗ α. …
 
@@ -162,13 +155,13 @@ lambda's variables. The same shape gives the coproduct rule that motivated the
 quantifier in the first place.
 
 Done when: `nat` is a commutative semiring by an object-language proof, and the
-proof of, say, `add.comm` is *reused* rather than restated.
+proof of, say, `add.comm` is _reused_ rather than restated.
 
 ## Ordering and risk
 
 Phases 1–3 are strictly sequential; each needs the previous phase's theorems.
 Phase 4 depends only on phase 3's `nat.add`/`nat.mul` (it needs something to
-lower *to*), and phase 5 depends only on phase 3's laws. So 4 and 5 are
+lower _to_), and phase 5 depends only on phase 3's laws. So 4 and 5 are
 independent of each other and can proceed in parallel once 3 lands.
 
 The two places to expect trouble: phase 2, because `eps` at a function type

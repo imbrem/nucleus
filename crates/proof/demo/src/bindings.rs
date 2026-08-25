@@ -1886,6 +1886,79 @@ pub mod nucleus {
             }
             impl Arena {
                 #[allow(unused_unsafe, clippy::all)]
+                pub fn ty_forall(
+                    &self,
+                    name: u64,
+                    predicate: u64,
+                ) -> Result<u64, _rt::String> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea(
+                            [::core::mem::MaybeUninit<
+                                u8,
+                            >; 8 + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let mut ret_area = RetArea(
+                            [::core::mem::MaybeUninit::uninit(); 8
+                                + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "nucleus:proof/host@0.1.0")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]arena.ty-forall"]
+                            fn wit_import1(_: i32, _: i64, _: i64, _: *mut u8);
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(
+                            _: i32,
+                            _: i64,
+                            _: i64,
+                            _: *mut u8,
+                        ) {
+                            unreachable!()
+                        }
+                        unsafe {
+                            wit_import1(
+                                (self).handle() as i32,
+                                _rt::as_i64(&name),
+                                _rt::as_i64(&predicate),
+                                ptr0,
+                            )
+                        };
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result7 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+                                    l3 as u64
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = *ptr0.add(8).cast::<*mut u8>();
+                                    let l5 = *ptr0
+                                        .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                        .cast::<usize>();
+                                    let len6 = l5;
+                                    let bytes6 = _rt::Vec::from_raw_parts(
+                                        l4.cast(),
+                                        len6,
+                                        len6,
+                                    );
+                                    _rt::string_lift(bytes6)
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+            impl Arena {
+                #[allow(unused_unsafe, clippy::all)]
                 pub fn model(
                     &self,
                     name: u64,
@@ -4066,6 +4139,79 @@ pub mod nucleus {
                         #[link(wasm_import_module = "nucleus:proof/host@0.1.0")]
                         unsafe extern "C" {
                             #[link_name = "[method]kernel.ty-exists"]
+                            fn wit_import1(_: i32, _: i64, _: i64, _: *mut u8);
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(
+                            _: i32,
+                            _: i64,
+                            _: i64,
+                            _: *mut u8,
+                        ) {
+                            unreachable!()
+                        }
+                        unsafe {
+                            wit_import1(
+                                (self).handle() as i32,
+                                _rt::as_i64(&name),
+                                _rt::as_i64(&predicate),
+                                ptr0,
+                            )
+                        };
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result7 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+                                    l3 as u64
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = *ptr0.add(8).cast::<*mut u8>();
+                                    let l5 = *ptr0
+                                        .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                        .cast::<usize>();
+                                    let len6 = l5;
+                                    let bytes6 = _rt::Vec::from_raw_parts(
+                                        l4.cast(),
+                                        len6,
+                                        len6,
+                                    );
+                                    _rt::string_lift(bytes6)
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+            impl Kernel {
+                #[allow(unused_unsafe, clippy::all)]
+                pub fn ty_forall(
+                    &self,
+                    name: u64,
+                    predicate: u64,
+                ) -> Result<u64, _rt::String> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea(
+                            [::core::mem::MaybeUninit<
+                                u8,
+                            >; 8 + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let mut ret_area = RetArea(
+                            [::core::mem::MaybeUninit::uninit(); 8
+                                + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "nucleus:proof/host@0.1.0")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]kernel.ty-forall"]
                             fn wit_import1(_: i32, _: i64, _: i64, _: *mut u8);
                         }
                         #[cfg(not(target_arch = "wasm32"))]
@@ -7990,9 +8136,9 @@ pub(crate) use __export_standard_proof_impl as export;
 #[unsafe(link_section = "component-type:wit-bindgen:0.41.0:nucleus:proof@0.1.0:standard-proof:encoded world")]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 6142] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf9.\x01A\x02\x01A\x05\
-\x01B\xfa\x01\x01m\x03\x03syn\x05alpha\x04conv\x04\0\x07syn-rel\x03\0\0\x01m\x03\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 6199] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xb2/\x01A\x02\x01A\x05\
+\x01B\xfc\x01\x01m\x03\x03syn\x05alpha\x04conv\x04\0\x07syn-rel\x03\0\0\x01m\x03\
 \x04kind\x02ty\x02tm\x04\0\x04sort\x03\0\x02\x01r\x05\x0bexists-typew\x04bodyw\x0c\
 carrier-namew\x09base-namew\x07theoremw\x04\0\x0einfinity-axiom\x03\0\x04\x01r\x07\
 \x07carrierw\x09predicatew\x0bexists-typew\x0cpackage-bodyw\x0amodel-namew\x09ba\
@@ -8024,37 +8170,38 @@ a.to-cbor\x010\x01@\x01\x04self/\0\x0e\x04\0\x15[method]arena.address\x011\x01@\
 \0\x14[method]arena.ty-app\x016\x01@\x03\x04self/\x06binderw\x04bodyw\03\x04\0\x14\
 [method]arena.ty-lam\x017\x01@\x03\x04self/\x04namew\x04kindw\03\x04\0\x13[metho\
 d]arena.ty-fv\x018\x01@\x03\x04self/\x04namew\x09predicatew\03\x04\0\x17[method]\
-arena.ty-exists\x019\x04\0\x13[method]arena.model\x019\x01@\x03\x04self/\x04name\
-w\x02tyw\03\x04\0\x13[method]arena.tm-fv\x01:\x04\0\x11[method]arena.app\x016\x04\
-\0\x11[method]arena.lam\x017\x01@\x02\x04self/\x05value\x7f\03\x04\0\x16[method]\
-arena.bool-lit\x01;\x01@\x03\x04self/\x04leftw\x05rightw\03\x04\0\x13[method]are\
-na.tm-eq\x01<\x01@\x03\x04self/\x02tyw\x09predicatew\03\x04\0\x11[method]arena.e\
-ps\x01=\x01@\x03\x04self/\x06sourcew\x07foreignw\03\x04\0\x16[method]arena.kind-\
-ref\x01>\x04\0\x14[method]arena.ty-ref\x01>\x04\0\x14[method]arena.tm-ref\x01>\x04\
-\0\x19[method]arena.import-null\x014\x01@\x02\x04self/\x05value/\03\x04\0\x1a[me\
-thod]arena.import-arena\x01?\x01@\x02\x04self/\x07address\x0e\03\x04\0\x19[metho\
-d]arena.import-link\x01@\x01j\0\x01s\x01@\x02\x04self/\x0bpropositionw\0\xc1\0\x04\
-\0\x19[method]arena.add-context\x01B\x01@\x02\x04self/\x04names\x01\0\x04\0\x17[\
-method]arena.add-axiom\x01C\x01i\x0c\x01j\x01\xc4\0\x01s\x01@\x01\x05value/\0\xc5\
-\0\x04\0\x18[static]table.from-arena\x01F\x01@\x01\x05value\x1a\0\xc5\0\x04\0\x17\
-[static]table.from-blob\x01G\x01h\x0c\x01@\x01\x04self\xc8\0\0\x0e\x04\0\x15[met\
-hod]table.address\x01I\x01@\x01\x04self\xc8\0\0+\x04\0\x13[method]table.arena\x01\
-J\x01i\x0d\x01@\0\0\xcb\0\x04\0\x13[constructor]kernel\x01L\x01h\x0d\x01@\x01\x04\
-self\xcd\0\0+\x04\0\x14[method]kernel.arena\x01N\x01@\x01\x04self\xcd\0\0\x0e\x04\
-\0\x16[method]kernel.address\x01O\x01@\x01\x04self\xcd\0\0w\x04\0\x12[method]ker\
-nel.len\x01P\x01j\x01\x03\x01s\x01@\x02\x04self\xcd\0\x09referencew\0\xd1\0\x04\0\
-\x17[method]kernel.category\x01R\x01@\x02\x04self\xcd\0\x09referencew\03\x04\0\x19\
-[method]kernel.classifier\x01S\x04\0\x13[method]kernel.find\x01S\x04\0\x17[metho\
-d]kernel.find-mut\x01S\x01@\x03\x04self\xcd\0\x04leftw\x05rightw\0(\x04\0\x19[me\
-thod]kernel.equivalent\x01T\x04\0\x1d[method]kernel.equivalent-mut\x01T\x01@\x01\
-\x04self\xcd\0\03\x04\0\x18[method]kernel.kind-star\x01U\x01@\x03\x04self\xcd\0\x06\
-domainw\x08codomainw\03\x04\0\x17[method]kernel.kind-arr\x01V\x01@\x02\x04self\xcd\
-\0\x04starw\03\x04\0\x18[method]kernel.bool-type\x01W\x04\0\x15[method]kernel.ty\
--arr\x01V\x01@\x03\x04self\xcd\0\x08functionw\x08argumentw\03\x04\0\x15[method]k\
-ernel.ty-app\x01X\x01@\x03\x04self\xcd\0\x06binderw\x04bodyw\03\x04\0\x15[method\
-]kernel.ty-lam\x01Y\x01@\x03\x04self\xcd\0\x04namew\x04kindw\03\x04\0\x14[method\
-]kernel.ty-fv\x01Z\x01@\x03\x04self\xcd\0\x04namew\x09predicatew\03\x04\0\x18[me\
-thod]kernel.ty-exists\x01[\x04\0\x14[method]kernel.model\x01[\x01@\x03\x04self\xcd\
+arena.ty-exists\x019\x04\0\x17[method]arena.ty-forall\x019\x04\0\x13[method]aren\
+a.model\x019\x01@\x03\x04self/\x04namew\x02tyw\03\x04\0\x13[method]arena.tm-fv\x01\
+:\x04\0\x11[method]arena.app\x016\x04\0\x11[method]arena.lam\x017\x01@\x02\x04se\
+lf/\x05value\x7f\03\x04\0\x16[method]arena.bool-lit\x01;\x01@\x03\x04self/\x04le\
+ftw\x05rightw\03\x04\0\x13[method]arena.tm-eq\x01<\x01@\x03\x04self/\x02tyw\x09p\
+redicatew\03\x04\0\x11[method]arena.eps\x01=\x01@\x03\x04self/\x06sourcew\x07for\
+eignw\03\x04\0\x16[method]arena.kind-ref\x01>\x04\0\x14[method]arena.ty-ref\x01>\
+\x04\0\x14[method]arena.tm-ref\x01>\x04\0\x19[method]arena.import-null\x014\x01@\
+\x02\x04self/\x05value/\03\x04\0\x1a[method]arena.import-arena\x01?\x01@\x02\x04\
+self/\x07address\x0e\03\x04\0\x19[method]arena.import-link\x01@\x01j\0\x01s\x01@\
+\x02\x04self/\x0bpropositionw\0\xc1\0\x04\0\x19[method]arena.add-context\x01B\x01\
+@\x02\x04self/\x04names\x01\0\x04\0\x17[method]arena.add-axiom\x01C\x01i\x0c\x01\
+j\x01\xc4\0\x01s\x01@\x01\x05value/\0\xc5\0\x04\0\x18[static]table.from-arena\x01\
+F\x01@\x01\x05value\x1a\0\xc5\0\x04\0\x17[static]table.from-blob\x01G\x01h\x0c\x01\
+@\x01\x04self\xc8\0\0\x0e\x04\0\x15[method]table.address\x01I\x01@\x01\x04self\xc8\
+\0\0+\x04\0\x13[method]table.arena\x01J\x01i\x0d\x01@\0\0\xcb\0\x04\0\x13[constr\
+uctor]kernel\x01L\x01h\x0d\x01@\x01\x04self\xcd\0\0+\x04\0\x14[method]kernel.are\
+na\x01N\x01@\x01\x04self\xcd\0\0\x0e\x04\0\x16[method]kernel.address\x01O\x01@\x01\
+\x04self\xcd\0\0w\x04\0\x12[method]kernel.len\x01P\x01j\x01\x03\x01s\x01@\x02\x04\
+self\xcd\0\x09referencew\0\xd1\0\x04\0\x17[method]kernel.category\x01R\x01@\x02\x04\
+self\xcd\0\x09referencew\03\x04\0\x19[method]kernel.classifier\x01S\x04\0\x13[me\
+thod]kernel.find\x01S\x04\0\x17[method]kernel.find-mut\x01S\x01@\x03\x04self\xcd\
+\0\x04leftw\x05rightw\0(\x04\0\x19[method]kernel.equivalent\x01T\x04\0\x1d[metho\
+d]kernel.equivalent-mut\x01T\x01@\x01\x04self\xcd\0\03\x04\0\x18[method]kernel.k\
+ind-star\x01U\x01@\x03\x04self\xcd\0\x06domainw\x08codomainw\03\x04\0\x17[method\
+]kernel.kind-arr\x01V\x01@\x02\x04self\xcd\0\x04starw\03\x04\0\x18[method]kernel\
+.bool-type\x01W\x04\0\x15[method]kernel.ty-arr\x01V\x01@\x03\x04self\xcd\0\x08fu\
+nctionw\x08argumentw\03\x04\0\x15[method]kernel.ty-app\x01X\x01@\x03\x04self\xcd\
+\0\x06binderw\x04bodyw\03\x04\0\x15[method]kernel.ty-lam\x01Y\x01@\x03\x04self\xcd\
+\0\x04namew\x04kindw\03\x04\0\x14[method]kernel.ty-fv\x01Z\x01@\x03\x04self\xcd\0\
+\x04namew\x09predicatew\03\x04\0\x18[method]kernel.ty-exists\x01[\x04\0\x18[meth\
+od]kernel.ty-forall\x01[\x04\0\x14[method]kernel.model\x01[\x01@\x03\x04self\xcd\
 \0\x04namew\x02tyw\03\x04\0\x14[method]kernel.tm-fv\x01\\\x04\0\x12[method]kerne\
 l.app\x01X\x04\0\x12[method]kernel.lam\x01Y\x01@\x03\x04self\xcd\0\x09bool-typew\
 \x05value\x7f\03\x04\0\x17[method]kernel.bool-lit\x01]\x01@\x04\x04self\xcd\0\x09\
