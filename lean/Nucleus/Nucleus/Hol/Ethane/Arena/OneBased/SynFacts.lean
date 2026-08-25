@@ -537,18 +537,34 @@ inductive Substitutes (subVar replacement : Value) : Value → Value → Prop wh
       (replacementIsSyntax : replacement.syntax? = some replacementSyntax)
       (inputIsSyntax : input.syntax? = some inputSyntax)
       (outputIsSyntax : output.syntax? = some outputSyntax)
+      -- `Value.syntax?` is `some` for families *and* terms, so without this the
+      -- relation would allow a family input with a term output.  Rust's
+      -- `require_substitution_result` pins the category unconditionally
+      -- (`require_category(output, category)`), so the premise costs nothing.
+      (sameCategory : input.tagSort = output.tagSort)
       (derivation : NamedSubstitution variableSyntax replacementSyntax inputSyntax outputSyntax) :
       Substitutes subVar replacement input output
+
+/-- Substitution never changes a value's syntax category. -/
+theorem Substitutes.tagSort_eq {subVar replacement input output : Value}
+    (substitutes : Substitutes subVar replacement input output) :
+    input.tagSort = output.tagSort := by
+  cases substitutes with
+  | kind kind => rfl
+  | «syntax» _ _ _ _ sameCategory _ => exact sameCategory
 
 /-- The variable case `[replacement / subVar] subVar = replacement`.
 This is the primitive substitution LCF rule used by Rust `syn_sub_var`. -/
 theorem Substitutes.varCase {subVar replacement : Value}
     {variableSyntax replacementSyntax : EmptySyn}
     (variableIsSyntax : subVar.syntax? = some variableSyntax)
-    (replacementIsSyntax : replacement.syntax? = some replacementSyntax) :
+    (replacementIsSyntax : replacement.syntax? = some replacementSyntax)
+    -- Rust `require_substitution_pair` requires the replacement to inhabit the
+    -- variable's category before any substitution fact is minted.
+    (sameCategory : subVar.tagSort = replacement.tagSort) :
     Substitutes subVar replacement subVar replacement :=
   .syntax variableIsSyntax replacementIsSyntax variableIsSyntax
-    replacementIsSyntax .hit
+    replacementIsSyntax sameCategory .hit
 
 /-- Denotation of one local direct or active-substitution judgment. -/
 def LocalSynMeaning (relation : SynRel) (subVar replacement : Option Value)
@@ -803,10 +819,11 @@ theorem refine_direct (source : SynRel.Holds finer input output)
 theorem substitutionVariable
     (variableIsSyntax : subVar.syntax? = some variableSyntax)
     (replacementIsSyntax : replacement.syntax? = some replacementSyntax)
-    (replacementWellFormed : replacement.WellFormed) :
+    (replacementWellFormed : replacement.WellFormed)
+    (sameCategory : subVar.tagSort = replacement.tagSort) :
     SynInference .syn (some subVar) (some replacement) subVar replacement :=
   .substitution
-    (Value.Substitutes.varCase variableIsSyntax replacementIsSyntax)
+    (Value.Substitutes.varCase variableIsSyntax replacementIsSyntax sameCategory)
     replacementWellFormed (Value.compatible_refl replacementWellFormed)
     (Value.syntaxEqual_refl replacement)
 

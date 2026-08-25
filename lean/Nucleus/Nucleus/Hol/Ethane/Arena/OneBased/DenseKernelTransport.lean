@@ -1922,14 +1922,27 @@ theorem denseEndpoints
     arena.dense.expr? fact.output ≠ none ∧
     Columns.SameCategory arena.dense fact.input fact.output := by
   rcases valid with ⟨input, output, inputResolved, outputResolved,
-    _inputWellFormed, _outputWellFormed, compatible, _meaning⟩
+    _inputWellFormed, _outputWellFormed, meaning⟩
+  -- `SynMeaning` carries endpoint compatibility in every case.  In the two
+  -- substitution cases it relates the *substituted* value to the output, and
+  -- substitution preserves the syntax category, so the tag sorts still agree.
+  have tagSortEq : input.tagSort = output.tagSort := by
+    cases varEq : fact.var <;> cases valEq : fact.val <;>
+      simp only [varEq, valEq, SynMeaning, Value.LocalSynMeaning] at meaning
+    · exact meaning.1.tagSort_eq
+    · obtain ⟨subVar, _, subVarWellFormed, localMeaning⟩ := meaning
+      obtain ⟨substituted, substitutes, _, compatible, _⟩ :=
+        localMeaning subVar subVarWellFormed (Value.compatible_refl subVarWellFormed)
+      exact substitutes.tagSort_eq.trans compatible.tagSort_eq
+    · obtain ⟨_, _, _, _, _, _, substituted, substitutes, _, compatible, _⟩ := meaning
+      exact substitutes.tagSort_eq.trans compatible.tagSort_eq
   have inputFull : Resolves resolve arena fact.input input :=
     (resolves_withoutSyn_iff resolve arena fact.input input).mp inputResolved
   have outputFull : Resolves resolve arena fact.output output :=
     (resolves_withoutSyn_iff resolve arena fact.output output).mp outputResolved
   refine ⟨inputFull.resident, outputFull.resident, ?_⟩
   refine ⟨input.tagSort, inputFull.tagSort?, ?_⟩
-  rw [compatible.tagSort_eq]
+  rw [tagSortEq]
   exact outputFull.tagSort?
 
 end SynFact.Valid
