@@ -25,6 +25,8 @@ pub const INIT_SOURCE: &str = include_str!("../theories/init.sexpr");
 #[derive(Debug)]
 pub struct CompiledTheory {
     kernel: Kernel,
+    star: Ref,
+    bool_ty: Ref,
     definitions: BTreeMap<String, Ref>,
     symbols: BTreeMap<String, Ref>,
 }
@@ -34,6 +36,18 @@ impl CompiledTheory {
     #[must_use]
     pub const fn kernel(&self) -> &Kernel {
         &self.kernel
+    }
+
+    /// Returns the kind of ordinary HOL types used by this compilation unit.
+    #[must_use]
+    pub const fn star(&self) -> Ref {
+        self.star
+    }
+
+    /// Returns the checked Boolean type used by this compilation unit.
+    #[must_use]
+    pub const fn bool_type(&self) -> Ref {
+        self.bool_ty
     }
 
     /// Resolves one public symbol.
@@ -171,6 +185,8 @@ pub fn compile_theory(source: &str) -> Result<CompiledTheory, TheoryError> {
     }
     Ok(CompiledTheory {
         kernel: compiler.kernel,
+        star: compiler.star,
+        bool_ty: compiler.bool_ty,
         definitions: compiler.definitions,
         symbols: compiler.symbols,
     })

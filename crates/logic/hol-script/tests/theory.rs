@@ -1,6 +1,7 @@
 //! End-to-end coverage for the untrusted theory front end.
 
-use covalence_logic_hol::{Sort, Tag, TmTag};
+use covalence_logic_hol::{AX_INF, AX_SUB, Sort, Tag, TmTag};
+use covalence_logic_hol_derived::NaturalExt;
 use covalence_logic_hol_script::{INIT_SOURCE, TheoryError, compile_theory};
 
 const COPRODUCT: &str = r"
@@ -174,6 +175,35 @@ fn checked_init_source_is_a_deterministic_untrusted_compilation_unit() {
         second.kernel().arena().addr()
     );
     assert!(first.kernel().arena().axioms().next().is_none());
+}
+
+#[test]
+fn compiled_nat_member_drives_the_userspace_natural_package() {
+    let compiled = compile_theory(INIT_SOURCE).expect("init source");
+    let bool_ty = compiled.bool_type();
+    let parameter = compiled
+        .get("NatMember/'a")
+        .expect("open carrier parameter");
+    let schema = compiled.get("NatMember").expect("open member schema");
+    let (mut kernel, names) = compiled.into_parts();
+
+    kernel.add_axiom(AX_INF).expect("infinity capability");
+    kernel.add_axiom(AX_SUB).expect("subtype capability");
+    let naturals = kernel
+        .choose_naturals_from_member_schema(bool_ty, parameter, schema)
+        .expect("naturals from compiled schema");
+
+    assert_eq!(names.get("NatMember"), Some(&schema));
+    let predicate_ty = kernel.classifier(naturals.member).expect("member type");
+    let mut predicate_parts = kernel
+        .arena()
+        .children(predicate_ty)
+        .expect("predicate arrow");
+    assert_eq!(predicate_parts.next(), Some(naturals.infinity.carrier));
+    assert_eq!(predicate_parts.next(), Some(bool_ty));
+    assert_eq!(naturals.subtype.predicate, naturals.member);
+    assert_eq!(naturals.get("nat"), Some(naturals.ty));
+    assert_eq!(naturals.get("nat.induction"), Some(naturals.induction));
 }
 
 #[test]

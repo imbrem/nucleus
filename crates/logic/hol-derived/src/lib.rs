@@ -13,6 +13,6 @@ mod subtype;
 
 pub use exists::{ExistsError, OpenedExists, open_exists};
 pub use infinity::{Infinity, InfinityError, InfinityExt};
-pub use model::{ChosenModel, ModelError, ModelExt, Substitution, substitute};
+pub use model::{ChosenModel, ModelError, ModelExt, Substitution, eta_expand_at, substitute};
 pub use natural::{NaturalError, NaturalExt, Naturals};
 pub use subtype::{Subtype, SubtypeError, SubtypeExt};

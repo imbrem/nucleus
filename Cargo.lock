@@ -739,6 +739,7 @@ dependencies = [
  "covalence-lib-error",
  "covalence-lib-parse",
  "covalence-logic-hol",
+ "covalence-logic-hol-derived",
 ]
 
 [[package]]
