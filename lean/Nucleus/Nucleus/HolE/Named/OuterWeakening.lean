@@ -172,7 +172,9 @@ private theorem lowering_appendOuter (expression : Expr Sig Nat sort) :
       simp only [lowerTm] at found ⊢
       rcases Option.bind_eq_some_iff.mp found with ⟨p, hp, result⟩
       cases Option.some.inj result
-      have predicateWeakened := ih (TyScope.cons name innerScope) outerScope .nil hp
+      -- The term scope crosses the type binder unchanged.
+      have predicateWeakened :=
+        ih (TyScope.cons name innerScope) outerScope termScope hp
       simp only [TyScope.appendOuter_cons] at predicateWeakened
       rw [predicateWeakened]
       rw [appendRightRen_cons]
@@ -182,7 +184,9 @@ private theorem lowering_appendOuter (expression : Expr Sig Nat sort) :
       simp only [lowerTm] at found ⊢
       rcases Option.bind_eq_some_iff.mp found with ⟨p, hp, result⟩
       cases Option.some.inj result
-      have predicateWeakened := ih (TyScope.cons name innerScope) outerScope .nil hp
+      -- The term scope crosses the type binder unchanged.
+      have predicateWeakened :=
+        ih (TyScope.cons name innerScope) outerScope termScope hp
       simp only [TyScope.appendOuter_cons] at predicateWeakened
       rw [predicateWeakened]
       rw [appendRightRen_cons]
@@ -192,7 +196,8 @@ private theorem lowering_appendOuter (expression : Expr Sig Nat sort) :
       simp only [lowerFam] at found ⊢
       rcases Option.bind_eq_some_iff.mp found with ⟨p, hp, result⟩
       cases Option.some.inj result
-      have predicateWeakened := ih (TyScope.cons name innerScope) outerScope .nil hp
+      have predicateWeakened :=
+        ih (TyScope.cons name innerScope) outerScope .nil hp
       simp only [TyScope.appendOuter_cons] at predicateWeakened
       rw [predicateWeakened]
       rw [appendRightRen_cons]

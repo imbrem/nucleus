@@ -47,6 +47,28 @@ def Eval {types : List Kind} {depth : Nat} {Γ : Ctx types depth}
     (expected : CPointed) (value : expected.carrier) : Prop :=
   Infinity.IEval term.toIntrinsic env bound expected value
 
+/-- Transporting a checked term along an equality of contexts does not change
+what it evaluates to. -/
+theorem Eval_transport {types : List Kind} {depth : Nat}
+    {Γ Δ : Ctx types depth} {A : Ty types} (contexts : Γ = Δ)
+    (term : Term Γ A) (env : CTypeEnv types) (bound : CBoundEnv depth)
+    (expected : CPointed) (value : expected.carrier) :
+    Eval (contexts ▸ term) env bound expected value ↔
+      Eval term env bound expected value := by
+  cases contexts
+  rfl
+
+/-- Reading a closed term past a fresh type variable does not change what it
+evaluates to: only the *type* context moves. -/
+@[simp] theorem Eval_openEmpty {types : List Kind} {kind : Kind}
+    {A : Ty (kind :: types)}
+    (term : Term (types := kind :: types) Ctx.empty A)
+    (env : CTypeEnv (kind :: types)) (bound : CBoundEnv 0)
+    (expected : CPointed) (value : expected.carrier) :
+    Eval (Term.openEmpty term) env bound expected value ↔
+      Eval term env bound expected value :=
+  Eval_transport Ctx.weakenTypes_empty.symm term env bound expected value
+
 @[simp] theorem Term.toIntrinsic_weaken
     {types : List Kind} {depth : Nat} {Γ : Ctx types depth} {A : Ty types}
     (term : Term Γ A) (C : Ty types) :

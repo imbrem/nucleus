@@ -170,6 +170,20 @@ syntax alone. -/
     (closeEmpty term).raw = term.raw :=
   transport_raw Ctx.weakenTypes_empty term
 
+/-- The inverse of `closeEmpty`: reading a closed predicate as living in the
+empty context seen past a fresh type variable, which is the form the type
+quantifiers now expect.  The raw syntax is unchanged. -/
+def openEmpty {types : List Kind} {kind : Kind} {A : Ty (kind :: types)}
+    (term : Term (types := kind :: types) Ctx.empty A) :
+    Term (types := kind :: types) (Ctx.empty : Ctx types 0).weakenTypes A :=
+  Ctx.weakenTypes_empty.symm ▸ term
+
+@[simp] theorem openEmpty_raw {types : List Kind} {kind : Kind}
+    {A : Ty (kind :: types)}
+    (term : Term (types := kind :: types) Ctx.empty A) :
+    (openEmpty term).raw = term.raw :=
+  transport_raw Ctx.weakenTypes_empty.symm term
+
 /-- Guarded choice of a type satisfying `predicate`, with the same total
 fallback convention as guarded subtypes.  `ty.model` remains a *closed* type
 binder: its meaning is a choice function on the predicate alone. -/

@@ -218,11 +218,11 @@ def predicate {types} (A : Ty types)
 def existsType {types} (A : Ty types)
     (P : Term (Ctx.empty : Ctx types 0) (A.arr FamK.boolTy)) :
     BoolTm (Ctx.empty : Ctx types 0) :=
-  Term.tyExists Ctx.empty (predicate A P)
+  Term.tyExists Ctx.empty (Term.openEmpty (predicate A P))
 
 /-- The model selected by the package predicate. -/
 def sub {types} (A : Ty types)
     (P : Term (Ctx.empty : Ctx types 0) (A.arr FamK.boolTy)) : Ty types :=
-  Term.model (predicate A P)
+  Term.model (Term.openEmpty (predicate A P))
 
 end Nucleus.HolE.Empty.SubtypePackage

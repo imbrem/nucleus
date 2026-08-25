@@ -267,11 +267,12 @@ theorem lowerTm_quote (floor next : Nat) (floorNext : floor ≤ next)
         apply freeBelow name
         simpa [Nucleus.HolE.fvarIndices] using membership
       simp only [quote, lowerTm]
+      -- The term scope and its names carry across the type binder unchanged.
       rw [lowerTm_quote floor (next + 1) (by omega)
         (.cons (kind := .star) next typeScope) (extendTyNames next typeNames)
         (extendTyNames_valid tyValid tyBelow) (extendTyNames_below tyBelow)
-        .nil emptyTmNames emptyTmNames_valid (emptyTmNames_below (next + 1))
-        (emptyTmScope_above floor) predicate predicateFree]
+        termScope termNames tmValid (fun item => Nat.lt_succ_of_lt (tmBelow item))
+        scopeAbove predicate predicateFree]
       rfl
   | .tyForall predicate => by
       have predicateFree : FVarsBelow floor predicate := by
@@ -279,11 +280,12 @@ theorem lowerTm_quote (floor next : Nat) (floorNext : floor ≤ next)
         apply freeBelow name
         simpa [Nucleus.HolE.fvarIndices] using membership
       simp only [quote, lowerTm]
+      -- The term scope and its names carry across the type binder unchanged.
       rw [lowerTm_quote floor (next + 1) (by omega)
         (.cons (kind := .star) next typeScope) (extendTyNames next typeNames)
         (extendTyNames_valid tyValid tyBelow) (extendTyNames_below tyBelow)
-        .nil emptyTmNames emptyTmNames_valid (emptyTmNames_below (next + 1))
-        (emptyTmScope_above floor) predicate predicateFree]
+        termScope termNames tmValid (fun item => Nat.lt_succ_of_lt (tmBelow item))
+        scopeAbove predicate predicateFree]
       rfl
   | .primTm symbol => by simp [quote, lowerTm]
   | .bv item => by

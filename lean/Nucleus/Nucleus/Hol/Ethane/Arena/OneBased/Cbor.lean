@@ -326,6 +326,11 @@ private def decodeValue? (tag : Tag) (value : Nucleus.Cbor) : Option detail.Valu
       some (some (.nat value)) := by
   simp [decodeOptional, decodeValue?]
 
+@[simp] private theorem decodeOptional_tyForallValue (value : UInt64) :
+    decodeOptional (decodeValue? (.tm .tyForall)) (some (unsigned value)) =
+      some (some (.nat value)) := by
+  simp [decodeOptional, decodeValue?]
+
 @[simp] private theorem decodeOptional_tmFvValue (value : UInt64) :
     decodeOptional (decodeValue? (.tm .fv)) (some (unsigned value)) =
       some (some (.nat value)) := by
