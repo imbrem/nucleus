@@ -660,7 +660,7 @@ impl Kernel {
         KernelError::InvalidSynFact { rule }
     }
 
-    fn fact<E>(&self, id: SynFactId) -> Result<SynFact, KernelError<E>>
+    pub(super) fn fact<E>(&self, id: SynFactId) -> Result<SynFact, KernelError<E>>
     where
         E: std::error::Error + 'static,
     {
@@ -723,7 +723,7 @@ impl Kernel {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn require_fact_match<E>(
+    pub(super) fn require_fact_match<E>(
         &self,
         evidence: SynFactId,
         rel: SynRel,

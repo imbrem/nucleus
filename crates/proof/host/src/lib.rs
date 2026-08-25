@@ -662,6 +662,16 @@ impl GuestKernel for HostKernel {
             .map_err(|error| error.to_string())
     }
 
+    fn model_spec(&self, theorem: u64, substitution: u64) -> Result<u64, String> {
+        let theorem = theorem_id(theorem)?;
+        let substitution = fact_id(substitution)?;
+        self.0
+            .borrow_mut()
+            .model_spec(theorem, substitution)
+            .map(|id| id.get().unsigned_abs().into())
+            .map_err(|error| error.to_string())
+    }
+
     fn inf_exists(&self, bool_type: u64) -> Result<wit::InfinityAxiom, String> {
         let axiom = self
             .0
@@ -987,6 +997,11 @@ fn usize_from_u64(value: u64, what: &str) -> Result<usize, String> {
 fn reference(value: u64) -> Result<Ref, String> {
     let value = i32::try_from(value).map_err(|_| "arena reference exceeds i32".to_owned())?;
     Ref::new(value).ok_or_else(|| "arena references are one-based".to_owned())
+}
+
+fn theorem_id(value: u64) -> Result<covalence_logic_hol::ThmId, String> {
+    let value = i32::try_from(value).map_err(|_| "theorem slot exceeds i32".to_owned())?;
+    covalence_logic_hol::ThmId::new(value).ok_or_else(|| "theorem slots are one-based".to_owned())
 }
 
 fn import_id(value: u64) -> Result<ImportId, String> {

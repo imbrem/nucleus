@@ -132,6 +132,11 @@ fn fact_id(value: u64) -> Result<SynFactId, String> {
     SynFactId::new(value).ok_or_else(|| "syntactic-fact slots are one-based".to_owned())
 }
 
+fn theorem_id(value: u64) -> Result<covalence_logic_hol::ThmId, String> {
+    let value = i32::try_from(value).map_err(|_| "theorem slot exceeds i32".to_owned())?;
+    covalence_logic_hol::ThmId::new(value).ok_or_else(|| "theorem slots are one-based".to_owned())
+}
+
 fn import_id(value: u64) -> Result<covalence_logic_hol::ImportId, String> {
     let value = i32::try_from(value).map_err(|_| "import ID exceeds i32".to_owned())?;
     covalence_logic_hol::ImportId::new(value).ok_or_else(|| "import IDs are one-based".to_owned())
@@ -1373,6 +1378,24 @@ impl nucleus::proof::host::HostKernel for ProofState {
             .0
             .fresh_name(&resolved)
             .map_err(|error| error.to_string()))
+    }
+
+    fn model_spec(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        theorem: u64,
+        substitution: u64,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        Ok(match (theorem_id(theorem), fact_id(substitution)) {
+            (Ok(theorem), Ok(substitution)) => self
+                .table
+                .get_mut(&kernel)?
+                .0
+                .model_spec(theorem, substitution)
+                .map(|id| id.get().unsigned_abs().into())
+                .map_err(|error| error.to_string()),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+        })
     }
 
     fn inf_exists(
