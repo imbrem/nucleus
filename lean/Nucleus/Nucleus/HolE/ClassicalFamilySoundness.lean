@@ -1012,7 +1012,8 @@ theorem cSem_instantiateTypes
       constructor <;> rintro ⟨candidate, witness⟩ <;> refine ⟨candidate, ?_⟩
       · let extEnv := extendCTypeEnv (kind := .star) candidate env
         have semP := cSem_instantiate_tm_normalize wellFormed.lift
-          (hp.instantiateTypes wellFormed.lift) _ (by rw [instantiateBoundCtx_weakenBoundCtx]) cp extEnv
+          (hp.instantiateTypes wellFormed.lift) _
+          (by rw [instantiateBoundCtx_weakenBoundCtx]) cp extEnv
         have cleanToInstantiated := congrFun (congrFun semP.symm bound) cBool
         have instantiatedToOriginal := congrFun
           (congrFun (ih wellFormed.lift extEnv) bound) cBool
@@ -1021,7 +1022,8 @@ theorem cSem_instantiateTypes
         exact evalEq.symm.trans witness
       · let extEnv := extendCTypeEnv (kind := .star) candidate env
         have semP := cSem_instantiate_tm_normalize wellFormed.lift
-          (hp.instantiateTypes wellFormed.lift) _ (by rw [instantiateBoundCtx_weakenBoundCtx]) cp extEnv
+          (hp.instantiateTypes wellFormed.lift) _
+          (by rw [instantiateBoundCtx_weakenBoundCtx]) cp extEnv
         have cleanToInstantiated := congrFun (congrFun semP.symm bound) cBool
         have instantiatedToOriginal := congrFun
           (congrFun (ih wellFormed.lift extEnv) bound) cBool
@@ -1043,7 +1045,8 @@ theorem cSem_instantiateTypes
       constructor <;> intro every candidate <;> have witness := every candidate
       · let extEnv := extendCTypeEnv (kind := .star) candidate env
         have semP := cSem_instantiate_tm_normalize wellFormed.lift
-          (hp.instantiateTypes wellFormed.lift) _ (by rw [instantiateBoundCtx_weakenBoundCtx]) cp extEnv
+          (hp.instantiateTypes wellFormed.lift) _
+          (by rw [instantiateBoundCtx_weakenBoundCtx]) cp extEnv
         have cleanToInstantiated := congrFun (congrFun semP.symm bound) cBool
         have instantiatedToOriginal := congrFun
           (congrFun (ih wellFormed.lift extEnv) bound) cBool
@@ -1052,7 +1055,8 @@ theorem cSem_instantiateTypes
         exact evalEq.symm.trans witness
       · let extEnv := extendCTypeEnv (kind := .star) candidate env
         have semP := cSem_instantiate_tm_normalize wellFormed.lift
-          (hp.instantiateTypes wellFormed.lift) _ (by rw [instantiateBoundCtx_weakenBoundCtx]) cp extEnv
+          (hp.instantiateTypes wellFormed.lift) _
+          (by rw [instantiateBoundCtx_weakenBoundCtx]) cp extEnv
         have cleanToInstantiated := congrFun (congrFun semP.symm bound) cBool
         have instantiatedToOriginal := congrFun
           (congrFun (ih wellFormed.lift extEnv) bound) cBool

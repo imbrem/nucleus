@@ -170,7 +170,7 @@ fn find_free_type_variable(
         // `model` and the type quantifiers store their binder name directly.
         if matches!(
             tag,
-            Tag::Ty(TyTag::Model) | Tag::Tm(TmTag::TyExists) | Tag::Tm(TmTag::TyForall)
+            Tag::Ty(TyTag::Model) | Tag::Tm(TmTag::TyExists | TmTag::TyForall)
         )
             && kernel.arena().name(input) == Some(name)
         {
@@ -333,7 +333,7 @@ impl TypeSubstitution<'_> {
             Tag::Ty(TyTag::Lam) | Tag::Tm(TmTag::Lam) => {
                 self.explicit_binder(input, tag, &children)
             }
-            Tag::Ty(TyTag::Model) | Tag::Tm(TmTag::TyExists) | Tag::Tm(TmTag::TyForall) => {
+            Tag::Ty(TyTag::Model) | Tag::Tm(TmTag::TyExists | TmTag::TyForall) => {
                 self.implicit_binder(input, tag, &children)
             }
             Tag::Kind(KindTag::Ref) | Tag::Ty(TyTag::Ref) | Tag::Tm(TmTag::Ref) => {

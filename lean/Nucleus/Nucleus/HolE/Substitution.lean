@@ -406,7 +406,8 @@ def FreeIn (name : Nat) : {sort : HolSort} → {depth : Nat} →
       _, _, .bv _ | _, _, .bool _ => False
   | _, _, .arr A B | _, _, .tyApp A B | _, _, .app A B | _, _, .lam A B |
       _, _, .eps A B => FreeIn name A ∨ FreeIn name B
-  | _, _, .tyLam body | _, _, .tyExists body | _, _, .tyForall body | _, _, .model body => FreeIn name body
+  | _, _, .tyLam body | _, _, .tyExists body | _, _, .tyForall body |
+      _, _, .model body => FreeIn name body
   | _, _, .sub A p => FreeIn name A ∨ FreeIn name p
   | _, _, .fv other A => other = name ∨ FreeIn name A
   | _, _, .eq A x y | _, _, .abs A x y | _, _, .rep A x y =>

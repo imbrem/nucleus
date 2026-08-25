@@ -150,7 +150,7 @@ impl Prover {
             .ok_or(KernelError::MissingDefinition { reference: left })?;
         match tag {
             Tag::Ty(TyTag::Lam) | Tag::Tm(TmTag::Lam) => self.binder(kernel, rel, left, right),
-            Tag::Ty(TyTag::Model) | Tag::Tm(TmTag::TyExists) | Tag::Tm(TmTag::TyForall) => {
+            Tag::Ty(TyTag::Model) | Tag::Tm(TmTag::TyExists | TmTag::TyForall) => {
                 self.implicit_binder(kernel, rel, left, right)
             }
             _ => self.congruence(kernel, rel, left, right),

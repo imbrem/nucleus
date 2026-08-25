@@ -21,16 +21,20 @@ def betaIdentity :
       (Term.openBound identityBody (Term.truth Γ)) :=
   TermEq.beta identityBody (Term.truth Γ)
 
+-- The predicate lives in the ambient context seen past the bound type
+-- variable.  Here that context is empty, so this is `Ctx.empty` transported.
 def typePredicate :
-    BoolTm (types := [.star]) (Ctx.empty : Ctx [.star] 0) :=
-  Term.truth Ctx.empty
+    BoolTm (types := [.star]) ((Ctx.empty : Ctx [] 0).weakenTypes) :=
+  Term.truth _
 
-def predicateAtBool : BoolTm Γ := typePredicate.openType FamK.boolTy
+def predicateAtBool : BoolTm (Ctx.empty : Ctx [] 0) :=
+  typePredicate.openType FamK.boolTy
 
-def predicateAtBoolProof : Proof Γ [] predicateAtBool := by
+def predicateAtBoolProof : Proof Ctx.empty [] predicateAtBool := by
   exact Proof.truth
 
-def someTypeExists : Proof Γ [] (Term.tyExists Γ typePredicate) :=
+def someTypeExists :
+    Proof Ctx.empty [] (Term.tyExists (Ctx.empty : Ctx [] 0) typePredicate) :=
   Proof.tyExistsIntro typePredicate FamK.boolTy predicateAtBoolProof
 
 end Nucleus.HolE.Empty.ApiTest

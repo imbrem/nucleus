@@ -429,13 +429,15 @@ theorem imp_value (left right : BoolTm Γ) (env : CTypeEnv types)
     (leftValue && (!rightValue)) conjunction
   cases leftValue <;> cases rightValue <;> simpa [Empty.imp] using negated
 
-/-- A checked type-existential is true when its body has one semantic witness. -/
+/-- A checked type-existential is true when its body has one semantic witness.
+The predicate is evaluated in the *ambient* bound environment: a type binder
+does not touch it, which is what makes the open quantifier cost nothing. -/
 theorem tyExists (Γ : Ctx types depth)
-    (predicate : Term (types := .star :: types) Ctx.empty FamK.boolTy)
+    (predicate : Term (types := .star :: types) Γ.weakenTypes FamK.boolTy)
     (env : CTypeEnv types) (bound : CBoundEnv depth)
     (candidate : CPointed)
     (predicateTrue : Eval predicate (extendCTypeEnv candidate env)
-      emptyCBoundEnv cBool true) :
+      bound cBool true) :
     Eval (Term.tyExists Γ predicate) env bound cBool true := by
   classical
   unfold Eval Infinity.IEval
@@ -445,7 +447,7 @@ theorem tyExists (Γ : Ctx types depth)
   rw [cSem_certificate_coherent checking explicit env]
   change ULift.up (alignCValue cBool cBool (decide (∃ witness : CPointed,
     cSem predicate.typing.certificate
-      (extendCTypeEnv witness env) emptyCBoundEnv cBool = ⟨true⟩))) = ⟨true⟩
+      (extendCTypeEnv witness env) bound cBool = ⟨true⟩))) = ⟨true⟩
   rw [alignCValue_bool]
   apply congrArg ULift.up
   apply decide_eq_true
