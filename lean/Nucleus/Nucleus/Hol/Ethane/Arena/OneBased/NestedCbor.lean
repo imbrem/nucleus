@@ -1,0 +1,608 @@
+import Nucleus.Cbor.Containers
+import Nucleus.Hol.Ethane.Arena.OneBased.Cbor
+import Nucleus.Hol.Ethane.Arena.OneBased.Layout
+
+/-!
+# CBOR contract for the nested HOL arena
+
+This is the authoritative structural codec for the `arena` wire introduced by
+the ambient/column refactor.  Unlike the legacy oracle in `Cbor.lean`, it
+models the exact nested Serde maps and their strict field discipline.  Codecs
+for already-formalized leaf payloads are parameters; the nesting, optional
+column defaults, ambient predicate representation, and arena normalization are
+fixed here.
+-/
+
+namespace Nucleus.Hol.Ethane.OneBased.NestedCbor
+
+open Nucleus
+open Nucleus.Hol.Ethane
+open Nucleus.Hol.Ethane.OneBased
+open Nucleus.Hol.Ethane.OneBased.Layout
+
+private def text (value : String) : Nucleus.Cbor := .primitive (.text value)
+private def unsigned (value : UInt64) : Nucleus.Cbor :=
+  .primitive (.integer (.unsigned value))
+private def null : Nucleus.Cbor := .primitive (.simple 22)
+private def array (values : List Nucleus.Cbor) : Nucleus.Cbor :=
+  Nucleus.Cbor.arrayOfList values
+private def object (fields : List (String × Nucleus.Cbor)) : Nucleus.Cbor :=
+  Nucleus.Cbor.textMapOfList fields
+
+private def asText? : Nucleus.Cbor → Option String
+  | .primitive (.text value) => some value
+  | _ => none
+
+private def asUnsigned? : Nucleus.Cbor → Option UInt64
+  | .primitive (.integer (.unsigned value)) => some value
+  | _ => none
+
+private def traverse (decode : Nucleus.Cbor → Option α) :
+    List Nucleus.Cbor → Option (List α)
+  | [] => some []
+  | value :: values => return (← decode value) :: (← traverse decode values)
+
+private theorem traverse_encode (encode : α → Nucleus.Cbor)
+    (decode : Nucleus.Cbor → Option α)
+    (roundtrip : ∀ value, decode (encode value) = some value) (values : List α) :
+    traverse decode (values.map encode) = some values := by
+  induction values with
+  | nil => rfl
+  | cons value values ih => simp [traverse, roundtrip, ih]
+
+@[simp] private theorem traverse_text (values : List String) :
+    traverse asText? (values.map text) = some values := by
+  exact traverse_encode text asText? (fun _ => rfl) values
+
+private def decodeList (decode : Nucleus.Cbor → Option α)
+    (value : Nucleus.Cbor) : Option (List α) := do
+  traverse decode (← Nucleus.Cbor.asArray? value)
+
+@[simp] private theorem decodeList_text (values : List String) :
+    decodeList asText? (array (values.map text)) = some values := by
+  simp [decodeList, array, traverse_text]
+
+@[simp] private theorem decodeList_map (encode : α → Nucleus.Cbor)
+    (decode : Nucleus.Cbor → Option α)
+    (roundtrip : ∀ value, decode (encode value) = some value)
+    (values : List α) :
+    decodeList decode (array (values.map encode)) = some values := by
+  simp [decodeList, array, traverse_encode encode decode roundtrip]
+
+private def fields? (allowed : List String) (value : Nucleus.Cbor) :
+    Option (List (String × Nucleus.Cbor)) := do
+  let fields ← Nucleus.Cbor.asTextMap? value
+  if (fields.map Prod.fst).Nodup then
+    if fields.all fun field => allowed.contains field.1 then some fields else none
+  else none
+
+private def field? (name : String) (fields : List (String × Nucleus.Cbor)) :
+    Option Nucleus.Cbor :=
+  (fields.find? fun field => field.1 == name).map Prod.snd
+
+private def required? (name : String) (fields : List (String × Nucleus.Cbor)) :
+    Option Nucleus.Cbor := field? name fields
+
+private def optional (name : String) : Option Nucleus.Cbor →
+    List (String × Nucleus.Cbor)
+  | none => []
+  | some value => [(name, value)]
+
+private def encodeRef (reference : Ref) : Nucleus.Cbor := unsigned reference.value
+private def decodeRef? (value : Nucleus.Cbor) : Option Ref := do
+  Ref.ofUInt64? (← asUnsigned? value)
+private def encodeImportId (source : ImportId) : Nucleus.Cbor := unsigned source.value
+private def decodeImportId? (value : Nucleus.Cbor) : Option ImportId := do
+  ImportId.ofUInt64? (← asUnsigned? value)
+private def encodeSynFactId (id : SynFactId) : Nucleus.Cbor := unsigned id.value
+private def decodeSynFactId? (value : Nucleus.Cbor) : Option SynFactId := do
+  SynFactId.ofUInt64? (← asUnsigned? value)
+
+@[simp] private theorem decodeRef?_encode (reference : Ref) :
+    decodeRef? (encodeRef reference) = some reference := by
+  simp [decodeRef?, encodeRef, unsigned, asUnsigned?]
+
+@[simp] private theorem decodeImportId?_encode (source : ImportId) :
+    decodeImportId? (encodeImportId source) = some source := by
+  simp [decodeImportId?, encodeImportId, unsigned, asUnsigned?]
+
+@[simp] private theorem decodeSynFactId?_encode (id : SynFactId) :
+    decodeSynFactId? (encodeSynFactId id) = some id := by
+  simp [decodeSynFactId?, encodeSynFactId, unsigned, asUnsigned?]
+
+private def encodeNullableRef : Option Ref → Nucleus.Cbor
+  | none => null
+  | some reference => encodeRef reference
+
+private def decodeNullableRef? : Nucleus.Cbor → Option (Option Ref)
+  | .primitive .null => some none
+  | value => return some (← decodeRef? value)
+
+@[simp] private theorem decodeNullableRef?_encode (value : Option Ref) :
+    decodeNullableRef? (encodeNullableRef value) = some value := by
+  cases value with
+  | none =>
+      simp [decodeNullableRef?, encodeNullableRef, null]
+  | some reference =>
+      simp [decodeNullableRef?, encodeNullableRef, encodeRef, decodeRef?, unsigned,
+        asUnsigned?]
+
+private def encodeColumn (column : Columns.Column Ref) : Nucleus.Cbor :=
+  array (column.map encodeNullableRef)
+private def decodeColumn? (value : Nucleus.Cbor) : Option (Columns.Column Ref) :=
+  decodeList decodeNullableRef? value
+
+@[simp] private theorem decodeColumn?_encode (column : Columns.Column Ref) :
+    decodeColumn? (encodeColumn column) = some column := by
+  simp [decodeColumn?, encodeColumn, decodeList, array,
+    traverse_encode encodeNullableRef decodeNullableRef? decodeNullableRef?_encode]
+
+@[simp] private theorem decodeList_encodeColumn (column : Columns.Column Ref) :
+    decodeList decodeNullableRef? (encodeColumn column) = some column :=
+  decodeColumn?_encode column
+
+private def decodeDefaultList (decode : Nucleus.Cbor → Option α) :
+    Option Nucleus.Cbor → Option (List α)
+  | none => some []
+  | some value => decodeList decode value
+
+@[simp] private theorem decodeDefaultList_none (decode : Nucleus.Cbor → Option α) :
+    decodeDefaultList decode none = some [] := rfl
+
+@[simp] private theorem decodeDefaultList_column_cons (head : Option Ref)
+    (tail : List (Option Ref)) :
+    decodeDefaultList decodeNullableRef? (some (encodeColumn (head :: tail))) =
+      some (head :: tail) := by
+  exact decodeColumn?_encode (head :: tail)
+
+private def decodeOptional (decode : Nucleus.Cbor → Option α) :
+    Option Nucleus.Cbor → Option (Option α)
+  | none => some none
+  | some (.primitive .null) => some none
+  | some value => return some (← decode value)
+
+@[simp] private theorem decodeOptional_none (decode : Nucleus.Cbor → Option α) :
+    decodeOptional decode none = some none := rfl
+
+@[simp] private theorem decodeOptional_encodeSynFactId (id : SynFactId) :
+    decodeOptional decodeSynFactId? (some (encodeSynFactId id)) = some (some id) := by
+  simp [decodeOptional, encodeSynFactId, decodeSynFactId?, unsigned, asUnsigned?]
+
+private def encodeExpr (expr : detail.Expr) : Nucleus.Cbor :=
+  OneBased.Cbor.encodeRow { expr, eq := none, sort := none }
+
+private def decodeExpr? (value : Nucleus.Cbor) : Option detail.Expr := do
+  let row ← OneBased.Cbor.decodeRow? value
+  if row.eq.isNone ∧ row.sort.isNone then some row.expr else none
+
+@[simp] private theorem decodeExpr?_encode (expr : detail.Expr) :
+    decodeExpr? (encodeExpr expr) = some expr := by
+  simp [decodeExpr?, encodeExpr]
+
+private def encodeLit (literal : ClassicalMatrix.Lit Ref) : Nucleus.Cbor :=
+  match literal.2 with
+  | true => unsigned literal.1.value
+  | false => .primitive (.integer (.negative
+      (UInt64.ofNat (literal.1.value.toNat - 1))))
+
+private def decodeLit? : Nucleus.Cbor → Option (ClassicalMatrix.Lit Ref)
+  | .primitive (.integer (.unsigned value)) =>
+      return (← Ref.ofUInt64? value, true)
+  | .primitive (.integer (.negative argument)) =>
+      return (← Ref.ofUInt64? (UInt64.ofNat (argument.toNat + 1)), false)
+  | _ => none
+
+@[simp] private theorem decodeLit?_encode (literal : ClassicalMatrix.Lit Ref) :
+    decodeLit? (encodeLit literal) = some literal := by
+  rcases literal with ⟨reference, polarity⟩
+  cases polarity
+  · have positive : 0 < reference.value.toNat := by
+      have := reference.property.1
+      exact UInt64.pos_iff_ne_zero.mpr this
+    have upper : reference.value.toNat < 2_147_483_647 := by
+      simpa [Ref.value, Ref.maxExclusive] using reference.property.2
+    have small : reference.value.toNat - 1 < 2 ^ 64 := by
+      omega
+    have encodedToNat :
+        (UInt64.ofNat (reference.value.toNat - 1)).toNat =
+          reference.value.toNat - 1 := by
+      exact UInt64.toNat_ofNat'.trans (Nat.mod_eq_of_lt small)
+    have restored : UInt64.ofNat
+        ((UInt64.ofNat (reference.value.toNat - 1)).toNat + 1) = reference.value := by
+      rw [← UInt64.toNat_inj]
+      rw [UInt64.toNat_ofNat', Nat.mod_eq_of_lt (by omega)]
+      rw [encodedToNat, Nat.sub_add_cancel (by omega)]
+    simp only [encodeLit, decodeLit?]
+    rw [restored, Ref.ofUInt64?_value]
+    rfl
+  · simp [encodeLit, decodeLit?, unsigned]
+
+private def encodeClause (clause : ClassicalMatrix.Clause Ref) : Nucleus.Cbor :=
+  array (clause.literals.map encodeLit)
+private def decodeClause? (value : Nucleus.Cbor) : Option (ClassicalMatrix.Clause Ref) :=
+  return ⟨← decodeList decodeLit? value⟩
+
+@[simp] private theorem encodeClause_ne_null (clause : ClassicalMatrix.Clause Ref) :
+    encodeClause clause ≠ null := by
+  simp [encodeClause, array, null, Nucleus.Cbor.arrayOfList, ArrayLike.array]
+
+@[simp] private theorem decodeClause?_encode (clause : ClassicalMatrix.Clause Ref) :
+    decodeClause? (encodeClause clause) = some clause := by
+  cases clause
+  simp [decodeClause?, encodeClause, decodeList, array,
+    traverse_encode encodeLit decodeLit? decodeLit?_encode]
+
+private def encodeCnf (cnf : ClassicalMatrix.Cnf Ref) : Nucleus.Cbor :=
+  array (cnf.clauses.map encodeClause)
+private def decodeLiveRows (decode : Nucleus.Cbor → Option α)
+    (value : Nucleus.Cbor) : Option (List α) := do
+  let values ← Nucleus.Cbor.asArray? value
+  let decodeRow? (value : Nucleus.Cbor) : Option (Option α) :=
+    if value = null then some none else (decode value).map some
+  let rows ← traverse decodeRow? values
+  return rows.filterMap id
+
+private theorem decodeLiveRows_leadingNull (decode : Nucleus.Cbor → Option α)
+    (values : List Nucleus.Cbor) :
+    decodeLiveRows decode (array (null :: values)) =
+      decodeLiveRows decode (array values) := by
+  let decodeRow? (value : Nucleus.Cbor) : Option (Option α) :=
+    if value = null then some none else (decode value).map some
+  have head : decodeRow? null = some none := by simp [decodeRow?]
+  unfold decodeLiveRows
+  simp only [array, Nucleus.Cbor.asArray?_arrayOfList]
+  change ((traverse decodeRow? (null :: values)).bind fun rows =>
+      some (rows.filterMap id)) =
+    ((traverse decodeRow? values).bind fun rows => some (rows.filterMap id))
+  cases found : traverse decodeRow? values with
+  | none => simp [traverse, head, found]
+  | some rows => simp [traverse, head, found]
+
+private def decodeCnf? (value : Nucleus.Cbor) : Option (ClassicalMatrix.Cnf Ref) :=
+  return ⟨← decodeLiveRows decodeClause? value⟩
+
+private theorem traverse_liveClauses (clauses : List (ClassicalMatrix.Clause Ref)) :
+    traverse (fun value =>
+      if value = null then some none else (decodeClause? value).map some)
+      (clauses.map encodeClause) = some (clauses.map some) := by
+  induction clauses with
+  | nil => rfl
+  | cons clause clauses ih =>
+      simp only [List.map_cons, traverse]
+      rw [if_neg (encodeClause_ne_null clause), decodeClause?_encode, ih]
+      rfl
+
+@[simp] private theorem decodeCnf?_encode (cnf : ClassicalMatrix.Cnf Ref) :
+    decodeCnf? (encodeCnf cnf) = some cnf := by
+  cases cnf
+  simp [decodeCnf?, encodeCnf, decodeLiveRows, array, traverse_liveClauses]
+
+private def encodeCube (cube : ClassicalMatrix.Cube Ref) : Nucleus.Cbor :=
+  array (cube.literals.map encodeLit)
+private def decodeCube? (value : Nucleus.Cbor) : Option (ClassicalMatrix.Cube Ref) :=
+  return ⟨← decodeList decodeLit? value⟩
+
+@[simp] private theorem encodeCube_ne_null (cube : ClassicalMatrix.Cube Ref) :
+    encodeCube cube ≠ null := by
+  simp [encodeCube, array, null, Nucleus.Cbor.arrayOfList, ArrayLike.array]
+
+@[simp] private theorem decodeCube?_encode (cube : ClassicalMatrix.Cube Ref) :
+    decodeCube? (encodeCube cube) = some cube := by
+  cases cube
+  simp [decodeCube?, encodeCube, decodeList, array,
+    traverse_encode encodeLit decodeLit? decodeLit?_encode]
+
+private def encodeDnf (dnf : ClassicalMatrix.Dnf Ref) : Nucleus.Cbor :=
+  array (dnf.cubes.map encodeCube)
+private def decodeDnf? (value : Nucleus.Cbor) : Option (ClassicalMatrix.Dnf Ref) :=
+  return ⟨← decodeLiveRows decodeCube? value⟩
+
+private theorem traverse_liveCubes (cubes : List (ClassicalMatrix.Cube Ref)) :
+    traverse (fun value =>
+      if value = null then some none else (decodeCube? value).map some)
+      (cubes.map encodeCube) = some (cubes.map some) := by
+  induction cubes with
+  | nil => rfl
+  | cons cube cubes ih =>
+      simp only [List.map_cons, traverse]
+      rw [if_neg (encodeCube_ne_null cube), decodeCube?_encode, ih]
+      rfl
+
+@[simp] private theorem decodeDnf?_encode (dnf : ClassicalMatrix.Dnf Ref) :
+    decodeDnf? (encodeDnf dnf) = some dnf := by
+  cases dnf
+  simp [decodeDnf?, encodeDnf, decodeLiveRows, array, traverse_liveCubes]
+
+private def encodeSequent (fact : ClassicalMatrix.Sequent Ref) : Nucleus.Cbor :=
+  array [encodeCnf fact.left, encodeDnf fact.right]
+private def decodeSequent? (value : Nucleus.Cbor) : Option (ClassicalMatrix.Sequent Ref) := do
+  let [left, right] ← Nucleus.Cbor.asArray? value | none
+  return ⟨← decodeCnf? left, ← decodeDnf? right⟩
+
+@[simp] private theorem decodeSequent?_encode (fact : ClassicalMatrix.Sequent Ref) :
+    decodeSequent? (encodeSequent fact) = some fact := by
+  cases fact
+  simp [decodeSequent?, encodeSequent, array]
+
+@[simp] private theorem decodeList_expr (values : List detail.Expr) :
+    decodeList decodeExpr? (array (values.map encodeExpr)) = some values :=
+  decodeList_map encodeExpr decodeExpr? decodeExpr?_encode values
+
+@[simp] private theorem decodeList_ref (values : List Ref) :
+    decodeList decodeRef? (array (values.map encodeRef)) = some values :=
+  decodeList_map encodeRef decodeRef? decodeRef?_encode values
+
+@[simp] private theorem decodeList_sequent
+    (values : List (ClassicalMatrix.Sequent Ref)) :
+    decodeList decodeSequent? (array (values.map encodeSequent)) = some values :=
+  decodeList_map encodeSequent decodeSequent? decodeSequent?_encode values
+
+private def encodeAmbPred : Layout.Pred → Nucleus.Cbor
+  | .arenaOk source => object [
+      ("tag", text "arena.ok"), ("src", encodeImportId source)]
+  | .holSort source ix sort => object [
+      ("tag", text "hol.sort"), ("src", encodeImportId source),
+      ("ix", encodeRef ix), ("sort", encodeRef sort)]
+
+private def decodeAmbPred? (value : Nucleus.Cbor) : Option Layout.Pred := do
+  let fields ← fields? ["tag", "src", "ix", "sort"] value
+  match ← asText? (← required? "tag" fields) with
+  | "arena.ok" =>
+      if field? "ix" fields = none ∧ field? "sort" fields = none then
+        return .arenaOk (← decodeImportId? (← required? "src" fields))
+      else none
+  | "hol.sort" =>
+      return .holSort
+        (← decodeImportId? (← required? "src" fields))
+        (← decodeRef? (← required? "ix" fields))
+        (← decodeRef? (← required? "sort" fields))
+  | _ => none
+
+@[simp] theorem decodeAmbPred?_encode (predicate : Layout.Pred) :
+    decodeAmbPred? (encodeAmbPred predicate) = some predicate := by
+  cases predicate <;>
+    simp [decodeAmbPred?, encodeAmbPred, fields?, field?, required?, object, text,
+      asText?]
+
+private def encodeAmb (amb : AmbView) : Nucleus.Cbor := object [
+  ("pred", array (amb.pred.map encodeAmbPred)),
+  ("ax", array (amb.ax.map text)),
+  ("ctx", encodeCnf amb.ctx),
+  ("thm", array (amb.thm.map encodeSequent))]
+
+private def decodeAmb? (value : Nucleus.Cbor) : Option AmbView := do
+  let fields ← fields? ["pred", "ax", "ctx", "thm"] value
+  return {
+    pred := ← decodeList decodeAmbPred? (← required? "pred" fields)
+    ax := ← decodeList asText? (← required? "ax" fields)
+    ctx := ← decodeCnf? (← required? "ctx" fields)
+    thm := ← decodeList decodeSequent? (← required? "thm" fields)
+  }
+
+private def encodePred (pred : PredSection) : Nucleus.Cbor :=
+  object [("syl", array (pred.syl.map encodeSequent))]
+
+private def decodePred? (value : Nucleus.Cbor) : Option PredSection := do
+  let fields ← fields? ["syl"] value
+  return { syl := ← decodeList decodeSequent? (← required? "syl" fields) }
+
+private def encodeSyn (syn : SynView) : Nucleus.Cbor := object <|
+  optional "subst1" (if syn.subst1.isEmpty then none
+    else some (array (syn.subst1.map OneBased.Cbor.encodeSynSlot))) ++
+  optional "subst1_free" (syn.subst1Free.map encodeSynFactId) ++
+  optional "eq" (if syn.eq.isEmpty then none else some (encodeColumn syn.eq)) ++
+  optional "conv" (if syn.conv.isEmpty then none else some (encodeColumn syn.conv)) ++
+  optional "sort" (if syn.sort.isEmpty then none else some (encodeColumn syn.sort))
+
+private def decodeSyn? (value : Nucleus.Cbor) : Option SynView := do
+  let fields ← fields? ["subst1", "subst1_free", "eq", "conv", "sort"] value
+  return {
+    subst1 := ← decodeDefaultList OneBased.Cbor.decodeSynSlot? (field? "subst1" fields)
+    subst1Free := ← decodeOptional decodeSynFactId? (field? "subst1_free" fields)
+    eq := ← decodeDefaultList decodeNullableRef? (field? "eq" fields)
+    conv := ← decodeDefaultList decodeNullableRef? (field? "conv" fields)
+    sort := ← decodeDefaultList decodeNullableRef? (field? "sort" fields)
+  }
+
+@[simp] private theorem traverse_synSlots (slots : List SynSlot) :
+    traverse OneBased.Cbor.decodeSynSlot?
+      (slots.map OneBased.Cbor.encodeSynSlot) = some slots := by
+  exact traverse_encode OneBased.Cbor.encodeSynSlot OneBased.Cbor.decodeSynSlot?
+    OneBased.Cbor.decodeSynSlot?_encode slots
+
+@[simp] private theorem decodeList_synSlots (slots : List SynSlot) :
+    decodeList OneBased.Cbor.decodeSynSlot?
+      (array (slots.map OneBased.Cbor.encodeSynSlot)) = some slots :=
+  decodeList_map OneBased.Cbor.encodeSynSlot OneBased.Cbor.decodeSynSlot?
+    OneBased.Cbor.decodeSynSlot?_encode slots
+
+@[simp] private theorem decodeList_synSlots_cons (head : SynSlot) (tail : List SynSlot) :
+    decodeList OneBased.Cbor.decodeSynSlot?
+      (array (OneBased.Cbor.encodeSynSlot head ::
+        tail.map OneBased.Cbor.encodeSynSlot)) = some (head :: tail) := by
+  simpa using decodeList_synSlots (head :: tail)
+
+private def encodeHol (hol : HolView) : Nucleus.Cbor := object <|
+  [("defs", array (hol.defs.map encodeExpr)),
+   ("ax", array (hol.ax.map text)),
+   ("ctx", array (hol.ctx.map encodeRef)),
+   ("thm", array (hol.thm.map encodeSequent))] ++
+  optional "eq" (if hol.eq.isEmpty then none else some (encodeColumn hol.eq)) ++
+  [("syn", encodeSyn hol.syn)]
+
+private def decodeHol? (value : Nucleus.Cbor) : Option HolView := do
+  let fields ← fields? ["defs", "ax", "ctx", "thm", "eq", "syn"] value
+  return {
+    defs := ← decodeList decodeExpr? (← required? "defs" fields)
+    ax := ← decodeList asText? (← required? "ax" fields)
+    ctx := ← decodeList decodeRef? (← required? "ctx" fields)
+    thm := ← decodeList decodeSequent? (← required? "thm" fields)
+    eq := ← decodeDefaultList decodeNullableRef? (field? "eq" fields)
+    syn := ← decodeSyn? (← required? "syn" fields)
+  }
+
+private def bytesOfO256 (value : O256) : Bytes := ⟨value.bytes.toByteArray⟩
+private def o256OfBytes? (value : Bytes) : Option O256 :=
+  O256.ofList? value.data.data.toList
+
+private def encodeLink (link : OneBased.Link) : Nucleus.Cbor := object [
+  ("tag", text "link"), ("format", text "cbor"),
+  ("blake3", .primitive (.bytes (bytesOfO256 link.blake3)))]
+
+private def decodeLink? (value : Nucleus.Cbor) : Option OneBased.Link := do
+  let fields ← fields? ["tag", "format", "blake3"] value
+  if (← asText? (← required? "tag" fields)) != "link" then none else pure ()
+  if (← asText? (← required? "format" fields)) != "cbor" then none else pure ()
+  let bytes ← match ← required? "blake3" fields with
+    | .primitive (.bytes bytes) => some bytes
+    | _ => none
+  return { blake3 := ← o256OfBytes? bytes }
+
+@[simp] private theorem o256OfBytes?_bytesOfO256 (value : O256) :
+    o256OfBytes? (bytesOfO256 value) = some value := by
+  simp [o256OfBytes?, bytesOfO256]
+
+@[simp] private theorem decodeLink?_encode (link : OneBased.Link) :
+    decodeLink? (encodeLink link) = some link := by
+  cases link
+  simp [decodeLink?, encodeLink, fields?, field?, required?, object, text, asText?]
+
+@[simp] private theorem encodeLink_ne_null (link : OneBased.Link) :
+    encodeLink link ≠ null := by
+  simp [encodeLink, object, null, Nucleus.Cbor.textMapOfList, ObjectLike.object]
+
+private def encodeViewWithImports (view : Layout.View)
+    (imports : List Nucleus.Cbor) : Nucleus.Cbor := object [
+  ("tag", text "arena"),
+  ("import", array imports),
+  ("amb", encodeAmb view.amb),
+  ("pred", encodePred view.pred),
+  ("hol", encodeHol view.hol)]
+
+mutual
+
+/-- Encode one import using Rust's untagged null/literal/link representation. -/
+def encodeImport : Layout.Import → Nucleus.Cbor
+  | .null => null
+  | .literal arena => encodeArena arena
+  | .link link => encodeLink link
+
+/-- Encode a normalized arena, recursively encoding literal imports. -/
+def encodeArena : Layout.Arena → Nucleus.Cbor
+  | .mk imports amb pred hol =>
+      encodeViewWithImports (Layout.Arena.toView (.mk imports amb pred hol))
+        (encodeImports imports)
+
+def encodeImports : List Layout.Import → List Nucleus.Cbor
+  | [] => []
+  | entry :: entries => encodeImport entry :: encodeImports entries
+
+end
+
+/-- Strict structural decoding. `fields?` rejects duplicate and unknown keys;
+every non-optional field is fetched with `required?`. -/
+private def decodeViewUsing? (decodeImport : Nucleus.Cbor → Option Layout.Import)
+    (value : Nucleus.Cbor) : Option Layout.View := do
+  let fields ← fields? ["tag", "import", "amb", "pred", "hol"] value
+  if (← asText? (← required? "tag" fields)) != "arena" then none else pure ()
+  return {
+    tag := .arena
+    «import» := ← decodeList decodeImport (← required? "import" fields)
+    amb := ← decodeAmb? (← required? "amb" fields)
+    pred := ← decodePred? (← required? "pred" fields)
+    hol := ← decodeHol? (← required? "hol" fields)
+  }
+
+mutual
+
+noncomputable def decodeImportWithFuel? : Nat → Nucleus.Cbor → Option Layout.Import
+  | 0, _ => none
+  | fuel + 1, value => do
+      if value = null then some .null
+      else match field? "tag" (← Nucleus.Cbor.asTextMap? value) with
+        | some (.primitive (.text "arena")) =>
+            return .literal (← (← decodeViewUsing? (decodeImportWithFuel? fuel) value).normalize?)
+        | some (.primitive (.text "link")) => return .link (← decodeLink? value)
+        | _ => none
+
+noncomputable def decodeViewWithFuel? (fuel : Nat) (value : Nucleus.Cbor) : Option Layout.View :=
+  decodeViewUsing? (decodeImportWithFuel? fuel) value
+
+end
+
+/-- Decode a structural view with CBOR size as a conservative nesting bound. -/
+noncomputable def decodeView? (value : Nucleus.Cbor) : Option Layout.View :=
+  decodeViewWithFuel? value.size value
+
+/-- Decode and apply the exact Rust normalization/residency gate. -/
+noncomputable def decodeArena? (value : Nucleus.Cbor) :
+    Option Layout.Arena := do
+  (← decodeView? value).normalize?
+
+private theorem decodeAmb?_encode (amb : AmbView) :
+    decodeAmb? (encodeAmb amb) = some amb := by
+  simp [decodeAmb?, encodeAmb, fields?, field?, required?, object, array, decodeList,
+    traverse_encode, decodeCnf?_encode, decodeSequent?_encode]
+
+private theorem decodePred?_encode (pred : PredSection) :
+    decodePred? (encodePred pred) = some pred := by
+  cases pred
+  simp [decodePred?, encodePred, fields?, field?, required?, object, array, decodeList,
+    traverse_encode]
+
+private theorem decodeSyn?_encode (syn : SynView) :
+    decodeSyn? (encodeSyn syn) = some syn := by
+  cases syn with
+  | mk subst1 subst1Free eq conv sort =>
+      cases subst1 <;> cases subst1Free <;> cases eq <;> cases conv <;> cases sort <;>
+        simp [decodeSyn?, encodeSyn, fields?, field?, optional, object,
+          decodeDefaultList]
+
+private theorem decodeHol?_encode (hol : HolView) :
+    decodeHol? (encodeHol hol) = some hol := by
+  cases hol with
+  | mk defs ax ctx thm eq syn =>
+      cases eq <;>
+        simp [decodeHol?, encodeHol, fields?, field?, required?, optional, object,
+          decodeDefaultList, decodeSyn?_encode]
+
+private theorem decodeViewUsing?_encode (decodeImport : Nucleus.Cbor → Option Layout.Import)
+    (view : Layout.View)
+    (encodedImports : List Nucleus.Cbor)
+    (imports : traverse decodeImport encodedImports = some view.import) :
+    decodeViewUsing? decodeImport (encodeViewWithImports view encodedImports) = some view := by
+  cases view
+  simp [decodeViewUsing?, encodeViewWithImports, fields?, field?, required?, object, text, asText?,
+    array, decodeList, imports, decodeAmb?_encode, decodePred?_encode,
+    decodeHol?_encode]
+
+/-- Structural decoding followed by Rust's residency/normalization gate is a
+round trip whenever the recursively encoded import vector is decoded by the
+supplied import decoder. -/
+theorem decodeNormalizedUsing?_encode {arena : Layout.Arena}
+    (decodeImport : Nucleus.Cbor → Option Layout.Import)
+    (encodedImports : List Nucleus.Cbor)
+    (imports : traverse decodeImport encodedImports = some arena.imports)
+    (wireValid : arena.ColumnsWireValid)
+    (normalized : arena.ColumnsNormalized) :
+    (decodeViewUsing? decodeImport
+      (encodeViewWithImports arena.toView encodedImports)).bind
+        Layout.View.normalize? = some arena := by
+  rw [decodeViewUsing?_encode decodeImport arena.toView encodedImports imports]
+  exact arena.normalize?_toView wireValid normalized
+
+/-- A serialized CNF tombstone is accepted and erased. -/
+theorem decodeCnf?_leadingNull (cnf : ClassicalMatrix.Cnf Ref) :
+    decodeCnf? (array (null :: cnf.clauses.map encodeClause)) = some cnf := by
+  rw [decodeCnf?]
+  rw [decodeLiveRows_leadingNull]
+  exact decodeCnf?_encode cnf
+
+/-- The DNF half uses the identical tombstone discipline. -/
+theorem decodeDnf?_leadingNull (dnf : ClassicalMatrix.Dnf Ref) :
+    decodeDnf? (array (null :: dnf.cubes.map encodeCube)) = some dnf := by
+  rw [decodeDnf?]
+  rw [decodeLiveRows_leadingNull]
+  exact decodeDnf?_encode dnf
+
+end Nucleus.Hol.Ethane.OneBased.NestedCbor

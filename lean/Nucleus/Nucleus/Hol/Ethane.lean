@@ -26,6 +26,7 @@ import Nucleus.Hol.Ethane.Arena.OneBased.Rules
 import Nucleus.Hol.Ethane.Arena.OneBased.SynFacts
 import Nucleus.Hol.Ethane.Arena.OneBased.Api
 import Nucleus.Hol.Ethane.Arena.OneBased.Cbor
+import Nucleus.Hol.Ethane.Arena.OneBased.NestedCbor
 import Nucleus.Hol.Ethane.Arena.OneBased.Table
 import Nucleus.Hol.Ethane.Amber
 
