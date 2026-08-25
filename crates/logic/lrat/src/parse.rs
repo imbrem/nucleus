@@ -2,7 +2,7 @@
 
 use covalence_lib_error::snafu::{self, Snafu};
 
-use crate::{Clause, Literal, RatGroup};
+use crate::{Clause, Formula, Literal, RatGroup};
 
 /// One parsed LRAT proof step.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -34,6 +34,116 @@ pub struct ParseError {
 
 fn error(at: usize) -> ParseError {
     ParseError { at }
+}
+
+/// Parses a strict DIMACS CNF byte stream while preserving clause and literal order.
+///
+/// # Errors
+///
+/// Returns the byte or line position containing malformed UTF-8, headers, literals,
+/// terminators, variable bounds, or clause counts.
+pub fn parse_dimacs(bytes: &[u8]) -> Result<Formula, ParseError> {
+    let text = std::str::from_utf8(bytes).map_err(|utf8| error(utf8.valid_up_to()))?;
+    let mut header = None;
+    let mut values = Vec::new();
+    for (line_index, raw_line) in text.lines().enumerate() {
+        let at = line_index + 1;
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('c') {
+            continue;
+        }
+        if line.starts_with('p') {
+            if header.is_some() || !values.is_empty() {
+                return Err(error(at));
+            }
+            let fields = line.split_ascii_whitespace().collect::<Vec<_>>();
+            if fields.len() != 4 || fields[0] != "p" || fields[1] != "cnf" {
+                return Err(error(at));
+            }
+            let variables = fields[2].parse::<u64>().map_err(|_| error(at))?;
+            let clauses = fields[3].parse::<usize>().map_err(|_| error(at))?;
+            header = Some((variables, clauses));
+            continue;
+        }
+        if header.is_none() {
+            return Err(error(at));
+        }
+        values.extend(
+            line.split_ascii_whitespace()
+                .map(|token| token.parse::<i64>().map_err(|_| error(at)))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+    }
+    let (variables, expected_clauses) = header.ok_or_else(|| error(0))?;
+    let mut clauses = Vec::new();
+    let mut clause = Vec::new();
+    for value in values {
+        if value == 0 {
+            clauses.push(Clause::from_signed(std::mem::take(&mut clause)).map_err(|_| error(0))?);
+        } else {
+            let literal = Literal::new(value).map_err(|_| error(0))?;
+            if literal.variable() > variables {
+                return Err(error(0));
+            }
+            clause.push(value);
+        }
+    }
+    if !clause.is_empty() || clauses.len() != expected_clauses {
+        return Err(error(0));
+    }
+    Ok(Formula::new(clauses))
+}
+
+/// Parses compact binary DIMACS: LRAT-style signed varints with `0` terminating
+/// each clause and EOF terminating the formula.
+///
+/// This preserves literal and clause order. An empty byte string is the empty
+/// formula, while a single zero byte is one empty clause.
+///
+/// # Errors
+///
+/// Returns the byte offset of a malformed integer or unterminated clause.
+pub fn parse_binary_dimacs(bytes: &[u8]) -> Result<Formula, ParseError> {
+    let mut position = 0;
+    let mut clauses = Vec::new();
+    while position < bytes.len() {
+        let mut clause = Vec::new();
+        loop {
+            if position == bytes.len() {
+                return Err(error(position));
+            }
+            let literal = read_signed(bytes, &mut position)?;
+            if literal == 0 {
+                break;
+            }
+            clause.push(literal);
+        }
+        clauses.push(Clause::from_signed(clause).map_err(|_| error(position))?);
+    }
+    Ok(Formula::new(clauses))
+}
+
+/// Encodes compact binary DIMACS using LRAT's signed-varint convention.
+#[must_use]
+pub fn encode_binary_dimacs(formula: &Formula) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for clause in formula.clauses() {
+        for literal in clause.iter() {
+            let magnitude = literal.get().unsigned_abs();
+            let value = (magnitude << 1) | u64::from(literal.get() < 0);
+            write_varint(value, &mut bytes);
+        }
+        bytes.push(0);
+    }
+    bytes
+}
+
+fn write_varint(mut value: u64, bytes: &mut Vec<u8>) {
+    while value >= 0x80 {
+        bytes.push(u8::try_from(value & 0x7f).expect("seven bits fit u8") | 0x80);
+        value >>= 7;
+    }
+    bytes.push(u8::try_from(value).expect("final varint byte fits u8"));
 }
 
 fn learn(id: u64, signed_clause: Vec<i64>, hints: Vec<i64>, at: usize) -> Result<Step, ParseError> {
@@ -251,6 +361,32 @@ mod tests {
         let text = parse_text("3 0 1 2 0\n4 d 1 2 0\n").unwrap();
         let binary = parse_binary(&[b'a', 6, 0, 2, 4, 0, b'd', 2, 4, 0]).unwrap();
         assert_eq!(text, binary);
+    }
+
+    #[test]
+    fn dimacs_preserves_order_duplicates_and_empty_clauses() {
+        let formula = parse_dimacs(b"c demo\np cnf 2 2\n2 1 2 0\n0\n").unwrap();
+        assert_eq!(
+            formula.clauses()[0]
+                .iter()
+                .map(Literal::get)
+                .collect::<Vec<_>>(),
+            [2, 1, 2]
+        );
+        assert!(formula.clauses()[1].is_empty());
+        assert!(parse_dimacs(b"p cnf 1 1\n2 0\n").is_err());
+        assert!(parse_dimacs(b"p cnf 1 2\n1 0\n").is_err());
+    }
+
+    #[test]
+    fn binary_dimacs_round_trips_and_distinguishes_empty_cases() {
+        let formula = Formula::from_signed([vec![2, -1, 2], vec![]]).unwrap();
+        let bytes = encode_binary_dimacs(&formula);
+        assert_eq!(bytes, [4, 3, 4, 0, 0]);
+        assert_eq!(parse_binary_dimacs(&bytes).unwrap(), formula);
+        assert!(parse_binary_dimacs(&[]).unwrap().is_empty());
+        assert_eq!(parse_binary_dimacs(&[0]).unwrap().len(), 1);
+        assert!(parse_binary_dimacs(&[2]).is_err());
     }
 
     #[test]

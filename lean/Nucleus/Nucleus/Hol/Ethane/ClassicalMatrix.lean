@@ -864,11 +864,6 @@ def Store.mutate? (store : Store Atom) (id : Nat) (replacement : Sequent Atom) :
   | none => none
   | some _ => some { store with slots := store.slots.set id (some replacement) }
 
-/-- Normalization is exposed as a semantics-preserving in-place mutation. -/
-def Store.normalize? [DecidableEq Atom] [LinearOrder (Lit Atom)]
-    (store : Store Atom) (id : Nat) : Option (Store Atom) :=
-  (store.lookup id).bind fun fact => store.mutate? id fact.normalize
-
 /-! Public lifecycle operations translate bounded one-based `ThmId`s at the
 arena boundary.  Allocation fails rather than manufacturing an out-of-range
 handle when all positive `i32` indices are exhausted. -/
@@ -886,10 +881,6 @@ def Store.copyThm? (store : Store Atom) (source : ThmId) : Option (ThmId × Stor
 def Store.mutateThm? (store : Store Atom) (id : ThmId) (replacement : Sequent Atom) :
     Option (Store Atom) :=
   store.mutate? id.offset replacement
-
-def Store.normalizeThm? [DecidableEq Atom] [LinearOrder (Lit Atom)]
-    (store : Store Atom) (id : ThmId) : Option (Store Atom) :=
-  store.normalize? id.offset
 
 @[simp] theorem Store.empty_live_sound : (Store.empty : Store Atom).LiveSound := by
   simp [Store.LiveSound, Store.empty, Store.lookup]
@@ -1159,14 +1150,6 @@ theorem Store.mutate_live_sound {store after : Store Atom} {id : Nat}
   · intro candidate different
     exact Store.mutate_lookup_other mutated different
 
-theorem Store.normalize_live_sound [DecidableEq Atom] [LinearOrder (Lit Atom)]
-    {store after : Store Atom} {id : Nat} (storeSound : store.LiveSound)
-    (normalized : store.normalize? id = some after) : after.LiveSound := by
-  simp only [Store.normalize?, Option.bind_eq_some_iff] at normalized
-  obtain ⟨fact, factLive, mutated⟩ := normalized
-  exact Store.mutate_live_sound storeSound
-    (normalization_replacement_sound (storeSound id fact factLive)) mutated
-
 theorem Store.insertThm_live_sound {store after : Store Atom} {fact : Sequent Atom}
     {id : ThmId} (storeSound : store.LiveSound) (factSound : fact.Sound)
     (inserted : store.insertThm? fact = some (id, after)) : after.LiveSound := by
@@ -1199,11 +1182,6 @@ theorem Store.mutateThm_live_sound {store after : Store Atom} {id : ThmId}
     (replacementSound : replacement.Sound)
     (mutated : store.mutateThm? id replacement = some after) : after.LiveSound :=
   Store.mutate_live_sound storeSound replacementSound mutated
-
-theorem Store.normalizeThm_live_sound [DecidableEq Atom] [LinearOrder (Lit Atom)]
-    {store after : Store Atom} {id : ThmId} (storeSound : store.LiveSound)
-    (normalized : store.normalizeThm? id = some after) : after.LiveSound :=
-  Store.normalize_live_sound storeSound normalized
 
 /-! ## Why the right side is DNF, not CNF -/
 

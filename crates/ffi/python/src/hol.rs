@@ -782,6 +782,28 @@ impl PyKernel {
         ))
     }
 
+    fn copy_refutation_to_syllogisms(
+        &mut self,
+        refutation: PyRef<'_, crate::lrat::PyRefutation>,
+    ) -> PyResult<i32> {
+        self.kernel
+            .syl_mut()
+            .copy_refutation(&refutation.0)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
+    fn copy_refutation_to_theorems(
+        &mut self,
+        refutation: PyRef<'_, crate::lrat::PyRefutation>,
+    ) -> PyResult<i32> {
+        self.kernel
+            .thm_mut()
+            .copy_refutation(&refutation.0)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
     fn identity(&mut self, proposition: i32) -> PyResult<i32> {
         self.kernel
             .identity(literal(proposition)?)
@@ -826,12 +848,6 @@ impl PyKernel {
         let row = dnf_id(row)?;
         self.kernel.move_dnf_left(id, row).map_err(value_error)?;
         Ok(())
-    }
-
-    fn normalize_theorem(&mut self, theorem: i32) -> PyResult<()> {
-        self.kernel
-            .normalize_theorem(theorem_id(theorem)?)
-            .map_err(value_error)
     }
 
     fn normalize_cnf(&mut self, theorem: i32, row: i32) -> PyResult<()> {

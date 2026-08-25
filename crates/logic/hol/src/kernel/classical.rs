@@ -20,11 +20,6 @@ impl Thm {
     const fn new(lhs: Cnf, rhs: Dnf) -> Self {
         Self(lhs, rhs)
     }
-
-    fn normalize(&mut self) {
-        self.0.normalize();
-        self.1.normalize();
-    }
 }
 
 fn positive(reference: Ref) -> Lit {
@@ -84,7 +79,8 @@ impl Kernel {
                 rule: "classical refutation conclusion",
             });
         }
-        let expected = self.decode_canonical_cnf(formula)?;
+        let mut expected = self.decode_cnf(formula)?;
+        expected.normalize();
         let mut actual = theorem.lhs.to_owned();
         actual.normalize();
         if actual != expected {
@@ -128,7 +124,7 @@ impl Kernel {
     /// Weakens this theorem with complete CNF and DNF rows.
     ///
     /// Adding a clause strengthens the CNF antecedent. Adding a cube weakens
-    /// the DNF consequent. Input order and duplicates are normalized after
+    /// the DNF consequent. Input order and duplicates are preserved after
     /// every proposition has been checked as a resident Boolean term.
     ///
     /// # Errors
@@ -183,17 +179,6 @@ impl Kernel {
             .map_err(|_| KernelError::InvalidTheoremRule {
                 rule: "DNF transfer left",
             })
-    }
-
-    /// Canonicalizes every clause, cube, and matrix row in place.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the theorem is absent.
-    pub fn normalize_theorem(&mut self, theorem: ThmId) -> Result<(), KernelError> {
-        self.thm
-            .normalize(theorem)
-            .map_err(|_| KernelError::MissingTheorem { id: theorem })
     }
 
     /// Canonicalizes one indexed CNF row in place.
@@ -501,13 +486,13 @@ impl Kernel {
     /// Recursively flattens a disjunctive opcode tree on the right side.
     ///
     /// Negation is pushed through supported opcodes. The operation rejects a
-    /// connective whose normalized form is conjunctive, since choosing a
+    /// connective whose flattened form is conjunctive, since choosing a
     /// branch is then required for soundness.
     ///
     /// # Errors
     ///
     /// Returns an error unless `formula` occurs in the conclusion and every
-    /// compound node has a disjunctive normalized form.
+    /// compound node has a disjunctive flattened form.
     pub fn flatten_conclusion(
         &mut self,
         theorem: ThmId,
@@ -524,7 +509,7 @@ impl Kernel {
         let mut leaves = Vec::new();
         while let Some(current) = pending.pop() {
             match self.disjunctive_children(current)? {
-                Some(children) => pending.extend(children),
+                Some(children) => pending.extend(children.into_iter().rev()),
                 None => leaves.push(current),
             }
         }
@@ -537,7 +522,7 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error unless `formula` occurs in the premise and every
-    /// compound node has a conjunctive normalized form.
+    /// compound node has a conjunctive flattened form.
     pub fn flatten_premise(&mut self, theorem: ThmId, formula: Lit) -> Result<ThmId, KernelError> {
         let source = self.require_thm(theorem)?;
         let mut premises = source.lhs.to_rows();
@@ -555,7 +540,7 @@ impl Kernel {
     ///
     /// # Errors
     ///
-    /// Returns an error unless every normalized leaf occurs in the premise.
+    /// Returns an error unless every flattened leaf occurs in the premise.
     pub fn fold_premise(&mut self, theorem: ThmId, formula: Lit) -> Result<ThmId, KernelError> {
         self.fold_tree(theorem, formula, TreeSide::Conjunctive)
     }
@@ -564,7 +549,7 @@ impl Kernel {
     ///
     /// # Errors
     ///
-    /// Returns an error unless every normalized leaf occurs in the conclusion.
+    /// Returns an error unless every flattened leaf occurs in the conclusion.
     pub fn fold_conclusion(&mut self, theorem: ThmId, formula: Lit) -> Result<ThmId, KernelError> {
         self.fold_tree(theorem, formula, TreeSide::Disjunctive)
     }
@@ -590,8 +575,7 @@ impl Kernel {
         self.require_bool_term::<std::convert::Infallible>(reference(proposition))
             .map(|_| ())
     }
-    fn push_theorem(&mut self, mut theorem: Thm) -> Result<ThmId, KernelError> {
-        theorem.normalize();
+    fn push_theorem(&mut self, theorem: Thm) -> Result<ThmId, KernelError> {
         self.thm
             .insert(theorem.0, theorem.1)
             .map_err(|_| KernelError::TooManyTheorems)
@@ -614,8 +598,7 @@ impl Kernel {
         ))
     }
 
-    fn replace_theorem(&mut self, id: ThmId, mut theorem: Thm) -> Result<(), KernelError> {
-        theorem.normalize();
+    fn replace_theorem(&mut self, id: ThmId, theorem: Thm) -> Result<(), KernelError> {
         self.thm
             .replace(id, theorem.0, theorem.1)
             .map_err(|_| KernelError::MissingTheorem { id })
@@ -661,67 +644,49 @@ impl Kernel {
         Ok(())
     }
 
-    fn decode_canonical_cnf(&self, formula: Lit) -> Result<Cnf, KernelError> {
+    fn decode_cnf(&self, formula: Lit) -> Result<Cnf, KernelError> {
         if !formula.is_positive() {
             return Err(KernelError::InvalidTheoremRule {
-                rule: "canonical CNF polarity",
+                rule: "CNF polarity",
             });
         }
-        let mut rest = reference(formula);
+        let mut pending = vec![reference(formula)];
         let mut rows = Vec::new();
-        loop {
-            if self.arena.bool_value(rest) == Some(true) {
-                break;
+        while let Some(current) = pending.pop() {
+            if self.arena.bool_value(current) == Some(true) {
+                continue;
             }
-            if self.arena.op2(rest) != Some(Op2::And) {
-                return Err(KernelError::InvalidTheoremRule {
-                    rule: "canonical CNF spine",
-                });
+            if self.arena.op2(current) == Some(Op2::And) {
+                let children: Vec<_> = self
+                    .arena
+                    .children(current)
+                    .ok_or(KernelError::MissingDefinition { reference: current })?
+                    .collect();
+                pending.extend(children.into_iter().rev());
+            } else {
+                rows.push(self.decode_disjunction(current)?);
             }
-            let mut children = self
-                .arena
-                .children(rest)
-                .ok_or(KernelError::MissingDefinition { reference: rest })?;
-            let row = children.next().ok_or(KernelError::InvalidTheoremRule {
-                rule: "canonical CNF spine",
-            })?;
-            rest = children.next().ok_or(KernelError::InvalidTheoremRule {
-                rule: "canonical CNF spine",
-            })?;
-            rows.push(self.decode_canonical_disjunction(row)?);
         }
-        let mut cnf = Cnf::new(rows);
-        cnf.normalize();
-        Ok(cnf)
+        Ok(Cnf::new(rows))
     }
 
-    fn decode_canonical_disjunction(&self, mut rest: Ref) -> Result<LitVec, KernelError> {
+    fn decode_disjunction(&self, formula: Ref) -> Result<LitVec, KernelError> {
+        let mut pending = vec![formula];
         let mut row = LitVec::new();
-        loop {
-            if self.arena.bool_value(rest) == Some(false) {
-                break;
+        while let Some(current) = pending.pop() {
+            if self.arena.bool_value(current) == Some(false) {
+                continue;
             }
-            if self.arena.op2(rest) != Some(Op2::Or) {
-                return Err(KernelError::InvalidTheoremRule {
-                    rule: "canonical CNF row",
-                });
+            if self.arena.op2(current) == Some(Op2::Or) {
+                let children: Vec<_> = self
+                    .arena
+                    .children(current)
+                    .ok_or(KernelError::MissingDefinition { reference: current })?
+                    .collect();
+                pending.extend(children.into_iter().rev());
+            } else {
+                row.push(self.decode_canonical_literal(current)?);
             }
-            let mut children = self
-                .arena
-                .children(rest)
-                .ok_or(KernelError::MissingDefinition { reference: rest })?;
-            let literal = children.next().ok_or(KernelError::InvalidTheoremRule {
-                rule: "canonical CNF row",
-            })?;
-            rest = children.next().ok_or(KernelError::InvalidTheoremRule {
-                rule: "canonical CNF row",
-            })?;
-            row.push(self.decode_canonical_literal(literal)?);
-        }
-        if row.windows(2).any(|pair| pair[0] >= pair[1]) {
-            return Err(KernelError::InvalidTheoremRule {
-                rule: "canonical CNF literal order",
-            });
         }
         Ok(row)
     }
@@ -909,7 +874,7 @@ impl Kernel {
                 TreeSide::Disjunctive => self.disjunctive_children(current)?,
             };
             match children {
-                Some(children) => pending.extend(children),
+                Some(children) => pending.extend(children.into_iter().rev()),
                 None => leaves.push(current),
             }
         }
@@ -923,9 +888,7 @@ impl Kernel {
         side: TreeSide,
     ) -> Result<ThmId, KernelError> {
         let source = self.require_thm(theorem)?;
-        let mut leaves = self.collect_tree(formula, side)?;
-        leaves.sort_unstable();
-        leaves.dedup();
+        let leaves = self.collect_tree(formula, side)?;
         let mut premises = source.lhs.to_rows();
         let mut conclusions = source.rhs.to_rows();
         let matched = match side {
@@ -1045,12 +1008,11 @@ mod tests {
     }
 
     #[test]
-    fn theorem_contexts_are_canonical_after_in_place_weakening() {
+    fn theorem_contexts_preserve_order_and_duplicates_after_in_place_weakening() {
         let Fixture { mut kernel, p, q } = fixture();
         let identity = kernel.identity(p).unwrap();
         kernel.weaken(identity, &[q, p, q], &[q, p, q]).unwrap();
-        let mut expected = [p, q];
-        expected.sort_unstable();
+        let expected = [p, q, p, q];
         assert_eq!(
             unit_premises(kernel.require_thm(identity).unwrap()),
             expected
@@ -1072,16 +1034,14 @@ mod tests {
     }
 
     #[test]
-    fn weakening_canonicalizes_hostile_unsorted_input_transactionally() {
+    fn weakening_preserves_hostile_unsorted_input_transactionally() {
         let Fixture { mut kernel, p, q } = fixture();
         let identity = kernel.identity(p).unwrap();
         kernel
             .weaken(identity, &[q, p.negated(), q, p], &[q.negated(), p, q])
             .unwrap();
-        let mut expected_premises = vec![p, p.negated(), q];
-        expected_premises.sort_unstable();
-        let mut expected_conclusions = vec![p, q, q.negated()];
-        expected_conclusions.sort_unstable();
+        let expected_premises = vec![p, q, p.negated(), q, p];
+        let expected_conclusions = vec![p, q.negated(), p, q];
         assert_eq!(
             unit_premises(kernel.require_thm(identity).unwrap()),
             expected_premises
@@ -1258,7 +1218,10 @@ mod tests {
         kernel.weaken(assumed_not_p, &[], &[q]).unwrap();
         let (left, right) = (assumed_p, assumed_not_p);
         let resolved = kernel.resolve(left, right, p).unwrap();
-        assert_eq!(unit_conclusions(kernel.require_thm(resolved).unwrap()), [q]);
+        assert_eq!(
+            unit_conclusions(kernel.require_thm(resolved).unwrap()),
+            [q, q]
+        );
 
         let assumed_p = kernel.identity(p).unwrap();
         let assumed_not_p = kernel.identity(p.negated()).unwrap();
@@ -1286,7 +1249,7 @@ mod tests {
         let neg_p_clause = kernel.expand_conclusion(not_clause, not_p, None).unwrap();
         let refutation = kernel.resolve(p_clause, neg_p_clause, p).unwrap();
         let sequent = kernel.require_thm(refutation).unwrap();
-        assert_eq!(unit_premises(sequent), [formula]);
+        assert_eq!(unit_premises(sequent), [formula, formula]);
         assert!(sequent.rhs.rows().next().is_none());
     }
 
@@ -1301,7 +1264,7 @@ mod tests {
         let flattened = kernel.flatten_conclusion(theorem, nested).unwrap();
         assert_eq!(
             unit_conclusions(kernel.require_thm(flattened).unwrap()),
-            [q, p.negated()]
+            [p.negated(), p.negated(), q]
         );
 
         let bool_ty = kernel.classifier(reference(p)).unwrap();
@@ -1347,7 +1310,7 @@ mod tests {
     }
 
     #[test]
-    fn recursive_tree_folding_treats_repeated_leaves_idempotently() {
+    fn recursive_tree_folding_preserves_repeated_leaves() {
         let Fixture { mut kernel, p, .. } = fixture();
         let repeated_and = positive(kernel.op2(Op2::And, reference(p), reference(p)).unwrap());
         let nested_and = positive(
@@ -1357,7 +1320,10 @@ mod tests {
         );
         let and_identity = kernel.identity(nested_and).unwrap();
         let flat_left = kernel.flatten_premise(and_identity, nested_and).unwrap();
-        assert_eq!(unit_premises(kernel.require_thm(flat_left).unwrap()), [p]);
+        assert_eq!(
+            unit_premises(kernel.require_thm(flat_left).unwrap()),
+            [p, p, p]
+        );
         let folded_left = kernel.fold_premise(flat_left, nested_and).unwrap();
         assert_eq!(
             kernel.require_thm(folded_left).unwrap(),
@@ -1374,7 +1340,7 @@ mod tests {
         let flat_right = kernel.flatten_conclusion(or_identity, nested_or).unwrap();
         assert_eq!(
             unit_conclusions(kernel.require_thm(flat_right).unwrap()),
-            [p]
+            [p, p, p]
         );
         let folded_right = kernel.fold_conclusion(flat_right, nested_or).unwrap();
         assert_eq!(
@@ -1549,8 +1515,7 @@ mod tests {
         let unary = kernel.identity(p).unwrap();
         let preserved = kernel.copy_theorem(unary).unwrap();
         kernel.weaken(unary, &[q], &[]).unwrap();
-        let mut expected = [p, q];
-        expected.sort_unstable();
+        let expected = [p, q];
         assert_eq!(unit_premises(kernel.require_thm(unary).unwrap()), expected);
         assert_eq!(unit_premises(kernel.require_thm(preserved).unwrap()), [p]);
         let before = snapshot(kernel.require_thm(unary).unwrap());
