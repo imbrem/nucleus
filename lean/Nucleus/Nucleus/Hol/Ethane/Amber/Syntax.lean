@@ -77,8 +77,8 @@ def tag : T Sig Name Ix → SyntaxTag
 
 /-- Scalar fields in constructor order. -/
 def extra : T Sig Name Ix → List (Extra Sig Name)
-  | .tyLam name .. | .tyFv name .. | .tyExists name .. | .model name .. |
-      .tmFv name .. => [.name name]
+  | .tyLam name .. | .tyFv name .. | .tyExists name .. | .tyForall name .. |
+      .model name .. | .tmFv name .. => [.name name]
   | @Arena.Row.primFam _ _ _ kind symbol _ => [.fam ⟨kind, symbol⟩]
   | .primTm symbol => [.tm symbol]
   | .bool value => [.bool value]

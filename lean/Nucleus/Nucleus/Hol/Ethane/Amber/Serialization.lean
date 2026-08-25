@@ -103,6 +103,7 @@ def tyApp (names : SyntaxVocabulary) := names.name .tyApp
 def tyLam (names : SyntaxVocabulary) := names.name .tyLam
 def tyFv (names : SyntaxVocabulary) := names.name .tyFv
 def tyExists (names : SyntaxVocabulary) := names.name .tyExists
+def tyForall (names : SyntaxVocabulary) := names.name .tyForall
 def model (names : SyntaxVocabulary) := names.name .model
 def primFam (names : SyntaxVocabulary) := names.name .primFam
 def primTm (names : SyntaxVocabulary) := names.name .primTm

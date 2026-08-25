@@ -56,7 +56,7 @@ def children : Row Sig Name ι → List ι
       .eq left right | .eps left right =>
       [left, right]
   | .tyLam _ kinds body => [kinds, body]
-  | .tyFv _ kind | .tyExists _ kind | .model _ kind |
+  | .tyFv _ kind | .tyExists _ kind | .tyForall _ kind | .model _ kind |
       .primFam _ kind | .tmFv _ kind => [kind]
   | .kindStar | .boolTy | .primTm _ | .bool _ => []
 

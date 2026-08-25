@@ -142,8 +142,10 @@ def infinityAxiom {Sig : Signature} [SigTyping Sig] : Tm Sig [] 0 :=
   .tyExists (typePredicate (Sig := Sig)).tm
 
 theorem axiom_typed {Sig : Signature} [SigTyping Sig] :
-    HasType (emptyBound : BoundCtx Sig [] 0) (infinityAxiom (Sig := Sig)) .boolTy :=
-  .tyExists (typePredicate (Sig := Sig)).typing
+    HasType (emptyBound : BoundCtx Sig [] 0) (infinityAxiom (Sig := Sig)) .boolTy := by
+  refine .tyExists ?_
+  rw [weakenBoundCtx_empty]
+  exact (typePredicate (Sig := Sig)).typing
 
 /-- The pointed carrier used for the semantic witness. -/
 def natPointed : CPointed := ⟨Nat, 0⟩

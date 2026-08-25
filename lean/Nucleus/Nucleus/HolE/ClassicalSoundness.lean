@@ -39,10 +39,10 @@ inductive CDefChecks : {types : List Kind} → {depth : Nat} →
       (hp : CChecks (extendBound A emptyBound) p (.tm .boolTy)) :
       CDefChecks Γ x (.sub A p) → CDefChecks Γ (.rep A p x) A
   | tyExists (raw : CChecks (types := types) Γ (.tyExists p) (.tm .boolTy)) :
-      CDefChecks (types := .star :: types) emptyBound p .boolTy →
+      CDefChecks (types := .star :: types) (weakenBoundCtx Γ) p .boolTy →
       CDefChecks (types := types) Γ (.tyExists p) .boolTy
   | tyForall (raw : CChecks (types := types) Γ (.tyForall p) (.tm .boolTy)) :
-      CDefChecks (types := .star :: types) emptyBound p .boolTy →
+      CDefChecks (types := .star :: types) (weakenBoundCtx Γ) p .boolTy →
       CDefChecks (types := types) Γ (.tyForall p) .boolTy
   | conv : CDefChecks Γ term A → CKinded B → FamEq ClassicalSig A B →
       CDefChecks Γ term B

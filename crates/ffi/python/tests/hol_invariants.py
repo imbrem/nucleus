@@ -27,6 +27,7 @@ TY_TAGS = frozenset(
 TM_TAGS = frozenset(
     {
         "tm.ty_exists",
+        "tm.ty_forall",
         "tm.fv",
         "tm.app",
         "tm.lam",

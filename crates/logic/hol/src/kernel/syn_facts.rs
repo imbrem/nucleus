@@ -1172,7 +1172,9 @@ impl Kernel {
                         shadowed || Self::same_variable_name(binder_node, needle),
                     ));
                 }
-                Node::TyExists { name, predicate } | Node::Model { name, predicate } => {
+                Node::TyExists { name, predicate }
+                | Node::TyForall { name, predicate }
+                | Node::Model { name, predicate } => {
                     let binds_needle =
                         matches!(needle, Node::TyFv { name: needle, .. } if needle == name);
                     pending.push((predicate, shadowed || binds_needle));

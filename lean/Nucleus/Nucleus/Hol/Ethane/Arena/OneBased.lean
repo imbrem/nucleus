@@ -286,6 +286,7 @@ def ofName? : String → Option Tag
   | "ty.lam" => some (.ty .lam)
   | "ty.fv" => some (.ty .fv)
   | "tm.ty_exists" => some (.tm .tyExists)
+  | "tm.ty_forall" => some (.tm .tyForall)
   | "ty.model" => some (.ty .model)
   | "tm.fv" => some (.tm .fv)
   | "tm.app" => some (.tm .app)
@@ -421,6 +422,8 @@ def Row.ofView? (view : RowView) : Option Row := do
     | .ty .fv, some [kind], some (.nat name), none, none => some (.tyFv name kind)
     | .tm .tyExists, some [predicate], some (.nat name), none, none =>
         some (.tyExists name predicate)
+    | .tm .tyForall, some [predicate], some (.nat name), none, none =>
+        some (.tyForall name predicate)
     | .ty .model, some [predicate], some (.nat name), none, none =>
         some (.model name predicate)
     | .tm .fv, some [type], some (.nat name), none, none => some (.tmFv name type)

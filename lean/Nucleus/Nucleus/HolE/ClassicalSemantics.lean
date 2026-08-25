@@ -180,10 +180,10 @@ inductive CChecks : {types : List Kind} → {sort : HolSort} → {depth : Nat} �
       (hp : CChecks (extendBound A emptyBound) predicate (.tm .boolTy)) :
       CChecks Γ value (.tm (.sub A predicate)) →
       CChecks Γ (.rep A predicate value) (.tm A)
-  | tyExists : CChecks (types := .star :: types) emptyBound predicate (.tm .boolTy) →
+  | tyExists : CChecks (types := .star :: types) (weakenBoundCtx Γ) predicate (.tm .boolTy) →
       CChecks (types := types) Γ (.tyExists predicate) (.tm .boolTy)
 
-  | tyForall : CChecks (types := .star :: types) emptyBound predicate (.tm .boolTy) →
+  | tyForall : CChecks (types := .star :: types) (weakenBoundCtx Γ) predicate (.tm .boolTy) →
       CChecks (types := types) Γ (.tyForall predicate) (.tm .boolTy)
 
 abbrev CKinded (A : Fam ClassicalSig types kind) := CChecks emptyBound A .kind
@@ -374,15 +374,29 @@ noncomputable def cSem {types : List Kind} {sort : HolSort} {depth : Nat}
         (cSem hp env (extendCBoundEnv carrier value emptyCBoundEnv) cBool).down
       let subtype := cGuardedType carrier predicate
       ⟨alignCValue carrier expected (cSem hx env bound subtype).down.1⟩
-  | .tyExists hp => fun env _ expected =>
+  -- `CBoundEnv` is indexed only by term depth, never by the type context, so
+  -- the ambient bound environment crosses the type binder unchanged.  That is
+  -- what makes an *open* type quantifier cost nothing semantically.
+  | .tyExists hp => fun env bound expected =>
       ⟨alignCValue cBool expected (decide (∃ candidate : CPointed,
         cSem hp (extendCTypeEnv (kind := .star) candidate env)
-          emptyCBoundEnv cBool = ⟨true⟩))⟩
-
-  | .tyForall hp => fun env _ expected =>
+          bound cBool = ⟨true⟩))⟩
+  | .tyForall hp => fun env bound expected =>
       ⟨alignCValue cBool expected (decide (∀ candidate : CPointed,
         cSem hp (extendCTypeEnv (kind := .star) candidate env)
-          emptyCBoundEnv cBool = ⟨true⟩))⟩
+          bound cBool = ⟨true⟩))⟩
+
+/-- Transporting a certificate along an equality of bound contexts does not
+change what it means.  The type quantifiers are open while `ty.model` stays a
+closed type binder, so a proof that moves between the two needs this bridge. -/
+theorem cSem_transport_ctx {types : List Kind} {sort : HolSort}
+    {depth : Nat} {Γ Δ : BoundCtx ClassicalSig types depth}
+    {expression : Expr ClassicalSig types sort depth}
+    {classification : Classification ClassicalSig types sort}
+    (contexts : Γ = Δ) (checking : CChecks Γ expression classification) :
+    cSem (contexts ▸ checking) = cSem checking := by
+  cases contexts
+  rfl
 
 noncomputable def cDenoteFam {types : List Kind} {kind : Kind}
     {A : Fam ClassicalSig types kind} (env : CTypeEnv types) (checking : CKinded A) :

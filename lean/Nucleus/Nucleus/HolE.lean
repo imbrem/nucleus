@@ -46,9 +46,13 @@ inductive Expr (Sig : Signature) : List Kind → HolSort → Nat → Type u wher
   | tyBv {kind : Kind} (v : TyVar types kind) : Expr Sig types (.kind kind) 0
   | sub (carrier : Expr Sig types (.kind .star) 0)
       (predicate : Expr Sig types .tm 1) : Expr Sig types (.kind .star) 0
-  | tyExists {depth : Nat} (predicate : Expr Sig (.star :: types) .tm 0) :
+  -- The predicate keeps the ambient term depth rather than being closed over
+  -- it, so a type quantifier may appear under term binders and still mention
+  -- them. Only the *type* context grows; `CBoundEnv` does not mention `types`,
+  -- so no environment has to be transported across the binder.
+  | tyExists {depth : Nat} (predicate : Expr Sig (.star :: types) .tm depth) :
       Expr Sig types .tm depth
-  | tyForall {depth : Nat} (predicate : Expr Sig (.star :: types) .tm 0) :
+  | tyForall {depth : Nat} (predicate : Expr Sig (.star :: types) .tm depth) :
       Expr Sig types .tm depth
   | model (predicate : Expr Sig (.star :: types) .tm 0) :
       Expr Sig types (.kind .star) 0
@@ -108,6 +112,68 @@ def weakenTypes (expression : Expr Sig types sort depth) :
     Expr Sig (kind :: types) sort depth :=
   renameTypes (fun v => .succ v) expression
 
+/-- Lifting preserves pointwise agreement of renamings. -/
+theorem liftTyRen_congr {source target : List Kind} {ρ τ : TyRen source target}
+    (agree : ∀ {k : Kind} (v : TyVar source k), ρ v = τ v) {kind k : Kind}
+    (v : TyVar (kind :: source) k) : liftTyRen ρ v = liftTyRen τ v := by
+  cases v with
+  | zero => rfl
+  | succ v => simp only [liftTyRen, agree v]
+
+/-- Lifting commutes with composition of renamings. -/
+theorem liftTyRen_comp {source middle target : List Kind}
+    (ρ : TyRen source middle) (τ : TyRen middle target) {kind k : Kind}
+    (v : TyVar (kind :: source) k) :
+    liftTyRen τ (liftTyRen ρ v) = liftTyRen (fun v => τ (ρ v)) v := by
+  cases v <;> rfl
+
+/-- Renaming depends only on where the renaming sends each variable. -/
+theorem renameTypes_congr {source target : List Kind} {ρ τ : TyRen source target}
+    (agree : ∀ {k : Kind} (v : TyVar source k), ρ v = τ v)
+    (expression : Expr Sig source sort depth) :
+    renameTypes ρ expression = renameTypes τ expression := by
+  induction expression generalizing target with
+  | boolTy | primFam | primTm | bv | bool => rfl
+  | arr A B ihA ihB | tyApp A B ihA ihB | app A B ihA ihB =>
+      simp only [renameTypes, ihA agree, ihB agree]
+  | tyLam body ih | model body ih | tyExists body ih | tyForall body ih =>
+      simp only [renameTypes, ih (liftTyRen_congr agree)]
+  | tyBv v => simp only [renameTypes, agree v]
+  | fv name A ih => simp only [renameTypes, ih agree]
+  | sub A p ihA ihp | lam A p ihA ihp | eps A p ihA ihp =>
+      simp only [renameTypes, ihA agree, ihp agree]
+  | eq A x y ihA ihx ihy | abs A x y ihA ihx ihy | rep A x y ihA ihx ihy =>
+      simp only [renameTypes, ihA agree, ihx agree, ihy agree]
+
+/-- Type renamings compose. -/
+theorem renameTypes_renameTypes {source middle target : List Kind}
+    (ρ : TyRen source middle) (τ : TyRen middle target)
+    (expression : Expr Sig source sort depth) :
+    renameTypes τ (renameTypes ρ expression) =
+      renameTypes (fun v => τ (ρ v)) expression := by
+  induction expression generalizing middle target with
+  | boolTy | primFam | primTm | bv | bool => rfl
+  | arr A B ihA ihB | tyApp A B ihA ihB | app A B ihA ihB =>
+      simp only [renameTypes, ihA, ihB]
+  | tyLam body ih | model body ih | tyExists body ih | tyForall body ih =>
+      simp only [renameTypes]
+      rw [ih (liftTyRen ρ) (liftTyRen τ)]
+      exact congrArg _ (renameTypes_congr (liftTyRen_comp ρ τ) body)
+  | tyBv v => rfl
+  | fv name A ih => simp only [renameTypes, ih]
+  | sub A p ihA ihp | lam A p ihA ihp | eps A p ihA ihp =>
+      simp only [renameTypes, ihA, ihp]
+  | eq A x y ihA ihx ihy | abs A x y ihA ihx ihy | rep A x y ihA ihx ihy =>
+      simp only [renameTypes, ihA, ihx, ihy]
+
+/-- Weakening past a fresh type variable commutes with renaming the rest. -/
+@[simp] theorem renameTypes_weakenTypes {source target : List Kind}
+    (ρ : TyRen source target) (expression : Expr Sig source sort depth) :
+    renameTypes (liftTyRen (kind := kind) ρ) (weakenTypes expression) =
+      weakenTypes (renameTypes ρ expression) := by
+  simp only [weakenTypes, renameTypes_renameTypes]
+  rfl
+
 def liftTySub (σ : TySub Sig source target) :
     TySub Sig (kind :: source) (kind :: target)
   | _, .zero => .tyBv .zero
@@ -140,6 +206,87 @@ def instantiateTypes (σ : TySub Sig source target) :
       (instantiateTypes σ x)
   | .rep A p x => .rep (instantiateTypes σ A) (instantiateTypes σ p)
       (instantiateTypes σ x)
+
+/-- Lifting preserves pointwise agreement of substitutions. -/
+theorem liftTySub_congr {source target : List Kind} {σ ς : TySub Sig source target}
+    (agree : ∀ {k : Kind} (v : TyVar source k), σ v = ς v) {kind k : Kind}
+    (v : TyVar (kind :: source) k) : liftTySub σ v = liftTySub ς v := by
+  cases v with
+  | zero => rfl
+  | succ v => simp only [liftTySub, agree v]
+
+/-- Substitution depends only on where the substitution sends each variable. -/
+theorem instantiateTypes_congr {source target : List Kind}
+    {σ ς : TySub Sig source target}
+    (agree : ∀ {k : Kind} (v : TyVar source k), σ v = ς v)
+    (expression : Expr Sig source sort depth) :
+    instantiateTypes σ expression = instantiateTypes ς expression := by
+  induction expression generalizing target with
+  | boolTy | primFam | primTm | bv | bool => rfl
+  | arr A B ihA ihB | tyApp A B ihA ihB | app A B ihA ihB =>
+      simp only [instantiateTypes, ihA agree, ihB agree]
+  | tyLam body ih | model body ih | tyExists body ih | tyForall body ih =>
+      simp only [instantiateTypes, ih (liftTySub_congr agree)]
+  | tyBv v => exact agree v
+  | fv name A ih => simp only [instantiateTypes, ih agree]
+  | sub A p ihA ihp | lam A p ihA ihp | eps A p ihA ihp =>
+      simp only [instantiateTypes, ihA agree, ihp agree]
+  | eq A x y ihA ihx ihy | abs A x y ihA ihx ihy | rep A x y ihA ihx ihy =>
+      simp only [instantiateTypes, ihA agree, ihx agree, ihy agree]
+
+/-- Substituting after renaming is substituting along the composite. -/
+theorem instantiateTypes_renameTypes {source middle target : List Kind}
+    (ρ : TyRen source middle) (σ : TySub Sig middle target)
+    (expression : Expr Sig source sort depth) :
+    instantiateTypes σ (renameTypes ρ expression) =
+      instantiateTypes (fun v => σ (ρ v)) expression := by
+  induction expression generalizing middle target with
+  | boolTy | primFam | primTm | bv | bool => rfl
+  | arr A B ihA ihB | tyApp A B ihA ihB | app A B ihA ihB =>
+      simp only [renameTypes, instantiateTypes, ihA, ihB]
+  | tyLam body ih | model body ih | tyExists body ih | tyForall body ih =>
+      simp only [renameTypes, instantiateTypes]
+      rw [ih (liftTyRen ρ) (liftTySub σ)]
+      exact congrArg _
+        (instantiateTypes_congr (fun v => by cases v <;> rfl) body)
+  | tyBv v => rfl
+  | fv name A ih => simp only [renameTypes, instantiateTypes, ih]
+  | sub A p ihA ihp | lam A p ihA ihp | eps A p ihA ihp =>
+      simp only [renameTypes, instantiateTypes, ihA, ihp]
+  | eq A x y ihA ihx ihy | abs A x y ihA ihx ihy | rep A x y ihA ihx ihy =>
+      simp only [renameTypes, instantiateTypes, ihA, ihx, ihy]
+
+/-- Renaming after substituting is substituting along the renamed images. -/
+theorem renameTypes_instantiateTypes {source middle target : List Kind}
+    (σ : TySub Sig source middle) (ρ : TyRen middle target)
+    (expression : Expr Sig source sort depth) :
+    renameTypes ρ (instantiateTypes σ expression) =
+      instantiateTypes (fun v => renameTypes ρ (σ v)) expression := by
+  induction expression generalizing middle target with
+  | boolTy | primFam | primTm | bv | bool => rfl
+  | arr A B ihA ihB | tyApp A B ihA ihB | app A B ihA ihB =>
+      simp only [renameTypes, instantiateTypes, ihA, ihB]
+  | tyLam body ih | model body ih | tyExists body ih | tyForall body ih =>
+      simp only [renameTypes, instantiateTypes]
+      rw [ih (liftTySub σ) (liftTyRen ρ)]
+      refine congrArg _ (instantiateTypes_congr (fun v => ?_) body)
+      cases v with
+      | zero => rfl
+      | succ v => exact renameTypes_weakenTypes ρ (σ v)
+  | tyBv v => rfl
+  | fv name A ih => simp only [renameTypes, instantiateTypes, ih]
+  | sub A p ihA ihp | lam A p ihA ihp | eps A p ihA ihp =>
+      simp only [renameTypes, instantiateTypes, ihA, ihp]
+  | eq A x y ihA ihx ihy | abs A x y ihA ihx ihy | rep A x y ihA ihx ihy =>
+      simp only [renameTypes, instantiateTypes, ihA, ihx, ihy]
+
+/-- Weakening past a fresh type variable commutes with substituting the rest. -/
+@[simp] theorem instantiateTypes_weakenTypes {source target : List Kind}
+    (σ : TySub Sig source target) (expression : Expr Sig source sort depth) :
+    instantiateTypes (liftTySub (kind := kind) σ) (weakenTypes expression) =
+      weakenTypes (instantiateTypes σ expression) := by
+  simp only [weakenTypes, instantiateTypes_renameTypes, renameTypes_instantiateTypes]
+  exact instantiateTypes_congr (fun v => rfl) expression
 
 def headTySub (replacement : Fam Sig types kind) :
     TySub Sig (kind :: types) types
@@ -225,6 +372,20 @@ abbrev BoundCtx (Sig : Signature) (types : List Kind) (depth : Nat) :=
 
 def emptyBound : BoundCtx Sig types 0 := Fin.elim0
 
+/-- Weaken a bound context past a fresh type variable.
+
+Going under a type binder does not disturb the *term* variables, only what
+their types mean, so the depth is unchanged and each entry is weakened. This is
+what lets a type quantifier stand under term binders and still mention them. -/
+def weakenBoundCtx (Γ : BoundCtx Sig types depth) :
+    BoundCtx Sig (kind :: types) depth := fun i => weakenTypes (Γ i)
+
+@[simp] theorem weakenBoundCtx_empty :
+    weakenBoundCtx (Sig := Sig) (kind := kind) (emptyBound : BoundCtx Sig types 0) =
+      (emptyBound : BoundCtx Sig (kind :: types) 0) := by
+  funext i
+  exact Fin.elim0 i
+
 def extendBound (A : Ty Sig types) (context : BoundCtx Sig types depth) :
     BoundCtx Sig types (depth + 1) := Fin.cases A context
 
@@ -277,9 +438,9 @@ inductive Checks {Sig : Signature} [SigTyping Sig] : {types : List Kind} →
   | sub : Checks emptyBound A .kind →
       Checks (extendBound A emptyBound) p (.tm .boolTy) →
       Checks emptyBound (.sub A p) .kind
-  | tyExists : Checks (types := .star :: types) emptyBound p (.tm .boolTy) →
+  | tyExists : Checks (types := .star :: types) (weakenBoundCtx Γ) p (.tm .boolTy) →
       Checks (types := types) Γ (.tyExists p) (.tm .boolTy)
-  | tyForall : Checks (types := .star :: types) emptyBound p (.tm .boolTy) →
+  | tyForall : Checks (types := .star :: types) (weakenBoundCtx Γ) p (.tm .boolTy) →
       Checks (types := types) Γ (.tyForall p) (.tm .boolTy)
   | model : Checks (types := .star :: types) emptyBound p (.tm .boolTy) →
       Checks (types := types) emptyBound (.model p) .kind
@@ -387,10 +548,10 @@ inductive HasTypeDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
       (hA : Kinded A) (hp : HasType (extendBound A emptyBound) p .boolTy) :
       HasTypeDefEq Γ x (.sub A p) → HasTypeDefEq Γ (.rep A p x) A
   | tyExists (raw : HasType (types := types) Γ (.tyExists p) .boolTy) :
-      HasTypeDefEq (types := .star :: types) emptyBound p .boolTy →
+      HasTypeDefEq (types := .star :: types) (weakenBoundCtx Γ) p .boolTy →
       HasTypeDefEq (types := types) Γ (.tyExists p) .boolTy
   | tyForall (raw : HasType (types := types) Γ (.tyForall p) .boolTy) :
-      HasTypeDefEq (types := .star :: types) emptyBound p .boolTy →
+      HasTypeDefEq (types := .star :: types) (weakenBoundCtx Γ) p .boolTy →
       HasTypeDefEq (types := types) Γ (.tyForall p) .boolTy
   | conv (typing : HasTypeDefEq Γ term A) (hB : Kinded B)
       (conversion : FamEq Sig A B) : HasTypeDefEq Γ term B
@@ -425,6 +586,15 @@ end HasTypeDefEq
 
 def renameBoundCtx (ρ : TyRen source target) (Γ : BoundCtx Sig source depth) :
     BoundCtx Sig target depth := fun i => renameTypes ρ (Γ i)
+
+/-- Weakening a context past a fresh type variable commutes with renaming the
+rest, which is what lets the type-quantifier rules transport. -/
+@[simp] theorem renameBoundCtx_weakenBoundCtx {source target : List Kind}
+    (ρ : TyRen source target) (Γ : BoundCtx Sig source depth) :
+    renameBoundCtx (liftTyRen (kind := kind) ρ) (weakenBoundCtx Γ) =
+      weakenBoundCtx (renameBoundCtx ρ Γ) := by
+  funext i
+  exact renameTypes_weakenTypes ρ (Γ i)
 
 @[simp] theorem renameBoundCtx_empty (ρ : TyRen source target) :
     renameBoundCtx (Sig := Sig) ρ (emptyBound : BoundCtx Sig source 0) =
@@ -516,6 +686,22 @@ theorem WellFormedTySub.lift {Sig : Signature} [SigTyping Sig]
 
 def instantiateBoundCtx (σ : TySub Sig source target) (Γ : BoundCtx Sig source depth) :
     BoundCtx Sig target depth := fun i => instantiateTypes σ (Γ i)
+
+/-- The substitution counterpart of `renameBoundCtx_weakenBoundCtx`. -/
+@[simp] theorem instantiateBoundCtx_weakenBoundCtx {source target : List Kind}
+    (σ : TySub Sig source target) (Γ : BoundCtx Sig source depth) :
+    instantiateBoundCtx (liftTySub (kind := kind) σ) (weakenBoundCtx Γ) =
+      weakenBoundCtx (instantiateBoundCtx σ Γ) := by
+  funext i
+  exact instantiateTypes_weakenTypes σ (Γ i)
+
+/-- Opening a type quantifier restores the ambient bound context exactly:
+weakening past the bound variable and then substituting it away cancels. -/
+@[simp] theorem instantiateBoundCtx_head_weakenBoundCtx {types : List Kind}
+    (replacement : Fam Sig types kind) (Γ : BoundCtx Sig types depth) :
+    instantiateBoundCtx (headTySub replacement) (weakenBoundCtx Γ) = Γ := by
+  funext i
+  exact instantiateTypes_head_weakenTypes (Γ i) replacement
 
 @[simp] theorem instantiateBoundCtx_empty (σ : TySub Sig source target) :
     instantiateBoundCtx (Sig := Sig) σ (emptyBound : BoundCtx Sig source 0) =

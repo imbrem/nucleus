@@ -140,7 +140,7 @@ mutual
     | tyExistsTrue
         (candidate : Pointed)
         (predicateEval : Eval (extendTypeEnv (kind := .star) candidate typeEnv)
-          emptyBound emptyRawBoundEnv
+          (weakenBoundCtx Γ) boundEnv
           predicate .boolTy boolPointed true) :
         Eval typeEnv Γ boundEnv (.tyExists predicate) .boolTy boolPointed true
     | tyExistsFalse :
@@ -155,12 +155,12 @@ mutual
     | tyForallTrue
         (predicateEval : ∀ candidate : Pointed,
           Eval (extendTypeEnv (kind := .star) candidate typeEnv)
-            emptyBound emptyRawBoundEnv predicate .boolTy boolPointed true) :
+            (weakenBoundCtx Γ) boundEnv predicate .boolTy boolPointed true) :
         Eval typeEnv Γ boundEnv (.tyForall predicate) .boolTy boolPointed true
     | tyForallFalse
         (candidate : Pointed)
         (predicateEval : Eval (extendTypeEnv (kind := .star) candidate typeEnv)
-          emptyBound emptyRawBoundEnv
+          (weakenBoundCtx Γ) boundEnv
           predicate .boolTy boolPointed false) :
         Eval typeEnv Γ boundEnv (.tyForall predicate) .boolTy boolPointed false
 end
@@ -327,7 +327,8 @@ theorem Checks.semantic_total {types : List Kind} {sort : HolSort} {depth : Nat}
       subst semantic
       exact ⟨false, .tyExistsFalse⟩
 
-  | @tyForall _ predicate _ _ hp ih =>
+  | tyForall hp ih =>
+      rename_i boundCtx predicate
       intro typeEnv
       refine ⟨⟨boolPointed, .bool typeEnv⟩, ?_⟩
       intro boundEnv semantic denotes
@@ -339,17 +340,17 @@ theorem Checks.semantic_total {types : List Kind} {sort : HolSort} {depth : Nat}
       -- refutes the universal.
       by_cases every : ∀ candidate : Pointed,
           Eval (extendTypeEnv (kind := .star) candidate typeEnv)
-            emptyBound emptyRawBoundEnv predicate .boolTy boolPointed true
+            (weakenBoundCtx boundCtx) boundEnv predicate .boolTy boolPointed true
       · exact ⟨true, .tyForallTrue every⟩
       · obtain ⟨candidate, notTrue⟩ : ∃ candidate : Pointed,
             ¬ Eval (extendTypeEnv (kind := .star) candidate typeEnv)
-                emptyBound emptyRawBoundEnv predicate .boolTy boolPointed true :=
+                (weakenBoundCtx boundCtx) boundEnv predicate .boolTy boolPointed true :=
           Classical.byContradiction fun none =>
             every fun candidate =>
               Classical.byContradiction fun missing => none ⟨candidate, missing⟩
         obtain ⟨value, valueEval⟩ :=
           (ih (extendTypeEnv (kind := .star) candidate typeEnv)).2
-            emptyRawBoundEnv boolPointed
+            boundEnv boolPointed
             (.bool (extendTypeEnv (kind := .star) candidate typeEnv))
         cases value with
         | true => exact absurd valueEval notTrue

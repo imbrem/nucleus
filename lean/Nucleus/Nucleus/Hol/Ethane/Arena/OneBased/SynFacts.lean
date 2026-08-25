@@ -449,6 +449,22 @@ inductive NamedSubstitution (needle replacement : EmptySyn) :
       (bodyStep : NamedSubstitution needle replacement body body') :
       NamedSubstitution needle replacement
         (.tyExists name body) (.tyExists name body')
+  | tyForallShadow {name body}
+      (shadowed : needle = .tyFv name .star) :
+      NamedSubstitution needle replacement
+        (.tyForall name body) (.tyForall name body)
+  | tyForallTyCongr {name body body'}
+      (typeNeedle : NamedSubstitution.IsTyVariable needle)
+      (notShadowed : needle ≠ .tyFv name .star)
+      (fresh : NamedSubstitution.Fresh (.tyFv name .star) replacement)
+      (bodyStep : NamedSubstitution needle replacement body body') :
+      NamedSubstitution needle replacement
+        (.tyForall name body) (.tyForall name body')
+  | tyForallTmCongr {name body body'}
+      (termNeedle : NamedSubstitution.IsTmVariable needle)
+      (bodyStep : NamedSubstitution needle replacement body body') :
+      NamedSubstitution needle replacement
+        (.tyForall name body) (.tyForall name body')
   | modelShadow {name body}
       (shadowed : needle = .tyFv name .star) :
       NamedSubstitution needle replacement (.model name body) (.model name body)
