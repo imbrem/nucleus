@@ -22,9 +22,9 @@
 //!
 //! The conclusion is `P` with the bound type variable replaced by the model,
 //! and the kernel does not substitute. It checks, exactly as `ty_beta_fact`
-//! does: the caller builds the substituted term and a `Conv` fact relating the
-//! predicate to it under `α := model α. P`, and the rule verifies that the
-//! fact's endpoints are the ones the theorem licenses.
+//! does: the caller builds the substituted term and a `Conv` (or finer) fact
+//! relating the predicate to it under `α := model α. P`, and the rule verifies
+//! that the fact's endpoints are the ones the theorem licenses.
 //!
 //! That keeps substitution out of the trusted surface — the fact calculus
 //! already carries it — and means this rule is a few structural checks rather
@@ -53,7 +53,8 @@ impl Kernel {
     /// Concludes that a chosen model satisfies the predicate that chose it.
     ///
     /// `theorem` must conclude `∃type α. P`, and `substitution` must be a
-    /// `Conv` fact relating `P` to the conclusion under `α := model α. P`.
+    /// `Conv` or finer fact relating `P` to the conclusion under
+    /// `α := model α. P`.
     ///
     /// # Errors
     ///

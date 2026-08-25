@@ -853,12 +853,17 @@ end SynInference
 
 namespace SynFact
 
-/-- Semantic validity relative to the row arena and import resolver. -/
+/-- Semantic validity relative to the row arena and import resolver.
+
+Endpoint classifier compatibility belongs to the direct branch of
+`SynMeaning`.  An active type substitution may deliberately retype a term,
+for example `[bool / α] (x : α) = (x : bool)`; its substituted value is checked
+for compatibility with the advertised output inside `SynMeaning` instead. -/
 def Valid (resolve : Resolver) (arena : Arena) (fact : SynFact) : Prop :=
   ∃ input output,
     Resolves resolve arena.withoutSyn fact.input input ∧
     Resolves resolve arena.withoutSyn fact.output output ∧
-    input.WellFormed ∧ output.WellFormed ∧ input.Compatible output ∧
+    input.WellFormed ∧ output.WellFormed ∧
     match fact.var, fact.val with
     | none, none => SynMeaning fact.rel none none input output
     | some variableRef, none =>
@@ -877,7 +882,7 @@ def Valid (resolve : Resolver) (arena : Arena) (fact : SynFact) : Prop :=
 theorem Valid.endpointsValid (valid : SynFact.Valid resolve arena fact) :
     SynFact.EndpointsValid fact := by
   rcases valid with ⟨input, output, inputResolves, outputResolves,
-    inputWellFormed, outputWellFormed, _inputCompatible, valid⟩
+    inputWellFormed, outputWellFormed, valid⟩
   cases varEq : fact.var <;> cases valEq : fact.val
   · exact Or.inl ⟨varEq, valEq⟩
   · simp [varEq, valEq] at valid
@@ -891,11 +896,12 @@ theorem Valid.direct_referenceEqual
     (valid : SynFact.Valid resolve arena fact) (direct : fact.Direct) :
     ReferenceEqual resolve arena fact.input fact.output := by
   rcases valid with ⟨input, output, inputResolved, outputResolved,
-    inputWellFormed, outputWellFormed, compatible, meaning⟩
+    inputWellFormed, outputWellFormed, meaning⟩
   rcases direct with ⟨varNone, valNone⟩
   simp only [varNone, valNone, SynMeaning, Value.LocalSynMeaning] at meaning
   have refinement : fact.rel.Refines .conv := by
     cases fact.rel <;> decide
+  let compatible := meaning.1
   have equal := meaning.2.refine refinement compatible inputWellFormed outputWellFormed
   exact ⟨input, output,
     (resolves_withoutSyn_iff resolve arena fact.input input).mp inputResolved,
@@ -908,7 +914,7 @@ theorem Valid.refl (resolved : Resolves resolve arena.withoutSyn reference value
     SynFact.Valid resolve arena
       { rel := relation, input := reference, output := reference } := by
   have compatible := Value.compatible_refl wellFormed
-  exact ⟨value, value, resolved, resolved, wellFormed, wellFormed, compatible,
+  exact ⟨value, value, resolved, resolved, wellFormed, wellFormed,
     compatible, SynRel.holds_refl wellFormed⟩
 
 /-- Exact semantic contract of Rust `Kernel::syn_refine`.  The endpoint and
@@ -917,9 +923,9 @@ theorem Valid.refine (valid : SynFact.Valid resolve arena fact)
     (refinement : fact.rel.Refines relation) :
     SynFact.Valid resolve arena { fact with rel := relation } := by
   rcases valid with ⟨input, output, inputResolves, outputResolves,
-    inputWellFormed, outputWellFormed, compatible, meaning⟩
+    inputWellFormed, outputWellFormed, meaning⟩
   refine ⟨input, output, inputResolves, outputResolves, inputWellFormed,
-    outputWellFormed, compatible, ?_⟩
+    outputWellFormed, ?_⟩
   cases varEq : fact.var <;> cases valEq : fact.val
   · simp only [varEq, valEq] at meaning ⊢
     exact SynInference.meaningRefine meaning refinement
@@ -945,11 +951,11 @@ theorem Valid.symm (valid : SynFact.Valid resolve arena fact)
     SynFact.Valid resolve arena
       { rel := fact.rel, input := fact.output, output := fact.input } := by
   rcases valid with ⟨input, output, inputResolves, outputResolves,
-    inputWellFormed, outputWellFormed, compatible, meaning⟩
+    inputWellFormed, outputWellFormed, meaning⟩
   rcases direct with ⟨varEq, valEq⟩
   simp only [varEq, valEq] at meaning
   exact ⟨output, input, outputResolves, inputResolves, outputWellFormed,
-    inputWellFormed, compatible.symm, compatible.symm, meaning.2.symm⟩
+    inputWellFormed, meaning.1.symm, meaning.2.symm⟩
 
 /-- The checked LCF wrapper.  Code consuming facts should accept this type;
 unchecked wire payloads become checked only through `ofInference`. -/
@@ -965,7 +971,6 @@ def Checked.ofInference {resolve : Resolver} {arena : Arena} {fact : SynFact}
     (outputResolves : Resolves resolve arena.withoutSyn fact.output output)
     (inputWellFormed : input.WellFormed)
     (outputWellFormed : output.WellFormed)
-    (inputCompatible : input.Compatible output)
     (inference : match fact.var, fact.val with
       | none, none => SynInference fact.rel none none input output
       | some variableRef, none =>
@@ -981,7 +986,7 @@ def Checked.ofInference {resolve : Resolver} {arena : Arena} {fact : SynFact}
             SynInference fact.rel (some subVar) (some replacement) input output
       | _, _ => False) : Checked resolve arena := by
   refine ⟨fact, input, output, inputResolves, outputResolves,
-    inputWellFormed, outputWellFormed, inputCompatible, ?_⟩
+    inputWellFormed, outputWellFormed, ?_⟩
   cases varEq : fact.var <;> cases valEq : fact.val
   · simp only [varEq, valEq] at inference ⊢
     exact SynInference.sound inference

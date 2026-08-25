@@ -107,7 +107,10 @@ impl Kernel {
         let base_name = self.fresh_name(&[bool_ty])?;
         let name = |binder: InfinityBinder| base_name + binder as u64;
 
-        let star = self.star()?;
+        // The model selected from this existential is classified by the same
+        // `star` as `bool_ty`; retain that exact row so `model_spec` can use it
+        // as the replacement for the carrier variable.
+        let star = self.classifier(bool_ty)?;
         let carrier_name = name(InfinityBinder::Carrier);
         let carrier = self.ty_fv(carrier_name, star)?;
         let endomap_ty = self.ty_arr(carrier, carrier)?;

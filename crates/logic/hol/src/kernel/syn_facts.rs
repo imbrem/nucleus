@@ -1103,7 +1103,7 @@ impl Kernel {
         self.require_star::<E>(kind)
     }
 
-    /// Whether `variable` may occur anywhere beneath `root`.
+    /// Whether `variable` occurs free beneath `root`.
     ///
     /// Rows form a directed acyclic graph with sharing, so the walk needs a
     /// visited set: without one a term of `n` rows can present exponentially
@@ -1115,16 +1115,46 @@ impl Kernel {
     {
         let needle = *self.row::<E>(variable)?.expr();
         let mut visited = BTreeSet::new();
-        let mut pending = vec![root];
-        while let Some(reference) = pending.pop() {
-            if !visited.insert(reference) {
+        let mut pending = vec![(root, false)];
+        while let Some((reference, shadowed)) = pending.pop() {
+            // A shared row can be reached both inside and outside a binder, so
+            // the binding state is part of the visited key.
+            if !visited.insert((reference, shadowed)) {
                 continue;
             }
             let node = *self.row::<E>(reference)?.expr();
-            if Self::same_variable_name(node, needle) || Self::is_proxy(node) {
+            if Self::is_proxy(node) {
                 return Ok(true);
             }
-            pending.extend(node.children());
+            if Self::same_variable_name(node, needle) {
+                if !shadowed {
+                    return Ok(true);
+                }
+                continue;
+            }
+            match node {
+                Node::TyLam(binder, body) | Node::Lam(binder, body) => {
+                    let binder_node = *self.row::<E>(binder)?.expr();
+                    // The declaration itself is not a variable occurrence, but
+                    // a term binder's classifier remains outside its scope.
+                    pending.extend(
+                        binder_node
+                            .children()
+                            .into_iter()
+                            .map(|child| (child, shadowed)),
+                    );
+                    pending.push((
+                        body,
+                        shadowed || Self::same_variable_name(binder_node, needle),
+                    ));
+                }
+                Node::TyExists { name, predicate } | Node::Model { name, predicate } => {
+                    let binds_needle =
+                        matches!(needle, Node::TyFv { name: needle, .. } if needle == name);
+                    pending.push((predicate, shadowed || binds_needle));
+                }
+                _ => pending.extend(node.children().into_iter().map(|child| (child, shadowed))),
+            }
         }
         Ok(false)
     }

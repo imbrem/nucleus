@@ -607,6 +607,12 @@
           ]
         },
         {
+          "name": "model",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "proof_subtype",
           "kinds": [
             "test"
