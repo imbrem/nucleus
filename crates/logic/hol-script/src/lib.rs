@@ -13,7 +13,7 @@ use covalence_lib_parse::winnow::{
     combinator::{alt, repeat},
     token::take_while,
 };
-use covalence_logic_hol::{Kernel, KernelError, Ref};
+use covalence_logic_hol::{Kernel, KernelError, Ref, builtin::Op2};
 
 /// Source of the first opcode-free init-library schemata.
 ///
@@ -706,29 +706,19 @@ impl<'a> Compiler<'a> {
     }
 
     fn and(&mut self, left: Ref, right: Ref) -> Result<Ref, TheoryError> {
-        let binder = self.logical_binder()?;
-        Ok(self.kernel.and_tm(self.bool_ty, binder, left, right)?)
+        Ok(self.kernel.op2(Op2::And, left, right)?)
     }
 
     fn or(&mut self, left: Ref, right: Ref) -> Result<Ref, TheoryError> {
-        let binder = self.logical_binder()?;
-        Ok(self.kernel.or_tm(self.bool_ty, binder, left, right)?)
+        Ok(self.kernel.op2(Op2::Or, left, right)?)
     }
 
     fn imp(&mut self, left: Ref, right: Ref) -> Result<Ref, TheoryError> {
-        let binder = self.logical_binder()?;
-        Ok(self.kernel.imp_tm(self.bool_ty, binder, left, right)?)
+        Ok(self.kernel.op2(Op2::Imp, left, right)?)
     }
 
     fn equal(&mut self, left: Ref, right: Ref) -> Result<Ref, TheoryError> {
         Ok(self.kernel.eq(self.bool_ty, left, right)?)
-    }
-
-    fn logical_binder(&mut self) -> Result<Ref, TheoryError> {
-        let unary = self.arrow(self.bool_ty, self.bool_ty)?;
-        let binary = self.arrow(self.bool_ty, unary)?;
-        let numeric_name = self.name();
-        Ok(self.kernel.tm_fv(numeric_name, binary)?)
     }
 
     fn arrow(&mut self, domain: Ref, codomain: Ref) -> Result<Ref, TheoryError> {

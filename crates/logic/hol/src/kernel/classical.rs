@@ -45,6 +45,40 @@ pub struct ApThm {
     pub theorem: ThmId,
 }
 
+/// The exact theorem and syntax produced by universal introduction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ForallThm {
+    /// Equality-encoded universal `∀ binder. body`.
+    pub universal: Ref,
+    /// Premise-free theorem concluding [`universal`](Self::universal).
+    pub theorem: ThmId,
+}
+
+/// The exact theorem and syntax produced by Hilbert-choice introduction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChoiceThm {
+    /// The selected witness `ε predicate`.
+    pub witness: Ref,
+    /// The proposition `predicate (ε predicate)`.
+    pub proposition: Ref,
+    /// The theorem preserving the source premises and concluding
+    /// [`proposition`](Self::proposition).
+    pub theorem: ThmId,
+}
+
+/// The theorem and syntax produced by applying one function to equal terms.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApTerm {
+    /// Application to the equality's left operand.
+    pub left: Ref,
+    /// Application to the equality's right operand.
+    pub right: Ref,
+    /// Equality between [`left`](Self::left) and [`right`](Self::right).
+    pub equality: Ref,
+    /// The theorem preserving the source premise matrix.
+    pub theorem: ThmId,
+}
+
 impl Kernel {
     /// Borrows the universally valid syllogism arena.
     #[must_use]
@@ -209,20 +243,56 @@ impl Kernel {
         self.replace_theorem(theorem, Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
     }
 
-    /// Applies a premise-free function equality to one argument (`AP_THM`).
+    /// Replaces an atom only in a theorem's conclusion matrix.
     ///
-    /// If `theorem` is exactly `⊢ f = g`, this constructs `f argument`,
-    /// `g argument`, their object-language equality, and a fresh exact theorem
-    /// `⊢ f argument = g argument`.
+    /// This is selective semantic rewriting: unlike
+    /// [`convert_theorem`](Self::convert_theorem), an equal atom in the premise
+    /// matrix is deliberately left untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the theorem exists and both checked Boolean
+    /// rows belong to the same semantic equality class. Rejection leaves the
+    /// theorem unchanged.
+    pub fn convert_conclusions(
+        &mut self,
+        theorem: ThmId,
+        source: Ref,
+        target: Ref,
+    ) -> Result<(), KernelError> {
+        self.require_bool_term::<std::convert::Infallible>(source)?;
+        self.require_bool_term::<std::convert::Infallible>(target)?;
+        if !self.equivalent(source, target)? {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "theorem conclusion conversion",
+            });
+        }
+        let old = self.require_thm(theorem)?;
+        let premises = old.lhs.to_owned();
+        let conclusions: Vec<LitVec> = old
+            .rhs
+            .rows()
+            .map(|row| replace_atom(row, source, target))
+            .collect();
+        self.replace_theorem(theorem, Thm::new(premises, Dnf::new(conclusions)))
+    }
+
+    /// Applies a proved function equality to one argument (`AP_THM`).
+    ///
+    /// If `theorem` is `Γ ⊢ f = g` with one conclusion, this constructs
+    /// `f argument`, `g argument`, their object-language equality, and the
+    /// theorem `Γ ⊢ f argument = g argument`.
     ///
     /// # Errors
     ///
     /// Returns an error unless the source theorem has exactly one positive
-    /// conclusion and no premises, that conclusion is equality at an arrow
-    /// type, and `argument` has the arrow domain. Rejection is transactional:
+    /// conclusion, that conclusion is equality at an arrow type, and
+    /// `argument` has the arrow domain. Rejection is transactional:
     /// neither syntax nor theorem slots are changed.
     pub fn ap_thm(&mut self, theorem: ThmId, argument: Ref) -> Result<ApThm, KernelError> {
-        let source = sole_positive_assertion(self.require_thm(theorem)?)?;
+        let source_theorem = self.require_thm(theorem)?;
+        let source = sole_positive_conclusion(source_theorem)?;
+        let premises = source_theorem.lhs.to_owned();
         let bool_ty = self.require_bool_term::<std::convert::Infallible>(source)?;
         self.require_category::<std::convert::Infallible>(argument, crate::Sort::Tm)?;
         let Node::Eq(function_ty, function, varied) = *self.row(source)?.expr() else {
@@ -239,7 +309,10 @@ impl Kernel {
         let left = staged.app(function, argument)?;
         let right = staged.app(varied, argument)?;
         let equality = staged.eq(bool_ty, left, right)?;
-        let theorem = staged.push_sequent(&[], &[positive(equality)])?;
+        let theorem = staged.push_theorem(Thm::new(
+            premises,
+            Dnf::new(vec![unit_row(positive(equality))]),
+        ))?;
         *self = staged;
         Ok(ApThm {
             left,
@@ -249,18 +322,100 @@ impl Kernel {
         })
     }
 
-    /// Eliminates equality with truth (`EQT_ELIM`).
+    /// Applies one checked function to both sides of a proved equality
+    /// (`AP_TERM`).
     ///
-    /// If `theorem` is exactly `⊢ p = true`, this allocates the exact theorem
-    /// `⊢ p`.
+    /// From `Γ ⊢ x = y`, derives `Γ ⊢ function x = function y`.
     ///
     /// # Errors
     ///
-    /// Returns an error unless the source is premise-free with one positive
-    /// equality conclusion whose right operand is the Boolean truth literal.
+    /// Returns an error unless the source has exactly one positive equality
+    /// conclusion and `function` accepts both operands. Rejection is
+    /// transactional.
+    pub fn ap_term(&mut self, theorem: ThmId, function: Ref) -> Result<ApTerm, KernelError> {
+        let source_theorem = self.require_thm(theorem)?;
+        let source = sole_positive_conclusion(source_theorem)?;
+        let premises = source_theorem.lhs.to_owned();
+        let bool_ty = self.require_bool_term::<std::convert::Infallible>(source)?;
+        let Node::Eq(_, left_operand, right_operand) = *self.row(source)?.expr() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "AP_TERM equality conclusion",
+            });
+        };
+
+        let mut staged = Self {
+            arena: self.arena.clone(),
+            init_prefix: self.init_prefix,
+        };
+        let left = staged.app(function, left_operand)?;
+        let right = staged.app(function, right_operand)?;
+        let equality = staged.eq(bool_ty, left, right)?;
+        let theorem = staged.push_theorem(Thm::new(
+            premises,
+            Dnf::new(vec![unit_row(positive(equality))]),
+        ))?;
+        *self = staged;
+        Ok(ApTerm {
+            left,
+            right,
+            equality,
+            theorem,
+        })
+    }
+
+    /// Rewrites a proved proposition through a proved Boolean equality
+    /// (`EQ_MP`).
+    ///
+    /// From `Γ ⊢ p = q` and `Π ⊢ p`, derives `Γ, Π ⊢ q`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless each source has exactly one positive
+    /// conclusion and those conclusions have the displayed exact shape.
+    pub fn eq_mp(
+        &mut self,
+        equality_theorem: ThmId,
+        premise_theorem: ThmId,
+    ) -> Result<ThmId, KernelError> {
+        let equality_source = self.require_thm(equality_theorem)?;
+        let equality = sole_positive_conclusion(equality_source)?;
+        let premise_source = self.require_thm(premise_theorem)?;
+        let premise = sole_positive_conclusion(premise_source)?;
+        self.require_bool_term::<std::convert::Infallible>(equality)?;
+        let Node::Eq(ty, left, right) = *self.row(equality)?.expr() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "EQ_MP equality conclusion",
+            });
+        };
+        let bool_ty = self.require_bool_term::<std::convert::Infallible>(left)?;
+        self.require_bool_term::<std::convert::Infallible>(right)?;
+        if ty != bool_ty || premise != left {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "EQ_MP proposition match",
+            });
+        }
+        let mut premises = equality_source.lhs.to_rows();
+        premises.extend(premise_source.lhs.to_rows());
+        self.push_theorem(Thm::new(
+            Cnf::new(premises),
+            Dnf::new(vec![unit_row(positive(right))]),
+        ))
+    }
+
+    /// Eliminates equality with truth (`EQT_ELIM`).
+    ///
+    /// If `theorem` is `Γ ⊢ p = true` with one conclusion, this allocates
+    /// `Γ ⊢ p`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the source has one positive equality conclusion
+    /// whose right operand is the Boolean truth literal.
     /// Rejection does not alter theorem storage.
     pub fn eqt_elim(&mut self, theorem: ThmId) -> Result<ThmId, KernelError> {
-        let source = sole_positive_assertion(self.require_thm(theorem)?)?;
+        let source_theorem = self.require_thm(theorem)?;
+        let source = sole_positive_conclusion(source_theorem)?;
+        let premises = source_theorem.lhs.to_owned();
         self.require_bool_term::<std::convert::Infallible>(source)?;
         let Node::Eq(_, proposition, truth) = *self.row(source)?.expr() else {
             return Err(KernelError::InvalidTheoremRule {
@@ -273,7 +428,180 @@ impl Kernel {
                 rule: "EQT_ELIM truth operand",
             });
         }
-        self.push_sequent(&[], &[positive(proposition)])
+        self.push_theorem(Thm::new(
+            premises,
+            Dnf::new(vec![unit_row(positive(proposition))]),
+        ))
+    }
+
+    /// Introduces Hilbert choice from one proved witness.
+    ///
+    /// From `Γ ⊢ predicate argument`, derives
+    /// `Γ ⊢ predicate (ε predicate)`. This is HOL's standard choice rule; the
+    /// chosen witness itself carries no additional assumption.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the source has exactly one positive conclusion
+    /// of application form. Rejection is transactional.
+    pub fn choice_intro(&mut self, theorem: ThmId) -> Result<ChoiceThm, KernelError> {
+        let source_theorem = self.require_thm(theorem)?;
+        let source = sole_positive_conclusion(source_theorem)?;
+        self.require_bool_term::<std::convert::Infallible>(source)?;
+        let Node::App(predicate, _) = *self.row(source)?.expr() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "choice introduction application",
+            });
+        };
+        let predicate_ty = self.classifier(predicate)?;
+        let (domain, _) = self.type_arrow_member::<std::convert::Infallible>(predicate_ty)?;
+
+        let mut staged = Self {
+            arena: self.arena.clone(),
+            init_prefix: self.init_prefix,
+        };
+        let witness = staged.eps(domain, predicate)?;
+        let proposition = staged.app(predicate, witness)?;
+        let theorem = staged.choice_intro_at(theorem, proposition)?;
+        *self = staged;
+        Ok(ChoiceThm {
+            witness,
+            proposition,
+            theorem,
+        })
+    }
+
+    /// Introduces choice into an existing checked target application.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the theorem has sole conclusion `predicate x`
+    /// and `target` is exactly `predicate (ε predicate)`.
+    pub fn choice_intro_at(&mut self, theorem: ThmId, target: Ref) -> Result<ThmId, KernelError> {
+        let source_theorem = self.require_thm(theorem)?;
+        let source = sole_positive_conclusion(source_theorem)?;
+        let premises = source_theorem.lhs.to_owned();
+        self.require_bool_term::<std::convert::Infallible>(source)?;
+        self.require_bool_term::<std::convert::Infallible>(target)?;
+        let Node::App(predicate, _) = *self.row(source)?.expr() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "choice introduction application",
+            });
+        };
+        let Node::App(target_predicate, witness) = *self.row(target)?.expr() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "choice introduction target application",
+            });
+        };
+        let Node::Eps {
+            predicate: selected,
+            ..
+        } = *self.row(witness)?.expr()
+        else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "choice introduction target witness",
+            });
+        };
+        if target_predicate != predicate || selected != predicate {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "choice introduction target predicate",
+            });
+        }
+        self.push_theorem(Thm::new(
+            premises,
+            Dnf::new(vec![unit_row(positive(target))]),
+        ))
+    }
+
+    /// Universally generalizes one theorem (`GEN`).
+    ///
+    /// If `theorem` is `Γ ⊢ body`, this constructs the standard
+    /// equality-encoded `∀ binder. body` and `Γ ⊢ ∀ binder. body`, provided
+    /// the binder is not free in any proposition in `Γ`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the source has exactly one positive Boolean
+    /// conclusion, `binder` is a checked term variable, and `binder` is absent
+    /// from every premise proposition. Rejection is transactional.
+    pub fn forall_intro(&mut self, theorem: ThmId, binder: Ref) -> Result<ForallThm, KernelError> {
+        let body = sole_positive_conclusion(self.require_thm(theorem)?)?;
+        let bool_ty = self.require_bool_term::<std::convert::Infallible>(body)?;
+
+        let mut staged = Self {
+            arena: self.arena.clone(),
+            init_prefix: self.init_prefix,
+        };
+        let universal = staged.forall_tm(bool_ty, binder, body)?;
+        let theorem = staged.forall_intro_at(theorem, binder, universal)?;
+        *self = staged;
+        Ok(ForallThm { universal, theorem })
+    }
+
+    /// Generalizes into an existing equality-encoded universal row.
+    ///
+    /// This is the allocation-free target form of [`forall_intro`](Self::forall_intro),
+    /// useful when an untrusted elaborator has already constructed the exact
+    /// statement it wants to prove.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `theorem` is `Γ ⊢ body`, `binder` is absent
+    /// from every proposition in `Γ`, and `universal` is exactly
+    /// `∀ binder. body` in the standard checked encoding.
+    pub fn forall_intro_at(
+        &mut self,
+        theorem: ThmId,
+        binder: Ref,
+        universal: Ref,
+    ) -> Result<ThmId, KernelError> {
+        let source = self.require_thm(theorem)?;
+        let body = sole_positive_conclusion(source)?;
+        let premises = source.lhs.to_owned();
+        let bool_ty = self.require_bool_term::<std::convert::Infallible>(body)?;
+        self.require_form::<std::convert::Infallible>(binder, "tm.fv", |node| {
+            matches!(node, Node::TmFv { .. })
+        })?;
+        for literal in premises.rows().flat_map(|row| row.iter()).copied() {
+            if self.contains_variable::<std::convert::Infallible>(reference(literal), binder)? {
+                return Err(KernelError::InvalidTheoremRule {
+                    rule: "universal introduction freshness",
+                });
+            }
+        }
+        if self.require_bool_term::<std::convert::Infallible>(universal)? != bool_ty {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "universal introduction Boolean type",
+            });
+        }
+        let Node::Eq(_, left, right) = *self.row(universal)?.expr() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "universal introduction target",
+            });
+        };
+        let Node::Lam(left_binder, left_body) = *self.row(left)?.expr() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "universal introduction predicate",
+            });
+        };
+        let Node::Lam(right_binder, right_body) = *self.row(right)?.expr() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "universal introduction truth function",
+            });
+        };
+        if left_binder != binder
+            || right_binder != binder
+            || left_body != body
+            || self.arena.bool_value(right_body) != Some(true)
+        {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "universal introduction target",
+            });
+        }
+        self.push_theorem(Thm::new(
+            premises,
+            Dnf::new(vec![unit_row(positive(universal))]),
+        ))
     }
 
     /// Moves one indexed CNF row to the right with pointwise-negated literals.
@@ -332,6 +660,24 @@ impl Kernel {
             .map_err(|_| KernelError::InvalidTheoremRule {
                 rule: "DNF row normalization",
             })
+    }
+
+    /// Contracts and canonicalizes both matrices of one theorem in place.
+    ///
+    /// This removes duplicate rows and duplicate literals as a sound
+    /// structural mutation. It is useful after multi-premise Gentzen rules
+    /// concatenate contexts that share assumptions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the theorem handle is absent.
+    pub fn contract_theorem(&mut self, theorem: ThmId) -> Result<(), KernelError> {
+        let source = self.require_thm(theorem)?;
+        let mut premises = source.lhs.to_owned();
+        let mut conclusions = source.rhs.to_owned();
+        premises.normalize();
+        conclusions.normalize();
+        self.replace_theorem(theorem, Thm::new(premises, conclusions))
     }
 
     /// Cuts a proposition occurring on opposite sides of two sequents.
@@ -1063,12 +1409,7 @@ enum TreeSide {
     Disjunctive,
 }
 
-fn sole_positive_assertion(theorem: ThmRef<'_>) -> Result<Ref, KernelError> {
-    if theorem.lhs.rows().next().is_some() {
-        return Err(KernelError::InvalidTheoremRule {
-            rule: "AP_THM premise-free source",
-        });
-    }
+fn sole_positive_conclusion(theorem: ThmRef<'_>) -> Result<Ref, KernelError> {
     let mut rows = theorem.rhs.rows();
     let row = rows.next().ok_or(KernelError::InvalidTheoremRule {
         rule: "AP_THM single conclusion",
@@ -1238,6 +1579,28 @@ mod tests {
     }
 
     #[test]
+    fn conclusion_conversion_leaves_a_shared_premise_atom_alone() {
+        let Fixture { mut kernel, p, .. } = fixture();
+        let bool_ty = kernel.classifier(reference(p)).unwrap();
+        let binder = kernel.tm_fv(9, bool_ty).unwrap();
+        let identity_function = kernel.lam(binder, binder).unwrap();
+        let application = kernel.app(identity_function, reference(p)).unwrap();
+        let substitution = kernel.syn_sub_var(None, binder, reference(p)).unwrap();
+        let beta = kernel
+            .tm_beta_fact(None, application, substitution)
+            .unwrap();
+        kernel.union_syn_fact(beta).unwrap();
+
+        let theorem = kernel.identity(positive(application)).unwrap();
+        kernel
+            .convert_conclusions(theorem, application, reference(p))
+            .unwrap();
+        let converted = kernel.thm().get(theorem).unwrap();
+        assert_eq!(unit_premises(converted), [positive(application)]);
+        assert_eq!(unit_conclusions(converted), [p]);
+    }
+
+    #[test]
     fn ap_thm_builds_an_exact_applied_equality_transactionally() {
         let Fixture { mut kernel, p, .. } = fixture();
         let bool_ty = kernel.classifier(reference(p)).unwrap();
@@ -1276,7 +1639,14 @@ mod tests {
                 .is_none()
         );
 
-        let nonexact = kernel.identity(positive(source)).unwrap();
+        let contextual = kernel.identity(positive(source)).unwrap();
+        let contextual_result = kernel.ap_thm(contextual, reference(p)).unwrap();
+        assert_eq!(
+            unit_premises(kernel.require_thm(contextual_result.theorem).unwrap()),
+            [positive(source)]
+        );
+
+        let nonexact = kernel.push_sequent(&[], &[positive(source), p]).unwrap();
         let before = kernel.arena().clone();
         assert!(kernel.ap_thm(nonexact, reference(p)).is_err());
         assert_eq!(*kernel.arena(), before);
@@ -1303,9 +1673,130 @@ mod tests {
         assert!(kernel.eqt_elim(reversed).is_err());
         assert_eq!(*kernel.arena(), before);
 
-        let nonexact = kernel.identity(positive(equality)).unwrap();
+        let contextual = kernel.identity(positive(equality)).unwrap();
+        let contextual_result = kernel.eqt_elim(contextual).unwrap();
+        assert_eq!(
+            unit_premises(kernel.require_thm(contextual_result).unwrap()),
+            [positive(equality)]
+        );
+
+        let nonexact = kernel.push_sequent(&[], &[positive(equality), p]).unwrap();
         let before = kernel.arena().clone();
         assert!(kernel.eqt_elim(nonexact).is_err());
+        assert_eq!(*kernel.arena(), before);
+    }
+
+    #[test]
+    fn forall_intro_generalizes_only_an_exact_assertion_transactionally() {
+        let Fixture { mut kernel, p, .. } = fixture();
+        let bool_ty = kernel.classifier(reference(p)).unwrap();
+        let binder = kernel.tm_fv(12, bool_ty).unwrap();
+        let exact = kernel.push_sequent(&[], &[p]).unwrap();
+
+        let generalized = kernel.forall_intro(exact, binder).unwrap();
+        assert_eq!(
+            unit_conclusions(kernel.require_thm(generalized.theorem).unwrap()),
+            [positive(generalized.universal)]
+        );
+        assert!(
+            kernel
+                .require_thm(generalized.theorem)
+                .unwrap()
+                .lhs
+                .rows()
+                .next()
+                .is_none()
+        );
+        assert_eq!(
+            kernel.arena().tag(generalized.universal),
+            Some(crate::Tag::Tm(crate::TmTag::Eq))
+        );
+
+        let contextual = kernel.identity(p).unwrap();
+        let contextual_result = kernel.forall_intro(contextual, binder).unwrap();
+        assert_eq!(
+            unit_premises(kernel.require_thm(contextual_result.theorem).unwrap()),
+            [p]
+        );
+
+        let captures = kernel.identity(positive(binder)).unwrap();
+        let before = kernel.arena().clone();
+        assert!(kernel.forall_intro(captures, binder).is_err());
+        assert_eq!(*kernel.arena(), before);
+
+        let before = kernel.arena().clone();
+        assert!(kernel.forall_intro(exact, bool_ty).is_err());
+        assert_eq!(*kernel.arena(), before);
+    }
+
+    #[test]
+    fn choice_intro_preserves_context_and_selects_from_the_same_predicate() {
+        let Fixture { mut kernel, p, .. } = fixture();
+        let bool_ty = kernel.classifier(reference(p)).unwrap();
+        let predicate_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+        let predicate = kernel.tm_fv(13, predicate_ty).unwrap();
+        let application = kernel.app(predicate, reference(p)).unwrap();
+        let source = kernel.identity(positive(application)).unwrap();
+
+        let chosen = kernel.choice_intro(source).unwrap();
+        assert_eq!(
+            kernel.arena().tag(chosen.witness),
+            Some(crate::Tag::Tm(crate::TmTag::Eps))
+        );
+        assert_eq!(
+            kernel
+                .arena()
+                .children(chosen.proposition)
+                .unwrap()
+                .collect::<Vec<_>>(),
+            [predicate, chosen.witness]
+        );
+        let result = kernel.require_thm(chosen.theorem).unwrap();
+        assert_eq!(unit_premises(result), [positive(application)]);
+        assert_eq!(unit_conclusions(result), [positive(chosen.proposition)]);
+
+        let malformed = kernel.identity(p).unwrap();
+        let before = kernel.arena().clone();
+        assert!(kernel.choice_intro(malformed).is_err());
+        assert_eq!(*kernel.arena(), before);
+    }
+
+    #[test]
+    fn ap_term_and_eq_mp_preserve_and_combine_contexts() {
+        let Fixture { mut kernel, p, q } = fixture();
+        let bool_ty = kernel.classifier(reference(p)).unwrap();
+        let equality = kernel.eq(bool_ty, reference(p), reference(q)).unwrap();
+        let equality_theorem = kernel.identity(positive(equality)).unwrap();
+        let function_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+        let function = kernel.tm_fv(14, function_ty).unwrap();
+
+        let applied = kernel.ap_term(equality_theorem, function).unwrap();
+        let applied_theorem = kernel.require_thm(applied.theorem).unwrap();
+        assert_eq!(unit_premises(applied_theorem), [positive(equality)]);
+        assert_eq!(
+            unit_conclusions(applied_theorem),
+            [positive(applied.equality)]
+        );
+
+        let proposition_equality = kernel.eq(bool_ty, reference(p), reference(q)).unwrap();
+        let proposition_equality_theorem = kernel
+            .push_sequent(&[], &[positive(proposition_equality)])
+            .unwrap();
+        let premise_theorem = kernel.identity(p).unwrap();
+        let rewritten = kernel
+            .eq_mp(proposition_equality_theorem, premise_theorem)
+            .unwrap();
+        let rewritten = kernel.require_thm(rewritten).unwrap();
+        assert_eq!(unit_premises(rewritten), [p]);
+        assert_eq!(unit_conclusions(rewritten), [q]);
+
+        let wrong_premise = kernel.identity(q).unwrap();
+        let before = kernel.arena().clone();
+        assert!(
+            kernel
+                .eq_mp(proposition_equality_theorem, wrong_premise)
+                .is_err()
+        );
         assert_eq!(*kernel.arena(), before);
     }
 

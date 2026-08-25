@@ -177,6 +177,44 @@ pub mod exports {
                             .finish()
                     }
                 }
+                /// Result of universal introduction.
+                #[repr(C)]
+                #[derive(Clone, Copy)]
+                pub struct ForallThm {
+                    pub universal: u64,
+                    pub theorem: u64,
+                }
+                impl ::core::fmt::Debug for ForallThm {
+                    fn fmt(
+                        &self,
+                        f: &mut ::core::fmt::Formatter<'_>,
+                    ) -> ::core::fmt::Result {
+                        f.debug_struct("ForallThm")
+                            .field("universal", &self.universal)
+                            .field("theorem", &self.theorem)
+                            .finish()
+                    }
+                }
+                /// Result of Hilbert-choice introduction.
+                #[repr(C)]
+                #[derive(Clone, Copy)]
+                pub struct ChoiceThm {
+                    pub witness: u64,
+                    pub proposition: u64,
+                    pub theorem: u64,
+                }
+                impl ::core::fmt::Debug for ChoiceThm {
+                    fn fmt(
+                        &self,
+                        f: &mut ::core::fmt::Formatter<'_>,
+                    ) -> ::core::fmt::Result {
+                        f.debug_struct("ChoiceThm")
+                            .field("witness", &self.witness)
+                            .field("proposition", &self.proposition)
+                            .field("theorem", &self.theorem)
+                            .finish()
+                    }
+                }
                 /// An immutable shared byte buffer.
                 #[derive(Debug)]
                 #[repr(transparent)]
@@ -4521,6 +4559,481 @@ pub mod exports {
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
+                pub unsafe fn _export_method_kernel_ap_term_cabi<T: GuestKernel>(
+                    arg0: *mut u8,
+                    arg1: i64,
+                    arg2: i64,
+                ) -> *mut u8 {
+                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    let result0 = T::ap_term(
+                        unsafe { KernelBorrow::lift(arg0 as u32 as usize) }.get(),
+                        arg1 as u64,
+                        arg2 as u64,
+                    );
+                    let ptr1 = (&raw mut _RET_AREA.0).cast::<u8>();
+                    match result0 {
+                        Ok(e) => {
+                            *ptr1.add(0).cast::<u8>() = (0i32) as u8;
+                            let ApThm {
+                                left: left2,
+                                right: right2,
+                                equality: equality2,
+                                theorem: theorem2,
+                            } = e;
+                            *ptr1.add(8).cast::<i64>() = _rt::as_i64(left2);
+                            *ptr1.add(16).cast::<i64>() = _rt::as_i64(right2);
+                            *ptr1.add(24).cast::<i64>() = _rt::as_i64(equality2);
+                            *ptr1.add(32).cast::<i64>() = _rt::as_i64(theorem2);
+                        }
+                        Err(e) => {
+                            *ptr1.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec3 = (e.into_bytes()).into_boxed_slice();
+                            let ptr3 = vec3.as_ptr().cast::<u8>();
+                            let len3 = vec3.len();
+                            ::core::mem::forget(vec3);
+                            *ptr1
+                                .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>() = len3;
+                            *ptr1.add(8).cast::<*mut u8>() = ptr3.cast_mut();
+                        }
+                    };
+                    ptr1
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn __post_return_method_kernel_ap_term<T: GuestKernel>(
+                    arg0: *mut u8,
+                ) {
+                    let l0 = i32::from(*arg0.add(0).cast::<u8>());
+                    match l0 {
+                        0 => {}
+                        _ => {
+                            let l1 = *arg0.add(8).cast::<*mut u8>();
+                            let l2 = *arg0
+                                .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>();
+                            _rt::cabi_dealloc(l1, l2, 1);
+                        }
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn _export_method_kernel_eq_mp_cabi<T: GuestKernel>(
+                    arg0: *mut u8,
+                    arg1: i64,
+                    arg2: i64,
+                ) -> *mut u8 {
+                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    let result0 = T::eq_mp(
+                        unsafe { KernelBorrow::lift(arg0 as u32 as usize) }.get(),
+                        arg1 as u64,
+                        arg2 as u64,
+                    );
+                    let ptr1 = (&raw mut _RET_AREA.0).cast::<u8>();
+                    match result0 {
+                        Ok(e) => {
+                            *ptr1.add(0).cast::<u8>() = (0i32) as u8;
+                            *ptr1.add(8).cast::<i64>() = _rt::as_i64(e);
+                        }
+                        Err(e) => {
+                            *ptr1.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec2 = (e.into_bytes()).into_boxed_slice();
+                            let ptr2 = vec2.as_ptr().cast::<u8>();
+                            let len2 = vec2.len();
+                            ::core::mem::forget(vec2);
+                            *ptr1
+                                .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>() = len2;
+                            *ptr1.add(8).cast::<*mut u8>() = ptr2.cast_mut();
+                        }
+                    };
+                    ptr1
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn __post_return_method_kernel_eq_mp<T: GuestKernel>(
+                    arg0: *mut u8,
+                ) {
+                    let l0 = i32::from(*arg0.add(0).cast::<u8>());
+                    match l0 {
+                        0 => {}
+                        _ => {
+                            let l1 = *arg0.add(8).cast::<*mut u8>();
+                            let l2 = *arg0
+                                .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>();
+                            _rt::cabi_dealloc(l1, l2, 1);
+                        }
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn _export_method_kernel_forall_intro_cabi<T: GuestKernel>(
+                    arg0: *mut u8,
+                    arg1: i64,
+                    arg2: i64,
+                ) -> *mut u8 {
+                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    let result0 = T::forall_intro(
+                        unsafe { KernelBorrow::lift(arg0 as u32 as usize) }.get(),
+                        arg1 as u64,
+                        arg2 as u64,
+                    );
+                    let ptr1 = (&raw mut _RET_AREA.0).cast::<u8>();
+                    match result0 {
+                        Ok(e) => {
+                            *ptr1.add(0).cast::<u8>() = (0i32) as u8;
+                            let ForallThm { universal: universal2, theorem: theorem2 } = e;
+                            *ptr1.add(8).cast::<i64>() = _rt::as_i64(universal2);
+                            *ptr1.add(16).cast::<i64>() = _rt::as_i64(theorem2);
+                        }
+                        Err(e) => {
+                            *ptr1.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec3 = (e.into_bytes()).into_boxed_slice();
+                            let ptr3 = vec3.as_ptr().cast::<u8>();
+                            let len3 = vec3.len();
+                            ::core::mem::forget(vec3);
+                            *ptr1
+                                .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>() = len3;
+                            *ptr1.add(8).cast::<*mut u8>() = ptr3.cast_mut();
+                        }
+                    };
+                    ptr1
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn __post_return_method_kernel_forall_intro<T: GuestKernel>(
+                    arg0: *mut u8,
+                ) {
+                    let l0 = i32::from(*arg0.add(0).cast::<u8>());
+                    match l0 {
+                        0 => {}
+                        _ => {
+                            let l1 = *arg0.add(8).cast::<*mut u8>();
+                            let l2 = *arg0
+                                .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>();
+                            _rt::cabi_dealloc(l1, l2, 1);
+                        }
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn _export_method_kernel_forall_intro_at_cabi<T: GuestKernel>(
+                    arg0: *mut u8,
+                    arg1: i64,
+                    arg2: i64,
+                    arg3: i64,
+                ) -> *mut u8 {
+                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    let result0 = T::forall_intro_at(
+                        unsafe { KernelBorrow::lift(arg0 as u32 as usize) }.get(),
+                        arg1 as u64,
+                        arg2 as u64,
+                        arg3 as u64,
+                    );
+                    let ptr1 = (&raw mut _RET_AREA.0).cast::<u8>();
+                    match result0 {
+                        Ok(e) => {
+                            *ptr1.add(0).cast::<u8>() = (0i32) as u8;
+                            *ptr1.add(8).cast::<i64>() = _rt::as_i64(e);
+                        }
+                        Err(e) => {
+                            *ptr1.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec2 = (e.into_bytes()).into_boxed_slice();
+                            let ptr2 = vec2.as_ptr().cast::<u8>();
+                            let len2 = vec2.len();
+                            ::core::mem::forget(vec2);
+                            *ptr1
+                                .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>() = len2;
+                            *ptr1.add(8).cast::<*mut u8>() = ptr2.cast_mut();
+                        }
+                    };
+                    ptr1
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn __post_return_method_kernel_forall_intro_at<
+                    T: GuestKernel,
+                >(arg0: *mut u8) {
+                    let l0 = i32::from(*arg0.add(0).cast::<u8>());
+                    match l0 {
+                        0 => {}
+                        _ => {
+                            let l1 = *arg0.add(8).cast::<*mut u8>();
+                            let l2 = *arg0
+                                .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>();
+                            _rt::cabi_dealloc(l1, l2, 1);
+                        }
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn _export_method_kernel_choice_intro_cabi<T: GuestKernel>(
+                    arg0: *mut u8,
+                    arg1: i64,
+                ) -> *mut u8 {
+                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    let result0 = T::choice_intro(
+                        unsafe { KernelBorrow::lift(arg0 as u32 as usize) }.get(),
+                        arg1 as u64,
+                    );
+                    let ptr1 = (&raw mut _RET_AREA.0).cast::<u8>();
+                    match result0 {
+                        Ok(e) => {
+                            *ptr1.add(0).cast::<u8>() = (0i32) as u8;
+                            let ChoiceThm {
+                                witness: witness2,
+                                proposition: proposition2,
+                                theorem: theorem2,
+                            } = e;
+                            *ptr1.add(8).cast::<i64>() = _rt::as_i64(witness2);
+                            *ptr1.add(16).cast::<i64>() = _rt::as_i64(proposition2);
+                            *ptr1.add(24).cast::<i64>() = _rt::as_i64(theorem2);
+                        }
+                        Err(e) => {
+                            *ptr1.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec3 = (e.into_bytes()).into_boxed_slice();
+                            let ptr3 = vec3.as_ptr().cast::<u8>();
+                            let len3 = vec3.len();
+                            ::core::mem::forget(vec3);
+                            *ptr1
+                                .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>() = len3;
+                            *ptr1.add(8).cast::<*mut u8>() = ptr3.cast_mut();
+                        }
+                    };
+                    ptr1
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn __post_return_method_kernel_choice_intro<T: GuestKernel>(
+                    arg0: *mut u8,
+                ) {
+                    let l0 = i32::from(*arg0.add(0).cast::<u8>());
+                    match l0 {
+                        0 => {}
+                        _ => {
+                            let l1 = *arg0.add(8).cast::<*mut u8>();
+                            let l2 = *arg0
+                                .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>();
+                            _rt::cabi_dealloc(l1, l2, 1);
+                        }
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn _export_method_kernel_choice_intro_at_cabi<T: GuestKernel>(
+                    arg0: *mut u8,
+                    arg1: i64,
+                    arg2: i64,
+                ) -> *mut u8 {
+                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    let result0 = T::choice_intro_at(
+                        unsafe { KernelBorrow::lift(arg0 as u32 as usize) }.get(),
+                        arg1 as u64,
+                        arg2 as u64,
+                    );
+                    let ptr1 = (&raw mut _RET_AREA.0).cast::<u8>();
+                    match result0 {
+                        Ok(e) => {
+                            *ptr1.add(0).cast::<u8>() = (0i32) as u8;
+                            *ptr1.add(8).cast::<i64>() = _rt::as_i64(e);
+                        }
+                        Err(e) => {
+                            *ptr1.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec2 = (e.into_bytes()).into_boxed_slice();
+                            let ptr2 = vec2.as_ptr().cast::<u8>();
+                            let len2 = vec2.len();
+                            ::core::mem::forget(vec2);
+                            *ptr1
+                                .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>() = len2;
+                            *ptr1.add(8).cast::<*mut u8>() = ptr2.cast_mut();
+                        }
+                    };
+                    ptr1
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn __post_return_method_kernel_choice_intro_at<
+                    T: GuestKernel,
+                >(arg0: *mut u8) {
+                    let l0 = i32::from(*arg0.add(0).cast::<u8>());
+                    match l0 {
+                        0 => {}
+                        _ => {
+                            let l1 = *arg0.add(8).cast::<*mut u8>();
+                            let l2 = *arg0
+                                .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>();
+                            _rt::cabi_dealloc(l1, l2, 1);
+                        }
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn _export_method_kernel_convert_theorem_cabi<T: GuestKernel>(
+                    arg0: *mut u8,
+                    arg1: i64,
+                    arg2: i64,
+                    arg3: i64,
+                ) -> *mut u8 {
+                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    let result0 = T::convert_theorem(
+                        unsafe { KernelBorrow::lift(arg0 as u32 as usize) }.get(),
+                        arg1 as u64,
+                        arg2 as u64,
+                        arg3 as u64,
+                    );
+                    let ptr1 = (&raw mut _RET_AREA.0).cast::<u8>();
+                    match result0 {
+                        Ok(_) => {
+                            *ptr1.add(0).cast::<u8>() = (0i32) as u8;
+                        }
+                        Err(e) => {
+                            *ptr1.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec2 = (e.into_bytes()).into_boxed_slice();
+                            let ptr2 = vec2.as_ptr().cast::<u8>();
+                            let len2 = vec2.len();
+                            ::core::mem::forget(vec2);
+                            *ptr1
+                                .add(2 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>() = len2;
+                            *ptr1
+                                .add(::core::mem::size_of::<*const u8>())
+                                .cast::<*mut u8>() = ptr2.cast_mut();
+                        }
+                    };
+                    ptr1
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn __post_return_method_kernel_convert_theorem<
+                    T: GuestKernel,
+                >(arg0: *mut u8) {
+                    let l0 = i32::from(*arg0.add(0).cast::<u8>());
+                    match l0 {
+                        0 => {}
+                        _ => {
+                            let l1 = *arg0
+                                .add(::core::mem::size_of::<*const u8>())
+                                .cast::<*mut u8>();
+                            let l2 = *arg0
+                                .add(2 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>();
+                            _rt::cabi_dealloc(l1, l2, 1);
+                        }
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn _export_method_kernel_convert_conclusions_cabi<
+                    T: GuestKernel,
+                >(arg0: *mut u8, arg1: i64, arg2: i64, arg3: i64) -> *mut u8 {
+                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    let result0 = T::convert_conclusions(
+                        unsafe { KernelBorrow::lift(arg0 as u32 as usize) }.get(),
+                        arg1 as u64,
+                        arg2 as u64,
+                        arg3 as u64,
+                    );
+                    let ptr1 = (&raw mut _RET_AREA.0).cast::<u8>();
+                    match result0 {
+                        Ok(_) => {
+                            *ptr1.add(0).cast::<u8>() = (0i32) as u8;
+                        }
+                        Err(e) => {
+                            *ptr1.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec2 = (e.into_bytes()).into_boxed_slice();
+                            let ptr2 = vec2.as_ptr().cast::<u8>();
+                            let len2 = vec2.len();
+                            ::core::mem::forget(vec2);
+                            *ptr1
+                                .add(2 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>() = len2;
+                            *ptr1
+                                .add(::core::mem::size_of::<*const u8>())
+                                .cast::<*mut u8>() = ptr2.cast_mut();
+                        }
+                    };
+                    ptr1
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn __post_return_method_kernel_convert_conclusions<
+                    T: GuestKernel,
+                >(arg0: *mut u8) {
+                    let l0 = i32::from(*arg0.add(0).cast::<u8>());
+                    match l0 {
+                        0 => {}
+                        _ => {
+                            let l1 = *arg0
+                                .add(::core::mem::size_of::<*const u8>())
+                                .cast::<*mut u8>();
+                            let l2 = *arg0
+                                .add(2 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>();
+                            _rt::cabi_dealloc(l1, l2, 1);
+                        }
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn _export_method_kernel_contract_theorem_cabi<
+                    T: GuestKernel,
+                >(arg0: *mut u8, arg1: i64) -> *mut u8 {
+                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    let result0 = T::contract_theorem(
+                        unsafe { KernelBorrow::lift(arg0 as u32 as usize) }.get(),
+                        arg1 as u64,
+                    );
+                    let ptr1 = (&raw mut _RET_AREA.0).cast::<u8>();
+                    match result0 {
+                        Ok(_) => {
+                            *ptr1.add(0).cast::<u8>() = (0i32) as u8;
+                        }
+                        Err(e) => {
+                            *ptr1.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec2 = (e.into_bytes()).into_boxed_slice();
+                            let ptr2 = vec2.as_ptr().cast::<u8>();
+                            let len2 = vec2.len();
+                            ::core::mem::forget(vec2);
+                            *ptr1
+                                .add(2 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>() = len2;
+                            *ptr1
+                                .add(::core::mem::size_of::<*const u8>())
+                                .cast::<*mut u8>() = ptr2.cast_mut();
+                        }
+                    };
+                    ptr1
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn __post_return_method_kernel_contract_theorem<
+                    T: GuestKernel,
+                >(arg0: *mut u8) {
+                    let l0 = i32::from(*arg0.add(0).cast::<u8>());
+                    match l0 {
+                        0 => {}
+                        _ => {
+                            let l1 = *arg0
+                                .add(::core::mem::size_of::<*const u8>())
+                                .cast::<*mut u8>();
+                            let l2 = *arg0
+                                .add(2 * ::core::mem::size_of::<*const u8>())
+                                .cast::<usize>();
+                            _rt::cabi_dealloc(l1, l2, 1);
+                        }
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
                 pub unsafe fn _export_method_kernel_eqt_elim_cabi<T: GuestKernel>(
                     arg0: *mut u8,
                     arg1: i64,
@@ -6858,14 +7371,65 @@ pub mod exports {
                         theorem: u64,
                         substitution: u64,
                     ) -> Result<u64, _rt::String>;
-                    /// From an exact premise-free theorem `|- f = g`, derive
-                    /// `|- f argument = g argument`.
+                    /// From `G |- f = g`, derive `G |- f argument = g argument`.
                     fn ap_thm(
                         &self,
                         theorem: u64,
                         argument: u64,
                     ) -> Result<ApThm, _rt::String>;
-                    /// From an exact theorem `|- p = true`, derive `|- p`.
+                    /// From `G |- x = y`, derive `G |- function x = function y`.
+                    fn ap_term(
+                        &self,
+                        theorem: u64,
+                        function: u64,
+                    ) -> Result<ApThm, _rt::String>;
+                    /// From `G |- p = q` and `D |- p`, derive `G, D |- q`.
+                    fn eq_mp(
+                        &self,
+                        equality: u64,
+                        premise: u64,
+                    ) -> Result<u64, _rt::String>;
+                    /// Generalize a theorem over a variable absent from its premises.
+                    fn forall_intro(
+                        &self,
+                        theorem: u64,
+                        binder: u64,
+                    ) -> Result<ForallThm, _rt::String>;
+                    /// Generalize into an existing equality-encoded universal.
+                    fn forall_intro_at(
+                        &self,
+                        theorem: u64,
+                        binder: u64,
+                        universal: u64,
+                    ) -> Result<u64, _rt::String>;
+                    /// Replace a proved witness by the Hilbert-selected witness.
+                    fn choice_intro(
+                        &self,
+                        theorem: u64,
+                    ) -> Result<ChoiceThm, _rt::String>;
+                    /// Introduce choice into an existing matching target.
+                    fn choice_intro_at(
+                        &self,
+                        theorem: u64,
+                        target: u64,
+                    ) -> Result<u64, _rt::String>;
+                    /// Rewrite every occurrence of one semantically equal theorem atom.
+                    fn convert_theorem(
+                        &self,
+                        theorem: u64,
+                        source: u64,
+                        target: u64,
+                    ) -> Result<(), _rt::String>;
+                    /// Rewrite one semantically equal atom only in conclusions.
+                    fn convert_conclusions(
+                        &self,
+                        theorem: u64,
+                        source: u64,
+                        target: u64,
+                    ) -> Result<(), _rt::String>;
+                    /// Contract duplicate rows and literals in a theorem.
+                    fn contract_theorem(&self, theorem: u64) -> Result<(), _rt::String>;
+                    /// From `G |- p = true`, derive `G |- p`.
                     fn eqt_elim(&self, theorem: u64) -> Result<u64, _rt::String>;
                     /// Concludes the axiom of infinity, consuming the `ax.inf` capability.
                     ///
@@ -7888,6 +8452,123 @@ pub mod exports {
                         mut u8,) { unsafe { $($path_to_types)*::
                         __post_return_method_kernel_ap_thm::<<$ty as $($path_to_types)*::
                         Guest >::Kernel > (arg0) } } #[unsafe (export_name =
+                        "nucleus:proof/host@0.1.0#[method]kernel.ap-term")] unsafe extern
+                        "C" fn export_method_kernel_ap_term(arg0 : * mut u8, arg1 : i64,
+                        arg2 : i64,) -> * mut u8 { unsafe { $($path_to_types)*::
+                        _export_method_kernel_ap_term_cabi::<<$ty as $($path_to_types)*::
+                        Guest >::Kernel > (arg0, arg1, arg2) } } #[unsafe (export_name =
+                        "cabi_post_nucleus:proof/host@0.1.0#[method]kernel.ap-term")]
+                        unsafe extern "C" fn _post_return_method_kernel_ap_term(arg0 : *
+                        mut u8,) { unsafe { $($path_to_types)*::
+                        __post_return_method_kernel_ap_term::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0) } } #[unsafe
+                        (export_name = "nucleus:proof/host@0.1.0#[method]kernel.eq-mp")]
+                        unsafe extern "C" fn export_method_kernel_eq_mp(arg0 : * mut u8,
+                        arg1 : i64, arg2 : i64,) -> * mut u8 { unsafe {
+                        $($path_to_types)*:: _export_method_kernel_eq_mp_cabi::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0, arg1, arg2) } }
+                        #[unsafe (export_name =
+                        "cabi_post_nucleus:proof/host@0.1.0#[method]kernel.eq-mp")]
+                        unsafe extern "C" fn _post_return_method_kernel_eq_mp(arg0 : *
+                        mut u8,) { unsafe { $($path_to_types)*::
+                        __post_return_method_kernel_eq_mp::<<$ty as $($path_to_types)*::
+                        Guest >::Kernel > (arg0) } } #[unsafe (export_name =
+                        "nucleus:proof/host@0.1.0#[method]kernel.forall-intro")] unsafe
+                        extern "C" fn export_method_kernel_forall_intro(arg0 : * mut u8,
+                        arg1 : i64, arg2 : i64,) -> * mut u8 { unsafe {
+                        $($path_to_types)*::
+                        _export_method_kernel_forall_intro_cabi::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0, arg1, arg2) } }
+                        #[unsafe (export_name =
+                        "cabi_post_nucleus:proof/host@0.1.0#[method]kernel.forall-intro")]
+                        unsafe extern "C" fn _post_return_method_kernel_forall_intro(arg0
+                        : * mut u8,) { unsafe { $($path_to_types)*::
+                        __post_return_method_kernel_forall_intro::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0) } } #[unsafe
+                        (export_name =
+                        "nucleus:proof/host@0.1.0#[method]kernel.forall-intro-at")]
+                        unsafe extern "C" fn export_method_kernel_forall_intro_at(arg0 :
+                        * mut u8, arg1 : i64, arg2 : i64, arg3 : i64,) -> * mut u8 {
+                        unsafe { $($path_to_types)*::
+                        _export_method_kernel_forall_intro_at_cabi::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0, arg1, arg2, arg3) }
+                        } #[unsafe (export_name =
+                        "cabi_post_nucleus:proof/host@0.1.0#[method]kernel.forall-intro-at")]
+                        unsafe extern "C" fn
+                        _post_return_method_kernel_forall_intro_at(arg0 : * mut u8,) {
+                        unsafe { $($path_to_types)*::
+                        __post_return_method_kernel_forall_intro_at::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0) } } #[unsafe
+                        (export_name =
+                        "nucleus:proof/host@0.1.0#[method]kernel.choice-intro")] unsafe
+                        extern "C" fn export_method_kernel_choice_intro(arg0 : * mut u8,
+                        arg1 : i64,) -> * mut u8 { unsafe { $($path_to_types)*::
+                        _export_method_kernel_choice_intro_cabi::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0, arg1) } } #[unsafe
+                        (export_name =
+                        "cabi_post_nucleus:proof/host@0.1.0#[method]kernel.choice-intro")]
+                        unsafe extern "C" fn _post_return_method_kernel_choice_intro(arg0
+                        : * mut u8,) { unsafe { $($path_to_types)*::
+                        __post_return_method_kernel_choice_intro::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0) } } #[unsafe
+                        (export_name =
+                        "nucleus:proof/host@0.1.0#[method]kernel.choice-intro-at")]
+                        unsafe extern "C" fn export_method_kernel_choice_intro_at(arg0 :
+                        * mut u8, arg1 : i64, arg2 : i64,) -> * mut u8 { unsafe {
+                        $($path_to_types)*::
+                        _export_method_kernel_choice_intro_at_cabi::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0, arg1, arg2) } }
+                        #[unsafe (export_name =
+                        "cabi_post_nucleus:proof/host@0.1.0#[method]kernel.choice-intro-at")]
+                        unsafe extern "C" fn
+                        _post_return_method_kernel_choice_intro_at(arg0 : * mut u8,) {
+                        unsafe { $($path_to_types)*::
+                        __post_return_method_kernel_choice_intro_at::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0) } } #[unsafe
+                        (export_name =
+                        "nucleus:proof/host@0.1.0#[method]kernel.convert-theorem")]
+                        unsafe extern "C" fn export_method_kernel_convert_theorem(arg0 :
+                        * mut u8, arg1 : i64, arg2 : i64, arg3 : i64,) -> * mut u8 {
+                        unsafe { $($path_to_types)*::
+                        _export_method_kernel_convert_theorem_cabi::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0, arg1, arg2, arg3) }
+                        } #[unsafe (export_name =
+                        "cabi_post_nucleus:proof/host@0.1.0#[method]kernel.convert-theorem")]
+                        unsafe extern "C" fn
+                        _post_return_method_kernel_convert_theorem(arg0 : * mut u8,) {
+                        unsafe { $($path_to_types)*::
+                        __post_return_method_kernel_convert_theorem::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0) } } #[unsafe
+                        (export_name =
+                        "nucleus:proof/host@0.1.0#[method]kernel.convert-conclusions")]
+                        unsafe extern "C" fn
+                        export_method_kernel_convert_conclusions(arg0 : * mut u8, arg1 :
+                        i64, arg2 : i64, arg3 : i64,) -> * mut u8 { unsafe {
+                        $($path_to_types)*::
+                        _export_method_kernel_convert_conclusions_cabi::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0, arg1, arg2, arg3) }
+                        } #[unsafe (export_name =
+                        "cabi_post_nucleus:proof/host@0.1.0#[method]kernel.convert-conclusions")]
+                        unsafe extern "C" fn
+                        _post_return_method_kernel_convert_conclusions(arg0 : * mut u8,)
+                        { unsafe { $($path_to_types)*::
+                        __post_return_method_kernel_convert_conclusions::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0) } } #[unsafe
+                        (export_name =
+                        "nucleus:proof/host@0.1.0#[method]kernel.contract-theorem")]
+                        unsafe extern "C" fn export_method_kernel_contract_theorem(arg0 :
+                        * mut u8, arg1 : i64,) -> * mut u8 { unsafe {
+                        $($path_to_types)*::
+                        _export_method_kernel_contract_theorem_cabi::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0, arg1) } } #[unsafe
+                        (export_name =
+                        "cabi_post_nucleus:proof/host@0.1.0#[method]kernel.contract-theorem")]
+                        unsafe extern "C" fn
+                        _post_return_method_kernel_contract_theorem(arg0 : * mut u8,) {
+                        unsafe { $($path_to_types)*::
+                        __post_return_method_kernel_contract_theorem::<<$ty as
+                        $($path_to_types)*:: Guest >::Kernel > (arg0) } } #[unsafe
+                        (export_name =
                         "nucleus:proof/host@0.1.0#[method]kernel.eqt-elim")] unsafe
                         extern "C" fn export_method_kernel_eqt_elim(arg0 : * mut u8, arg1
                         : i64,) -> * mut u8 { unsafe { $($path_to_types)*::
@@ -8492,128 +9173,141 @@ pub(crate) use __export_kernel_host_impl as export;
 )]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 6271] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xfd/\x01A\x02\x01A\x02\
-\x01B\x83\x02\x01m\x03\x03syn\x05alpha\x04conv\x04\0\x07syn-rel\x03\0\0\x01m\x03\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 6926] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x8c5\x01A\x02\x01A\x02\
+\x01B\x9a\x02\x01m\x03\x03syn\x05alpha\x04conv\x04\0\x07syn-rel\x03\0\0\x01m\x03\
 \x04kind\x02ty\x02tm\x04\0\x04sort\x03\0\x02\x01r\x05\x0bexists-typew\x04bodyw\x0c\
 carrier-namew\x09base-namew\x07theoremw\x04\0\x0einfinity-axiom\x03\0\x04\x01r\x07\
 \x07carrierw\x09predicatew\x0bexists-typew\x0cpackage-bodyw\x0amodel-namew\x09ba\
 se-namew\x07theoremw\x04\0\x0dsubtype-axiom\x03\0\x06\x01r\x04\x04leftw\x05right\
-w\x08equalityw\x07theoremw\x04\0\x06ap-thm\x03\0\x08\x04\0\x05bytes\x03\x01\x04\0\
-\x04blob\x03\x01\x04\0\x09index-cas\x03\x01\x04\0\x05arena\x03\x01\x04\0\x05tabl\
-e\x03\x01\x04\0\x06kernel\x03\x01\x01p}\x01i\x0a\x01@\x01\x05value\x10\0\x11\x04\
-\0\x12[constructor]bytes\x01\x12\x01h\x0a\x01@\x01\x04self\x13\0w\x04\0\x11[meth\
-od]bytes.len\x01\x14\x01@\x01\x04self\x13\0\x10\x04\0\x15[method]bytes.to-list\x01\
-\x15\x01j\x01\x11\x01s\x01@\x03\x04self\x13\x05startw\x03endw\0\x16\x04\0\x13[me\
-thod]bytes.slice\x01\x17\x01i\x0b\x01@\x01\x04self\x13\0\x18\x04\0\x12[method]by\
-tes.blob\x01\x19\x01j\x01\x18\x01s\x01@\x02\x07address\x10\x05value\x13\0\x1a\x04\
-\0\x12[static]blob.check\x01\x1b\x01h\x0b\x01@\x01\x04self\x1c\0\x10\x04\0\x14[m\
-ethod]blob.address\x01\x1d\x01@\x01\x04self\x1c\0\x11\x04\0\x12[method]blob.byte\
-s\x01\x1e\x01@\x01\x04self\x1c\0w\x04\0\x10[method]blob.len\x01\x1f\x01i\x0c\x01\
-@\0\0\x20\x04\0\x16[constructor]index-cas\x01!\x01h\x0c\x01@\x02\x04self\"\x05va\
-lue\x1c\0w\x04\0\x18[method]index-cas.insert\x01#\x01@\x02\x04self\"\x05value\x13\
-\0w\x04\0\x15[method]index-cas.put\x01$\x01k\x18\x01@\x02\x04self\"\x06objectw\0\
-%\x04\0\x15[method]index-cas.get\x01&\x01kw\x01j\x01'\x01s\x01@\x02\x04self\"\x07\
-address\x10\0(\x04\0\x16[method]index-cas.find\x01)\x01j\x01\x7f\x01s\x01@\x02\x04\
-self\"\x07address\x10\0*\x04\0\x18[method]index-cas.remove\x01+\x01@\x01\x04self\
-\"\0w\x04\0\x15[method]index-cas.len\x01,\x01i\x0d\x01@\0\0-\x04\0\x12[construct\
-or]arena\x01.\x01j\x01-\x01s\x01@\x01\x05value\x13\0/\x04\0\x17[static]arena.fro\
-m-cbor\x010\x01h\x0d\x01@\x01\x04self1\0\x16\x04\0\x15[method]arena.to-cbor\x012\
-\x01@\x01\x04self1\0\x10\x04\0\x15[method]arena.address\x013\x01@\x01\x04self1\0\
-w\x04\0\x11[method]arena.len\x014\x01j\x01w\x01s\x01@\x01\x04self1\05\x04\0\x17[\
-method]arena.kind-star\x016\x01@\x03\x04self1\x06domainw\x08codomainw\05\x04\0\x16\
-[method]arena.kind-arr\x017\x04\0\x17[method]arena.bool-type\x016\x04\0\x14[meth\
-od]arena.ty-arr\x017\x01@\x03\x04self1\x08functionw\x08argumentw\05\x04\0\x14[me\
-thod]arena.ty-app\x018\x01@\x03\x04self1\x06binderw\x04bodyw\05\x04\0\x14[method\
-]arena.ty-lam\x019\x01@\x03\x04self1\x04namew\x04kindw\05\x04\0\x13[method]arena\
-.ty-fv\x01:\x01@\x03\x04self1\x04namew\x09predicatew\05\x04\0\x17[method]arena.t\
-y-exists\x01;\x04\0\x17[method]arena.ty-forall\x01;\x04\0\x13[method]arena.model\
-\x01;\x01@\x03\x04self1\x04namew\x02tyw\05\x04\0\x13[method]arena.tm-fv\x01<\x04\
-\0\x11[method]arena.app\x018\x04\0\x11[method]arena.lam\x019\x01@\x02\x04self1\x05\
-value\x7f\05\x04\0\x16[method]arena.bool-lit\x01=\x01@\x03\x04self1\x04leftw\x05\
-rightw\05\x04\0\x13[method]arena.tm-eq\x01>\x01@\x03\x04self1\x02tyw\x09predicat\
-ew\05\x04\0\x11[method]arena.eps\x01?\x01@\x03\x04self1\x06sourcew\x07foreignw\0\
-5\x04\0\x16[method]arena.kind-ref\x01@\x04\0\x14[method]arena.ty-ref\x01@\x04\0\x14\
-[method]arena.tm-ref\x01@\x04\0\x19[method]arena.import-null\x016\x01@\x02\x04se\
-lf1\x05value1\05\x04\0\x1a[method]arena.import-arena\x01A\x01@\x02\x04self1\x07a\
-ddress\x10\05\x04\0\x19[method]arena.import-link\x01B\x01j\0\x01s\x01@\x02\x04se\
-lf1\x0bpropositionw\0\xc3\0\x04\0\x19[method]arena.add-context\x01D\x01@\x02\x04\
-self1\x04names\x01\0\x04\0\x17[method]arena.add-axiom\x01E\x01i\x0e\x01j\x01\xc6\
-\0\x01s\x01@\x01\x05value1\0\xc7\0\x04\0\x18[static]table.from-arena\x01H\x01@\x01\
-\x05value\x1c\0\xc7\0\x04\0\x17[static]table.from-blob\x01I\x01h\x0e\x01@\x01\x04\
-self\xca\0\0\x10\x04\0\x15[method]table.address\x01K\x01@\x01\x04self\xca\0\0-\x04\
-\0\x13[method]table.arena\x01L\x01i\x0f\x01@\0\0\xcd\0\x04\0\x13[constructor]ker\
-nel\x01N\x01h\x0f\x01@\x01\x04self\xcf\0\0-\x04\0\x14[method]kernel.arena\x01P\x01\
-@\x01\x04self\xcf\0\0\x10\x04\0\x16[method]kernel.address\x01Q\x01@\x01\x04self\xcf\
-\0\0w\x04\0\x12[method]kernel.len\x01R\x01j\x01\x03\x01s\x01@\x02\x04self\xcf\0\x09\
-referencew\0\xd3\0\x04\0\x17[method]kernel.category\x01T\x01@\x02\x04self\xcf\0\x09\
-referencew\05\x04\0\x19[method]kernel.classifier\x01U\x04\0\x13[method]kernel.fi\
-nd\x01U\x04\0\x17[method]kernel.find-mut\x01U\x01@\x03\x04self\xcf\0\x04leftw\x05\
-rightw\0*\x04\0\x19[method]kernel.equivalent\x01V\x04\0\x1d[method]kernel.equiva\
-lent-mut\x01V\x01@\x01\x04self\xcf\0\05\x04\0\x18[method]kernel.kind-star\x01W\x01\
-@\x03\x04self\xcf\0\x06domainw\x08codomainw\05\x04\0\x17[method]kernel.kind-arr\x01\
-X\x01@\x02\x04self\xcf\0\x04starw\05\x04\0\x18[method]kernel.bool-type\x01Y\x04\0\
-\x15[method]kernel.ty-arr\x01X\x01@\x03\x04self\xcf\0\x08functionw\x08argumentw\0\
-5\x04\0\x15[method]kernel.ty-app\x01Z\x01@\x03\x04self\xcf\0\x06binderw\x04bodyw\
-\05\x04\0\x15[method]kernel.ty-lam\x01[\x01@\x03\x04self\xcf\0\x04namew\x04kindw\
-\05\x04\0\x14[method]kernel.ty-fv\x01\\\x01@\x03\x04self\xcf\0\x04namew\x09predi\
-catew\05\x04\0\x18[method]kernel.ty-exists\x01]\x04\0\x18[method]kernel.ty-foral\
-l\x01]\x04\0\x14[method]kernel.model\x01]\x01@\x03\x04self\xcf\0\x04namew\x02tyw\
-\05\x04\0\x14[method]kernel.tm-fv\x01^\x04\0\x12[method]kernel.app\x01Z\x04\0\x12\
-[method]kernel.lam\x01[\x01@\x03\x04self\xcf\0\x09bool-typew\x05value\x7f\05\x04\
-\0\x17[method]kernel.bool-lit\x01_\x01@\x04\x04self\xcf\0\x09bool-typew\x04leftw\
-\x05rightw\05\x04\0\x14[method]kernel.tm-eq\x01`\x01@\x03\x04self\xcf\0\x02tyw\x09\
-predicatew\05\x04\0\x12[method]kernel.eps\x01a\x01@\x03\x04self\xcf\0\x09bool-ty\
-pew\x0bpropositionw\05\x04\0\x15[method]kernel.not-tm\x01b\x01@\x04\x04self\xcf\0\
-\x09bool-typew\x06binderw\x04bodyw\05\x04\0\x18[method]kernel.forall-tm\x01c\x04\
-\0\x18[method]kernel.exists-tm\x01[\x01@\x05\x04self\xcf\0\x09bool-typew\x06bind\
-erw\x04leftw\x05rightw\05\x04\0\x15[method]kernel.and-tm\x01d\x04\0\x14[method]k\
-ernel.or-tm\x01d\x04\0\x15[method]kernel.imp-tm\x01d\x01pw\x01@\x02\x04self\xcf\0\
-\x05roots\xe5\0\05\x04\0\x19[method]kernel.fresh-name\x01f\x01@\x03\x04self\xcf\0\
-\x07theoremw\x0csubstitutionw\05\x04\0\x19[method]kernel.model-spec\x01g\x01j\x01\
-\x09\x01s\x01@\x03\x04self\xcf\0\x07theoremw\x08argumentw\0\xe8\0\x04\0\x15[meth\
-od]kernel.ap-thm\x01i\x01@\x02\x04self\xcf\0\x07theoremw\05\x04\0\x17[method]ker\
-nel.eqt-elim\x01j\x01j\x01\x05\x01s\x01@\x02\x04self\xcf\0\x09bool-typew\0\xeb\0\
-\x04\0\x19[method]kernel.inf-exists\x01l\x01j\x01\x07\x01s\x01@\x04\x04self\xcf\0\
-\x09bool-typew\x07carrierw\x09predicatew\0\xed\0\x04\0\x19[method]kernel.sub-exi\
-sts\x01n\x01@\x02\x04self\xcf\0\x05value1\05\x04\0\x1b[method]kernel.import-aren\
-a\x01o\x01@\x02\x04self\xcf\0\x05value\xca\0\05\x04\0\x1b[method]kernel.import-t\
-able\x01p\x01@\x02\x04self\xcf\0\x07address\x10\05\x04\0\x1a[method]kernel.impor\
-t-link\x01q\x01@\x03\x04self\xcf\0\x06sourcew\x07foreignw\05\x04\0\x17[method]ke\
-rnel.kind-ref\x01r\x01@\x04\x04self\xcf\0\x06sourcew\x07foreignw\x04kindw\05\x04\
-\0\x15[method]kernel.ty-ref\x01s\x01@\x04\x04self\xcf\0\x06sourcew\x07foreignw\x02\
-tyw\05\x04\0\x15[method]kernel.tm-ref\x01t\x01@\x02\x04self\xcf\0\x0bproposition\
-w\0\xc3\0\x04\0\x1a[method]kernel.add-context\x01u\x01@\x02\x04self\xcf\0\x04nam\
-es\0\xc3\0\x04\0\x18[method]kernel.add-axiom\x01v\x04\0\x1d[method]kernel.syn-fa\
-ct-count\x01R\x01@\x02\x04self\xcf\0\x04factw\0\x7f\x04\0\x1e[method]kernel.remo\
-ve-syn-fact\x01w\x01@\x02\x04self\xcf\0\x03lenw\0\xc3\0\x04\0![method]kernel.tru\
-ncate-syn-facts\x01x\x01@\x04\x04self\xcf\0\x08relation\x01\x05inputw\x06target'\
-\05\x04\0\x17[method]kernel.syn-refl\x01y\x01@\x04\x04self\xcf\0\x04factw\x08rel\
-ation\x01\x06target'\05\x04\0\x19[method]kernel.syn-refine\x01z\x01@\x03\x04self\
-\xcf\0\x04factw\x06target'\05\x04\0\x17[method]kernel.syn-symm\x01{\x01@\x04\x04\
-self\xcf\0\x04leftw\x05rightw\x06target'\05\x04\0\x18[method]kernel.syn-trans\x01\
-|\x01@\x04\x04self\xcf\0\x03varw\x03valw\x06target'\05\x04\0\x1a[method]kernel.s\
-yn-sub-var\x01}\x01@\x05\x04self\xcf\0\x03varw\x03valw\x05inputw\x06target'\05\x04\
-\0\x1b[method]kernel.syn-sub-leaf\x01~\x01@\x04\x04self\xcf\0\x03varw\x05inputw\x06\
-target'\05\x04\0\"[method]kernel.syn-sub-leaf-forall\x01\x7f\x01@\x08\x04self\xcf\
-\0\x03varw\x03valw\x05inputw\x06outputw\x11variable-equalityw\x0dbody-equalityw\x06\
-target'\05\x04\0\x1f[method]kernel.syn-sub-identity\x01\x80\x01\x01@\x08\x04self\
-\xcf\0\x08relation\x01\x03var'\x03val'\x05inputw\x06outputw\x08children\xe5\0\x06\
-target'\05\x04\0\x18[method]kernel.syn-congr\x01\x81\x01\x01@\x09\x04self\xcf\0\x08\
-relation\x01\x03var'\x03val'\x05inputw\x06outputw\x06binderw\x04bodyw\x06target'\
-\05\x04\0\x1f[method]kernel.syn-binder-congr\x01\x82\x01\x04\0([method]kernel.sy\
-n-implicit-binder-congr\x01\x82\x01\x01@\x06\x04self\xcf\0\x05inputw\x06outputw\x11\
-binder-classifierw\x11body-substitutionw\x06target'\05\x04\0\x1f[method]kernel.s\
-yn-alpha-binder\x01\x83\x01\x01@\x07\x04self\xcf\0\x05inputw\x06outputw\x0cinput\
--binderw\x0doutput-binderw\x11body-substitutionw\x06target'\05\x04\0([method]ker\
-nel.syn-alpha-implicit-binder\x01\x84\x01\x01@\x04\x04self\xcf\0\x06sourcew\x0cs\
-ubstitutionw\x06target'\05\x04\0\x16[method]kernel.tm-beta\x01\x85\x01\x04\0\x16\
-[method]kernel.ty-beta\x01\x85\x01\x01@\x03\x04self\xcf\0\x06sourcew\x06target'\0\
-5\x04\0\x15[method]kernel.tm-eta\x01\x86\x01\x01@\x02\x04self\xcf\0\x04factw\0\xc3\
-\0\x04\0\x1d[method]kernel.union-syn-fact\x01\x87\x01\x01@\x01\x05value\x1c\0w\x04\
-\0\x0acas-insert\x01\x88\x01\x01@\x01\x05value\x13\0w\x04\0\x07cas-put\x01\x89\x01\
-\x01@\x01\x06objectw\0%\x04\0\x07cas-get\x01\x8a\x01\x01@\x01\x07address\x10\0(\x04\
-\0\x08cas-find\x01\x8b\x01\x04\0\x18nucleus:proof/host@0.1.0\x05\0\x04\0\x1fnucl\
+w\x08equalityw\x07theoremw\x04\0\x06ap-thm\x03\0\x08\x01r\x02\x09universalw\x07t\
+heoremw\x04\0\x0aforall-thm\x03\0\x0a\x01r\x03\x07witnessw\x0bpropositionw\x07th\
+eoremw\x04\0\x0achoice-thm\x03\0\x0c\x04\0\x05bytes\x03\x01\x04\0\x04blob\x03\x01\
+\x04\0\x09index-cas\x03\x01\x04\0\x05arena\x03\x01\x04\0\x05table\x03\x01\x04\0\x06\
+kernel\x03\x01\x01p}\x01i\x0e\x01@\x01\x05value\x14\0\x15\x04\0\x12[constructor]\
+bytes\x01\x16\x01h\x0e\x01@\x01\x04self\x17\0w\x04\0\x11[method]bytes.len\x01\x18\
+\x01@\x01\x04self\x17\0\x14\x04\0\x15[method]bytes.to-list\x01\x19\x01j\x01\x15\x01\
+s\x01@\x03\x04self\x17\x05startw\x03endw\0\x1a\x04\0\x13[method]bytes.slice\x01\x1b\
+\x01i\x0f\x01@\x01\x04self\x17\0\x1c\x04\0\x12[method]bytes.blob\x01\x1d\x01j\x01\
+\x1c\x01s\x01@\x02\x07address\x14\x05value\x17\0\x1e\x04\0\x12[static]blob.check\
+\x01\x1f\x01h\x0f\x01@\x01\x04self\x20\0\x14\x04\0\x14[method]blob.address\x01!\x01\
+@\x01\x04self\x20\0\x15\x04\0\x12[method]blob.bytes\x01\"\x01@\x01\x04self\x20\0\
+w\x04\0\x10[method]blob.len\x01#\x01i\x10\x01@\0\0$\x04\0\x16[constructor]index-\
+cas\x01%\x01h\x10\x01@\x02\x04self&\x05value\x20\0w\x04\0\x18[method]index-cas.i\
+nsert\x01'\x01@\x02\x04self&\x05value\x17\0w\x04\0\x15[method]index-cas.put\x01(\
+\x01k\x1c\x01@\x02\x04self&\x06objectw\0)\x04\0\x15[method]index-cas.get\x01*\x01\
+kw\x01j\x01+\x01s\x01@\x02\x04self&\x07address\x14\0,\x04\0\x16[method]index-cas\
+.find\x01-\x01j\x01\x7f\x01s\x01@\x02\x04self&\x07address\x14\0.\x04\0\x18[metho\
+d]index-cas.remove\x01/\x01@\x01\x04self&\0w\x04\0\x15[method]index-cas.len\x010\
+\x01i\x11\x01@\0\01\x04\0\x12[constructor]arena\x012\x01j\x011\x01s\x01@\x01\x05\
+value\x17\03\x04\0\x17[static]arena.from-cbor\x014\x01h\x11\x01@\x01\x04self5\0\x1a\
+\x04\0\x15[method]arena.to-cbor\x016\x01@\x01\x04self5\0\x14\x04\0\x15[method]ar\
+ena.address\x017\x01@\x01\x04self5\0w\x04\0\x11[method]arena.len\x018\x01j\x01w\x01\
+s\x01@\x01\x04self5\09\x04\0\x17[method]arena.kind-star\x01:\x01@\x03\x04self5\x06\
+domainw\x08codomainw\09\x04\0\x16[method]arena.kind-arr\x01;\x04\0\x17[method]ar\
+ena.bool-type\x01:\x04\0\x14[method]arena.ty-arr\x01;\x01@\x03\x04self5\x08funct\
+ionw\x08argumentw\09\x04\0\x14[method]arena.ty-app\x01<\x01@\x03\x04self5\x06bin\
+derw\x04bodyw\09\x04\0\x14[method]arena.ty-lam\x01=\x01@\x03\x04self5\x04namew\x04\
+kindw\09\x04\0\x13[method]arena.ty-fv\x01>\x01@\x03\x04self5\x04namew\x09predica\
+tew\09\x04\0\x17[method]arena.ty-exists\x01?\x04\0\x17[method]arena.ty-forall\x01\
+?\x04\0\x13[method]arena.model\x01?\x01@\x03\x04self5\x04namew\x02tyw\09\x04\0\x13\
+[method]arena.tm-fv\x01@\x04\0\x11[method]arena.app\x01<\x04\0\x11[method]arena.\
+lam\x01=\x01@\x02\x04self5\x05value\x7f\09\x04\0\x16[method]arena.bool-lit\x01A\x01\
+@\x03\x04self5\x04leftw\x05rightw\09\x04\0\x13[method]arena.tm-eq\x01B\x01@\x03\x04\
+self5\x02tyw\x09predicatew\09\x04\0\x11[method]arena.eps\x01C\x01@\x03\x04self5\x06\
+sourcew\x07foreignw\09\x04\0\x16[method]arena.kind-ref\x01D\x04\0\x14[method]are\
+na.ty-ref\x01D\x04\0\x14[method]arena.tm-ref\x01D\x04\0\x19[method]arena.import-\
+null\x01:\x01@\x02\x04self5\x05value5\09\x04\0\x1a[method]arena.import-arena\x01\
+E\x01@\x02\x04self5\x07address\x14\09\x04\0\x19[method]arena.import-link\x01F\x01\
+j\0\x01s\x01@\x02\x04self5\x0bpropositionw\0\xc7\0\x04\0\x19[method]arena.add-co\
+ntext\x01H\x01@\x02\x04self5\x04names\x01\0\x04\0\x17[method]arena.add-axiom\x01\
+I\x01i\x12\x01j\x01\xca\0\x01s\x01@\x01\x05value5\0\xcb\0\x04\0\x18[static]table\
+.from-arena\x01L\x01@\x01\x05value\x20\0\xcb\0\x04\0\x17[static]table.from-blob\x01\
+M\x01h\x12\x01@\x01\x04self\xce\0\0\x14\x04\0\x15[method]table.address\x01O\x01@\
+\x01\x04self\xce\0\01\x04\0\x13[method]table.arena\x01P\x01i\x13\x01@\0\0\xd1\0\x04\
+\0\x13[constructor]kernel\x01R\x01h\x13\x01@\x01\x04self\xd3\0\01\x04\0\x14[meth\
+od]kernel.arena\x01T\x01@\x01\x04self\xd3\0\0\x14\x04\0\x16[method]kernel.addres\
+s\x01U\x01@\x01\x04self\xd3\0\0w\x04\0\x12[method]kernel.len\x01V\x01j\x01\x03\x01\
+s\x01@\x02\x04self\xd3\0\x09referencew\0\xd7\0\x04\0\x17[method]kernel.category\x01\
+X\x01@\x02\x04self\xd3\0\x09referencew\09\x04\0\x19[method]kernel.classifier\x01\
+Y\x04\0\x13[method]kernel.find\x01Y\x04\0\x17[method]kernel.find-mut\x01Y\x01@\x03\
+\x04self\xd3\0\x04leftw\x05rightw\0.\x04\0\x19[method]kernel.equivalent\x01Z\x04\
+\0\x1d[method]kernel.equivalent-mut\x01Z\x01@\x01\x04self\xd3\0\09\x04\0\x18[met\
+hod]kernel.kind-star\x01[\x01@\x03\x04self\xd3\0\x06domainw\x08codomainw\09\x04\0\
+\x17[method]kernel.kind-arr\x01\\\x01@\x02\x04self\xd3\0\x04starw\09\x04\0\x18[m\
+ethod]kernel.bool-type\x01]\x04\0\x15[method]kernel.ty-arr\x01\\\x01@\x03\x04sel\
+f\xd3\0\x08functionw\x08argumentw\09\x04\0\x15[method]kernel.ty-app\x01^\x01@\x03\
+\x04self\xd3\0\x06binderw\x04bodyw\09\x04\0\x15[method]kernel.ty-lam\x01_\x01@\x03\
+\x04self\xd3\0\x04namew\x04kindw\09\x04\0\x14[method]kernel.ty-fv\x01`\x01@\x03\x04\
+self\xd3\0\x04namew\x09predicatew\09\x04\0\x18[method]kernel.ty-exists\x01a\x04\0\
+\x18[method]kernel.ty-forall\x01a\x04\0\x14[method]kernel.model\x01a\x01@\x03\x04\
+self\xd3\0\x04namew\x02tyw\09\x04\0\x14[method]kernel.tm-fv\x01b\x04\0\x12[metho\
+d]kernel.app\x01^\x04\0\x12[method]kernel.lam\x01_\x01@\x03\x04self\xd3\0\x09boo\
+l-typew\x05value\x7f\09\x04\0\x17[method]kernel.bool-lit\x01c\x01@\x04\x04self\xd3\
+\0\x09bool-typew\x04leftw\x05rightw\09\x04\0\x14[method]kernel.tm-eq\x01d\x01@\x03\
+\x04self\xd3\0\x02tyw\x09predicatew\09\x04\0\x12[method]kernel.eps\x01e\x01@\x03\
+\x04self\xd3\0\x09bool-typew\x0bpropositionw\09\x04\0\x15[method]kernel.not-tm\x01\
+f\x01@\x04\x04self\xd3\0\x09bool-typew\x06binderw\x04bodyw\09\x04\0\x18[method]k\
+ernel.forall-tm\x01g\x04\0\x18[method]kernel.exists-tm\x01_\x01@\x05\x04self\xd3\
+\0\x09bool-typew\x06binderw\x04leftw\x05rightw\09\x04\0\x15[method]kernel.and-tm\
+\x01h\x04\0\x14[method]kernel.or-tm\x01h\x04\0\x15[method]kernel.imp-tm\x01h\x01\
+pw\x01@\x02\x04self\xd3\0\x05roots\xe9\0\09\x04\0\x19[method]kernel.fresh-name\x01\
+j\x01@\x03\x04self\xd3\0\x07theoremw\x0csubstitutionw\09\x04\0\x19[method]kernel\
+.model-spec\x01k\x01j\x01\x09\x01s\x01@\x03\x04self\xd3\0\x07theoremw\x08argumen\
+tw\0\xec\0\x04\0\x15[method]kernel.ap-thm\x01m\x01@\x03\x04self\xd3\0\x07theorem\
+w\x08functionw\0\xec\0\x04\0\x16[method]kernel.ap-term\x01n\x01@\x03\x04self\xd3\
+\0\x08equalityw\x07premisew\09\x04\0\x14[method]kernel.eq-mp\x01o\x01j\x01\x0b\x01\
+s\x01@\x03\x04self\xd3\0\x07theoremw\x06binderw\0\xf0\0\x04\0\x1b[method]kernel.\
+forall-intro\x01q\x01@\x04\x04self\xd3\0\x07theoremw\x06binderw\x09universalw\09\
+\x04\0\x1e[method]kernel.forall-intro-at\x01r\x01j\x01\x0d\x01s\x01@\x02\x04self\
+\xd3\0\x07theoremw\0\xf3\0\x04\0\x1b[method]kernel.choice-intro\x01t\x01@\x03\x04\
+self\xd3\0\x07theoremw\x06targetw\09\x04\0\x1e[method]kernel.choice-intro-at\x01\
+u\x01@\x04\x04self\xd3\0\x07theoremw\x06sourcew\x06targetw\0\xc7\0\x04\0\x1e[met\
+hod]kernel.convert-theorem\x01v\x04\0\"[method]kernel.convert-conclusions\x01v\x01\
+@\x02\x04self\xd3\0\x07theoremw\0\xc7\0\x04\0\x1f[method]kernel.contract-theorem\
+\x01w\x01@\x02\x04self\xd3\0\x07theoremw\09\x04\0\x17[method]kernel.eqt-elim\x01\
+x\x01j\x01\x05\x01s\x01@\x02\x04self\xd3\0\x09bool-typew\0\xf9\0\x04\0\x19[metho\
+d]kernel.inf-exists\x01z\x01j\x01\x07\x01s\x01@\x04\x04self\xd3\0\x09bool-typew\x07\
+carrierw\x09predicatew\0\xfb\0\x04\0\x19[method]kernel.sub-exists\x01|\x01@\x02\x04\
+self\xd3\0\x05value5\09\x04\0\x1b[method]kernel.import-arena\x01}\x01@\x02\x04se\
+lf\xd3\0\x05value\xce\0\09\x04\0\x1b[method]kernel.import-table\x01~\x01@\x02\x04\
+self\xd3\0\x07address\x14\09\x04\0\x1a[method]kernel.import-link\x01\x7f\x01@\x03\
+\x04self\xd3\0\x06sourcew\x07foreignw\09\x04\0\x17[method]kernel.kind-ref\x01\x80\
+\x01\x01@\x04\x04self\xd3\0\x06sourcew\x07foreignw\x04kindw\09\x04\0\x15[method]\
+kernel.ty-ref\x01\x81\x01\x01@\x04\x04self\xd3\0\x06sourcew\x07foreignw\x02tyw\0\
+9\x04\0\x15[method]kernel.tm-ref\x01\x82\x01\x01@\x02\x04self\xd3\0\x0bpropositi\
+onw\0\xc7\0\x04\0\x1a[method]kernel.add-context\x01\x83\x01\x01@\x02\x04self\xd3\
+\0\x04names\0\xc7\0\x04\0\x18[method]kernel.add-axiom\x01\x84\x01\x04\0\x1d[meth\
+od]kernel.syn-fact-count\x01V\x01@\x02\x04self\xd3\0\x04factw\0\x7f\x04\0\x1e[me\
+thod]kernel.remove-syn-fact\x01\x85\x01\x01@\x02\x04self\xd3\0\x03lenw\0\xc7\0\x04\
+\0![method]kernel.truncate-syn-facts\x01\x86\x01\x01@\x04\x04self\xd3\0\x08relat\
+ion\x01\x05inputw\x06target+\09\x04\0\x17[method]kernel.syn-refl\x01\x87\x01\x01\
+@\x04\x04self\xd3\0\x04factw\x08relation\x01\x06target+\09\x04\0\x19[method]kern\
+el.syn-refine\x01\x88\x01\x01@\x03\x04self\xd3\0\x04factw\x06target+\09\x04\0\x17\
+[method]kernel.syn-symm\x01\x89\x01\x01@\x04\x04self\xd3\0\x04leftw\x05rightw\x06\
+target+\09\x04\0\x18[method]kernel.syn-trans\x01\x8a\x01\x01@\x04\x04self\xd3\0\x03\
+varw\x03valw\x06target+\09\x04\0\x1a[method]kernel.syn-sub-var\x01\x8b\x01\x01@\x05\
+\x04self\xd3\0\x03varw\x03valw\x05inputw\x06target+\09\x04\0\x1b[method]kernel.s\
+yn-sub-leaf\x01\x8c\x01\x01@\x04\x04self\xd3\0\x03varw\x05inputw\x06target+\09\x04\
+\0\"[method]kernel.syn-sub-leaf-forall\x01\x8d\x01\x01@\x08\x04self\xd3\0\x03var\
+w\x03valw\x05inputw\x06outputw\x11variable-equalityw\x0dbody-equalityw\x06target\
++\09\x04\0\x1f[method]kernel.syn-sub-identity\x01\x8e\x01\x01@\x08\x04self\xd3\0\
+\x08relation\x01\x03var+\x03val+\x05inputw\x06outputw\x08children\xe9\0\x06targe\
+t+\09\x04\0\x18[method]kernel.syn-congr\x01\x8f\x01\x01@\x09\x04self\xd3\0\x08re\
+lation\x01\x03var+\x03val+\x05inputw\x06outputw\x06binderw\x04bodyw\x06target+\0\
+9\x04\0\x1f[method]kernel.syn-binder-congr\x01\x90\x01\x04\0([method]kernel.syn-\
+implicit-binder-congr\x01\x90\x01\x01@\x06\x04self\xd3\0\x05inputw\x06outputw\x11\
+binder-classifierw\x11body-substitutionw\x06target+\09\x04\0\x1f[method]kernel.s\
+yn-alpha-binder\x01\x91\x01\x01@\x07\x04self\xd3\0\x05inputw\x06outputw\x0cinput\
+-binderw\x0doutput-binderw\x11body-substitutionw\x06target+\09\x04\0([method]ker\
+nel.syn-alpha-implicit-binder\x01\x92\x01\x01@\x04\x04self\xd3\0\x06sourcew\x0cs\
+ubstitutionw\x06target+\09\x04\0\x16[method]kernel.tm-beta\x01\x93\x01\x04\0\x16\
+[method]kernel.ty-beta\x01\x93\x01\x01@\x03\x04self\xd3\0\x06sourcew\x06target+\0\
+9\x04\0\x15[method]kernel.tm-eta\x01\x94\x01\x01@\x02\x04self\xd3\0\x04factw\0\xc7\
+\0\x04\0\x1d[method]kernel.union-syn-fact\x01\x95\x01\x01@\x01\x05value\x20\0w\x04\
+\0\x0acas-insert\x01\x96\x01\x01@\x01\x05value\x17\0w\x04\0\x07cas-put\x01\x97\x01\
+\x01@\x01\x06objectw\0)\x04\0\x07cas-get\x01\x98\x01\x01@\x01\x07address\x14\0,\x04\
+\0\x08cas-find\x01\x99\x01\x04\0\x18nucleus:proof/host@0.1.0\x05\0\x04\0\x1fnucl\
 eus:proof/kernel-host@0.1.0\x04\0\x0b\x11\x01\0\x0bkernel-host\x03\0\0\0G\x09pro\
 ducers\x01\x0cprocessed-by\x02\x0dwit-component\x070.227.1\x10wit-bindgen-rust\x06\
 0.41.0";

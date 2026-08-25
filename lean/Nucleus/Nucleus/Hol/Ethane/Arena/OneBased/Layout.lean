@@ -498,6 +498,28 @@ def Arena.FunctionApplicationEquality (resolve : Resolver) (arena : Arena)
     Resolves (coreResolver resolve) arena.holCore target
       (.term boolType (.eq codomain (.app function value) (.app varied value)))
 
+/-- An equality and the equality obtained by applying one checked function to
+both operands (`AP_TERM`). -/
+def Arena.FunctionArgumentEquality (resolve : Resolver) (arena : Arena)
+    (source function target : Ref) : Prop :=
+  ∃ boolType domain codomain left right applied,
+    Resolves (coreResolver resolve) arena.holCore source
+      (.term boolType (.eq domain left right)) ∧
+    Resolves (coreResolver resolve) arena.holCore function
+      (.term (.arr domain codomain) applied) ∧
+    Resolves (coreResolver resolve) arena.holCore target
+      (.term boolType (.eq codomain (.app applied left) (.app applied right)))
+
+/-- Boolean equality, its left proposition, and its right proposition, as
+consumed by `EQ_MP`. -/
+def Arena.EqualityModusPonens (resolve : Resolver) (arena : Arena)
+    (equality premise target : Ref) : Prop :=
+  ∃ boolType left right,
+    Resolves (coreResolver resolve) arena.holCore equality
+      (.term boolType (.eq .boolTy left right)) ∧
+    Resolves (coreResolver resolve) arena.holCore premise (.term .boolTy left) ∧
+    Resolves (coreResolver resolve) arena.holCore target (.term .boolTy right)
+
 /-- An equality of one checked proposition with the Boolean truth literal. -/
 def Arena.EqualityToTruth (resolve : Resolver) (arena : Arena)
     (source target : Ref) : Prop :=
@@ -506,6 +528,26 @@ def Arena.EqualityToTruth (resolve : Resolver) (arena : Arena)
       (.term boolType (.eq equalityType proposition (.bool true))) ∧
     Resolves (coreResolver resolve) arena.holCore target
       (.term equalityType proposition)
+
+/-- A checked Boolean body and its standard equality-encoded universal.
+This is the reference-level shape consumed by HOL's `GEN` rule. -/
+def Arena.Generalization (resolve : Resolver) (arena : Arena)
+    (source binder target : Ref) : Prop :=
+  ∃ boolType domain name body,
+    Resolves (coreResolver resolve) arena.holCore source (.term boolType body) ∧
+    Resolves (coreResolver resolve) arena.holCore binder (.term domain (.tmFv name domain)) ∧
+    Resolves (coreResolver resolve) arena.holCore target
+      (.term boolType (Expr.forallTm name domain body))
+
+/-- A proved predicate application and the application at its Hilbert-selected
+witness. This is the reference-level shape consumed by the choice rule. -/
+def Arena.ChoiceApplication (resolve : Resolver) (arena : Arena)
+    (source target : Ref) : Prop :=
+  ∃ boolType domain predicate argument,
+    Resolves (coreResolver resolve) arena.holCore source
+      (.term boolType (.app predicate argument)) ∧
+    Resolves (coreResolver resolve) arena.holCore target
+      (.term boolType (.app predicate (.eps domain predicate)))
 
 /-- HOL theorem atoms have a partial interpretation.  A checked Boolean row
 may later supply its actual HOL truth value; unknown or ill-sorted references
@@ -531,9 +573,36 @@ structure Arena.HolInterpretationSound (resolve : Resolver) (arena : Arena)
     interpretation source = some sourceProp →
     interpretation target = some targetProp →
     (sourceProp → targetProp)
+  /-- Equality is preserved by applying one checked function (`AP_TERM`). -/
+  applyArgument : ∀ {source function target sourceProp targetProp},
+    arena.FunctionArgumentEquality resolve source function target →
+    interpretation source = some sourceProp →
+    interpretation target = some targetProp →
+    (sourceProp → targetProp)
+  /-- Boolean equality transports proof of its left side to its right side
+  (`EQ_MP`). -/
+  equalityMp : ∀ {equality premise target equalityProp premiseProp targetProp},
+    arena.EqualityModusPonens resolve equality premise target →
+    interpretation equality = some equalityProp →
+    interpretation premise = some premiseProp →
+    interpretation target = some targetProp →
+    (equalityProp → premiseProp → targetProp)
   /-- Equality with truth may be eliminated (`EQT_ELIM`). -/
   equalityToTruth : ∀ {source target sourceProp targetProp},
     arena.EqualityToTruth resolve source target →
+    interpretation source = some sourceProp →
+    interpretation target = some targetProp →
+    (sourceProp → targetProp)
+  /-- A theorem may be generalized over one checked free term variable
+  (`GEN`) when that variable is fresh for its premise matrix. -/
+  generalize : ∀ {source binder target sourceProp targetProp},
+    arena.Generalization resolve source binder target →
+    interpretation source = some sourceProp →
+    interpretation target = some targetProp →
+    (sourceProp → targetProp)
+  /-- A proved witness may be replaced by the Hilbert-selected witness. -/
+  choice : ∀ {source target sourceProp targetProp},
+    arena.ChoiceApplication resolve source target →
     interpretation source = some sourceProp →
     interpretation target = some targetProp →
     (sourceProp → targetProp)
@@ -703,7 +772,27 @@ theorem Arena.holTheorem_replaceSemantic {trusted : Arena → Prop}
   · exact valid.holTheorems ambientValuation admitted fact member valuation completion
   · exact valid.holInterpretation.completion_eq sourceBool targetBool related completion
 
-/-- A premise-free theorem of function equality may be specialized at one
+/-- Semantic transport may rewrite only the conclusion matrix, leaving a
+physically shared premise atom untouched. -/
+theorem Arena.holTheorem_replaceRightSemantic {trusted : Arena → Prop}
+    {resolve : Resolver} {arena : Arena} {interpretation : PartialValuation Ref}
+    (valid : arena.KernelValid trusted resolve interpretation)
+    {fact : WireSequent} (member : fact ∈ arena.hol.thm)
+    {source target : Ref}
+    (sourceBool : ContextClaim (coreResolver resolve) arena.holCore source)
+    (targetBool : ContextClaim (coreResolver resolve) arena.holCore target)
+    (related : Columns.Class arena.columns.dense .semantic source target) :
+    ∀ ambientValuation,
+      arena.ambientTheory.Admits (arena.ImportOk trusted resolve)
+        (arena.ImportSort resolve) ambientValuation →
+      ∀ valuation : Valuation Ref, valuation.Completes interpretation →
+        (fact.semantic.replaceRightAtom source target).Holds valuation := by
+  intro ambientValuation admitted valuation completion
+  apply fact.semantic.replaceRightAtom_holds source target
+  · exact valid.holTheorems ambientValuation admitted fact member valuation completion
+  · exact valid.holInterpretation.completion_eq sourceBool targetBool related completion
+
+/-- A theorem of function equality may be specialized at one
 checked argument. This is the semantic contract of Rust's `AP_THM` operation;
 syntax construction and theorem-slot allocation are separate refinements. -/
 theorem Arena.holTheorem_applyFunction {trusted : Arena → Prop}
@@ -711,7 +800,7 @@ theorem Arena.holTheorem_applyFunction {trusted : Arena → Prop}
     (valid : arena.KernelValid trusted resolve interpretation)
     {fact : WireSequent} (member : fact ∈ arena.hol.thm)
     {source argument target : Ref}
-    (exactSource : fact.semantic = Sequent.assert source)
+    (exactRight : fact.semantic.right = (Sequent.assert source).right)
     (sourceBool : ContextClaim (coreResolver resolve) arena.holCore source)
     (targetBool : ContextClaim (coreResolver resolve) arena.holCore target)
     (application : arena.FunctionApplicationEquality resolve source argument target) :
@@ -719,17 +808,89 @@ theorem Arena.holTheorem_applyFunction {trusted : Arena → Prop}
       arena.ambientTheory.Admits (arena.ImportOk trusted resolve)
         (arena.ImportSort resolve) ambientValuation →
       ∀ valuation : Valuation Ref, valuation.Completes interpretation →
-        (Sequent.assert target).Holds valuation := by
+        (⟨fact.semantic.left, (Sequent.assert target).right⟩ : Sequent Ref).Holds valuation := by
   intro ambientValuation admitted valuation completion
   obtain ⟨sourceProp, sourceFound⟩ := valid.holInterpretation.total source sourceBool
   obtain ⟨targetProp, targetFound⟩ := valid.holInterpretation.total target targetBool
-  rw [Sequent.assert_holds]
+  intro leftHolds
+  change (Sequent.assert target).right.Holds valuation
+  rw [Sequent.assertRight_holds]
   apply (completion target targetProp targetFound).mpr
   apply valid.holInterpretation.applyFunction application sourceFound targetFound
   apply (completion source sourceProp sourceFound).mp
   have sourceHolds := valid.holTheorems ambientValuation admitted fact member valuation completion
-  rw [exactSource] at sourceHolds
-  exact Sequent.assert_holds valuation source |>.mp sourceHolds
+  have rightHolds := sourceHolds leftHolds
+  rw [exactRight] at rightHolds
+  exact (Sequent.assertRight_holds valuation source).mp rightHolds
+
+/-- A proved equality remains true after applying one checked function. -/
+theorem Arena.holTheorem_applyArgument {trusted : Arena → Prop}
+    {resolve : Resolver} {arena : Arena} {interpretation : PartialValuation Ref}
+    (valid : arena.KernelValid trusted resolve interpretation)
+    {fact : WireSequent} (member : fact ∈ arena.hol.thm)
+    {source function target : Ref}
+    (exactRight : fact.semantic.right = (Sequent.assert source).right)
+    (sourceBool : ContextClaim (coreResolver resolve) arena.holCore source)
+    (targetBool : ContextClaim (coreResolver resolve) arena.holCore target)
+    (application : arena.FunctionArgumentEquality resolve source function target) :
+    ∀ ambientValuation,
+      arena.ambientTheory.Admits (arena.ImportOk trusted resolve)
+        (arena.ImportSort resolve) ambientValuation →
+      ∀ valuation : Valuation Ref, valuation.Completes interpretation →
+        (⟨fact.semantic.left, (Sequent.assert target).right⟩ : Sequent Ref).Holds valuation := by
+  intro ambientValuation admitted valuation completion leftHolds
+  obtain ⟨sourceProp, sourceFound⟩ := valid.holInterpretation.total source sourceBool
+  obtain ⟨targetProp, targetFound⟩ := valid.holInterpretation.total target targetBool
+  change (Sequent.assert target).right.Holds valuation
+  rw [Sequent.assertRight_holds]
+  apply (completion target targetProp targetFound).mpr
+  apply valid.holInterpretation.applyArgument application sourceFound targetFound
+  apply (completion source sourceProp sourceFound).mp
+  have sourceHolds := valid.holTheorems ambientValuation admitted fact member valuation completion
+  have rightHolds := sourceHolds leftHolds
+  rw [exactRight] at rightHolds
+  exact (Sequent.assertRight_holds valuation source).mp rightHolds
+
+/-- `EQ_MP` combines Boolean equality and its proved left proposition. -/
+theorem Arena.holTheorem_equalityMp {trusted : Arena → Prop}
+    {resolve : Resolver} {arena : Arena} {interpretation : PartialValuation Ref}
+    (valid : arena.KernelValid trusted resolve interpretation)
+    {equalityFact premiseFact : WireSequent}
+    (equalityMember : equalityFact ∈ arena.hol.thm)
+    (premiseMember : premiseFact ∈ arena.hol.thm)
+    {equality premise target : Ref}
+    (equalityRight : equalityFact.semantic.right = (Sequent.assert equality).right)
+    (premiseRight : premiseFact.semantic.right = (Sequent.assert premise).right)
+    (equalityBool : ContextClaim (coreResolver resolve) arena.holCore equality)
+    (premiseBool : ContextClaim (coreResolver resolve) arena.holCore premise)
+    (targetBool : ContextClaim (coreResolver resolve) arena.holCore target)
+    (shape : arena.EqualityModusPonens resolve equality premise target) :
+    ∀ ambientValuation,
+      arena.ambientTheory.Admits (arena.ImportOk trusted resolve)
+        (arena.ImportSort resolve) ambientValuation →
+      ∀ valuation : Valuation Ref, valuation.Completes interpretation →
+        (⟨equalityFact.semantic.left.append premiseFact.semantic.left,
+          (Sequent.assert target).right⟩ : Sequent Ref).Holds valuation := by
+  intro ambientValuation admitted valuation completion leftHolds
+  rw [Cnf.append_holds] at leftHolds
+  obtain ⟨equalityProp, equalityFound⟩ :=
+    valid.holInterpretation.total equality equalityBool
+  obtain ⟨premiseProp, premiseFound⟩ := valid.holInterpretation.total premise premiseBool
+  obtain ⟨targetProp, targetFound⟩ := valid.holInterpretation.total target targetBool
+  change (Sequent.assert target).right.Holds valuation
+  rw [Sequent.assertRight_holds]
+  apply (completion target targetProp targetFound).mpr
+  apply valid.holInterpretation.equalityMp shape equalityFound premiseFound targetFound
+  · apply (completion equality equalityProp equalityFound).mp
+    have holds := valid.holTheorems ambientValuation admitted equalityFact equalityMember
+      valuation completion leftHolds.1
+    rw [equalityRight] at holds
+    exact (Sequent.assertRight_holds valuation equality).mp holds
+  · apply (completion premise premiseProp premiseFound).mp
+    have holds := valid.holTheorems ambientValuation admitted premiseFact premiseMember
+      valuation completion leftHolds.2
+    rw [premiseRight] at holds
+    exact (Sequent.assertRight_holds valuation premise).mp holds
 
 /-- An exact theorem `⊢ p = true` yields the exact theorem `⊢ p`. -/
 theorem Arena.holTheorem_equalityToTruth {trusted : Arena → Prop}
@@ -737,7 +898,7 @@ theorem Arena.holTheorem_equalityToTruth {trusted : Arena → Prop}
     (valid : arena.KernelValid trusted resolve interpretation)
     {fact : WireSequent} (member : fact ∈ arena.hol.thm)
     {source target : Ref}
-    (exactSource : fact.semantic = Sequent.assert source)
+    (exactRight : fact.semantic.right = (Sequent.assert source).right)
     (sourceBool : ContextClaim (coreResolver resolve) arena.holCore source)
     (targetBool : ContextClaim (coreResolver resolve) arena.holCore target)
     (equality : arena.EqualityToTruth resolve source target) :
@@ -745,17 +906,80 @@ theorem Arena.holTheorem_equalityToTruth {trusted : Arena → Prop}
       arena.ambientTheory.Admits (arena.ImportOk trusted resolve)
         (arena.ImportSort resolve) ambientValuation →
       ∀ valuation : Valuation Ref, valuation.Completes interpretation →
-        (Sequent.assert target).Holds valuation := by
+        (⟨fact.semantic.left, (Sequent.assert target).right⟩ : Sequent Ref).Holds valuation := by
   intro ambientValuation admitted valuation completion
   obtain ⟨sourceProp, sourceFound⟩ := valid.holInterpretation.total source sourceBool
   obtain ⟨targetProp, targetFound⟩ := valid.holInterpretation.total target targetBool
-  rw [Sequent.assert_holds]
+  intro leftHolds
+  change (Sequent.assert target).right.Holds valuation
+  rw [Sequent.assertRight_holds]
   apply (completion target targetProp targetFound).mpr
   apply valid.holInterpretation.equalityToTruth equality sourceFound targetFound
   apply (completion source sourceProp sourceFound).mp
   have sourceHolds := valid.holTheorems ambientValuation admitted fact member valuation completion
-  rw [exactSource] at sourceHolds
-  exact Sequent.assert_holds valuation source |>.mp sourceHolds
+  have rightHolds := sourceHolds leftHolds
+  rw [exactRight] at rightHolds
+  exact (Sequent.assertRight_holds valuation source).mp rightHolds
+
+/-- A theorem may be universally generalized while preserving a premise
+matrix for which the binder is fresh. The reference implementation checks
+that syntactic side condition before invoking this semantic contract. -/
+theorem Arena.holTheorem_generalize {trusted : Arena → Prop}
+    {resolve : Resolver} {arena : Arena} {interpretation : PartialValuation Ref}
+    (valid : arena.KernelValid trusted resolve interpretation)
+    {fact : WireSequent} (member : fact ∈ arena.hol.thm)
+    {source binder target : Ref}
+    (exactRight : fact.semantic.right = (Sequent.assert source).right)
+    (sourceBool : ContextClaim (coreResolver resolve) arena.holCore source)
+    (targetBool : ContextClaim (coreResolver resolve) arena.holCore target)
+    (generalization : arena.Generalization resolve source binder target) :
+    ∀ ambientValuation,
+      arena.ambientTheory.Admits (arena.ImportOk trusted resolve)
+        (arena.ImportSort resolve) ambientValuation →
+      ∀ valuation : Valuation Ref, valuation.Completes interpretation →
+        (⟨fact.semantic.left, (Sequent.assert target).right⟩ : Sequent Ref).Holds valuation := by
+  intro ambientValuation admitted valuation completion
+  obtain ⟨sourceProp, sourceFound⟩ := valid.holInterpretation.total source sourceBool
+  obtain ⟨targetProp, targetFound⟩ := valid.holInterpretation.total target targetBool
+  intro leftHolds
+  change (Sequent.assert target).right.Holds valuation
+  rw [Sequent.assertRight_holds]
+  apply (completion target targetProp targetFound).mpr
+  apply valid.holInterpretation.generalize generalization sourceFound targetFound
+  apply (completion source sourceProp sourceFound).mp
+  have sourceHolds := valid.holTheorems ambientValuation admitted fact member valuation completion
+  have rightHolds := sourceHolds leftHolds
+  rw [exactRight] at rightHolds
+  exact (Sequent.assertRight_holds valuation source).mp rightHolds
+
+/-- A theorem of one predicate application yields the application at the
+Hilbert-selected witness, preserving its premise matrix. -/
+theorem Arena.holTheorem_choice {trusted : Arena → Prop}
+    {resolve : Resolver} {arena : Arena} {interpretation : PartialValuation Ref}
+    (valid : arena.KernelValid trusted resolve interpretation)
+    {fact : WireSequent} (member : fact ∈ arena.hol.thm)
+    {source target : Ref}
+    (exactRight : fact.semantic.right = (Sequent.assert source).right)
+    (sourceBool : ContextClaim (coreResolver resolve) arena.holCore source)
+    (targetBool : ContextClaim (coreResolver resolve) arena.holCore target)
+    (choice : arena.ChoiceApplication resolve source target) :
+    ∀ ambientValuation,
+      arena.ambientTheory.Admits (arena.ImportOk trusted resolve)
+        (arena.ImportSort resolve) ambientValuation →
+      ∀ valuation : Valuation Ref, valuation.Completes interpretation →
+        (⟨fact.semantic.left, (Sequent.assert target).right⟩ : Sequent Ref).Holds valuation := by
+  intro ambientValuation admitted valuation completion leftHolds
+  obtain ⟨sourceProp, sourceFound⟩ := valid.holInterpretation.total source sourceBool
+  obtain ⟨targetProp, targetFound⟩ := valid.holInterpretation.total target targetBool
+  change (Sequent.assert target).right.Holds valuation
+  rw [Sequent.assertRight_holds]
+  apply (completion target targetProp targetFound).mpr
+  apply valid.holInterpretation.choice choice sourceFound targetFound
+  apply (completion source sourceProp sourceFound).mp
+  have sourceHolds := valid.holTheorems ambientValuation admitted fact member valuation completion
+  have rightHolds := sourceHolds leftHolds
+  rw [exactRight] at rightHolds
+  exact (Sequent.assertRight_holds valuation source).mp rightHolds
 
 /-- Conversion-column lookup is sound because checked insertion refines it
 into semantic equality. -/

@@ -66,6 +66,19 @@ interface host {
         theorem: u64,
     }
 
+    /// Result of universal introduction.
+    record forall-thm {
+        universal: u64,
+        theorem: u64,
+    }
+
+    /// Result of Hilbert-choice introduction.
+    record choice-thm {
+        witness: u64,
+        proposition: u64,
+        theorem: u64,
+    }
+
     /// An immutable shared byte buffer.
     resource bytes {
         /// Copies component bytes into a host buffer.
@@ -275,11 +288,37 @@ interface host {
         /// conclusion, which is the shape the axiom rules produce.
         model-spec: func(theorem: u64, substitution: u64) -> result<u64, string>;
 
-        /// From an exact premise-free theorem `|- f = g`, derive
-        /// `|- f argument = g argument`.
+        /// From `G |- f = g`, derive `G |- f argument = g argument`.
         ap-thm: func(theorem: u64, argument: u64) -> result<ap-thm, string>;
 
-        /// From an exact theorem `|- p = true`, derive `|- p`.
+        /// From `G |- x = y`, derive `G |- function x = function y`.
+        ap-term: func(theorem: u64, function: u64) -> result<ap-thm, string>;
+
+        /// From `G |- p = q` and `D |- p`, derive `G, D |- q`.
+        eq-mp: func(equality: u64, premise: u64) -> result<u64, string>;
+
+        /// Generalize a theorem over a variable absent from its premises.
+        forall-intro: func(theorem: u64, binder: u64) -> result<forall-thm, string>;
+
+        /// Generalize into an existing equality-encoded universal.
+        forall-intro-at: func(theorem: u64, binder: u64, universal: u64) -> result<u64, string>;
+
+        /// Replace a proved witness by the Hilbert-selected witness.
+        choice-intro: func(theorem: u64) -> result<choice-thm, string>;
+
+        /// Introduce choice into an existing matching target.
+        choice-intro-at: func(theorem: u64, target: u64) -> result<u64, string>;
+
+        /// Rewrite every occurrence of one semantically equal theorem atom.
+        convert-theorem: func(theorem: u64, source: u64, target: u64) -> result<_, string>;
+
+        /// Rewrite one semantically equal atom only in conclusions.
+        convert-conclusions: func(theorem: u64, source: u64, target: u64) -> result<_, string>;
+
+        /// Contract duplicate rows and literals in a theorem.
+        contract-theorem: func(theorem: u64) -> result<_, string>;
+
+        /// From `G |- p = true`, derive `G |- p`.
         eqt-elim: func(theorem: u64) -> result<u64, string>;
 
         /// Concludes the axiom of infinity, consuming the `ax.inf` capability.

@@ -699,6 +699,94 @@ impl GuestKernel for HostKernel {
         })
     }
 
+    fn ap_term(&self, theorem: u64, function: u64) -> Result<wit::ApThm, String> {
+        let result = self
+            .0
+            .borrow_mut()
+            .ap_term(theorem_id(theorem)?, reference(function)?)
+            .map_err(|error| error.to_string())?;
+        Ok(wit::ApThm {
+            left: ref_index(result.left),
+            right: ref_index(result.right),
+            equality: ref_index(result.equality),
+            theorem: result.theorem.get().unsigned_abs().into(),
+        })
+    }
+
+    fn eq_mp(&self, equality: u64, premise: u64) -> Result<u64, String> {
+        self.0
+            .borrow_mut()
+            .eq_mp(theorem_id(equality)?, theorem_id(premise)?)
+            .map(|id| id.get().unsigned_abs().into())
+            .map_err(|error| error.to_string())
+    }
+
+    fn forall_intro(&self, theorem: u64, binder: u64) -> Result<wit::ForallThm, String> {
+        let result = self
+            .0
+            .borrow_mut()
+            .forall_intro(theorem_id(theorem)?, reference(binder)?)
+            .map_err(|error| error.to_string())?;
+        Ok(wit::ForallThm {
+            universal: ref_index(result.universal),
+            theorem: result.theorem.get().unsigned_abs().into(),
+        })
+    }
+
+    fn forall_intro_at(&self, theorem: u64, binder: u64, universal: u64) -> Result<u64, String> {
+        self.0
+            .borrow_mut()
+            .forall_intro_at(
+                theorem_id(theorem)?,
+                reference(binder)?,
+                reference(universal)?,
+            )
+            .map(|id| id.get().unsigned_abs().into())
+            .map_err(|error| error.to_string())
+    }
+
+    fn choice_intro(&self, theorem: u64) -> Result<wit::ChoiceThm, String> {
+        let result = self
+            .0
+            .borrow_mut()
+            .choice_intro(theorem_id(theorem)?)
+            .map_err(|error| error.to_string())?;
+        Ok(wit::ChoiceThm {
+            witness: ref_index(result.witness),
+            proposition: ref_index(result.proposition),
+            theorem: result.theorem.get().unsigned_abs().into(),
+        })
+    }
+
+    fn choice_intro_at(&self, theorem: u64, target: u64) -> Result<u64, String> {
+        self.0
+            .borrow_mut()
+            .choice_intro_at(theorem_id(theorem)?, reference(target)?)
+            .map(|id| id.get().unsigned_abs().into())
+            .map_err(|error| error.to_string())
+    }
+
+    fn convert_theorem(&self, theorem: u64, source: u64, target: u64) -> Result<(), String> {
+        self.0
+            .borrow_mut()
+            .convert_theorem(theorem_id(theorem)?, reference(source)?, reference(target)?)
+            .map_err(|error| error.to_string())
+    }
+
+    fn convert_conclusions(&self, theorem: u64, source: u64, target: u64) -> Result<(), String> {
+        self.0
+            .borrow_mut()
+            .convert_conclusions(theorem_id(theorem)?, reference(source)?, reference(target)?)
+            .map_err(|error| error.to_string())
+    }
+
+    fn contract_theorem(&self, theorem: u64) -> Result<(), String> {
+        self.0
+            .borrow_mut()
+            .contract_theorem(theorem_id(theorem)?)
+            .map_err(|error| error.to_string())
+    }
+
     fn eqt_elim(&self, theorem: u64) -> Result<u64, String> {
         self.0
             .borrow_mut()

@@ -1455,6 +1455,190 @@ impl nucleus::proof::host::HostKernel for ProofState {
         })
     }
 
+    fn ap_term(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        theorem: u64,
+        function: u64,
+    ) -> wasmtime::Result<Result<nucleus::proof::host::ApThm, String>> {
+        Ok(match (theorem_id(theorem), reference(function)) {
+            (Ok(theorem), Ok(function)) => self
+                .table
+                .get_mut(&kernel)?
+                .0
+                .ap_term(theorem, function)
+                .map(|result| nucleus::proof::host::ApThm {
+                    left: u64::from(result.left.get().unsigned_abs()),
+                    right: u64::from(result.right.get().unsigned_abs()),
+                    equality: u64::from(result.equality.get().unsigned_abs()),
+                    theorem: u64::from(result.theorem.get().unsigned_abs()),
+                })
+                .map_err(|error| error.to_string()),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+        })
+    }
+
+    fn eq_mp(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        equality: u64,
+        premise: u64,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        Ok(match (theorem_id(equality), theorem_id(premise)) {
+            (Ok(equality), Ok(premise)) => self
+                .table
+                .get_mut(&kernel)?
+                .0
+                .eq_mp(equality, premise)
+                .map(|id| u64::from(id.get().unsigned_abs()))
+                .map_err(|error| error.to_string()),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+        })
+    }
+
+    fn forall_intro(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        theorem: u64,
+        binder: u64,
+    ) -> wasmtime::Result<Result<nucleus::proof::host::ForallThm, String>> {
+        Ok(match (theorem_id(theorem), reference(binder)) {
+            (Ok(theorem), Ok(binder)) => self
+                .table
+                .get_mut(&kernel)?
+                .0
+                .forall_intro(theorem, binder)
+                .map(|result| nucleus::proof::host::ForallThm {
+                    universal: u64::from(result.universal.get().unsigned_abs()),
+                    theorem: u64::from(result.theorem.get().unsigned_abs()),
+                })
+                .map_err(|error| error.to_string()),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+        })
+    }
+
+    fn forall_intro_at(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        theorem: u64,
+        binder: u64,
+        universal: u64,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        let (theorem, binder, universal) =
+            match (theorem_id(theorem), reference(binder), reference(universal)) {
+                (Ok(theorem), Ok(binder), Ok(universal)) => (theorem, binder, universal),
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
+                    return Ok(Err(error));
+                }
+            };
+        Ok(self
+            .table
+            .get_mut(&kernel)?
+            .0
+            .forall_intro_at(theorem, binder, universal)
+            .map(|id| u64::from(id.get().unsigned_abs()))
+            .map_err(|error| error.to_string()))
+    }
+
+    fn choice_intro(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        theorem: u64,
+    ) -> wasmtime::Result<Result<nucleus::proof::host::ChoiceThm, String>> {
+        Ok(match theorem_id(theorem) {
+            Ok(theorem) => self
+                .table
+                .get_mut(&kernel)?
+                .0
+                .choice_intro(theorem)
+                .map(|result| nucleus::proof::host::ChoiceThm {
+                    witness: u64::from(result.witness.get().unsigned_abs()),
+                    proposition: u64::from(result.proposition.get().unsigned_abs()),
+                    theorem: u64::from(result.theorem.get().unsigned_abs()),
+                })
+                .map_err(|error| error.to_string()),
+            Err(error) => Err(error),
+        })
+    }
+
+    fn choice_intro_at(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        theorem: u64,
+        target: u64,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        Ok(match (theorem_id(theorem), reference(target)) {
+            (Ok(theorem), Ok(target)) => self
+                .table
+                .get_mut(&kernel)?
+                .0
+                .choice_intro_at(theorem, target)
+                .map(|id| u64::from(id.get().unsigned_abs()))
+                .map_err(|error| error.to_string()),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+        })
+    }
+
+    fn convert_theorem(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        theorem: u64,
+        source: u64,
+        target: u64,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let (theorem, source, target) =
+            match (theorem_id(theorem), reference(source), reference(target)) {
+                (Ok(theorem), Ok(source), Ok(target)) => (theorem, source, target),
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
+                    return Ok(Err(error));
+                }
+            };
+        Ok(self
+            .table
+            .get_mut(&kernel)?
+            .0
+            .convert_theorem(theorem, source, target)
+            .map_err(|error| error.to_string()))
+    }
+
+    fn convert_conclusions(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        theorem: u64,
+        source: u64,
+        target: u64,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let (theorem, source, target) =
+            match (theorem_id(theorem), reference(source), reference(target)) {
+                (Ok(theorem), Ok(source), Ok(target)) => (theorem, source, target),
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
+                    return Ok(Err(error));
+                }
+            };
+        Ok(self
+            .table
+            .get_mut(&kernel)?
+            .0
+            .convert_conclusions(theorem, source, target)
+            .map_err(|error| error.to_string()))
+    }
+
+    fn contract_theorem(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        theorem: u64,
+    ) -> wasmtime::Result<Result<(), String>> {
+        Ok(match theorem_id(theorem) {
+            Ok(theorem) => self
+                .table
+                .get_mut(&kernel)?
+                .0
+                .contract_theorem(theorem)
+                .map_err(|error| error.to_string()),
+            Err(error) => Err(error),
+        })
+    }
+
     fn eqt_elim(
         &mut self,
         kernel: Resource<HostKernel>,
