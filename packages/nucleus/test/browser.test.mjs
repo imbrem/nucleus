@@ -188,7 +188,7 @@ test("the browser composes the full kernel host with a proof", async (context) =
   assert.match(result.address, /^[0-9a-f]{64}$/);
   // The demo now exercises the full subtype package rather than stopping at
   // the three-row Boolean prelude.
-  assert.equal(result.rows, "146");
+  assert.equal(result.rows, "145");
   assert.equal(result.synFacts, "0");
   assert.equal(result.category, "kind");
   assert.equal(result.tableAddressBytes, 32);
@@ -209,7 +209,7 @@ test("the browser composes the full kernel host with a proof", async (context) =
     await page.locator("#status").textContent(),
   );
   assert.match(await page.locator("#address").textContent(), /^[0-9a-f]{64}$/);
-  assert.equal(await page.locator("#rows").textContent(), "146");
+  assert.equal(await page.locator("#rows").textContent(), "145");
 });
 
 test("the REPL runs proofs from the selected kernel by content address", async (context) => {

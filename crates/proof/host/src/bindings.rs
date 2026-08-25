@@ -6608,9 +6608,9 @@ pub mod exports {
                     ///
                     /// The type-level analogue of `eps`'s specification. The kernel does
                     /// not substitute — the caller builds the substituted term and a `conv`
-                    /// fact relating the predicate to it, exactly as `ty-beta` expects, and
-                    /// this checks that the fact's endpoints are the ones the theorem
-                    /// licenses.
+                    /// or finer fact relating the predicate to it, exactly as `ty-beta`
+                    /// expects, and this checks that the fact's endpoints are the ones the
+                    /// theorem licenses.
                     ///
                     /// The theorem must be a premise-free sequent with a single positive
                     /// conclusion, which is the shape the axiom rules produce.
@@ -6622,9 +6622,8 @@ pub mod exports {
                     /// Concludes the axiom of infinity, consuming the `ax.inf` capability.
                     ///
                     /// The sentence is closed, so it takes only the Boolean type to build
-                    /// it at. Concluding it is not the same as using it: naming the carrier
-                    /// whose existence it asserts needs elimination for `ty.exists`, which
-                    /// the kernel does not yet offer.
+                    /// it at. `model-spec` can then name and specify the carrier selected
+                    /// by this existential.
                     fn inf_exists(
                         &self,
                         bool_type: u64,
