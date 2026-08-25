@@ -4,6 +4,13 @@ use std::io::{Read, Write};
 
 use crate::Arena;
 
+/// Maximum literal-import nesting accepted by the current CBOR decoder.
+///
+/// This is one below the underlying Serde CBOR container recursion budget.
+/// It is a byte-decoder resource bound, not a semantic arena invariant: raw
+/// [`Arena`] values and the encoder may represent deeper import trees.
+pub const MAX_LITERAL_IMPORT_DEPTH: usize = 126;
+
 /// Deserializes an unvalidated arena from the complete contents of `reader`.
 ///
 /// Decoding is whole-object: bytes after the arena are a decode failure, not

@@ -773,6 +773,26 @@ theorem decodeArena?_encode_byteWire (arena : Layout.Arena)
     decodeArena? (encodeArena arena) = some arena :=
   decodeArena?_encode arena supported.1
 
+/-- Parsed-CBOR model of the executable byte decoder's literal-import budget.
+The actual byte parser enforces the same bound through its container recursion
+limit; keeping this check explicit separates that resource policy from the
+unbounded semantic decoder above. -/
+noncomputable def decodeArenaByte? (value : Nucleus.Cbor) : Option Layout.Arena := do
+  let arena ← decodeArena? value
+  if arena.literalDepth ≤ Layout.maxLiteralImportDepth then some arena else none
+
+theorem decodeArenaByte?_encode (arena : Layout.Arena)
+    (supported : arena.ByteWireCanonical) :
+    decodeArenaByte? (encodeArena arena) = some arena := by
+  simp [decodeArenaByte?, decodeArena?_encode arena supported.1, supported.2]
+
+theorem decodeArenaByte?_encode_reject_depth (arena : Layout.Arena)
+    (canonical : arena.WireCanonical)
+    (tooDeep : Layout.maxLiteralImportDepth < arena.literalDepth) :
+    decodeArenaByte? (encodeArena arena) = none := by
+  simp [decodeArenaByte?, decodeArena?_encode arena canonical,
+    Nat.not_le.mpr tooDeep]
+
 /-- A serialized CNF tombstone is retained at its exact row position. -/
 theorem decodeCnf?_leadingNull (cnf : Layout.WireCnf) :
     decodeCnf? (encodeCnf ⟨none :: cnf.rows⟩) = some ⟨none :: cnf.rows⟩ :=
