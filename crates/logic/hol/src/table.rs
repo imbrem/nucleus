@@ -24,9 +24,17 @@ impl Table {
     /// # Errors
     ///
     /// Returns an error if the arena cannot be encoded.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if bytes produced by the arena's own canonical encoder do
+    /// not decode as an arena, which indicates an internal codec defect.
     pub fn from_arena(arena: Arena) -> Result<Self, wire::EncodeError> {
         let mut bytes = Vec::new();
         wire::serialize(&arena, &mut bytes)?;
+        drop(arena);
+        let arena = wire::deserialize(bytes.as_slice())
+            .expect("the canonical encoding of an arena must decode");
         Ok(Self {
             address: O256::from_bytes(&bytes),
             arena: Arc::new(arena),
@@ -79,6 +87,7 @@ impl TryFrom<CasFact> for Table {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Kernel, Lit};
 
     #[test]
     fn checked_bytes_introduce_the_corresponding_table() {
@@ -105,5 +114,26 @@ mod tests {
         wire::serialize(&table, &mut encoded).unwrap();
         assert_eq!(table.addr(), O256::from_bytes(&encoded));
         assert_eq!(table.addr(), table.as_ref().addr());
+    }
+
+    #[test]
+    fn raw_arenas_are_canonicalized_to_exactly_what_their_address_decodes() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let proposition = kernel.tm_fv(0, bool_ty).unwrap();
+        let removed = kernel.identity(Lit::positive(proposition.get())).unwrap();
+        let live = kernel.identity(Lit::positive(proposition.get())).unwrap();
+        assert!(kernel.remove_theorem(removed));
+        assert_ne!(live, removed);
+
+        let table = Table::from_arena(kernel.into_arena()).unwrap();
+        let mut bytes = Vec::new();
+        wire::serialize(&table, &mut bytes).unwrap();
+        let decoded = wire::deserialize(bytes.as_slice()).unwrap();
+        assert_eq!(table.as_ref(), &decoded);
+        assert_eq!(table.addr(), O256::from_bytes(&bytes));
+        assert!(table.theorems().get(removed).is_some());
+        assert!(table.theorems().get(live).is_none());
     }
 }
