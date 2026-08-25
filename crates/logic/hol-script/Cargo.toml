@@ -1,0 +1,16 @@
+[package]
+name = "covalence-logic-hol-script"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Untrusted S-expression front end for checked HOL definitions"
+publish = false
+
+[dependencies]
+covalence-lib-error = { path = "../../lib/error" }
+covalence-lib-parse = { path = "../../lib/parse" }
+covalence-logic-hol = { path = "../hol" }
+
+[lints]
+workspace = true

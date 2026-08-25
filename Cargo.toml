@@ -19,6 +19,7 @@ members = [
   "crates/logic/metamath",
   "crates/logic/sat",
   "crates/logic/hol",
+  "crates/logic/hol-script",
   "crates/data/array",
   "crates/data/basic",
   "crates/data/cbor",
