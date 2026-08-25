@@ -16,7 +16,8 @@ mod proof;
 pub use proof::{ProofError, load_standard_proof};
 
 pub use covalence_logic_hol_derived::{
-    ChosenModel, ModelError, ModelExt, Subtype, SubtypeError, SubtypeExt,
+    ChosenModel, ExistsError, Infinity, InfinityError, InfinityExt, ModelError, ModelExt,
+    OpenedExists, Substitution, Subtype, SubtypeError, SubtypeExt, open_exists, substitute,
 };
 
 mod connection;

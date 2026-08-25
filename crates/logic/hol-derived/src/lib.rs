@@ -5,8 +5,12 @@
 //! admitted only through public checked [`Kernel`](covalence_logic_hol::Kernel)
 //! operations.
 
+mod exists;
+mod infinity;
 mod model;
 mod subtype;
 
-pub use model::{ChosenModel, ModelError, ModelExt};
+pub use exists::{ExistsError, OpenedExists, open_exists};
+pub use infinity::{Infinity, InfinityError, InfinityExt};
+pub use model::{ChosenModel, ModelError, ModelExt, Substitution, substitute};
 pub use subtype::{Subtype, SubtypeError, SubtypeExt};
