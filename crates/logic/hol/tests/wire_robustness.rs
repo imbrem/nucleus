@@ -39,6 +39,33 @@ fn a_fact_free_arena_stays_off_the_wire_entirely() {
 }
 
 #[test]
+fn classical_matrix_tombstones_round_trip_in_every_arena_position() {
+    let lit = Value::Integer((-1).into());
+    let matrix = vec![Value::Null, Value::Array(vec![lit]), Value::Null];
+    let theorem = Value::Array(vec![
+        Value::Array(matrix.clone()),
+        Value::Array(matrix.clone()),
+    ]);
+    let bytes = ArenaCbor::new()
+        .amb_ctx(matrix)
+        .amb_thm(vec![theorem.clone()])
+        .pred_syl(vec![theorem.clone()])
+        .hol_thm(vec![theorem])
+        .bytes();
+
+    let arena = wire::deserialize(bytes.as_slice()).expect("matrix tombstones decode");
+    assert_eq!(arena.ambient_context().rows().count(), 1);
+    assert_eq!(arena.ambient_theorems().live_theorems().count(), 1);
+    assert_eq!(arena.syllogisms().live_theorems().count(), 1);
+    assert_eq!(arena.theorems().live_theorems().count(), 1);
+    assert_eq!(
+        encode(&arena),
+        bytes,
+        "the wire format must preserve every inner matrix tombstone"
+    );
+}
+
+#[test]
 fn dense_columns_are_sparse_canonical_and_row_external() {
     let noncanonical = ArenaCbor::new()
         .defs(vec![star_row(), star_row()])

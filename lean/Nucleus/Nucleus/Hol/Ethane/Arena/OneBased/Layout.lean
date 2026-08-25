@@ -299,6 +299,7 @@ def Arena.holCore : Arena → OneBased.Arena
         eq := hol.eq
         synEq := hol.syn.eq
         conv := hol.syn.conv
+        sort := hol.syn.sort
       }
       .mk (imports.map Import.holCore) hol.ax
         dense.rows

@@ -251,6 +251,10 @@ pub struct ArenaCbor {
     syn_facts: Option<Vec<Value>>,
     syn_free: Option<Value>,
     ctx: Vec<Value>,
+    amb_ctx: Vec<Value>,
+    amb_thm: Vec<Value>,
+    pred_syl: Vec<Value>,
+    hol_thm: Vec<Value>,
     extra: Vec<(Value, Value)>,
 }
 
@@ -273,6 +277,10 @@ impl ArenaCbor {
             syn_facts: None,
             syn_free: None,
             ctx: Vec::new(),
+            amb_ctx: Vec::new(),
+            amb_thm: Vec::new(),
+            pred_syl: Vec::new(),
+            hol_thm: Vec::new(),
             extra: Vec::new(),
         }
     }
@@ -326,6 +334,30 @@ impl ArenaCbor {
     }
 
     #[must_use]
+    pub fn amb_ctx(mut self, rows: Vec<Value>) -> Self {
+        self.amb_ctx = rows;
+        self
+    }
+
+    #[must_use]
+    pub fn amb_thm(mut self, rows: Vec<Value>) -> Self {
+        self.amb_thm = rows;
+        self
+    }
+
+    #[must_use]
+    pub fn pred_syl(mut self, rows: Vec<Value>) -> Self {
+        self.pred_syl = rows;
+        self
+    }
+
+    #[must_use]
+    pub fn hol_thm(mut self, rows: Vec<Value>) -> Self {
+        self.hol_thm = rows;
+        self
+    }
+
+    #[must_use]
     pub fn slots(mut self, slots: Vec<Value>) -> Self {
         self.syn_facts = Some(slots);
         self
@@ -365,15 +397,15 @@ impl ArenaCbor {
         let amb = Value::Map(vec![
             (text("pred"), Value::Array(Vec::new())),
             (text("ax"), Value::Array(Vec::new())),
-            (text("ctx"), Value::Array(Vec::new())),
-            (text("thm"), Value::Array(Vec::new())),
+            (text("ctx"), Value::Array(self.amb_ctx)),
+            (text("thm"), Value::Array(self.amb_thm)),
         ]);
-        let pred = Value::Map(vec![(text("syl"), Value::Array(Vec::new()))]);
+        let pred = Value::Map(vec![(text("syl"), Value::Array(self.pred_syl))]);
         let mut hol_fields = vec![
             (text("defs"), Value::Array(self.defs)),
             (text("ax"), Value::Array(self.axs)),
             (text("ctx"), Value::Array(self.ctx)),
-            (text("thm"), Value::Array(Vec::new())),
+            (text("thm"), Value::Array(self.hol_thm)),
             (text("syn"), Value::Map(syn)),
         ];
         if let Some(values) = self.eq {
