@@ -19,6 +19,7 @@ covalence-lib-hash = { path = "../lib/hash", default-features = false, features 
 covalence-lib-sqlite = { path = "../lib/sqlite" }
 covalence-logic-cas = { path = "../logic/cas" }
 covalence-logic-hol = { path = "../logic/hol" }
+covalence-logic-hol-derived = { path = "../logic/hol-derived" }
 covalence-neutron = { path = "../neutron" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

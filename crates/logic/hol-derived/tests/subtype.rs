@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use covalence_logic_hol::{AX_SUB, Binder, Kernel, KernelError, Ref, Sort, Table};
-use covalence_nucleus::{Subtype, SubtypeError, SubtypeExt};
+use covalence_logic_hol_derived::{Subtype, SubtypeError, SubtypeExt};
 
 /// A kernel with `star`, `bool`, a carrier, and a predicate over it.
 struct Fix {

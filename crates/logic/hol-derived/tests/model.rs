@@ -1,7 +1,7 @@
 //! End-to-end userspace opening of type-existential model packages.
 
 use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Lit, Ref, Sort, SynRel, Tag};
-use covalence_nucleus::{ModelError, ModelExt};
+use covalence_logic_hol_derived::{ModelError, ModelExt};
 
 fn prelude() -> (Kernel, Ref, Ref) {
     let mut kernel = Kernel::new();
