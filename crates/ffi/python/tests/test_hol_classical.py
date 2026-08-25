@@ -19,12 +19,18 @@ def test_literals_and_every_index_are_i32_checked_python_ints() -> None:
     assert p == -p_ref
     assert kernel.lit(p_ref, negated=True) == -p
 
-    for malformed in (0, 2**31 - 1, -(2**31), 2**31, -(2**31) - 1):
+    for malformed in (0, 2**31 - 1, -(2**31)):
         with pytest.raises(ValueError):
             kernel.identity(malformed)
-    for malformed in (0, -1, 2**31, -(2**31) - 1):
+    for outside_i32 in (2**31, -(2**31) - 1, 2**63, -(2**63) - 1):
+        with pytest.raises(OverflowError):
+            kernel.identity(outside_i32)
+    for malformed in (0, -1):
         with pytest.raises(ValueError):
             kernel.theorem(malformed)
+    for outside_i32 in (2**31, -(2**31) - 1, 2**63):
+        with pytest.raises(OverflowError):
+            kernel.theorem(outside_i32)
 
 
 def test_nested_cnf_dnf_inspection_weakening_transfers_and_normalization() -> None:
@@ -35,16 +41,16 @@ def test_nested_cnf_dnf_inspection_weakening_transfers_and_normalization() -> No
 
     kernel.weaken_matrix(theorem, [[q, p, q]], [[-q, p, -q]])
     assert kernel.theorem(theorem) == ([[q, p], [p]], [[p], [p, -q]])
-    kernel.move_clause_right(theorem, 2)
+    kernel.move_cnf_right(theorem, 2)
     assert [p, -q] in kernel.theorem(theorem)[1]
-    kernel.move_cube_left(theorem, 1)
+    kernel.move_dnf_left(theorem, 1)
     kernel.normalize_theorem(theorem)
 
     before = kernel.theorem(theorem)
     with pytest.raises(ValueError):
-        kernel.move_clause_right(theorem, 0)
-    with pytest.raises(ValueError):
-        kernel.move_cube_left(theorem, 2**31)
+        kernel.move_cnf_right(theorem, 0)
+    with pytest.raises(OverflowError):
+        kernel.move_dnf_left(theorem, 2**31)
     assert kernel.theorem(theorem) == before
 
 
@@ -77,7 +83,7 @@ def test_rejected_rules_are_atomic_and_do_not_consume_slots() -> None:
     before = kernel.theorem(theorem)
     with pytest.raises(ValueError):
         kernel.weaken(theorem, [q, 0], [])
-    with pytest.raises(ValueError):
+    with pytest.raises(OverflowError):
         kernel.weaken_matrix(theorem, [[q], [2**31]], [])
     with pytest.raises(ValueError):
         kernel.not_left(theorem, q)
