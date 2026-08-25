@@ -660,6 +660,85 @@ theorem impRight {left : List (Clause Atom)} {right : List (Cube Atom)}
       exact (implicationTruth ((meaning valuation).mpr (fun _ => qTruth))).elim
     · exact ⟨cube, by simp [member], truth⟩
 
+/-! ## Checked opcode-tree replacement
+
+These four schemas cover one-step expansion, recursive flattening, and folding.
+The HOL implementation computes `leaves` only from checked opcode rows; its
+local opcode equations discharge the corresponding semantic premise. -/
+
+theorem expandConclusion {left : List (Clause Atom)} {right : List (Cube Atom)}
+    {formula : Lit Atom} {leaves : List (Lit Atom)}
+    (expands : ∀ valuation, formula.Holds valuation →
+      ∃ leaf ∈ leaves, leaf.Holds valuation)
+    (sound : (Sequent.mk (Cnf.mk left)
+      (Dnf.mk (Cube.mk [formula] :: right))).Sound) :
+    (Sequent.mk (Cnf.mk left)
+      (Dnf.mk (leaves.map (fun leaf => Cube.mk [leaf]) ++ right))).Sound := by
+  intro valuation premises
+  obtain ⟨cube, member, truth⟩ := sound valuation premises
+  simp only [List.mem_cons] at member
+  rcases member with rfl | member
+  · obtain ⟨leaf, leafMember, leafTruth⟩ := expands valuation
+      ((singleton_cube_holds valuation formula).mp truth)
+    exact ⟨Cube.mk [leaf], by simp [leafMember],
+      (singleton_cube_holds valuation leaf).mpr leafTruth⟩
+  · exact ⟨cube, List.mem_append_right _ member, truth⟩
+
+theorem flattenPremise {left : List (Clause Atom)} {right : List (Cube Atom)}
+    {formula : Lit Atom} {leaves : List (Lit Atom)}
+    (collects : ∀ valuation,
+      (∀ leaf ∈ leaves, leaf.Holds valuation) → formula.Holds valuation)
+    (sound : (Sequent.mk (Cnf.mk (Clause.mk [formula] :: left))
+      (Dnf.mk right)).Sound) :
+    (Sequent.mk (Cnf.mk (leaves.map (fun leaf => Clause.mk [leaf]) ++ left))
+      (Dnf.mk right)).Sound := by
+  intro valuation premises
+  apply sound valuation
+  intro clause member
+  simp only [List.mem_cons] at member
+  rcases member with rfl | member
+  · apply (singleton_clause_holds valuation formula).mpr
+    apply collects valuation
+    intro leaf leafMember
+    exact (singleton_clause_holds valuation leaf).mp
+      (premises (Clause.mk [leaf]) (by simp [leafMember]))
+  · exact premises clause (List.mem_append_right _ member)
+
+theorem foldConclusion {left : List (Clause Atom)} {right : List (Cube Atom)}
+    {formula : Lit Atom} {leaves : List (Lit Atom)}
+    (folds : ∀ valuation leaf, leaf ∈ leaves →
+      leaf.Holds valuation → formula.Holds valuation)
+    (sound : (Sequent.mk (Cnf.mk left)
+      (Dnf.mk (leaves.map (fun leaf => Cube.mk [leaf]) ++ right))).Sound) :
+    (Sequent.mk (Cnf.mk left) (Dnf.mk (Cube.mk [formula] :: right))).Sound := by
+  intro valuation premises
+  obtain ⟨cube, member, truth⟩ := sound valuation premises
+  rcases List.mem_append.mp member with member | member
+  · obtain ⟨leaf, leafMember, rfl⟩ := List.mem_map.mp member
+    exact ⟨Cube.mk [formula], by simp,
+      (singleton_cube_holds valuation formula).mpr
+        (folds valuation leaf leafMember ((singleton_cube_holds valuation leaf).mp truth))⟩
+  · exact ⟨cube, by simp [member], truth⟩
+
+theorem foldPremise {left : List (Clause Atom)} {right : List (Cube Atom)}
+    {formula : Lit Atom} {leaves : List (Lit Atom)}
+    (folds : ∀ valuation, formula.Holds valuation →
+      ∀ leaf ∈ leaves, leaf.Holds valuation)
+    (sound : (Sequent.mk
+      (Cnf.mk (leaves.map (fun leaf => Clause.mk [leaf]) ++ left))
+      (Dnf.mk right)).Sound) :
+    (Sequent.mk (Cnf.mk (Clause.mk [formula] :: left)) (Dnf.mk right)).Sound := by
+  intro valuation premises
+  apply sound valuation
+  intro clause member
+  rcases List.mem_append.mp member with member | member
+  · obtain ⟨leaf, leafMember, rfl⟩ := List.mem_map.mp member
+    have formulaTruth := (singleton_clause_holds valuation formula).mp
+      (premises (Clause.mk [formula]) (by simp))
+    exact (singleton_clause_holds valuation leaf).mpr
+      (folds valuation formulaTruth leaf leafMember)
+  · exact premises clause (by simp [member])
+
 /-! ## Theorem slots and free-list lifecycle -/
 
 /-- Public classical indices are one-based nonzero signed-32-bit values.  The
