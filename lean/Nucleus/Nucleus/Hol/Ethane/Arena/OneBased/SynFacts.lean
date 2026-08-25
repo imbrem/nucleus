@@ -134,6 +134,11 @@ theorem Compatible.symm {left right : Value} (compatible : Compatible left right
       rcases conversion with ⟨conversion⟩
       exact .term ⟨conversion.symm⟩
 
+/-- Compatible resolved values necessarily inhabit the same syntax category. -/
+theorem Compatible.tagSort_eq {left right : Value}
+    (compatible : Compatible left right) : left.tagSort = right.tagSort := by
+  cases compatible <;> rfl
+
 theorem Compatible.trans {left middle right : Value}
     (leftMiddle : Compatible left middle)
     (middleWellFormed : middle.WellFormed)
@@ -879,6 +884,24 @@ theorem Valid.endpointsValid (valid : SynFact.Valid resolve arena fact) :
   · exact Or.inr (Or.inl ⟨_, varEq, valEq⟩)
   · exact Or.inr (Or.inr ⟨_, _, varEq, valEq⟩)
 
+/-- A valid direct cache fact always proves semantic equality of its endpoint
+references.  Finer syntactic and alpha relations are weakened to conversion;
+the syntax-only row table contributes no hidden equality information. -/
+theorem Valid.direct_referenceEqual
+    (valid : SynFact.Valid resolve arena fact) (direct : fact.Direct) :
+    ReferenceEqual resolve arena fact.input fact.output := by
+  rcases valid with ⟨input, output, inputResolved, outputResolved,
+    inputWellFormed, outputWellFormed, compatible, meaning⟩
+  rcases direct with ⟨varNone, valNone⟩
+  simp only [varNone, valNone, SynMeaning, Value.LocalSynMeaning] at meaning
+  have refinement : fact.rel.Refines .conv := by
+    cases fact.rel <;> decide
+  have equal := meaning.2.refine refinement compatible inputWellFormed outputWellFormed
+  exact ⟨input, output,
+    (resolves_withoutSyn_iff resolve arena fact.input input).mp inputResolved,
+    (resolves_withoutSyn_iff resolve arena fact.output output).mp outputResolved,
+    inputWellFormed, outputWellFormed, equal⟩
+
 /-- Exact semantic contract of Rust `Kernel::syn_refl`. -/
 theorem Valid.refl (resolved : Resolves resolve arena.withoutSyn reference value)
     (wellFormed : value.WellFormed) :
@@ -1005,8 +1028,8 @@ namespace SynArena
 private def withSyn (state : SynArena) (facts : List SynSlot)
     (free : Option SynFactId) : SynArena :=
   match state with
-  | .mk imports axs defs _ _ ctx assume assert =>
-      .mk imports axs defs facts free ctx assume assert
+  | .mk imports axs dense _ _ ctx assume assert =>
+      .mk imports axs dense facts free ctx assume assert
 
 @[simp] private theorem withoutSyn_withSyn
     (state : SynArena) (facts : List SynSlot) (free : Option SynFactId) :
@@ -1026,6 +1049,20 @@ private def slotAt : Nat → List SynSlot → Option SynSlot
   | 0, slot :: _ => some slot
   | position + 1, _ :: slots => slotAt position slots
 
+private theorem slotAt_mem {position : Nat} {slots : List SynSlot} {slot : SynSlot}
+    (found : slotAt position slots = some slot) : slot ∈ slots := by
+  induction slots generalizing position with
+  | nil => simp [slotAt] at found
+  | cons head tail ih =>
+      cases position with
+      | zero =>
+          simp only [slotAt, Option.some.injEq] at found
+          subst slot
+          simp
+      | succ position =>
+          simp only [slotAt] at found
+          exact List.mem_cons_of_mem head (ih found)
+
 def factSlot? (state : SynArena) (id : SynFactId) : Option SynSlot :=
   slotAt id.position state.synFacts
 
@@ -1039,6 +1076,23 @@ links are deliberately absent from the trusted proposition. -/
 def Sound (resolve : Resolver) (state : SynArena) : Prop :=
   ∀ fact, SynSlot.fact fact ∈ state.synFacts →
     SynFact.Valid resolve state fact
+
+/-- Looking up an occupied slot in a sound fact arena recovers its validity. -/
+theorem Sound.fact?_valid {resolve : Resolver} {state : SynArena}
+    {id : SynFactId} {fact : SynFact} (sound : Sound resolve state)
+    (found : state.fact? id = some fact) : SynFact.Valid resolve state fact := by
+  unfold fact? at found
+  cases slotFound : state.factSlot? id with
+  | none => simp [slotFound] at found
+  | some slot =>
+      cases slot with
+      | free free => simp [slotFound] at found
+      | fact stored =>
+          simp only [slotFound, Option.some.injEq] at found
+          subst stored
+          apply sound fact
+          apply slotAt_mem
+          simpa [factSlot?] using slotFound
 
 def append (state : SynArena) (fact : SynFact) : SynArena :=
   withSyn state (state.synFacts ++ [.fact fact]) state.synFree

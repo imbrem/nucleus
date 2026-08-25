@@ -8,7 +8,7 @@ use crate::{
     builtin::{Op1, Op2},
 };
 
-const MAX_CHILDREN: usize = 2;
+const MAX_CHILDREN: usize = 3;
 type Fields = (
     Tag,
     Option<SmallVec<[Ref; MAX_CHILDREN]>>,
@@ -53,7 +53,7 @@ pub(crate) enum Expr {
     /// Versioned compact binary syntax. Operands are ordered left-to-right.
     Op2(Op2, Ref, Ref),
     /// Equality: left and right operands. Their common type is inferred.
-    Eq(Ref, Ref),
+    Eq(Ref, Ref, Ref),
     Eps {
         ty: Ref,
         predicate: Ref,
@@ -112,8 +112,8 @@ impl Expr {
             | Self::TyLam(left, right)
             | Self::App(left, right)
             | Self::Lam(left, right)
-            | Self::Eq(left, right)
             | Self::Op2(_, left, right) => SmallVec::from_slice(&[left, right]),
+            Self::Eq(ty, left, right) => SmallVec::from_slice(&[ty, left, right]),
             Self::Op1(_, operand) => SmallVec::from_slice(&[operand]),
             Self::Eps { ty, predicate } => SmallVec::from_slice(&[ty, predicate]),
             Self::TyFv { kind: child, .. }
@@ -151,31 +151,6 @@ impl Row {
 
     pub(crate) const fn expr(&self) -> &Expr {
         &self.expr
-    }
-}
-
-/// A definition together with its optional dense-column members.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct RowView<'a> {
-    row: &'a Row,
-    sort: Option<Ref>,
-}
-
-impl<'a> RowView<'a> {
-    pub(crate) const fn new(row: &'a Row, sort: Option<Ref>) -> Self {
-        Self { row, sort }
-    }
-
-    pub(crate) const fn tag(self) -> Tag {
-        self.row.tag()
-    }
-
-    pub(crate) const fn expr(self) -> &'a Expr {
-        self.row.expr()
-    }
-
-    pub(crate) const fn sort(self) -> Option<Ref> {
-        self.sort
     }
 }
 
@@ -447,7 +422,7 @@ impl From<Row> for RowSerde {
                 [left, right],
                 Some(Value::Nat(u64::from(op.code()))),
             ),
-            Expr::Eq(left, right) => ordinary(Tag::Tm(TmTag::Eq), [left, right], None),
+            Expr::Eq(ty, left, right) => ordinary(Tag::Tm(TmTag::Eq), [ty, left, right], None),
             Expr::Eps { ty, predicate } => ordinary(Tag::Tm(TmTag::Eps), [ty, predicate], None),
             Expr::TmRef { src, ix } => foreign(Tag::Tm(TmTag::Ref), src, ix),
             Expr::TyRef { src, ix } => foreign(Tag::Ty(TyTag::Ref), src, ix),
@@ -532,7 +507,9 @@ impl TryFrom<RowSerde> for Row {
                     *right,
                 )
             }
-            (Tag::Tm(TmTag::Eq), Some([left, right]), None, None, None) => Expr::Eq(*left, *right),
+            (Tag::Tm(TmTag::Eq), Some([ty, left, right]), None, None, None) => {
+                Expr::Eq(*ty, *left, *right)
+            }
             (Tag::Tm(TmTag::Eps), Some([ty, predicate]), None, None, None) => Expr::Eps {
                 ty: *ty,
                 predicate: *predicate,
@@ -605,7 +582,7 @@ mod tests {
             Row::new(Expr::Bool(true)),
             Row::new(Expr::Op1(Op1::Not, one)),
             Row::new(Expr::Op2(Op2::And, one, two)),
-            Row::new(Expr::Eq(one, two)),
+            Row::new(Expr::Eq(one, one, two)),
             Row::new(Expr::Eps {
                 ty: one,
                 predicate: two,
@@ -635,13 +612,17 @@ mod tests {
     }
 
     #[test]
-    fn inferred_type_rows_have_exactly_two_children() {
+    fn typed_rows_encode_every_explicit_child() {
         let one = reference(1);
         let two = reference(2);
-        for (row, name) in [
-            (Row::new(Expr::TyApp(one, two)), "ty.app"),
-            (Row::new(Expr::TyLam(one, two)), "ty.lam"),
-            (Row::new(Expr::Eq(one, two)), "tm.eq"),
+        for (row, name, children) in [
+            (Row::new(Expr::TyApp(one, two)), "ty.app", vec![one, two]),
+            (Row::new(Expr::TyLam(one, two)), "ty.lam", vec![one, two]),
+            (
+                Row::new(Expr::Eq(one, one, two)),
+                "tm.eq",
+                vec![one, one, two],
+            ),
         ] {
             let mut bytes = Vec::new();
             into_writer(&row, &mut bytes).unwrap();
@@ -654,7 +635,12 @@ mod tests {
                     (Cbor::Text("tag".into()), Cbor::Text(name.into())),
                     (
                         Cbor::Text("ixs".into()),
-                        Cbor::Array(vec![Cbor::Integer(1.into()), Cbor::Integer(2.into())]),
+                        Cbor::Array(
+                            children
+                                .into_iter()
+                                .map(|child| { Cbor::Integer(child.get().into()) })
+                                .collect()
+                        ),
                     ),
                 ]
             );
@@ -694,6 +680,15 @@ mod tests {
             (
                 Cbor::Text("ixs".into()),
                 Cbor::Array(vec![Cbor::Integer(1.into())]),
+            ),
+        ]));
+        // Equality's type is syntax, not a classifier-column lookup.  The
+        // former two-child encoding must not silently acquire mutable meaning.
+        assert!(decode_bad(vec![
+            (Cbor::Text("tag".into()), Cbor::Text("tm.eq".into())),
+            (
+                Cbor::Text("ixs".into()),
+                Cbor::Array(vec![Cbor::Integer(1.into()), Cbor::Integer(2.into())]),
             ),
         ]));
         for (tag, operands, code) in [

@@ -80,6 +80,49 @@ pub mod nucleus {
                     }
                 }
             }
+            /// The guarded subtype-package sentence, and what an untrusted layer needs
+            /// in order to build terms about the same subtype.
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct SubtypeAxiom {
+                /// The carrier type the subtype was carved out of.
+                pub carrier: u64,
+                /// The defining predicate, of type `carrier -> bool`.
+                pub predicate: u64,
+                /// The sentence the theorem concludes. The only field carrying
+                /// authority.
+                pub exists_type: u64,
+                /// The body `exists-type` quantifies, with the model type variable
+                /// free. The subtype itself is `model(model-name, package-body)`.
+                pub package_body: u64,
+                /// The name of the model type variable bound in `package`.
+                pub model_name: u64,
+                /// The first name reserved for the package's own binders; the caller's
+                /// terms use no name at or above it.
+                pub base_name: u64,
+                /// Slot of the premise-free sequent concluding `exists-type`.
+                ///
+                /// Opaque until the checked theorem operations are exposed here; it is
+                /// returned rather than dropped so that exposing them later is not a
+                /// breaking change.
+                pub theorem: u64,
+            }
+            impl ::core::fmt::Debug for SubtypeAxiom {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("SubtypeAxiom")
+                        .field("carrier", &self.carrier)
+                        .field("predicate", &self.predicate)
+                        .field("exists-type", &self.exists_type)
+                        .field("package-body", &self.package_body)
+                        .field("model-name", &self.model_name)
+                        .field("base-name", &self.base_name)
+                        .field("theorem", &self.theorem)
+                        .finish()
+                }
+            }
             /// An immutable shared byte buffer.
             #[derive(Debug)]
             #[repr(transparent)]
@@ -4549,6 +4592,678 @@ pub mod nucleus {
             }
             impl Kernel {
                 #[allow(unused_unsafe, clippy::all)]
+                /// Derived logical constructions.
+                ///
+                /// Macros over the primitives above, not new row shapes: negation is
+                /// equality with `false`, universal quantification is equality with the
+                /// constantly-true function, existential quantification is Hilbert
+                /// choice, and conjunction is the equality-only encoding
+                /// `(\f. f l r) = (\f. f true true)`. The binder of a conjunction is a
+                /// `tm-fv` row of type `bool -> bool -> bool`, and the caller owns the
+                /// choice of a name that does not capture.
+                ///
+                /// Deliberately not the compact Boolean builtins, whose meaning comes
+                /// from the init manifest's definitions rather than the primitive
+                /// literals; no lemma relates the two encodings.
+                pub fn not_tm(
+                    &self,
+                    bool_type: u64,
+                    proposition: u64,
+                ) -> Result<u64, _rt::String> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea(
+                            [::core::mem::MaybeUninit<
+                                u8,
+                            >; 8 + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let mut ret_area = RetArea(
+                            [::core::mem::MaybeUninit::uninit(); 8
+                                + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "nucleus:proof/host@0.1.0")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]kernel.not-tm"]
+                            fn wit_import1(_: i32, _: i64, _: i64, _: *mut u8);
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(
+                            _: i32,
+                            _: i64,
+                            _: i64,
+                            _: *mut u8,
+                        ) {
+                            unreachable!()
+                        }
+                        unsafe {
+                            wit_import1(
+                                (self).handle() as i32,
+                                _rt::as_i64(&bool_type),
+                                _rt::as_i64(&proposition),
+                                ptr0,
+                            )
+                        };
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result7 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+                                    l3 as u64
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = *ptr0.add(8).cast::<*mut u8>();
+                                    let l5 = *ptr0
+                                        .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                        .cast::<usize>();
+                                    let len6 = l5;
+                                    let bytes6 = _rt::Vec::from_raw_parts(
+                                        l4.cast(),
+                                        len6,
+                                        len6,
+                                    );
+                                    _rt::string_lift(bytes6)
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+            impl Kernel {
+                #[allow(unused_unsafe, clippy::all)]
+                pub fn forall_tm(
+                    &self,
+                    bool_type: u64,
+                    binder: u64,
+                    body: u64,
+                ) -> Result<u64, _rt::String> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea(
+                            [::core::mem::MaybeUninit<
+                                u8,
+                            >; 8 + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let mut ret_area = RetArea(
+                            [::core::mem::MaybeUninit::uninit(); 8
+                                + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "nucleus:proof/host@0.1.0")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]kernel.forall-tm"]
+                            fn wit_import1(_: i32, _: i64, _: i64, _: i64, _: *mut u8);
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(
+                            _: i32,
+                            _: i64,
+                            _: i64,
+                            _: i64,
+                            _: *mut u8,
+                        ) {
+                            unreachable!()
+                        }
+                        unsafe {
+                            wit_import1(
+                                (self).handle() as i32,
+                                _rt::as_i64(&bool_type),
+                                _rt::as_i64(&binder),
+                                _rt::as_i64(&body),
+                                ptr0,
+                            )
+                        };
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result7 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+                                    l3 as u64
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = *ptr0.add(8).cast::<*mut u8>();
+                                    let l5 = *ptr0
+                                        .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                        .cast::<usize>();
+                                    let len6 = l5;
+                                    let bytes6 = _rt::Vec::from_raw_parts(
+                                        l4.cast(),
+                                        len6,
+                                        len6,
+                                    );
+                                    _rt::string_lift(bytes6)
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+            impl Kernel {
+                #[allow(unused_unsafe, clippy::all)]
+                pub fn exists_tm(
+                    &self,
+                    binder: u64,
+                    body: u64,
+                ) -> Result<u64, _rt::String> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea(
+                            [::core::mem::MaybeUninit<
+                                u8,
+                            >; 8 + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let mut ret_area = RetArea(
+                            [::core::mem::MaybeUninit::uninit(); 8
+                                + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "nucleus:proof/host@0.1.0")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]kernel.exists-tm"]
+                            fn wit_import1(_: i32, _: i64, _: i64, _: *mut u8);
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(
+                            _: i32,
+                            _: i64,
+                            _: i64,
+                            _: *mut u8,
+                        ) {
+                            unreachable!()
+                        }
+                        unsafe {
+                            wit_import1(
+                                (self).handle() as i32,
+                                _rt::as_i64(&binder),
+                                _rt::as_i64(&body),
+                                ptr0,
+                            )
+                        };
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result7 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+                                    l3 as u64
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = *ptr0.add(8).cast::<*mut u8>();
+                                    let l5 = *ptr0
+                                        .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                        .cast::<usize>();
+                                    let len6 = l5;
+                                    let bytes6 = _rt::Vec::from_raw_parts(
+                                        l4.cast(),
+                                        len6,
+                                        len6,
+                                    );
+                                    _rt::string_lift(bytes6)
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+            impl Kernel {
+                #[allow(unused_unsafe, clippy::all)]
+                pub fn and_tm(
+                    &self,
+                    bool_type: u64,
+                    binder: u64,
+                    left: u64,
+                    right: u64,
+                ) -> Result<u64, _rt::String> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea(
+                            [::core::mem::MaybeUninit<
+                                u8,
+                            >; 8 + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let mut ret_area = RetArea(
+                            [::core::mem::MaybeUninit::uninit(); 8
+                                + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "nucleus:proof/host@0.1.0")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]kernel.and-tm"]
+                            fn wit_import1(
+                                _: i32,
+                                _: i64,
+                                _: i64,
+                                _: i64,
+                                _: i64,
+                                _: *mut u8,
+                            );
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(
+                            _: i32,
+                            _: i64,
+                            _: i64,
+                            _: i64,
+                            _: i64,
+                            _: *mut u8,
+                        ) {
+                            unreachable!()
+                        }
+                        unsafe {
+                            wit_import1(
+                                (self).handle() as i32,
+                                _rt::as_i64(&bool_type),
+                                _rt::as_i64(&binder),
+                                _rt::as_i64(&left),
+                                _rt::as_i64(&right),
+                                ptr0,
+                            )
+                        };
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result7 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+                                    l3 as u64
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = *ptr0.add(8).cast::<*mut u8>();
+                                    let l5 = *ptr0
+                                        .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                        .cast::<usize>();
+                                    let len6 = l5;
+                                    let bytes6 = _rt::Vec::from_raw_parts(
+                                        l4.cast(),
+                                        len6,
+                                        len6,
+                                    );
+                                    _rt::string_lift(bytes6)
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+            impl Kernel {
+                #[allow(unused_unsafe, clippy::all)]
+                pub fn or_tm(
+                    &self,
+                    bool_type: u64,
+                    binder: u64,
+                    left: u64,
+                    right: u64,
+                ) -> Result<u64, _rt::String> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea(
+                            [::core::mem::MaybeUninit<
+                                u8,
+                            >; 8 + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let mut ret_area = RetArea(
+                            [::core::mem::MaybeUninit::uninit(); 8
+                                + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "nucleus:proof/host@0.1.0")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]kernel.or-tm"]
+                            fn wit_import1(
+                                _: i32,
+                                _: i64,
+                                _: i64,
+                                _: i64,
+                                _: i64,
+                                _: *mut u8,
+                            );
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(
+                            _: i32,
+                            _: i64,
+                            _: i64,
+                            _: i64,
+                            _: i64,
+                            _: *mut u8,
+                        ) {
+                            unreachable!()
+                        }
+                        unsafe {
+                            wit_import1(
+                                (self).handle() as i32,
+                                _rt::as_i64(&bool_type),
+                                _rt::as_i64(&binder),
+                                _rt::as_i64(&left),
+                                _rt::as_i64(&right),
+                                ptr0,
+                            )
+                        };
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result7 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+                                    l3 as u64
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = *ptr0.add(8).cast::<*mut u8>();
+                                    let l5 = *ptr0
+                                        .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                        .cast::<usize>();
+                                    let len6 = l5;
+                                    let bytes6 = _rt::Vec::from_raw_parts(
+                                        l4.cast(),
+                                        len6,
+                                        len6,
+                                    );
+                                    _rt::string_lift(bytes6)
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+            impl Kernel {
+                #[allow(unused_unsafe, clippy::all)]
+                pub fn imp_tm(
+                    &self,
+                    bool_type: u64,
+                    binder: u64,
+                    left: u64,
+                    right: u64,
+                ) -> Result<u64, _rt::String> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea(
+                            [::core::mem::MaybeUninit<
+                                u8,
+                            >; 8 + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let mut ret_area = RetArea(
+                            [::core::mem::MaybeUninit::uninit(); 8
+                                + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "nucleus:proof/host@0.1.0")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]kernel.imp-tm"]
+                            fn wit_import1(
+                                _: i32,
+                                _: i64,
+                                _: i64,
+                                _: i64,
+                                _: i64,
+                                _: *mut u8,
+                            );
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(
+                            _: i32,
+                            _: i64,
+                            _: i64,
+                            _: i64,
+                            _: i64,
+                            _: *mut u8,
+                        ) {
+                            unreachable!()
+                        }
+                        unsafe {
+                            wit_import1(
+                                (self).handle() as i32,
+                                _rt::as_i64(&bool_type),
+                                _rt::as_i64(&binder),
+                                _rt::as_i64(&left),
+                                _rt::as_i64(&right),
+                                ptr0,
+                            )
+                        };
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result7 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+                                    l3 as u64
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l4 = *ptr0.add(8).cast::<*mut u8>();
+                                    let l5 = *ptr0
+                                        .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                        .cast::<usize>();
+                                    let len6 = l5;
+                                    let bytes6 = _rt::Vec::from_raw_parts(
+                                        l4.cast(),
+                                        len6,
+                                        len6,
+                                    );
+                                    _rt::string_lift(bytes6)
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result7
+                    }
+                }
+            }
+            impl Kernel {
+                #[allow(unused_unsafe, clippy::all)]
+                /// One past the largest name reachable from `roots`, counting "no
+                /// names at all" as zero.
+                ///
+                /// A binder allocated here cannot capture anything in `roots`. Exposed
+                /// because a component building terms about a subtype has to pick the
+                /// same names the axiom did.
+                pub fn fresh_name(&self, roots: &[u64]) -> Result<u64, _rt::String> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea(
+                            [::core::mem::MaybeUninit<
+                                u8,
+                            >; 8 + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let mut ret_area = RetArea(
+                            [::core::mem::MaybeUninit::uninit(); 8
+                                + 2 * ::core::mem::size_of::<*const u8>()],
+                        );
+                        let vec0 = roots;
+                        let ptr0 = vec0.as_ptr().cast::<u8>();
+                        let len0 = vec0.len();
+                        let ptr1 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "nucleus:proof/host@0.1.0")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]kernel.fresh-name"]
+                            fn wit_import2(_: i32, _: *mut u8, _: usize, _: *mut u8);
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import2(
+                            _: i32,
+                            _: *mut u8,
+                            _: usize,
+                            _: *mut u8,
+                        ) {
+                            unreachable!()
+                        }
+                        unsafe {
+                            wit_import2(
+                                (self).handle() as i32,
+                                ptr0.cast_mut(),
+                                len0,
+                                ptr1,
+                            )
+                        };
+                        let l3 = i32::from(*ptr1.add(0).cast::<u8>());
+                        let result8 = match l3 {
+                            0 => {
+                                let e = {
+                                    let l4 = *ptr1.add(8).cast::<i64>();
+                                    l4 as u64
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l5 = *ptr1.add(8).cast::<*mut u8>();
+                                    let l6 = *ptr1
+                                        .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                        .cast::<usize>();
+                                    let len7 = l6;
+                                    let bytes7 = _rt::Vec::from_raw_parts(
+                                        l5.cast(),
+                                        len7,
+                                        len7,
+                                    );
+                                    _rt::string_lift(bytes7)
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result8
+                    }
+                }
+            }
+            impl Kernel {
+                #[allow(unused_unsafe, clippy::all)]
+                /// Concludes the guarded subtype-package sentence for `carrier` and
+                /// `predicate`, consuming the `ax.sub` capability.
+                ///
+                /// The subtype carved out is
+                /// `{ x : carrier // P x or not exists y. P y }`, so this is total:
+                /// every predicate has a package and no nonemptiness proof is needed.
+                ///
+                /// Fails unless `add-axiom("ax.sub")` has been called, so an arena that
+                /// rests on the subtype axiom always says so. The sentence is built
+                /// here rather than taken from the caller, and the sequent minted for
+                /// it is premise-free.
+                ///
+                /// This is the whole of the trusted surface. Building a usable subtype
+                /// from the result — the subtype itself, `rep`, `abs`, the laws — is
+                /// ordinary construction over the constructors above and carries no
+                /// authority.
+                pub fn sub_exists(
+                    &self,
+                    bool_type: u64,
+                    carrier: u64,
+                    predicate: u64,
+                ) -> Result<SubtypeAxiom, _rt::String> {
+                    unsafe {
+                        #[repr(align(8))]
+                        struct RetArea([::core::mem::MaybeUninit<u8>; 64]);
+                        let mut ret_area = RetArea(
+                            [::core::mem::MaybeUninit::uninit(); 64],
+                        );
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "nucleus:proof/host@0.1.0")]
+                        unsafe extern "C" {
+                            #[link_name = "[method]kernel.sub-exists"]
+                            fn wit_import1(_: i32, _: i64, _: i64, _: i64, _: *mut u8);
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        unsafe extern "C" fn wit_import1(
+                            _: i32,
+                            _: i64,
+                            _: i64,
+                            _: i64,
+                            _: *mut u8,
+                        ) {
+                            unreachable!()
+                        }
+                        unsafe {
+                            wit_import1(
+                                (self).handle() as i32,
+                                _rt::as_i64(&bool_type),
+                                _rt::as_i64(&carrier),
+                                _rt::as_i64(&predicate),
+                                ptr0,
+                            )
+                        };
+                        let l2 = i32::from(*ptr0.add(0).cast::<u8>());
+                        let result13 = match l2 {
+                            0 => {
+                                let e = {
+                                    let l3 = *ptr0.add(8).cast::<i64>();
+                                    let l4 = *ptr0.add(16).cast::<i64>();
+                                    let l5 = *ptr0.add(24).cast::<i64>();
+                                    let l6 = *ptr0.add(32).cast::<i64>();
+                                    let l7 = *ptr0.add(40).cast::<i64>();
+                                    let l8 = *ptr0.add(48).cast::<i64>();
+                                    let l9 = *ptr0.add(56).cast::<i64>();
+                                    SubtypeAxiom {
+                                        carrier: l3 as u64,
+                                        predicate: l4 as u64,
+                                        exists_type: l5 as u64,
+                                        package_body: l6 as u64,
+                                        model_name: l7 as u64,
+                                        base_name: l8 as u64,
+                                        theorem: l9 as u64,
+                                    }
+                                };
+                                Ok(e)
+                            }
+                            1 => {
+                                let e = {
+                                    let l10 = *ptr0.add(8).cast::<*mut u8>();
+                                    let l11 = *ptr0
+                                        .add(8 + 1 * ::core::mem::size_of::<*const u8>())
+                                        .cast::<usize>();
+                                    let len12 = l11;
+                                    let bytes12 = _rt::Vec::from_raw_parts(
+                                        l10.cast(),
+                                        len12,
+                                        len12,
+                                    );
+                                    _rt::string_lift(bytes12)
+                                };
+                                Err(e)
+                            }
+                            _ => _rt::invalid_enum_discriminant(),
+                        };
+                        result13
+                    }
+                }
+            }
+            impl Kernel {
+                #[allow(unused_unsafe, clippy::all)]
                 /// Checked imports, contexts, and axiom capabilities.
                 pub fn import_arena(&self, value: &Arena) -> Result<u64, _rt::String> {
                     unsafe {
@@ -7083,114 +7798,124 @@ pub(crate) use __export_standard_proof_impl as export;
 #[unsafe(link_section = "component-type:wit-bindgen:0.41.0:nucleus:proof@0.1.0:standard-proof:encoded world")]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 5419] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xa6)\x01A\x02\x01A\x05\
-\x01B\xe3\x01\x01m\x03\x03syn\x05alpha\x04conv\x04\0\x07syn-rel\x03\0\0\x01m\x03\
-\x04kind\x02ty\x02tm\x04\0\x04sort\x03\0\x02\x04\0\x05bytes\x03\x01\x04\0\x04blo\
-b\x03\x01\x04\0\x09index-cas\x03\x01\x04\0\x05arena\x03\x01\x04\0\x05table\x03\x01\
-\x04\0\x06kernel\x03\x01\x01p}\x01i\x04\x01@\x01\x05value\x0a\0\x0b\x04\0\x12[co\
-nstructor]bytes\x01\x0c\x01h\x04\x01@\x01\x04self\x0d\0w\x04\0\x11[method]bytes.\
-len\x01\x0e\x01@\x01\x04self\x0d\0\x0a\x04\0\x15[method]bytes.to-list\x01\x0f\x01\
-j\x01\x0b\x01s\x01@\x03\x04self\x0d\x05startw\x03endw\0\x10\x04\0\x13[method]byt\
-es.slice\x01\x11\x01i\x05\x01@\x01\x04self\x0d\0\x12\x04\0\x12[method]bytes.blob\
-\x01\x13\x01j\x01\x12\x01s\x01@\x02\x07address\x0a\x05value\x0d\0\x14\x04\0\x12[\
-static]blob.check\x01\x15\x01h\x05\x01@\x01\x04self\x16\0\x0a\x04\0\x14[method]b\
-lob.address\x01\x17\x01@\x01\x04self\x16\0\x0b\x04\0\x12[method]blob.bytes\x01\x18\
-\x01@\x01\x04self\x16\0w\x04\0\x10[method]blob.len\x01\x19\x01i\x06\x01@\0\0\x1a\
-\x04\0\x16[constructor]index-cas\x01\x1b\x01h\x06\x01@\x02\x04self\x1c\x05value\x16\
-\0w\x04\0\x18[method]index-cas.insert\x01\x1d\x01@\x02\x04self\x1c\x05value\x0d\0\
-w\x04\0\x15[method]index-cas.put\x01\x1e\x01k\x12\x01@\x02\x04self\x1c\x06object\
-w\0\x1f\x04\0\x15[method]index-cas.get\x01\x20\x01kw\x01j\x01!\x01s\x01@\x02\x04\
-self\x1c\x07address\x0a\0\"\x04\0\x16[method]index-cas.find\x01#\x01j\x01\x7f\x01\
-s\x01@\x02\x04self\x1c\x07address\x0a\0$\x04\0\x18[method]index-cas.remove\x01%\x01\
-@\x01\x04self\x1c\0w\x04\0\x15[method]index-cas.len\x01&\x01i\x07\x01@\0\0'\x04\0\
-\x12[constructor]arena\x01(\x01j\x01'\x01s\x01@\x01\x05value\x0d\0)\x04\0\x17[st\
-atic]arena.from-cbor\x01*\x01h\x07\x01@\x01\x04self+\0\x10\x04\0\x15[method]aren\
-a.to-cbor\x01,\x01@\x01\x04self+\0\x0a\x04\0\x15[method]arena.address\x01-\x01@\x01\
-\x04self+\0w\x04\0\x11[method]arena.len\x01.\x01j\x01w\x01s\x01@\x01\x04self+\0/\
-\x04\0\x17[method]arena.kind-star\x010\x01@\x03\x04self+\x06domainw\x08codomainw\
-\0/\x04\0\x16[method]arena.kind-arr\x011\x04\0\x17[method]arena.bool-type\x010\x04\
-\0\x14[method]arena.ty-arr\x011\x01@\x03\x04self+\x08functionw\x08argumentw\0/\x04\
-\0\x14[method]arena.ty-app\x012\x01@\x03\x04self+\x06binderw\x04bodyw\0/\x04\0\x14\
-[method]arena.ty-lam\x013\x01@\x03\x04self+\x04namew\x04kindw\0/\x04\0\x13[metho\
-d]arena.ty-fv\x014\x01@\x03\x04self+\x04namew\x09predicatew\0/\x04\0\x17[method]\
-arena.ty-exists\x015\x04\0\x13[method]arena.model\x015\x01@\x03\x04self+\x04name\
-w\x02tyw\0/\x04\0\x13[method]arena.tm-fv\x016\x04\0\x11[method]arena.app\x012\x04\
-\0\x11[method]arena.lam\x013\x01@\x02\x04self+\x05value\x7f\0/\x04\0\x16[method]\
-arena.bool-lit\x017\x01@\x03\x04self+\x04leftw\x05rightw\0/\x04\0\x13[method]are\
-na.tm-eq\x018\x01@\x03\x04self+\x02tyw\x09predicatew\0/\x04\0\x11[method]arena.e\
-ps\x019\x01@\x03\x04self+\x06sourcew\x07foreignw\0/\x04\0\x16[method]arena.kind-\
-ref\x01:\x04\0\x14[method]arena.ty-ref\x01:\x04\0\x14[method]arena.tm-ref\x01:\x04\
-\0\x19[method]arena.import-null\x010\x01@\x02\x04self+\x05value+\0/\x04\0\x1a[me\
-thod]arena.import-arena\x01;\x01@\x02\x04self+\x07address\x0a\0/\x04\0\x19[metho\
-d]arena.import-link\x01<\x01j\0\x01s\x01@\x02\x04self+\x0bpropositionw\0=\x04\0\x19\
-[method]arena.add-context\x01>\x01@\x02\x04self+\x04names\x01\0\x04\0\x17[method\
-]arena.add-axiom\x01?\x01i\x08\x01j\x01\xc0\0\x01s\x01@\x01\x05value+\0\xc1\0\x04\
-\0\x18[static]table.from-arena\x01B\x01@\x01\x05value\x16\0\xc1\0\x04\0\x17[stat\
-ic]table.from-blob\x01C\x01h\x08\x01@\x01\x04self\xc4\0\0\x0a\x04\0\x15[method]t\
-able.address\x01E\x01@\x01\x04self\xc4\0\0'\x04\0\x13[method]table.arena\x01F\x01\
-i\x09\x01@\0\0\xc7\0\x04\0\x13[constructor]kernel\x01H\x01h\x09\x01@\x01\x04self\
-\xc9\0\0'\x04\0\x14[method]kernel.arena\x01J\x01@\x01\x04self\xc9\0\0\x0a\x04\0\x16\
-[method]kernel.address\x01K\x01@\x01\x04self\xc9\0\0w\x04\0\x12[method]kernel.le\
-n\x01L\x01j\x01\x03\x01s\x01@\x02\x04self\xc9\0\x09referencew\0\xcd\0\x04\0\x17[\
-method]kernel.category\x01N\x01@\x02\x04self\xc9\0\x09referencew\0/\x04\0\x19[me\
-thod]kernel.classifier\x01O\x04\0\x13[method]kernel.find\x01O\x04\0\x17[method]k\
-ernel.find-mut\x01O\x01@\x03\x04self\xc9\0\x04leftw\x05rightw\0$\x04\0\x19[metho\
-d]kernel.equivalent\x01P\x04\0\x1d[method]kernel.equivalent-mut\x01P\x01@\x01\x04\
-self\xc9\0\0/\x04\0\x18[method]kernel.kind-star\x01Q\x01@\x03\x04self\xc9\0\x06d\
-omainw\x08codomainw\0/\x04\0\x17[method]kernel.kind-arr\x01R\x01@\x02\x04self\xc9\
-\0\x04starw\0/\x04\0\x18[method]kernel.bool-type\x01S\x04\0\x15[method]kernel.ty\
--arr\x01R\x01@\x03\x04self\xc9\0\x08functionw\x08argumentw\0/\x04\0\x15[method]k\
-ernel.ty-app\x01T\x01@\x03\x04self\xc9\0\x06binderw\x04bodyw\0/\x04\0\x15[method\
-]kernel.ty-lam\x01U\x01@\x03\x04self\xc9\0\x04namew\x04kindw\0/\x04\0\x14[method\
-]kernel.ty-fv\x01V\x01@\x03\x04self\xc9\0\x04namew\x09predicatew\0/\x04\0\x18[me\
-thod]kernel.ty-exists\x01W\x04\0\x14[method]kernel.model\x01W\x01@\x03\x04self\xc9\
-\0\x04namew\x02tyw\0/\x04\0\x14[method]kernel.tm-fv\x01X\x04\0\x12[method]kernel\
-.app\x01T\x04\0\x12[method]kernel.lam\x01U\x01@\x03\x04self\xc9\0\x09bool-typew\x05\
-value\x7f\0/\x04\0\x17[method]kernel.bool-lit\x01Y\x01@\x04\x04self\xc9\0\x09boo\
-l-typew\x04leftw\x05rightw\0/\x04\0\x14[method]kernel.tm-eq\x01Z\x01@\x03\x04sel\
-f\xc9\0\x02tyw\x09predicatew\0/\x04\0\x12[method]kernel.eps\x01[\x01@\x02\x04sel\
-f\xc9\0\x05value+\0/\x04\0\x1b[method]kernel.import-arena\x01\\\x01@\x02\x04self\
-\xc9\0\x05value\xc4\0\0/\x04\0\x1b[method]kernel.import-table\x01]\x01@\x02\x04s\
-elf\xc9\0\x07address\x0a\0/\x04\0\x1a[method]kernel.import-link\x01^\x01@\x03\x04\
-self\xc9\0\x06sourcew\x07foreignw\0/\x04\0\x17[method]kernel.kind-ref\x01_\x01@\x04\
-\x04self\xc9\0\x06sourcew\x07foreignw\x04kindw\0/\x04\0\x15[method]kernel.ty-ref\
-\x01`\x01@\x04\x04self\xc9\0\x06sourcew\x07foreignw\x02tyw\0/\x04\0\x15[method]k\
-ernel.tm-ref\x01a\x01@\x02\x04self\xc9\0\x0bpropositionw\0=\x04\0\x1a[method]ker\
-nel.add-context\x01b\x01@\x02\x04self\xc9\0\x04names\0=\x04\0\x18[method]kernel.\
-add-axiom\x01c\x04\0\x1d[method]kernel.syn-fact-count\x01L\x01@\x02\x04self\xc9\0\
-\x04factw\0\x7f\x04\0\x1e[method]kernel.remove-syn-fact\x01d\x01@\x02\x04self\xc9\
-\0\x03lenw\0=\x04\0![method]kernel.truncate-syn-facts\x01e\x01@\x04\x04self\xc9\0\
-\x08relation\x01\x05inputw\x06target!\0/\x04\0\x17[method]kernel.syn-refl\x01f\x01\
-@\x04\x04self\xc9\0\x04factw\x08relation\x01\x06target!\0/\x04\0\x19[method]kern\
-el.syn-refine\x01g\x01@\x03\x04self\xc9\0\x04factw\x06target!\0/\x04\0\x17[metho\
-d]kernel.syn-symm\x01h\x01@\x04\x04self\xc9\0\x04leftw\x05rightw\x06target!\0/\x04\
-\0\x18[method]kernel.syn-trans\x01i\x01@\x04\x04self\xc9\0\x03varw\x03valw\x06ta\
-rget!\0/\x04\0\x1a[method]kernel.syn-sub-var\x01j\x01@\x05\x04self\xc9\0\x03varw\
-\x03valw\x05inputw\x06target!\0/\x04\0\x1b[method]kernel.syn-sub-leaf\x01k\x01@\x04\
-\x04self\xc9\0\x03varw\x05inputw\x06target!\0/\x04\0\"[method]kernel.syn-sub-lea\
-f-forall\x01l\x01@\x08\x04self\xc9\0\x03varw\x03valw\x05inputw\x06outputw\x11var\
-iable-equalityw\x0dbody-equalityw\x06target!\0/\x04\0\x1f[method]kernel.syn-sub-\
-identity\x01m\x01pw\x01@\x08\x04self\xc9\0\x08relation\x01\x03var!\x03val!\x05in\
-putw\x06outputw\x08children\xee\0\x06target!\0/\x04\0\x18[method]kernel.syn-cong\
-r\x01o\x01@\x09\x04self\xc9\0\x08relation\x01\x03var!\x03val!\x05inputw\x06outpu\
-tw\x06binderw\x04bodyw\x06target!\0/\x04\0\x1f[method]kernel.syn-binder-congr\x01\
-p\x04\0([method]kernel.syn-implicit-binder-congr\x01p\x01@\x06\x04self\xc9\0\x05\
-inputw\x06outputw\x11binder-classifierw\x11body-substitutionw\x06target!\0/\x04\0\
-\x1f[method]kernel.syn-alpha-binder\x01q\x01@\x07\x04self\xc9\0\x05inputw\x06out\
-putw\x0cinput-binderw\x0doutput-binderw\x11body-substitutionw\x06target!\0/\x04\0\
-([method]kernel.syn-alpha-implicit-binder\x01r\x01@\x04\x04self\xc9\0\x06sourcew\
-\x0csubstitutionw\x06target!\0/\x04\0\x16[method]kernel.tm-beta\x01s\x04\0\x16[m\
-ethod]kernel.ty-beta\x01s\x01@\x03\x04self\xc9\0\x06sourcew\x06target!\0/\x04\0\x15\
-[method]kernel.tm-eta\x01t\x01@\x02\x04self\xc9\0\x04factw\0=\x04\0\x1d[method]k\
-ernel.union-syn-fact\x01u\x01@\x01\x05value\x16\0w\x04\0\x0acas-insert\x01v\x01@\
-\x01\x05value\x0d\0w\x04\0\x07cas-put\x01w\x01@\x01\x06objectw\0\x1f\x04\0\x07ca\
-s-get\x01x\x01@\x01\x07address\x0a\0\"\x04\0\x08cas-find\x01y\x03\0\x18nucleus:p\
-roof/host@0.1.0\x05\0\x02\x03\0\0\x06kernel\x01B\x06\x02\x03\x02\x01\x01\x04\0\x06\
-kernel\x03\0\0\x01i\x01\x01j\x01\x02\x01s\x01@\0\0\x03\x04\0\x05prove\x01\x04\x04\
-\0\x1cnucleus:proof/standard@0.1.0\x05\x02\x04\0\"nucleus:proof/standard-proof@0\
-.1.0\x04\0\x0b\x14\x01\0\x0estandard-proof\x03\0\0\0G\x09producers\x01\x0cproces\
-sed-by\x02\x0dwit-component\x070.227.1\x10wit-bindgen-rust\x060.41.0";
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 5930] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xa5-\x01A\x02\x01A\x05\
+\x01B\xf3\x01\x01m\x03\x03syn\x05alpha\x04conv\x04\0\x07syn-rel\x03\0\0\x01m\x03\
+\x04kind\x02ty\x02tm\x04\0\x04sort\x03\0\x02\x01r\x07\x07carrierw\x09predicatew\x0b\
+exists-typew\x0cpackage-bodyw\x0amodel-namew\x09base-namew\x07theoremw\x04\0\x0d\
+subtype-axiom\x03\0\x04\x04\0\x05bytes\x03\x01\x04\0\x04blob\x03\x01\x04\0\x09in\
+dex-cas\x03\x01\x04\0\x05arena\x03\x01\x04\0\x05table\x03\x01\x04\0\x06kernel\x03\
+\x01\x01p}\x01i\x06\x01@\x01\x05value\x0c\0\x0d\x04\0\x12[constructor]bytes\x01\x0e\
+\x01h\x06\x01@\x01\x04self\x0f\0w\x04\0\x11[method]bytes.len\x01\x10\x01@\x01\x04\
+self\x0f\0\x0c\x04\0\x15[method]bytes.to-list\x01\x11\x01j\x01\x0d\x01s\x01@\x03\
+\x04self\x0f\x05startw\x03endw\0\x12\x04\0\x13[method]bytes.slice\x01\x13\x01i\x07\
+\x01@\x01\x04self\x0f\0\x14\x04\0\x12[method]bytes.blob\x01\x15\x01j\x01\x14\x01\
+s\x01@\x02\x07address\x0c\x05value\x0f\0\x16\x04\0\x12[static]blob.check\x01\x17\
+\x01h\x07\x01@\x01\x04self\x18\0\x0c\x04\0\x14[method]blob.address\x01\x19\x01@\x01\
+\x04self\x18\0\x0d\x04\0\x12[method]blob.bytes\x01\x1a\x01@\x01\x04self\x18\0w\x04\
+\0\x10[method]blob.len\x01\x1b\x01i\x08\x01@\0\0\x1c\x04\0\x16[constructor]index\
+-cas\x01\x1d\x01h\x08\x01@\x02\x04self\x1e\x05value\x18\0w\x04\0\x18[method]inde\
+x-cas.insert\x01\x1f\x01@\x02\x04self\x1e\x05value\x0f\0w\x04\0\x15[method]index\
+-cas.put\x01\x20\x01k\x14\x01@\x02\x04self\x1e\x06objectw\0!\x04\0\x15[method]in\
+dex-cas.get\x01\"\x01kw\x01j\x01#\x01s\x01@\x02\x04self\x1e\x07address\x0c\0$\x04\
+\0\x16[method]index-cas.find\x01%\x01j\x01\x7f\x01s\x01@\x02\x04self\x1e\x07addr\
+ess\x0c\0&\x04\0\x18[method]index-cas.remove\x01'\x01@\x01\x04self\x1e\0w\x04\0\x15\
+[method]index-cas.len\x01(\x01i\x09\x01@\0\0)\x04\0\x12[constructor]arena\x01*\x01\
+j\x01)\x01s\x01@\x01\x05value\x0f\0+\x04\0\x17[static]arena.from-cbor\x01,\x01h\x09\
+\x01@\x01\x04self-\0\x12\x04\0\x15[method]arena.to-cbor\x01.\x01@\x01\x04self-\0\
+\x0c\x04\0\x15[method]arena.address\x01/\x01@\x01\x04self-\0w\x04\0\x11[method]a\
+rena.len\x010\x01j\x01w\x01s\x01@\x01\x04self-\01\x04\0\x17[method]arena.kind-st\
+ar\x012\x01@\x03\x04self-\x06domainw\x08codomainw\01\x04\0\x16[method]arena.kind\
+-arr\x013\x04\0\x17[method]arena.bool-type\x012\x04\0\x14[method]arena.ty-arr\x01\
+3\x01@\x03\x04self-\x08functionw\x08argumentw\01\x04\0\x14[method]arena.ty-app\x01\
+4\x01@\x03\x04self-\x06binderw\x04bodyw\01\x04\0\x14[method]arena.ty-lam\x015\x01\
+@\x03\x04self-\x04namew\x04kindw\01\x04\0\x13[method]arena.ty-fv\x016\x01@\x03\x04\
+self-\x04namew\x09predicatew\01\x04\0\x17[method]arena.ty-exists\x017\x04\0\x13[\
+method]arena.model\x017\x01@\x03\x04self-\x04namew\x02tyw\01\x04\0\x13[method]ar\
+ena.tm-fv\x018\x04\0\x11[method]arena.app\x014\x04\0\x11[method]arena.lam\x015\x01\
+@\x02\x04self-\x05value\x7f\01\x04\0\x16[method]arena.bool-lit\x019\x01@\x03\x04\
+self-\x04leftw\x05rightw\01\x04\0\x13[method]arena.tm-eq\x01:\x01@\x03\x04self-\x02\
+tyw\x09predicatew\01\x04\0\x11[method]arena.eps\x01;\x01@\x03\x04self-\x06source\
+w\x07foreignw\01\x04\0\x16[method]arena.kind-ref\x01<\x04\0\x14[method]arena.ty-\
+ref\x01<\x04\0\x14[method]arena.tm-ref\x01<\x04\0\x19[method]arena.import-null\x01\
+2\x01@\x02\x04self-\x05value-\01\x04\0\x1a[method]arena.import-arena\x01=\x01@\x02\
+\x04self-\x07address\x0c\01\x04\0\x19[method]arena.import-link\x01>\x01j\0\x01s\x01\
+@\x02\x04self-\x0bpropositionw\0?\x04\0\x19[method]arena.add-context\x01@\x01@\x02\
+\x04self-\x04names\x01\0\x04\0\x17[method]arena.add-axiom\x01A\x01i\x0a\x01j\x01\
+\xc2\0\x01s\x01@\x01\x05value-\0\xc3\0\x04\0\x18[static]table.from-arena\x01D\x01\
+@\x01\x05value\x18\0\xc3\0\x04\0\x17[static]table.from-blob\x01E\x01h\x0a\x01@\x01\
+\x04self\xc6\0\0\x0c\x04\0\x15[method]table.address\x01G\x01@\x01\x04self\xc6\0\0\
+)\x04\0\x13[method]table.arena\x01H\x01i\x0b\x01@\0\0\xc9\0\x04\0\x13[constructo\
+r]kernel\x01J\x01h\x0b\x01@\x01\x04self\xcb\0\0)\x04\0\x14[method]kernel.arena\x01\
+L\x01@\x01\x04self\xcb\0\0\x0c\x04\0\x16[method]kernel.address\x01M\x01@\x01\x04\
+self\xcb\0\0w\x04\0\x12[method]kernel.len\x01N\x01j\x01\x03\x01s\x01@\x02\x04sel\
+f\xcb\0\x09referencew\0\xcf\0\x04\0\x17[method]kernel.category\x01P\x01@\x02\x04\
+self\xcb\0\x09referencew\01\x04\0\x19[method]kernel.classifier\x01Q\x04\0\x13[me\
+thod]kernel.find\x01Q\x04\0\x17[method]kernel.find-mut\x01Q\x01@\x03\x04self\xcb\
+\0\x04leftw\x05rightw\0&\x04\0\x19[method]kernel.equivalent\x01R\x04\0\x1d[metho\
+d]kernel.equivalent-mut\x01R\x01@\x01\x04self\xcb\0\01\x04\0\x18[method]kernel.k\
+ind-star\x01S\x01@\x03\x04self\xcb\0\x06domainw\x08codomainw\01\x04\0\x17[method\
+]kernel.kind-arr\x01T\x01@\x02\x04self\xcb\0\x04starw\01\x04\0\x18[method]kernel\
+.bool-type\x01U\x04\0\x15[method]kernel.ty-arr\x01T\x01@\x03\x04self\xcb\0\x08fu\
+nctionw\x08argumentw\01\x04\0\x15[method]kernel.ty-app\x01V\x01@\x03\x04self\xcb\
+\0\x06binderw\x04bodyw\01\x04\0\x15[method]kernel.ty-lam\x01W\x01@\x03\x04self\xcb\
+\0\x04namew\x04kindw\01\x04\0\x14[method]kernel.ty-fv\x01X\x01@\x03\x04self\xcb\0\
+\x04namew\x09predicatew\01\x04\0\x18[method]kernel.ty-exists\x01Y\x04\0\x14[meth\
+od]kernel.model\x01Y\x01@\x03\x04self\xcb\0\x04namew\x02tyw\01\x04\0\x14[method]\
+kernel.tm-fv\x01Z\x04\0\x12[method]kernel.app\x01V\x04\0\x12[method]kernel.lam\x01\
+W\x01@\x03\x04self\xcb\0\x09bool-typew\x05value\x7f\01\x04\0\x17[method]kernel.b\
+ool-lit\x01[\x01@\x04\x04self\xcb\0\x09bool-typew\x04leftw\x05rightw\01\x04\0\x14\
+[method]kernel.tm-eq\x01\\\x01@\x03\x04self\xcb\0\x02tyw\x09predicatew\01\x04\0\x12\
+[method]kernel.eps\x01]\x01@\x03\x04self\xcb\0\x09bool-typew\x0bpropositionw\01\x04\
+\0\x15[method]kernel.not-tm\x01^\x01@\x04\x04self\xcb\0\x09bool-typew\x06binderw\
+\x04bodyw\01\x04\0\x18[method]kernel.forall-tm\x01_\x04\0\x18[method]kernel.exis\
+ts-tm\x01W\x01@\x05\x04self\xcb\0\x09bool-typew\x06binderw\x04leftw\x05rightw\01\
+\x04\0\x15[method]kernel.and-tm\x01`\x04\0\x14[method]kernel.or-tm\x01`\x04\0\x15\
+[method]kernel.imp-tm\x01`\x01pw\x01@\x02\x04self\xcb\0\x05roots\xe1\0\01\x04\0\x19\
+[method]kernel.fresh-name\x01b\x01j\x01\x05\x01s\x01@\x04\x04self\xcb\0\x09bool-\
+typew\x07carrierw\x09predicatew\0\xe3\0\x04\0\x19[method]kernel.sub-exists\x01d\x01\
+@\x02\x04self\xcb\0\x05value-\01\x04\0\x1b[method]kernel.import-arena\x01e\x01@\x02\
+\x04self\xcb\0\x05value\xc6\0\01\x04\0\x1b[method]kernel.import-table\x01f\x01@\x02\
+\x04self\xcb\0\x07address\x0c\01\x04\0\x1a[method]kernel.import-link\x01g\x01@\x03\
+\x04self\xcb\0\x06sourcew\x07foreignw\01\x04\0\x17[method]kernel.kind-ref\x01h\x01\
+@\x04\x04self\xcb\0\x06sourcew\x07foreignw\x04kindw\01\x04\0\x15[method]kernel.t\
+y-ref\x01i\x01@\x04\x04self\xcb\0\x06sourcew\x07foreignw\x02tyw\01\x04\0\x15[met\
+hod]kernel.tm-ref\x01j\x01@\x02\x04self\xcb\0\x0bpropositionw\0?\x04\0\x1a[metho\
+d]kernel.add-context\x01k\x01@\x02\x04self\xcb\0\x04names\0?\x04\0\x18[method]ke\
+rnel.add-axiom\x01l\x04\0\x1d[method]kernel.syn-fact-count\x01N\x01@\x02\x04self\
+\xcb\0\x04factw\0\x7f\x04\0\x1e[method]kernel.remove-syn-fact\x01m\x01@\x02\x04s\
+elf\xcb\0\x03lenw\0?\x04\0![method]kernel.truncate-syn-facts\x01n\x01@\x04\x04se\
+lf\xcb\0\x08relation\x01\x05inputw\x06target#\01\x04\0\x17[method]kernel.syn-ref\
+l\x01o\x01@\x04\x04self\xcb\0\x04factw\x08relation\x01\x06target#\01\x04\0\x19[m\
+ethod]kernel.syn-refine\x01p\x01@\x03\x04self\xcb\0\x04factw\x06target#\01\x04\0\
+\x17[method]kernel.syn-symm\x01q\x01@\x04\x04self\xcb\0\x04leftw\x05rightw\x06ta\
+rget#\01\x04\0\x18[method]kernel.syn-trans\x01r\x01@\x04\x04self\xcb\0\x03varw\x03\
+valw\x06target#\01\x04\0\x1a[method]kernel.syn-sub-var\x01s\x01@\x05\x04self\xcb\
+\0\x03varw\x03valw\x05inputw\x06target#\01\x04\0\x1b[method]kernel.syn-sub-leaf\x01\
+t\x01@\x04\x04self\xcb\0\x03varw\x05inputw\x06target#\01\x04\0\"[method]kernel.s\
+yn-sub-leaf-forall\x01u\x01@\x08\x04self\xcb\0\x03varw\x03valw\x05inputw\x06outp\
+utw\x11variable-equalityw\x0dbody-equalityw\x06target#\01\x04\0\x1f[method]kerne\
+l.syn-sub-identity\x01v\x01@\x08\x04self\xcb\0\x08relation\x01\x03var#\x03val#\x05\
+inputw\x06outputw\x08children\xe1\0\x06target#\01\x04\0\x18[method]kernel.syn-co\
+ngr\x01w\x01@\x09\x04self\xcb\0\x08relation\x01\x03var#\x03val#\x05inputw\x06out\
+putw\x06binderw\x04bodyw\x06target#\01\x04\0\x1f[method]kernel.syn-binder-congr\x01\
+x\x04\0([method]kernel.syn-implicit-binder-congr\x01x\x01@\x06\x04self\xcb\0\x05\
+inputw\x06outputw\x11binder-classifierw\x11body-substitutionw\x06target#\01\x04\0\
+\x1f[method]kernel.syn-alpha-binder\x01y\x01@\x07\x04self\xcb\0\x05inputw\x06out\
+putw\x0cinput-binderw\x0doutput-binderw\x11body-substitutionw\x06target#\01\x04\0\
+([method]kernel.syn-alpha-implicit-binder\x01z\x01@\x04\x04self\xcb\0\x06sourcew\
+\x0csubstitutionw\x06target#\01\x04\0\x16[method]kernel.tm-beta\x01{\x04\0\x16[m\
+ethod]kernel.ty-beta\x01{\x01@\x03\x04self\xcb\0\x06sourcew\x06target#\01\x04\0\x15\
+[method]kernel.tm-eta\x01|\x01@\x02\x04self\xcb\0\x04factw\0?\x04\0\x1d[method]k\
+ernel.union-syn-fact\x01}\x01@\x01\x05value\x18\0w\x04\0\x0acas-insert\x01~\x01@\
+\x01\x05value\x0f\0w\x04\0\x07cas-put\x01\x7f\x01@\x01\x06objectw\0!\x04\0\x07ca\
+s-get\x01\x80\x01\x01@\x01\x07address\x0c\0$\x04\0\x08cas-find\x01\x81\x01\x03\0\
+\x18nucleus:proof/host@0.1.0\x05\0\x02\x03\0\0\x06kernel\x01B\x06\x02\x03\x02\x01\
+\x01\x04\0\x06kernel\x03\0\0\x01i\x01\x01j\x01\x02\x01s\x01@\0\0\x03\x04\0\x05pr\
+ove\x01\x04\x04\0\x1cnucleus:proof/standard@0.1.0\x05\x02\x04\0\"nucleus:proof/s\
+tandard-proof@0.1.0\x04\0\x0b\x14\x01\0\x0estandard-proof\x03\0\0\0G\x09producer\
+s\x01\x0cprocessed-by\x02\x0dwit-component\x070.227.1\x10wit-bindgen-rust\x060.4\
+1.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

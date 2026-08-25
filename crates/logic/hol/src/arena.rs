@@ -14,7 +14,6 @@ pub(crate) struct Dense {
     pub(crate) eq: Vec<Option<Ref>>,
     pub(crate) syn_eq: Vec<Option<Ref>>,
     pub(crate) conv: Vec<Option<Ref>>,
-    pub(crate) sort: Vec<Option<Ref>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -57,6 +56,34 @@ impl Dense {
             column.pop();
         }
         true
+    }
+
+    /// Derives the classifier encoded at the root of a conversion class.
+    ///
+    /// Same-category links are conversion parents.  The first cross-category
+    /// link is the class classifier (`tm -> ty` or `ty -> kind`).  Malformed
+    /// raw paths, including cycles and other category changes, have no sort.
+    pub(crate) fn sort(&self, reference: Ref) -> Option<Ref> {
+        let category = self.row(reference)?.tag().sort();
+        let expected = match category {
+            crate::Sort::Kind => return None,
+            crate::Sort::Ty => crate::Sort::Kind,
+            crate::Sort::Tm => crate::Sort::Ty,
+        };
+        let mut seen = BTreeSet::new();
+        let mut current = reference;
+        loop {
+            if !seen.insert(current) {
+                return None;
+            }
+            let parent = self.column(&self.conv, current)?;
+            let parent_category = self.row(parent)?.tag().sort();
+            if parent_category == category {
+                current = parent;
+            } else {
+                return (parent_category == expected).then_some(parent);
+            }
+        }
     }
 }
 

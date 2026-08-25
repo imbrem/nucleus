@@ -13,6 +13,10 @@ fn star_row() -> Value {
     map(vec![("tag", text("kind.star"))])
 }
 
+fn bool_ty_row() -> Value {
+    map(vec![("tag", text("ty.bool"))])
+}
+
 fn accepts(label: &str, arena: ArenaCbor) -> Arena {
     arena
         .decode()
@@ -68,17 +72,16 @@ fn classical_matrix_tombstones_round_trip_in_every_arena_position() {
 #[test]
 fn dense_columns_are_sparse_canonical_and_row_external() {
     let noncanonical = ArenaCbor::new()
-        .defs(vec![star_row(), star_row()])
+        .defs(vec![star_row(), bool_ty_row()])
         .eq(vec![int(1), Value::Null, Value::Null])
         .syn_eq(vec![int(1), Value::Null])
-        .conv(vec![int(1)])
-        .sort(vec![Value::Null, int(1)])
+        .conv(vec![Value::Null, int(1), Value::Null])
         .bytes();
     let arena = wire::deserialize(noncanonical.as_slice()).expect("sparse columns decode");
 
     assert_eq!(arena.eq(support::row_id(1)).unwrap().get(), 1);
     assert_eq!(arena.syn_eq(support::row_id(1)).unwrap().get(), 1);
-    assert_eq!(arena.conv(support::row_id(1)).unwrap().get(), 1);
+    assert_eq!(arena.conv(support::row_id(2)).unwrap().get(), 1);
     assert_eq!(arena.sort(support::row_id(2)).unwrap().get(), 1);
     assert_ne!(encode(&arena), noncanonical, "trailing nulls are removed");
 
@@ -134,13 +137,12 @@ fn raw_columns_may_name_dangling_values_but_not_dangling_cells() {
             .defs(vec![star_row()])
             .eq(vec![int(900)])
             .syn_eq(vec![int(901)])
-            .conv(vec![int(902)])
-            .sort(vec![int(903)]),
+            .conv(vec![int(902)]),
     );
     assert_eq!(arena.eq(support::row_id(1)).unwrap().get(), 900);
     assert_eq!(arena.syn_eq(support::row_id(1)).unwrap().get(), 901);
     assert_eq!(arena.conv(support::row_id(1)).unwrap().get(), 902);
-    assert_eq!(arena.sort(support::row_id(1)).unwrap().get(), 903);
+    assert_eq!(arena.sort(support::row_id(1)), None);
 }
 
 #[test]
@@ -440,7 +442,7 @@ fn nested_literal_imports(depth: usize) -> Arena {
 
 #[test]
 fn literal_import_byte_depth_boundary_is_representation_not_canonicity() {
-    let supported = nested_literal_imports(126);
+    let supported = nested_literal_imports(wire::MAX_LITERAL_IMPORT_DEPTH);
     let supported_bytes = encode(&supported);
     assert_eq!(
         wire::deserialize(supported_bytes.as_slice()).unwrap(),
@@ -450,7 +452,7 @@ fn literal_import_byte_depth_boundary_is_representation_not_canonicity() {
     // Rust arenas remain structurally valid and serializable past the byte
     // decoder's current 127-container recursion budget.  The limitation is a
     // property of that decoder, not of arena canonicity or the reference space.
-    let deeper = nested_literal_imports(127);
+    let deeper = nested_literal_imports(wire::MAX_LITERAL_IMPORT_DEPTH + 1);
     let deeper_bytes = encode(&deeper);
     assert!(wire::deserialize(deeper_bytes.as_slice()).is_err());
 }

@@ -113,7 +113,7 @@ def test_substitution_rebuilds_only_the_spine_that_moved() -> None:
 
     assert output != source
     assert rows[output].tag == "tm.eq"
-    assert rows[output].children == [truth, constant]
+    assert rows[output].children == [base.bool_ty, truth, constant]
     assert fact_view(fact) == ("syn", variable, truth, source, output)
 
 
@@ -169,7 +169,7 @@ def test_substitution_under_a_lambda_keeps_the_binder() -> None:
 
     assert rows[output].tag == "tm.lam"
     assert rows[output].children[0] == binder
-    assert rows[rows[output].children[1]].children == [binder, truth]
+    assert rows[rows[output].children[1]].children == [base.bool_ty, binder, truth]
     assert fact.var == replaced
     assert fact.val == truth
 

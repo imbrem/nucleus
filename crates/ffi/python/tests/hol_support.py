@@ -109,7 +109,6 @@ def arena_view(arena: Arena) -> dict[str, object]:
         "eq": list(arena.eq),
         "syn_eq": list(arena.syn_eq),
         "conv": list(arena.conv),
-        "sort": list(arena.sort),
         "amb_pred": [amb_pred_view(pred) for pred in arena.amb_pred],
         "amb_ax": list(arena.amb_ax),
         "amb_ctx": arena.amb_ctx,
@@ -529,7 +528,7 @@ def _construct(kernel: Kernel, row: Definition, children: list[int]) -> int:
         case "tm.bool":
             return kernel.bool(classifier, row.value)
         case "tm.eq":
-            return kernel.eq(classifier, *children)
+            return kernel.eq(*children)
         case "tm.eps":
             return kernel.eps(*children)
         case _:

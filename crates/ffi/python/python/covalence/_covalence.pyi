@@ -99,7 +99,6 @@ class HolArena:
     eq: list[int | None]
     syn_eq: list[int | None]
     conv: list[int | None]
-    sort: list[int | None]
     amb_pred: list[AmbPred]
     amb_ax: list[str]
     amb_ctx: list[list[int]]

@@ -28,7 +28,7 @@ use std::{collections::BTreeSet, num::NonZeroI32};
 
 use arena::{Dense, EqColumn};
 use covalence_lib_hash::O256;
-use row::{Row, RowView};
+use row::Row;
 use serde::{Deserialize, Serialize};
 use syn::{SynFree, SynSlot};
 
@@ -375,7 +375,7 @@ impl ArenaRepr for Dense {
     }
 
     fn sort(&self, reference: Ref) -> Option<Ref> {
-        self.column(&self.sort, reference)
+        Dense::sort(self, reference)
     }
 }
 
@@ -390,7 +390,6 @@ impl Arena {
                 eq: Vec::new(),
                 syn_eq: Vec::new(),
                 conv: Vec::new(),
-                sort: Vec::new(),
             },
             syn_facts: Vec::new(),
             syn_free: None,
@@ -458,11 +457,8 @@ impl Arena {
         self.dense.sort(reference)
     }
 
-    pub(crate) fn row(&self, reference: Ref) -> Option<RowView<'_>> {
-        Some(RowView::new(
-            self.dense.row(reference)?,
-            self.dense.sort(reference),
-        ))
+    pub(crate) fn row(&self, reference: Ref) -> Option<&Row> {
+        self.dense.row(reference)
     }
 
     #[must_use]
@@ -730,7 +726,13 @@ impl Arena {
 
     /// Append a raw object-language equality row.
     pub fn push_tm_eq(&mut self, left: Ref, right: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::Eq(left, right)), None)
+        let ty = self.sort(left).or_else(|| match self.row(left)?.expr() {
+            row::Expr::TmFv { ty, .. } | row::Expr::Eq(ty, ..) | row::Expr::Eps { ty, .. } => {
+                Some(*ty)
+            }
+            _ => None,
+        })?;
+        self.push_row(Row::new(row::Expr::Eq(ty, left, right)), None)
     }
 
     /// Append a raw choice row.
@@ -764,7 +766,7 @@ impl Arena {
         if let Some(sort) = sort {
             let recorded = self
                 .dense
-                .set_column(|dense| &mut dense.sort, reference, Some(sort));
+                .set_column(|dense| &mut dense.conv, reference, Some(sort));
             debug_assert!(recorded, "the appended row is resident");
         }
         Some(reference)
@@ -781,7 +783,6 @@ impl Arena {
             && columns_match(&self.dense.eq, &prefix.dense.eq)
             && columns_match(&self.dense.syn_eq, &prefix.dense.syn_eq)
             && columns_match(&self.dense.conv, &prefix.dense.conv)
-            && columns_match(&self.dense.sort, &prefix.dense.sort)
             && self.axs == prefix.axs
             && self.ctx == prefix.ctx
             && self.amb_pred == prefix.amb_pred
@@ -991,8 +992,6 @@ struct HolSynSerde {
     eq: Vec<Option<Ref>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     conv: Vec<Option<Ref>>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    sort: Vec<Option<Ref>>,
 }
 
 impl From<Arena> for ArenaSerde {
@@ -1018,7 +1017,6 @@ impl From<Arena> for ArenaSerde {
                     subst1_free: arena.syn_free,
                     eq: arena.dense.syn_eq,
                     conv: arena.dense.conv,
-                    sort: arena.dense.sort,
                 },
             },
         }
@@ -1058,7 +1056,7 @@ impl TryFrom<ArenaSerde> for Arena {
             mut syn,
         } = arena.hol;
         let mut eq = eq;
-        for column in [&eq, &syn.eq, &syn.conv, &syn.sort] {
+        for column in [&eq, &syn.eq, &syn.conv] {
             if !column_is_resident(column, defs.len()) {
                 return Err("dense column has a member without a definition row");
             }
@@ -1066,7 +1064,6 @@ impl TryFrom<ArenaSerde> for Arena {
         normalize_column(&mut eq);
         normalize_column(&mut syn.eq);
         normalize_column(&mut syn.conv);
-        normalize_column(&mut syn.sort);
         Ok(Self {
             imports: arena.imports,
             axs: ax.into_iter().collect(),
@@ -1075,7 +1072,6 @@ impl TryFrom<ArenaSerde> for Arena {
                 eq,
                 syn_eq: syn.eq,
                 conv: syn.conv,
-                sort: syn.sort,
             },
             syn_facts: syn.subst1,
             syn_free: syn.subst1_free,
@@ -1125,10 +1121,10 @@ mod tests {
             vec![],
             [],
             vec![
-                (Row::new(Expr::KindStar), Some(reference(2)), None),
+                (Row::new(Expr::KindStar), None, None),
                 (
                     Row::new(Expr::BoolTy),
-                    Some(reference(2)),
+                    Some(reference(1)),
                     Some(reference(1)),
                 ),
             ],
@@ -1139,8 +1135,9 @@ mod tests {
 
         assert_eq!(arena.tag(reference(1)), Some(Tag::Kind(KindTag::Star)));
         assert_eq!(arena.eq(reference(1)), None);
-        assert_eq!(arena.sort(reference(1)), Some(reference(2)));
+        assert_eq!(arena.sort(reference(1)), None);
         assert_eq!(arena.tag(reference(2)), Some(Tag::Ty(TyTag::Bool)));
+        assert_eq!(arena.sort(reference(2)), Some(reference(1)));
         assert_eq!(arena.eq(reference(2)), Some(reference(1)));
         assert_eq!(arena.tag(reference(3)), None);
     }

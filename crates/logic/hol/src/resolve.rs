@@ -167,13 +167,13 @@ impl Expr {
             .expect("resolved references name an existing row")
     }
 
-    /// Returns the row's optional equality claim.
+    /// Returns this reference's optional semantic-equality column entry.
     #[must_use]
     pub fn eq(&self) -> Option<Ref> {
         self.arena().eq(self.reference)
     }
 
-    /// Returns the row's optional sort claim.
+    /// Returns this reference's optional dense-sort column entry.
     #[must_use]
     pub fn sort(&self) -> Option<Ref> {
         self.arena().sort(self.reference)

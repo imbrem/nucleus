@@ -173,27 +173,30 @@ def assert_kernel_invariants(kernel: Kernel) -> None:
     assert kernel.addr() == arena.addr()
     assert_arena_invariants(arena)
 
-    assert (
-        len(arena.eq)
-        == len(arena.syn_eq)
-        == len(arena.conv)
-        == len(arena.sort)
-        == len(arena)
-    )
-    for definition, equal, classifier in zip(
-        arena.definitions, arena.eq, arena.sort, strict=True
+    assert len(arena.eq) == len(arena.syn_eq) == len(arena.conv) == len(arena)
+    for definition, equal, raw_conv in zip(
+        arena.definitions, arena.eq, arena.conv, strict=True
     ):
         reference = definition.reference
         category = kernel.category(reference)
         assert definition.tag in CATEGORY_TAGS[category]
         assert all(child <= len(kernel) for child in definition.children)
 
-        if classifier is None:
-            # Only kinds go unclassified, and only `classifier` says so.
-            assert category == "kind"
-        else:
-            assert kernel.classifier(reference) == classifier
+        if category != "kind":
+            classifier = kernel.classifier(reference)
             assert classifier <= len(kernel)
+            assert kernel.category(classifier) == ("kind" if category == "ty" else "ty")
+
+        # A fused conversion cell is either a same-category parent link or the
+        # conversion root's cross-category classifier. Kinds have only the
+        # former because they are themselves classifiers.
+        if raw_conv is not None:
+            target_category = kernel.category(raw_conv)
+            assert (
+                target_category == category
+                or (category == "tm" and target_category == "ty")
+                or (category == "ty" and target_category == "kind")
+            )
 
         # A class is represented by its smallest member, and finding is
         # idempotent whether or not the path is compressed.

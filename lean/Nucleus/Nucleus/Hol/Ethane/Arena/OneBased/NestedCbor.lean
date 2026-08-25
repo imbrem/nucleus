@@ -389,17 +389,15 @@ private def encodeSyn (syn : SynView) : Nucleus.Cbor := object <|
     else some (array (syn.subst1.map OneBased.Cbor.encodeSynSlot))) ++
   optional "subst1_free" (syn.subst1Free.map encodeSynFactId) ++
   optional "eq" (if syn.eq.isEmpty then none else some (encodeColumn syn.eq)) ++
-  optional "conv" (if syn.conv.isEmpty then none else some (encodeColumn syn.conv)) ++
-  optional "sort" (if syn.sort.isEmpty then none else some (encodeColumn syn.sort))
+  optional "conv" (if syn.conv.isEmpty then none else some (encodeColumn syn.conv))
 
 private def decodeSyn? (value : Nucleus.Cbor) : Option SynView := do
-  let fields ← fields? ["subst1", "subst1_free", "eq", "conv", "sort"] value
+  let fields ← fields? ["subst1", "subst1_free", "eq", "conv"] value
   return {
     subst1 := ← decodeDefaultList OneBased.Cbor.decodeSynSlot? (field? "subst1" fields)
     subst1Free := ← decodeOptional decodeSynFactId? (field? "subst1_free" fields)
     eq := ← decodeDefaultList decodeNullableRef? (field? "eq" fields)
     conv := ← decodeDefaultList decodeNullableRef? (field? "conv" fields)
-    sort := ← decodeDefaultList decodeNullableRef? (field? "sort" fields)
   }
 
 @[simp] private theorem traverse_synSlots (slots : List SynSlot) :
@@ -597,8 +595,8 @@ private theorem decodePred?_encode (pred : PredSection) :
 private theorem decodeSyn?_encode (syn : SynView) :
     decodeSyn? (encodeSyn syn) = some syn := by
   cases syn with
-  | mk subst1 subst1Free eq conv sort =>
-      cases subst1 <;> cases subst1Free <;> cases eq <;> cases conv <;> cases sort <;>
+  | mk subst1 subst1Free eq conv =>
+      cases subst1 <;> cases subst1Free <;> cases eq <;> cases conv <;>
         simp [decodeSyn?, encodeSyn, fields?, field?, optional, object,
           decodeDefaultList]
 
@@ -774,6 +772,26 @@ theorem decodeArena?_encode_byteWire (arena : Layout.Arena)
     (supported : arena.ByteWireCanonical) :
     decodeArena? (encodeArena arena) = some arena :=
   decodeArena?_encode arena supported.1
+
+/-- Parsed-CBOR model of the executable byte decoder's literal-import budget.
+The actual byte parser enforces the same bound through its container recursion
+limit; keeping this check explicit separates that resource policy from the
+unbounded semantic decoder above. -/
+noncomputable def decodeArenaByte? (value : Nucleus.Cbor) : Option Layout.Arena := do
+  let arena ← decodeArena? value
+  if arena.literalDepth ≤ Layout.maxLiteralImportDepth then some arena else none
+
+theorem decodeArenaByte?_encode (arena : Layout.Arena)
+    (supported : arena.ByteWireCanonical) :
+    decodeArenaByte? (encodeArena arena) = some arena := by
+  simp [decodeArenaByte?, decodeArena?_encode arena supported.1, supported.2]
+
+theorem decodeArenaByte?_encode_reject_depth (arena : Layout.Arena)
+    (canonical : arena.WireCanonical)
+    (tooDeep : Layout.maxLiteralImportDepth < arena.literalDepth) :
+    decodeArenaByte? (encodeArena arena) = none := by
+  simp [decodeArenaByte?, decodeArena?_encode arena canonical,
+    Nat.not_le.mpr tooDeep]
 
 /-- A serialized CNF tombstone is retained at its exact row position. -/
 theorem decodeCnf?_leadingNull (cnf : Layout.WireCnf) :

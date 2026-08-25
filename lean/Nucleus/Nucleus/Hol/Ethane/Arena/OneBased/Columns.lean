@@ -5,8 +5,9 @@ import Mathlib.Logic.Relation
 # Dense optional arena columns
 
 This is the representation model for the behavior-preserving column
-refactor. Expression rows contain syntax only.  Classifiers and the three
-nested equality relations are independent, trailing-null-eliding columns.
+refactor. Expression rows contain syntax only.  The conversion column fuses
+same-category union-find parents with cross-category classifiers; semantic
+and syntactic equality remain independent, trailing-null-eliding columns.
 The existing `SynFact` arena remains unchanged and is named `subst1` by the
 wire view; columns cache only direct relations admitted by checked rules.
 -/
@@ -18,115 +19,79 @@ set_option relaxedAutoImplicit true
 
 /-- A dense optional column. A missing entry, including every position past
 the stored prefix, denotes `none`. -/
-abbrev Column (α : Type) := List (Option α)
+abbrev Column := Nucleus.Hol.Ethane.OneBased.Column
 
 namespace Column
 
-def get? (column : Column α) (reference : Ref) : Option α :=
-  column[(reference.value.toNat - 1)]?.bind id
+abbrev get? (column : Column α) (reference : Ref) : Option α :=
+  Nucleus.Hol.Ethane.OneBased.Column.get? column reference
+abbrev Decreases (column : Column Ref) : Prop :=
+  Nucleus.Hol.Ethane.OneBased.Column.Decreases column
+abbrev normalize (column : Column α) : Column α :=
+  Nucleus.Hol.Ethane.OneBased.Column.normalize column
 
-@[simp] theorem get?_nil (reference : Ref) :
-    get? ([] : Column α) reference = none := by
-  simp [get?]
-
-/-- Removing trailing nulls is the canonical wire normalization. -/
-def normalize : Column α → Column α
-  | [] => []
-  | none :: tail =>
-      let normalized := normalize tail
-      if normalized.isEmpty then [] else none :: normalized
-  | some value :: tail => some value :: normalize tail
-
-@[simp] theorem normalize_nil : normalize ([] : Column α) = [] := rfl
+theorem normalize_nil : normalize ([] : Column α) = [] :=
+  Nucleus.Hol.Ethane.OneBased.Column.normalize_nil
 
 theorem normalize_cons_some (value : α) (tail : Column α) :
-    normalize (some value :: tail) = some value :: normalize tail := rfl
+    normalize (some value :: tail) = some value :: normalize tail :=
+  Nucleus.Hol.Ethane.OneBased.Column.normalize_cons_some value tail
 
-@[simp] theorem normalize_idempotent (column : Column α) :
-    normalize (normalize column) = normalize column := by
-  induction column with
-  | nil => rfl
-  | cons head tail ih =>
-      cases head with
-      | some value => simp [normalize, ih]
-      | none =>
-          simp only [normalize]
-          split <;> simp_all [normalize]
+theorem normalize_idempotent (column : Column α) :
+    normalize (normalize column) = normalize column :=
+  Nucleus.Hol.Ethane.OneBased.Column.normalize_idempotent column
+
+theorem getElem?_normalize_bind (column : Column α) (position : Nat) :
+    (normalize column)[position]?.bind id = column[position]?.bind id :=
+  Nucleus.Hol.Ethane.OneBased.Column.getElem?_normalize_bind column position
+
+theorem get?_normalize (column : Column α) (reference : Ref) :
+    get? (normalize column) reference = get? column reference :=
+  Nucleus.Hol.Ethane.OneBased.Column.get?_normalize column reference
 
 end Column
 
-/-- The five optional columns of the first refactor PR. `sort` is deliberately
-separate from `conv`; the stacked fusion PR changes only this representation,
-not the checked rules that justify its entries. -/
-structure Dense where
-  defs : List detail.Expr
-  eq : Column Ref := []
-  synEq : Column Ref := []
-  conv : Column Ref := []
-  sort : Column Ref := []
-  deriving DecidableEq, Repr
+/-- Compatibility namespace for invariants over the base arena's storage. -/
+abbrev Dense := Nucleus.Hol.Ethane.OneBased.Dense
 
 namespace Dense
 
-def expr? (dense : Dense) (reference : Ref) : Option detail.Expr :=
-  dense.defs[(reference.value.toNat - 1)]?
+abbrev expr? (dense : Dense) (reference : Ref) :=
+  Nucleus.Hol.Ethane.OneBased.Dense.expr? dense reference
+abbrev tagSort? (dense : Dense) (reference : Ref) :=
+  Nucleus.Hol.Ethane.OneBased.Dense.tagSort? dense reference
+abbrev classifierSort? (sort : TagSort) :=
+  Nucleus.Hol.Ethane.OneBased.Dense.classifierSort? sort
+abbrev classifierAt? (dense : Dense) (fuel : Nat) (reference : Ref) :=
+  Nucleus.Hol.Ethane.OneBased.Dense.classifierAt? dense fuel reference
+abbrev classifier? (dense : Dense) (reference : Ref) :=
+  Nucleus.Hol.Ethane.OneBased.Dense.classifier? dense reference
+abbrev classifierFrom? (dense : Dense) (fuel : Nat) (sort : TagSort)
+    (target : Option Ref) :=
+  Nucleus.Hol.Ethane.OneBased.Dense.classifierFrom? dense fuel sort target
+abbrev row? (dense : Dense) (reference : Ref) :=
+  Nucleus.Hol.Ethane.OneBased.Dense.row? dense reference
+abbrev rows (dense : Dense) := Nucleus.Hol.Ethane.OneBased.Dense.rows dense
 
-def row? (dense : Dense) (reference : Ref) : Option detail.Row := do
-  let expr ← dense.expr? reference
-  return {
-    expr
-    eq := dense.eq.get? reference
-    sort := dense.sort.get? reference
-  }
-
-/-- The semantic row view consumed by the pre-column kernel proofs.  This is
-not stored or serialized: it is reconstructed by zipping expression-only
-`defs` with the semantic-equality and classifier columns.  Syntactic equality
-and conversion are separate proof caches and therefore do not occur in a
-logical row. -/
-def rows (dense : Dense) : List detail.Row :=
-  dense.defs.mapIdx fun position expr => {
-    expr
-    eq := dense.eq[position]?.bind id
-    sort := dense.sort[position]?.bind id
-  }
+theorem classifierAt?_eq_classifierFrom? (dense : Dense) (fuel : Nat)
+    (reference : Ref) (expr : detail.Expr)
+    (found : dense.expr? reference = some expr) :
+    dense.classifierAt? fuel reference =
+      dense.classifierFrom? fuel expr.tag.sort (dense.conv.get? reference) :=
+  Nucleus.Hol.Ethane.OneBased.Dense.classifierAt?_eq_classifierFrom?
+    dense fuel reference expr found
 
 @[simp] theorem rows_length (dense : Dense) : dense.rows.length = dense.defs.length := by
-  simp [rows]
+  exact Nucleus.Hol.Ethane.OneBased.Dense.rows_length dense
 
-/-- Positional materialization is observationally identical to separately
-looking up the expression, semantic equality, and classifier columns. -/
+/-- Positional syntax lookup is the underlying definition lookup. -/
 theorem rows_get? (dense : Dense) (position : Nat) :
-    dense.rows[position]? = do
-      let expr ← dense.defs[position]?
-      return {
-        expr
-        eq := dense.eq[position]?.bind id
-        sort := dense.sort[position]?.bind id
-      } := by
-  simp only [rows, List.getElem?_mapIdx]
-  cases dense.defs[position]? <;> rfl
+    dense.rows[position]? = dense.defs[position]? :=
+  Nucleus.Hol.Ethane.OneBased.Dense.rows_get? dense position
 
 theorem rows_row? (dense : Dense) (reference : Ref) :
-    dense.rows[(reference.value.toNat - 1)]? = dense.row? reference := by
-  rw [rows_get?]
-  rfl
-
-@[simp] theorem row?_eq (dense : Dense) (reference : Ref)
-    (resident : dense.expr? reference ≠ none) :
-    (dense.row? reference).bind (·.eq) = dense.eq.get? reference := by
-  simp only [row?]
-  cases found : dense.expr? reference with
-  | none => contradiction
-  | some expr => simp
-
-@[simp] theorem row?_sort (dense : Dense) (reference : Ref)
-    (resident : dense.expr? reference ≠ none) :
-    (dense.row? reference).bind (·.sort) = dense.sort.get? reference := by
-  simp only [row?]
-  cases found : dense.expr? reference with
-  | none => contradiction
-  | some expr => simp
+    dense.rows[(reference.value.toNat - 1)]? = dense.row? reference :=
+  Nucleus.Hol.Ethane.OneBased.Dense.rows_row? dense reference
 
 /-- A column is resident when it has no non-null member beyond `defs`. Short
 columns are valid and mean null for the omitted suffix. -/
@@ -137,7 +102,6 @@ structure WellFormed (dense : Dense) : Prop where
   eq : dense.Resident dense.eq
   synEq : dense.Resident dense.synEq
   conv : dense.Resident dense.conv
-  sort : dense.Resident dense.sort
 
 /-- Checked kernels additionally require every equality target to be a local
 definition. Raw arena decoding checks only source-column residency; dangling
@@ -150,9 +114,175 @@ structure Checked (dense : Dense) extends dense.WellFormed where
   eqTargets : dense.TargetsResident dense.eq
   synEqTargets : dense.TargetsResident dense.synEq
   convTargets : dense.TargetsResident dense.conv
-  sortTargets : dense.TargetsResident dense.sort
 
 end Dense
+
+/-! ## Category-sensitive meaning of the fused conversion column -/
+
+def SameCategory (dense : Dense) (left right : Ref) : Prop :=
+  ∃ category, dense.tagSort? left = some category ∧ dense.tagSort? right = some category
+
+/-- The raw cell has one representation but two disjoint meanings. -/
+inductive RawLink (dense : Dense) (left right : Ref) : Prop
+  | conversion (raw : dense.conv.get? left = some right)
+      (same : SameCategory dense left right)
+  | classifier (raw : dense.conv.get? left = some right)
+      (different : ¬ SameCategory dense left right)
+
+def ConvEdge (dense : Dense) (left right : Ref) : Prop :=
+  dense.conv.get? left = some right ∧ SameCategory dense left right
+
+def ClassifierEdge (dense : Dense) (value classifier : Ref) : Prop :=
+  dense.conv.get? value = some classifier ∧ ¬ SameCategory dense value classifier
+
+theorem convEdge_classifierEdge_disjoint :
+    ¬ (ConvEdge dense left right ∧ ClassifierEdge dense left right) := by
+  rintro ⟨⟨_, same⟩, ⟨_, different⟩⟩
+  exact different same
+
+def ConvClass (dense : Dense) : Ref → Ref → Prop :=
+  Relation.EqvGen (ConvEdge dense)
+
+/-- A classifier belongs to a conversion class when one member's root cell
+points across the category boundary to it. This relational definition is
+independent of path-compression shape. -/
+def HasClassifier (dense : Dense) (value classifier : Ref) : Prop :=
+  ∃ root, ConvClass dense value root ∧ ClassifierEdge dense root classifier
+
+theorem HasClassifier.of_edge (edge : ClassifierEdge dense value classifier) :
+    HasClassifier dense value classifier :=
+  ⟨value, Relation.EqvGen.refl value, edge⟩
+
+theorem HasClassifier.of_conv (connected : ConvClass dense left right)
+    (classified : HasClassifier dense right classifier) :
+    HasClassifier dense left classifier := by
+  obtain ⟨root, rightRoot, edge⟩ := classified
+  exact ⟨root, Relation.EqvGen.trans _ _ _ connected rightRoot, edge⟩
+
+/-- Executable classifier traversal is intrinsically sound: whenever it
+returns a classifier, the fused graph relationally classifies the source by
+that reference. This direction needs no checked-kernel invariant. -/
+theorem Dense.classifierAt?_sound (dense : Dense) (fuel : Nat)
+    (value classifier : Ref)
+    (checked : dense.Checked) (resident : dense.expr? value ≠ none)
+    (found : dense.classifierAt? fuel value = some classifier) :
+    HasClassifier dense value classifier := by
+  induction fuel generalizing value with
+  | zero => simp [Nucleus.Hol.Ethane.OneBased.Dense.classifierAt?] at found
+  | succ fuel ih =>
+      simp only [Nucleus.Hol.Ethane.OneBased.Dense.classifierAt?] at found
+      cases raw : dense.conv.get? value with
+      | none => simp [raw] at found
+      | some target =>
+          rw [raw] at found
+          change (if dense.tagSort? value = dense.tagSort? target then
+            dense.classifierAt? fuel target
+          else if (dense.tagSort? value).bind
+            Nucleus.Hol.Ethane.OneBased.Dense.classifierSort? = dense.tagSort? target then
+            some target else none) = some classifier at found
+          have targetResident := (checked.convTargets value target raw).2
+          by_cases same : dense.tagSort? value = dense.tagSort? target
+          · rw [if_pos same] at found
+            apply HasClassifier.of_conv (Relation.EqvGen.rel _ _ ⟨raw, ?_⟩)
+              (ih target targetResident found)
+            cases sourceCategory : dense.tagSort? value with
+            | none =>
+                have missing : dense.expr? value = none := by
+                  cases expression : dense.expr? value with
+                  | none => rfl
+                  | some expr =>
+                      simp [Nucleus.Hol.Ethane.OneBased.Dense.tagSort?, expression]
+                        at sourceCategory
+                exact (resident missing).elim
+            | some category =>
+                exact ⟨category, sourceCategory, same ▸ sourceCategory⟩
+          · rw [if_neg same] at found
+            split at found
+            · rename_i classifierShape
+              have classifierEq : target = classifier := Option.some.inj found
+              subst target
+              exact HasClassifier.of_edge ⟨raw, fun sameCategory => same <| by
+                obtain ⟨category, valueCategory, classifierCategory⟩ := sameCategory
+                rw [valueCategory, classifierCategory]⟩
+            · simp at found
+
+theorem Dense.classifier?_sound (dense : Dense) (value classifier : Ref)
+    (checked : dense.Checked) (resident : dense.expr? value ≠ none)
+    (found : dense.classifier? value = some classifier) :
+    HasClassifier dense value classifier :=
+  dense.classifierAt?_sound (dense.defs.length + 1) value classifier
+    checked resident found
+
+/-- Category transition discipline of the fused cell: conversion links stay
+within a category; classifiers are exactly `tm → ty` or `ty → kind`.
+Kinds therefore never carry classifiers. -/
+def ClassifierShape (dense : Dense) (value classifier : Ref) : Prop :=
+  (dense.tagSort? value = some .tm ∧ dense.tagSort? classifier = some .ty) ∨
+  (dense.tagSort? value = some .ty ∧ dense.tagSort? classifier = some .kind)
+
+structure FusedChecked (dense : Dense) extends dense.Checked where
+  eqDecreases : dense.eq.Decreases
+  synEqDecreases : dense.synEq.Decreases
+  convDecreases : dense.conv.Decreases
+  classifierShape : ∀ {value classifier}, ClassifierEdge dense value classifier →
+    ClassifierShape dense value classifier
+
+theorem ConvClass.category_eq (connected : ConvClass dense left right) :
+    dense.tagSort? left = dense.tagSort? right := by
+  induction connected with
+  | rel left right edge =>
+      rcases edge.2 with ⟨category, leftCategory, rightCategory⟩
+      rw [leftCategory, rightCategory]
+  | refl => rfl
+  | symm left right _ ih => exact ih.symm
+  | trans left middle right _ _ leftMiddle middleRight =>
+      exact leftMiddle.trans middleRight
+
+theorem FusedChecked.kind_has_no_classifier (checked : FusedChecked dense)
+    (kind : dense.tagSort? value = some .kind) :
+    ¬ HasClassifier dense value classifier := by
+  rintro ⟨root, connected, edge⟩
+  have rootKind : dense.tagSort? root = some .kind := by
+    rw [← connected.category_eq]
+    exact kind
+  rcases checked.classifierShape edge with shape | shape
+  · rw [rootKind] at shape
+    cases shape.1
+  · rw [rootKind] at shape
+    cases shape.1
+
+/-- A kind is inhabited in the arena exactly when some type-family class is
+classified by it. This is the fused replacement for a dedicated kind-sort
+bit/column. -/
+def ValidKind (dense : Dense) (kind : Ref) : Prop :=
+  ∃ family, HasClassifier dense family kind
+
+theorem validKind_iff_exists_classifier :
+    ValidKind dense kind ↔ ∃ family, HasClassifier dense family kind := Iff.rfl
+
+theorem ConvClass.mono
+    (edges : ∀ {left right}, ConvEdge before left right → ConvClass after left right)
+    (connected : ConvClass before left right) : ConvClass after left right := by
+  induction connected with
+  | rel left right relation => exact edges relation
+  | refl reference => exact Relation.EqvGen.refl reference
+  | symm left right _ ih => exact Relation.EqvGen.symm _ _ ih
+  | trans left middle right _ _ leftMiddle middleRight =>
+      exact Relation.EqvGen.trans _ _ _ leftMiddle middleRight
+
+/-- Abstract path compression theorem: replacing parent edges by edges inside
+the same old conversion classes, while retaining classifier edges, preserves
+all old classifications. This is the exact obligation of the mutable Rust
+compression loop. -/
+theorem compression_preserves_classifier
+    (classes : ∀ {left right}, ConvEdge before left right →
+      ConvClass after left right)
+    (classifiers : ∀ {value classifier}, ClassifierEdge before value classifier →
+      ClassifierEdge after value classifier)
+    (classified : HasClassifier before value classifier) :
+    HasClassifier after value classifier := by
+  obtain ⟨root, connected, edge⟩ := classified
+  exact ⟨root, connected.mono classes, classifiers edge⟩
 
 inductive EqualityColumn
   | syn
@@ -166,7 +296,10 @@ def Dense.column (dense : Dense) : EqualityColumn → Column Ref
   | .semantic => dense.eq
 
 def Edge (dense : Dense) (column : EqualityColumn) (left right : Ref) : Prop :=
-  (dense.column column).get? left = some right
+  match column with
+  | .syn => dense.synEq.get? left = some right
+  | .conv => ConvEdge dense left right
+  | .semantic => dense.eq.get? left = some right
 
 def Class (dense : Dense) (column : EqualityColumn) : Ref → Ref → Prop :=
   Relation.EqvGen (Edge dense column)

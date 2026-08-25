@@ -202,6 +202,77 @@ theorem Equal.trans {left middle right : Value}
               typeLowering := leftConversion.typeLowering
               derivation := leftConversion.derivation.trans rightDerivation }⟩
 
+/-- Replacing a classifier by a semantically equal value preserves sorting.
+This is the logical bridge used by the fused conversion forest when a union
+overwrites the child root's classifier with the parent root's convertible
+classifier. -/
+theorem HasSort.replaceClassifier {value oldClassifier newClassifier : Value}
+    (sorted : value.HasSort oldClassifier)
+    (oldWellFormed : oldClassifier.WellFormed)
+    (equal : Equal oldClassifier newClassifier) :
+    value.HasSort newClassifier := by
+  cases equal with
+  | kind kind => exact sorted
+  | @family kind left right conversion =>
+      cases value with
+      | kind value => simp [HasSort] at sorted
+      | family expected expression =>
+          cases kind with
+          | star => simp [HasSort] at sorted
+          | arr domain codomain => simp [HasSort] at sorted
+      | term expected expression =>
+          cases kind with
+          | star =>
+              rcases sorted with ⟨sorted⟩
+              rcases conversion with ⟨conversion⟩
+              rcases oldWellFormed with
+                ⟨loweredMiddle, classification, middleLowering,
+                  _classificationLowering, middleKinded⟩
+              cases classification with
+              | kind =>
+                  change Nucleus.HolE.Named.lowerFam (.nil : TyScope []) left.toHolE =
+                    some loweredMiddle at middleLowering
+                  rw [sorted.rightLowering] at middleLowering
+                  have same := Option.some.inj middleLowering
+                  subst loweredMiddle
+                  exact ⟨sorted.trans middleKinded conversion⟩
+          | arr domain codomain => simp [HasSort] at sorted
+  | term leftWellFormed rightWellFormed classifierConversion conversion =>
+      cases value <;> simp [HasSort] at sorted
+
+/-- Re-advertising a term at a convertible classifier preserves logical
+well-formedness. The term syntax and its lowering are unchanged; only the
+typing certificate is transported across family conversion. -/
+theorem WellFormed.reclassifyTerm {oldType newType : EmptyTy}
+    {expression : EmptyTm}
+    (termWellFormed : WellFormed (.term oldType expression))
+    (newTypeWellFormed : WellFormed (.family .star newType))
+    (conversion : Nucleus.HolE.Named.FamEq
+      (.nil : TyScope []) oldType.toHolE newType.toHolE) :
+    WellFormed (.term newType expression) := by
+  rcases termWellFormed with
+    ⟨loweredExpression, loweredOldType, expressionLowering,
+      oldTypeLowering, typing⟩
+  rcases newTypeWellFormed with
+    ⟨loweredNewType, classification, newTypeLowering,
+      _classificationLowering, newTypeKinded⟩
+  cases classification with
+  | kind =>
+      have oldLowering := oldTypeLowering
+      change Nucleus.HolE.Named.lowerFam (.nil : TyScope []) oldType.toHolE =
+        some loweredOldType at oldLowering
+      rw [conversion.leftLowering] at oldLowering
+      have oldSame := Option.some.inj oldLowering
+      have newLowering := newTypeLowering
+      change Nucleus.HolE.Named.lowerFam (.nil : TyScope []) newType.toHolE =
+        some loweredNewType at newLowering
+      rw [conversion.rightLowering] at newLowering
+      have newSame := Option.some.inj newLowering
+      refine ⟨loweredExpression, loweredNewType, expressionLowering,
+        newTypeLowering, ?_⟩
+      exact .conv typing newTypeKinded (by
+        simpa only [oldSame, newSame] using conversion.derivation)
+
 end Value
 
 /-- Meaning of one optional equality parent. -/
@@ -228,10 +299,20 @@ def SortingMemberClaim (resolve : Resolver) (arena : Arena) (reference : Ref) : 
   | none => True
   | some _ => SortingClaim resolve arena reference
 
-/-- A context member is a well-typed Boolean term. -/
+/-- A context member is a well-typed term at a type convertible to Boolean.
+
+Rust accepts a proposition whenever the semantic type class of its classifier
+contains `ty.bool`; it does not require the row to be advertised at that exact
+syntax node.  Stating the claim modulo family conversion is therefore both
+the executable rule and what makes sound classifier replacement preserve a
+previously checked context. -/
 def ContextClaim (resolve : Resolver) (arena : Arena) (reference : Ref) : Prop :=
-  ∃ expression, Resolves resolve arena reference (.term .boolTy expression) ∧
-    Value.WellFormed (.term .boolTy expression)
+  ∃ type expression,
+    Resolves resolve arena reference (.term type expression) ∧
+    Value.WellFormed (.term type expression) ∧
+    Nonempty (Nucleus.HolE.Named.FamEq
+      (.nil : TyScope []) type.toHolE
+        (Nucleus.Hol.Ethane.Expr.boolTy : EmptyTy).toHolE)
 
 /-- Object-logic axiom capabilities an arena may declare.
 
@@ -270,13 +351,13 @@ structure Kernel (resolve : Resolver) where
 namespace Arena
 
 @[simp] theorem empty_row? (reference : Ref) : empty.row? reference = none := by
-  simp [empty, row?, defs]
+  simp [empty, row?, Dense.row?, Dense.expr?, Arena.dense]
 
 @[simp] theorem empty_eq? (reference : Ref) : empty.eq? reference = none := by
-  simp [eq?]
+  simp [empty, eq?, Column.get?, Arena.dense]
 
 @[simp] theorem empty_sort? (reference : Ref) : empty.sort? reference = none := by
-  simp [sort?]
+  simp [empty, sort?, Dense.classifier?, Dense.classifierAt?, Column.get?, Arena.dense]
 
 theorem empty_kernelValid (resolve : Resolver) : empty.KernelValid resolve := by
   change empty.CoreKernelValid resolve

@@ -5,8 +5,7 @@ import Nucleus.Hol.Ethane.Amber.Row
 # Structural validity of one-based Ethane arenas
 
 Only ordinary constructor operands are local graph edges.  Import IDs,
-foreign references, and the optional equality/sort members are claims rather
-than children.  A dense arena is structurally valid when every local child
+foreign references are not children. A dense arena is structurally valid when every local child
 points to an earlier row.
 -/
 
@@ -18,8 +17,6 @@ inductive RowExtra where
   | bool (value : Bool)
   | source (value : ImportId)
   | foreign (value : Ref)
-  | eq (value : Ref)
-  | sort (value : Ref)
   deriving DecidableEq
 
 namespace detail.Expr
@@ -29,7 +26,8 @@ def children : detail.Expr → List Ref
   | .kindStar | .boolTy | .bool _ | .tmRef .. | .tyRef .. | .kindRef .. => []
   | .kindArr left right | .tyArr left right | .tyApp left right |
       .tyLam left right | .app left right | .lam left right |
-      .eq left right | .eps left right | .op2 _ left right => [left, right]
+      .eps left right | .op2 _ left right => [left, right]
+  | .eq type left right => [type, left, right]
   | .op1 _ child => [child]
   | .tyFv _ child | .tyExists _ child | .model _ child | .tmFv _ child => [child]
 
@@ -42,8 +40,8 @@ def children : detail.Expr → List Ref
 @[simp] theorem children_kindRef (source : ImportId) (foreign : Ref) :
     (detail.Expr.kindRef source foreign).children = [] := rfl
 
-theorem children_length_le_two (expression : detail.Expr) :
-    expression.children.length ≤ 2 := by
+theorem children_length_le_three (expression : detail.Expr) :
+    expression.children.length ≤ 3 := by
   cases expression <;> simp [children]
 
 end detail.Expr
@@ -61,7 +59,7 @@ def extras (row : detail.Row) : List RowExtra :=
     | .tmRef source foreign | .tyRef source foreign | .kindRef source foreign =>
         [.source source, .foreign foreign]
     | _ => []
-  expression ++ row.eq.toList.map RowExtra.eq ++ row.sort.toList.map RowExtra.sort
+  expression
 
 end detail.Row
 
@@ -81,17 +79,21 @@ def RowsValid : Nat → List detail.Row → Prop
       RowValid allocated row ∧ RowsValid (allocated + 1) rows
 
 /-- Structural validity of a self-contained one-based dense arena. -/
-def Arena.StructurallyValid (arena : Arena) : Prop := RowsValid 0 arena.defs
+def Arena.syntaxRows (arena : Arena) : List detail.Row :=
+  arena.dense.defs.map fun expr => { expr }
+
+def Arena.StructurallyValid (arena : Arena) : Prop := RowsValid 0 arena.syntaxRows
 
 /-- Whether a row can be appended to an arena. -/
 def Arena.CanPush (arena : Arena) (row : detail.Row) : Prop :=
-  RowValid arena.defs.length row
+  RowValid arena.dense.defs.length row
 
 /-- Append one raw row without claiming that it is logically valid. -/
 def Arena.pushRaw (arena : Arena) (row : detail.Row) : Arena :=
   match arena with
-  | .mk imports axs defs synFacts synFree ctx assume assert =>
-      .mk imports axs (defs ++ [row]) synFacts synFree ctx assume assert
+  | .mk imports axs dense synFacts synFree ctx assume assert =>
+      .mk imports axs { dense with defs := dense.defs ++ [row.expr] }
+        synFacts synFree ctx assume assert
 
 theorem rowsValid_append (allocated : Nat) (left right : List detail.Row) :
     RowsValid allocated (left ++ right) ↔
@@ -113,9 +115,14 @@ theorem rowsValid_append (allocated : Nat) (left right : List detail.Row) :
     (arena.pushRaw row).StructurallyValid ↔
       arena.StructurallyValid ∧ arena.CanPush row := by
   cases arena with
-  | mk imports axs defs synFacts synFree ctx assume assert =>
-      change RowsValid 0 (defs ++ [row]) ↔
-        RowsValid 0 defs ∧ RowValid defs.length row
+  | mk imports axs dense synFacts synFree ctx assume assert =>
+      change RowsValid 0
+          ((dense.defs ++ [row.expr]).map fun expr => detail.Row.mk expr) ↔
+        RowsValid 0 (dense.defs.map fun expr => detail.Row.mk expr) ∧
+          RowValid dense.defs.length row
+      rw [List.map_append]
+      change RowsValid 0
+          (dense.defs.map (fun expr => detail.Row.mk expr) ++ [row]) ↔ _
       rw [rowsValid_append]
       simp [RowsValid]
 
