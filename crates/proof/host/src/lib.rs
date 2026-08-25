@@ -600,6 +600,94 @@ impl GuestKernel for HostKernel {
         })
     }
 
+    fn not_tm(&self, bool_type: u64, proposition: u64) -> Result<u64, String> {
+        checked_ref(
+            self.0
+                .borrow_mut()
+                .not_tm(reference(bool_type)?, reference(proposition)?),
+        )
+    }
+
+    fn forall_tm(&self, bool_type: u64, binder: u64, body: u64) -> Result<u64, String> {
+        checked_ref(self.0.borrow_mut().forall_tm(
+            reference(bool_type)?,
+            reference(binder)?,
+            reference(body)?,
+        ))
+    }
+
+    fn exists_tm(&self, binder: u64, body: u64) -> Result<u64, String> {
+        checked_ref(
+            self.0
+                .borrow_mut()
+                .exists_tm(reference(binder)?, reference(body)?),
+        )
+    }
+
+    fn and_tm(&self, bool_type: u64, binder: u64, left: u64, right: u64) -> Result<u64, String> {
+        checked_ref(self.0.borrow_mut().and_tm(
+            reference(bool_type)?,
+            reference(binder)?,
+            reference(left)?,
+            reference(right)?,
+        ))
+    }
+
+    fn or_tm(&self, bool_type: u64, binder: u64, left: u64, right: u64) -> Result<u64, String> {
+        checked_ref(self.0.borrow_mut().or_tm(
+            reference(bool_type)?,
+            reference(binder)?,
+            reference(left)?,
+            reference(right)?,
+        ))
+    }
+
+    fn imp_tm(&self, bool_type: u64, binder: u64, left: u64, right: u64) -> Result<u64, String> {
+        checked_ref(self.0.borrow_mut().imp_tm(
+            reference(bool_type)?,
+            reference(binder)?,
+            reference(left)?,
+            reference(right)?,
+        ))
+    }
+
+    fn fresh_name(&self, roots: Vec<u64>) -> Result<u64, String> {
+        let roots = roots
+            .into_iter()
+            .map(reference)
+            .collect::<Result<Vec<_>, _>>()?;
+        self.0
+            .borrow()
+            .fresh_name(&roots)
+            .map_err(|error| error.to_string())
+    }
+
+    fn sub_exists(
+        &self,
+        bool_type: u64,
+        carrier: u64,
+        predicate: u64,
+    ) -> Result<wit::SubtypeAxiom, String> {
+        let axiom = self
+            .0
+            .borrow_mut()
+            .sub_exists(
+                reference(bool_type)?,
+                reference(carrier)?,
+                reference(predicate)?,
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(wit::SubtypeAxiom {
+            carrier: ref_index(axiom.carrier),
+            predicate: ref_index(axiom.predicate),
+            exists_type: ref_index(axiom.exists_type),
+            package_body: ref_index(axiom.package_body),
+            model_name: axiom.model_name,
+            base_name: axiom.base_name,
+            theorem: axiom.theorem.get().unsigned_abs().into(),
+        })
+    }
+
     fn add_context(&self, proposition: u64) -> Result<(), String> {
         self.0
             .borrow_mut()

@@ -27,7 +27,7 @@ pub use covalence_logic_classical::{
     CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, Dnf, DnfId, Lit,
     LitError, LitVec, Refutation, ThmId, ThmRef,
 };
-pub use subtype::{AX_SUB, BINDER_COUNT, Binder, Subtype};
+pub use subtype::{AX_SUB, BINDER_COUNT, Binder, SubtypeAxiom};
 
 /// A recoverable failure at the checked kernel boundary.
 #[derive(Debug, Snafu)]

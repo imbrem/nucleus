@@ -76,6 +76,39 @@ fn u64_from_usize(value: usize, what: &str) -> wasmtime::Result<u64> {
     u64::try_from(value).map_err(|_| wasmtime::Error::msg(format!("{what} exceeds u64")))
 }
 
+/// Resolve the four references a binary connective takes, reporting the first
+/// failure.
+fn binary_logic(
+    bool_type: u64,
+    binder: u64,
+    left: u64,
+    right: u64,
+) -> Result<(Ref, Ref, Ref, Ref), String> {
+    Ok((
+        reference(bool_type)?,
+        reference(binder)?,
+        reference(left)?,
+        reference(right)?,
+    ))
+}
+
+/// Marshal a built subtype axiom out to the component ABI.
+fn subtype_axiom(axiom: covalence_logic_hol::SubtypeAxiom) -> nucleus::proof::host::SubtypeAxiom {
+    nucleus::proof::host::SubtypeAxiom {
+        carrier: u64_from_ref(axiom.carrier),
+        predicate: u64_from_ref(axiom.predicate),
+        exists_type: u64_from_ref(axiom.exists_type),
+        package_body: u64_from_ref(axiom.package_body),
+        model_name: axiom.model_name,
+        base_name: axiom.base_name,
+        theorem: axiom.theorem.get().unsigned_abs().into(),
+    }
+}
+
+fn u64_from_ref(reference: Ref) -> u64 {
+    reference.get().unsigned_abs().into()
+}
+
 fn reference(value: u64) -> Result<Ref, String> {
     let value = i32::try_from(value).map_err(|_| "reference exceeds i32".to_owned())?;
     Ref::new(value).ok_or_else(|| "references are one-based".to_owned())
@@ -1199,6 +1232,160 @@ impl nucleus::proof::host::HostKernel for ProofState {
             .0
             .add_axiom(&name)
             .map_err(|error| error.to_string()))
+    }
+
+    fn not_tm(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        bool_type: u64,
+        proposition: u64,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        Ok(match (reference(bool_type), reference(proposition)) {
+            (Ok(bool_type), Ok(proposition)) => checked_ref(
+                self.table
+                    .get_mut(&kernel)?
+                    .0
+                    .not_tm(bool_type, proposition),
+            ),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+        })
+    }
+
+    fn forall_tm(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        bool_type: u64,
+        binder: u64,
+        body: u64,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        Ok(
+            match (reference(bool_type), reference(binder), reference(body)) {
+                (Ok(bool_type), Ok(binder), Ok(body)) => checked_ref(
+                    self.table
+                        .get_mut(&kernel)?
+                        .0
+                        .forall_tm(bool_type, binder, body),
+                ),
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            },
+        )
+    }
+
+    fn exists_tm(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        binder: u64,
+        body: u64,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        Ok(match (reference(binder), reference(body)) {
+            (Ok(binder), Ok(body)) => {
+                checked_ref(self.table.get_mut(&kernel)?.0.exists_tm(binder, body))
+            }
+            (Err(error), _) | (_, Err(error)) => Err(error),
+        })
+    }
+
+    fn and_tm(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        bool_type: u64,
+        binder: u64,
+        left: u64,
+        right: u64,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        Ok(match binary_logic(bool_type, binder, left, right) {
+            Ok((bool_type, binder, left, right)) => checked_ref(
+                self.table
+                    .get_mut(&kernel)?
+                    .0
+                    .and_tm(bool_type, binder, left, right),
+            ),
+            Err(error) => Err(error),
+        })
+    }
+
+    fn or_tm(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        bool_type: u64,
+        binder: u64,
+        left: u64,
+        right: u64,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        Ok(match binary_logic(bool_type, binder, left, right) {
+            Ok((bool_type, binder, left, right)) => checked_ref(
+                self.table
+                    .get_mut(&kernel)?
+                    .0
+                    .or_tm(bool_type, binder, left, right),
+            ),
+            Err(error) => Err(error),
+        })
+    }
+
+    fn imp_tm(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        bool_type: u64,
+        binder: u64,
+        left: u64,
+        right: u64,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        Ok(match binary_logic(bool_type, binder, left, right) {
+            Ok((bool_type, binder, left, right)) => checked_ref(
+                self.table
+                    .get_mut(&kernel)?
+                    .0
+                    .imp_tm(bool_type, binder, left, right),
+            ),
+            Err(error) => Err(error),
+        })
+    }
+
+    fn fresh_name(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        roots: Vec<u64>,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        let mut resolved = Vec::with_capacity(roots.len());
+        for root in roots {
+            match reference(root) {
+                Ok(root) => resolved.push(root),
+                Err(error) => return Ok(Err(error)),
+            }
+        }
+        Ok(self
+            .table
+            .get(&kernel)?
+            .0
+            .fresh_name(&resolved)
+            .map_err(|error| error.to_string()))
+    }
+
+    fn sub_exists(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        bool_type: u64,
+        carrier: u64,
+        predicate: u64,
+    ) -> wasmtime::Result<Result<nucleus::proof::host::SubtypeAxiom, String>> {
+        let (bool_type, carrier, predicate) = match (
+            reference(bool_type),
+            reference(carrier),
+            reference(predicate),
+        ) {
+            (Ok(bool_type), Ok(carrier), Ok(predicate)) => (bool_type, carrier, predicate),
+            (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
+                return Ok(Err(error));
+            }
+        };
+        Ok(self
+            .table
+            .get_mut(&kernel)?
+            .0
+            .sub_exists(bool_type, carrier, predicate)
+            .map_err(|error| error.to_string())
+            .map(subtype_axiom))
     }
 
     fn syn_fact_count(&mut self, kernel: Resource<HostKernel>) -> wasmtime::Result<u64> {

@@ -1,5 +1,6 @@
 import Nucleus.Hol.Ethane.Reference
 import Nucleus.Hol.Ethane.Subtype
+import Nucleus.Hol.Ethane.Subtype.Lower
 import Nucleus.Hol.Ethane.Subtype.Semantics
 import Nucleus.Hol.Ethane.Subtype.Checked
 import Nucleus.Hol.Ethane.Subtype.Derivation
@@ -9,6 +10,7 @@ import Nucleus.Hol.Ethane.Equivalence
 import Nucleus.Hol.Ethane.FV
 import Nucleus.Hol.Ethane.Builtin
 import Nucleus.Hol.Ethane.LogicalOpcode
+import Nucleus.Hol.Ethane.ClassicalAxiomRule
 import Nucleus.Hol.Ethane.ClassicalMatrix
 import Nucleus.Hol.Ethane.ClassicalRefutation
 import Nucleus.Hol.Ethane.Arena
