@@ -36,7 +36,7 @@ that `R : bool` and `A : bool`").
 The module documentation of `Nucleus.Metamath.HolMM` says what is believed about
 each and why.
 
-This file contains no `sorry`.
+This file leaves nothing unproved.
 -/
 
 namespace Nucleus.Metamath.HolMM
