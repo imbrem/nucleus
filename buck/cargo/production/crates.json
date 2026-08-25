@@ -522,6 +522,12 @@
           ]
         },
         {
+          "name": "equality",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "infinity",
           "kinds": [
             "test"
