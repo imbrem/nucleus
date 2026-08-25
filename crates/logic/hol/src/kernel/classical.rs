@@ -156,6 +156,45 @@ impl Kernel {
         self.replace_theorem(theorem, Thm::new(Cnf::new(left), Dnf::new(right)))
     }
 
+    /// Replaces every signed occurrence of one Boolean atom in a theorem by
+    /// a semantically equal Boolean atom, in place.
+    ///
+    /// Literal polarity is preserved.  This is the bridge from checked HOL
+    /// conversion/equality columns to the physical atoms stored by the
+    /// classical theorem matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the theorem exists, both references are
+    /// checked Boolean terms, and they belong to the same semantic equality
+    /// class.  Rejection leaves the theorem unchanged.
+    pub fn convert_theorem(
+        &mut self,
+        theorem: ThmId,
+        source: Ref,
+        target: Ref,
+    ) -> Result<(), KernelError> {
+        self.require_bool_term::<std::convert::Infallible>(source)?;
+        self.require_bool_term::<std::convert::Infallible>(target)?;
+        if !self.equivalent(source, target)? {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "theorem conversion",
+            });
+        }
+        let old = self.require_thm(theorem)?;
+        let premises: Vec<LitVec> = old
+            .lhs
+            .rows()
+            .map(|row| replace_atom(row, source, target))
+            .collect();
+        let conclusions: Vec<LitVec> = old
+            .rhs
+            .rows()
+            .map(|row| replace_atom(row, source, target))
+            .collect();
+        self.replace_theorem(theorem, Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
+    }
+
     /// Moves one indexed CNF row to the right with pointwise-negated literals.
     ///
     /// # Errors
@@ -943,6 +982,23 @@ enum TreeSide {
     Disjunctive,
 }
 
+fn replace_atom(row: &[Lit], source: Ref, target: Ref) -> LitVec {
+    row.iter()
+        .copied()
+        .map(|literal| {
+            if reference(literal) != source {
+                return literal;
+            }
+            let replacement = positive(target);
+            if literal.is_positive() {
+                replacement
+            } else {
+                replacement.negated()
+            }
+        })
+        .collect()
+}
+
 fn unit_row(proposition: Lit) -> LitVec {
     std::iter::once(proposition).collect()
 }
@@ -1032,6 +1088,48 @@ mod tests {
         assert_eq!(Lit::try_new(i32::MIN), Err(LitError { value: i32::MIN }));
         assert_eq!(Lit::try_new(i32::MAX), Err(LitError { value: i32::MAX }));
         assert_eq!(Lit::try_new(-i32::MAX), Err(LitError { value: -i32::MAX }));
+    }
+
+    #[test]
+    fn theorem_conversion_replaces_both_polarities_transactionally() {
+        let Fixture { mut kernel, p, q } = fixture();
+        let bool_ty = kernel.classifier(reference(p)).unwrap();
+        let binder = kernel.tm_fv(3, bool_ty).unwrap();
+        let identity_function = kernel.lam(binder, binder).unwrap();
+        let application = kernel.app(identity_function, reference(p)).unwrap();
+        let substitution = kernel.syn_sub_var(None, binder, reference(p)).unwrap();
+        let beta = kernel
+            .tm_beta_fact(None, application, substitution)
+            .unwrap();
+        kernel.union_syn_fact(beta).unwrap();
+
+        let source = positive(application);
+        let positive_theorem = kernel.identity(source).unwrap();
+        kernel
+            .convert_theorem(positive_theorem, application, reference(p))
+            .unwrap();
+        let converted = kernel.thm().get(positive_theorem).unwrap();
+        assert_eq!(unit_premises(converted), [p]);
+        assert_eq!(unit_conclusions(converted), [p]);
+
+        let negative_theorem = kernel.identity(source.negated()).unwrap();
+        kernel
+            .convert_theorem(negative_theorem, application, reference(p))
+            .unwrap();
+        let converted = kernel.thm().get(negative_theorem).unwrap();
+        assert_eq!(unit_premises(converted), [p.negated()]);
+        assert_eq!(unit_conclusions(converted), [p.negated()]);
+
+        let before = snapshot(kernel.thm().get(positive_theorem).unwrap());
+        assert!(
+            kernel
+                .convert_theorem(positive_theorem, reference(p), reference(q))
+                .is_err()
+        );
+        assert_eq!(
+            snapshot(kernel.thm().get(positive_theorem).unwrap()),
+            before
+        );
     }
 
     #[test]

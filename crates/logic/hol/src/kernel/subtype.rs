@@ -44,9 +44,9 @@
 //! Lean carries **two** constructions of this package, and they are not the
 //! same object:
 //!
-//! * `Nucleus.Hol.Ethane.Subtype` builds it in *named* Ethane syntax. That is
-//!   the one this module mirrors, term for term, after the `freshBase`
-//!   alignment — see the hygiene section.
+//! * `Nucleus.Hol.Ethane.Subtype` builds it in *named* Ethane syntax. This
+//!   module mirrors its meaning after the `freshBase` alignment, using compact
+//!   logical opcodes whose definitions remain opcode-free.
 //! * `Nucleus.HolE.Empty.SubtypePackage` rebuilds it through the
 //!   intrinsically checked de Bruijn API, and that is the one carrying the
 //!   soundness theorem:
@@ -106,7 +106,11 @@ use std::collections::BTreeSet;
 use std::convert::Infallible;
 
 use super::{Kernel, KernelError, ThmId};
-use crate::{Ref, row::Expr as Node};
+use crate::{
+    Ref,
+    builtin::{Op1, Op2},
+    row::Expr as Node,
+};
 
 /// The name of the axiom capability [`Kernel::sub_exists`] consumes.
 pub const AX_SUB: &str = "ax.sub";
@@ -130,7 +134,10 @@ pub enum Binder {
     SubtypeValue = 4,
     /// The witness bound by the guard's inner existential.
     Witness = 5,
-    /// The function variable of the equality-only conjunction encoding.
+    /// Reserved for the opcode-free conjunction definition used by Lean.
+    ///
+    /// Rust uses the equivalent compact opcode, but retains this code so the
+    /// two hygienic name layouts remain aligned.
     Conjunction = 6,
 }
 
@@ -301,7 +308,6 @@ impl Kernel {
     /// `P value ∨ ¬∃w. P w` — membership in the guarded predicate.
     fn guard_body(
         &mut self,
-        bool_ty: Ref,
         base_name: u64,
         carrier: Ref,
         predicate: Ref,
@@ -310,10 +316,9 @@ impl Kernel {
         let witness = self.tm_fv(base_name + Binder::Witness as u64, carrier)?;
         let holds_witness = self.app(predicate, witness)?;
         let inhabited = self.exists_tm(witness, holds_witness)?;
-        let empty = self.not_tm(bool_ty, inhabited)?;
+        let empty = self.op1(Op1::Not, inhabited)?;
         let holds_value = self.app(predicate, value)?;
-        let conjunction = self.conjunction_binder(bool_ty, base_name)?;
-        self.or_tm(bool_ty, conjunction, holds_value, empty)
+        self.op2(Op2::Or, holds_value, empty)
     }
 
     /// The three package laws for one candidate model type.
@@ -341,16 +346,15 @@ impl Kernel {
         };
 
         let rep_abs_body = {
-            let guard = self.guard_body(bool_ty, base_name, carrier, predicate, carrier_value)?;
+            let guard = self.guard_body(base_name, carrier, predicate, carrier_value)?;
             let applied = self.app(representation, abs_a)?;
             let equality = self.eq(bool_ty, applied, carrier_value)?;
-            let conjunction = self.conjunction_binder(bool_ty, base_name)?;
-            let implication = self.imp_tm(bool_ty, conjunction, guard, equality)?;
+            let implication = self.op2(Op2::Imp, guard, equality)?;
             self.forall_tm(bool_ty, carrier_value, implication)?
         };
 
         let rep_guarded_body = {
-            let guard = self.guard_body(bool_ty, base_name, carrier, predicate, rep_b)?;
+            let guard = self.guard_body(base_name, carrier, predicate, rep_b)?;
             self.forall_tm(bool_ty, subtype_value, guard)?
         };
 
@@ -378,15 +382,7 @@ impl Kernel {
             representation,
             abstraction,
         )?;
-        let conjunction = self.conjunction_binder(bool_ty, base_name)?;
-        let tail = self.and_tm(bool_ty, conjunction, rep_abs, rep_guarded)?;
-        self.and_tm(bool_ty, conjunction, abs_rep, tail)
-    }
-
-    /// The bound function variable of the equality-only conjunction encoding.
-    fn conjunction_binder(&mut self, bool_ty: Ref, base_name: u64) -> Result<Ref, KernelError> {
-        let unary = self.ty_arr(bool_ty, bool_ty)?;
-        let binary = self.ty_arr(bool_ty, unary)?;
-        self.tm_fv(base_name + Binder::Conjunction as u64, binary)
+        let tail = self.op2(Op2::And, rep_abs, rep_guarded)?;
+        self.op2(Op2::And, abs_rep, tail)
     }
 }

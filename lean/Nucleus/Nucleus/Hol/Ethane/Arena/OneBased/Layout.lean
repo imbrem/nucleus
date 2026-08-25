@@ -491,6 +491,37 @@ def Arena.SylSound (arena : Arena) : Prop :=
 may later supply its actual HOL truth value; unknown or ill-sorted references
 remain indeterminate.  Classical soundness is required for every completion,
 which is precisely the discipline used by `CheckedArena`. -/
+structure Arena.HolInterpretationSound (resolve : Resolver) (arena : Arena)
+    (interpretation : PartialValuation Ref) : Prop where
+  /-- Every checked Boolean row has a proposition denotation.  Ill-sorted and
+  absent rows may remain indeterminate. -/
+  total : ∀ reference, ContextClaim (coreResolver resolve) arena.holCore reference →
+    ∃ proposition, interpretation reference = some proposition
+  /-- Semantic equality classes denote logically equivalent propositions. -/
+  equality : ∀ {left right leftProp rightProp},
+    ContextClaim (coreResolver resolve) arena.holCore left →
+    ContextClaim (coreResolver resolve) arena.holCore right →
+    Columns.Class arena.columns.dense .semantic left right →
+    interpretation left = some leftProp → interpretation right = some rightProp →
+    (leftProp ↔ rightProp)
+
+/-- Every completion assigns the same truth value to semantically equal
+checked Boolean rows. -/
+theorem Arena.HolInterpretationSound.completion_eq {resolve : Resolver}
+    {arena : Arena} {interpretation : PartialValuation Ref}
+    (sound : arena.HolInterpretationSound resolve interpretation)
+    {left right : Ref}
+    (leftBool : ContextClaim (coreResolver resolve) arena.holCore left)
+    (rightBool : ContextClaim (coreResolver resolve) arena.holCore right)
+    (related : Columns.Class arena.columns.dense .semantic left right)
+    {valuation : Valuation Ref} (completion : valuation.Completes interpretation) :
+    valuation left ↔ valuation right := by
+  obtain ⟨leftProp, leftFound⟩ := sound.total left leftBool
+  obtain ⟨rightProp, rightFound⟩ := sound.total right rightBool
+  exact (completion left leftProp leftFound).trans <|
+    (sound.equality leftBool rightBool related leftFound rightFound).trans <|
+      (completion right rightProp rightFound).symm
+
 def Arena.HolThmSound (trusted : Arena → Prop) (resolve : Resolver) (arena : Arena)
     (interpretation : PartialValuation Ref) : Prop :=
   ∀ ambientValuation,
@@ -532,6 +563,7 @@ structure Arena.KernelValid (trusted : Arena → Prop) (resolve : Resolver) (are
   ambientAxioms : arena.ambientTheory.AllowsAxioms AllowedAmbientAxiom
   ambientTheorems : arena.AmbThmSound trusted resolve
   syllogisms : arena.SylSound
+  holInterpretation : arena.HolInterpretationSound resolve interpretation
   holTheorems : arena.HolThmSound trusted resolve interpretation
 
 /-- Under any admitted ambient valuation, the nested kernel specializes to
@@ -615,6 +647,28 @@ theorem Arena.semanticClass_sound {trusted : Arena → Prop} {resolve : Resolver
     (by simpa using rightRow)
     connectedCore
   simpa [ReferenceEqual] using proved
+
+/-- A HOL theorem remains sound when every occurrence of one checked Boolean
+atom is replaced by a semantically equal checked Boolean atom.  This is the
+semantic contract of the Rust theorem-transport rule; physical matrix layout
+and theorem-slot mutation are orthogonal refinements. -/
+theorem Arena.holTheorem_replaceSemantic {trusted : Arena → Prop}
+    {resolve : Resolver} {arena : Arena} {interpretation : PartialValuation Ref}
+    (valid : arena.KernelValid trusted resolve interpretation)
+    {fact : WireSequent} (member : fact ∈ arena.hol.thm)
+    {source target : Ref}
+    (sourceBool : ContextClaim (coreResolver resolve) arena.holCore source)
+    (targetBool : ContextClaim (coreResolver resolve) arena.holCore target)
+    (related : Columns.Class arena.columns.dense .semantic source target) :
+    ∀ ambientValuation,
+      arena.ambientTheory.Admits (arena.ImportOk trusted resolve)
+        (arena.ImportSort resolve) ambientValuation →
+      ∀ valuation : Valuation Ref, valuation.Completes interpretation →
+        (fact.semantic.replaceAtom source target).Holds valuation := by
+  intro ambientValuation admitted valuation completion
+  apply fact.semantic.replaceAtom_holds source target
+  · exact valid.holTheorems ambientValuation admitted fact member valuation completion
+  · exact valid.holInterpretation.completion_eq sourceBool targetBool related completion
 
 /-- Conversion-column lookup is sound because checked insertion refines it
 into semantic equality. -/

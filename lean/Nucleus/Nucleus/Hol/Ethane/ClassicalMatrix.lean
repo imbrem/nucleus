@@ -112,6 +112,114 @@ def Sequent.Holds {Atom : Type} (valuation : Valuation Atom) (sequent : Sequent 
 def Sequent.Sound {Atom : Type} (sequent : Sequent Atom) : Prop :=
   ∀ valuation, sequent.Holds valuation
 
+/-! ## Atom transport
+
+HOL conversion and equality can identify two Boolean rows which remain
+distinct physical atoms in the classical matrix.  The following structural
+map isolates the representation-independent part of transporting a theorem
+between those rows. -/
+
+def Lit.mapAtom {Atom Other : Type} (map : Atom → Other) (literal : Lit Atom) : Lit Other :=
+  ⟨map literal.1, literal.2⟩
+
+def Clause.mapAtom {Atom Other : Type} (map : Atom → Other)
+    (clause : Clause Atom) : Clause Other :=
+  ⟨clause.literals.map (Lit.mapAtom map)⟩
+
+def Cnf.mapAtom {Atom Other : Type} (map : Atom → Other) (cnf : Cnf Atom) : Cnf Other :=
+  ⟨cnf.clauses.map (Clause.mapAtom map)⟩
+
+def Cube.mapAtom {Atom Other : Type} (map : Atom → Other) (cube : Cube Atom) : Cube Other :=
+  ⟨cube.literals.map (Lit.mapAtom map)⟩
+
+def Dnf.mapAtom {Atom Other : Type} (map : Atom → Other) (dnf : Dnf Atom) : Dnf Other :=
+  ⟨dnf.cubes.map (Cube.mapAtom map)⟩
+
+def Sequent.mapAtom {Atom Other : Type} (map : Atom → Other)
+    (sequent : Sequent Atom) : Sequent Other :=
+  ⟨sequent.left.mapAtom map, sequent.right.mapAtom map⟩
+
+@[simp] theorem Lit.mapAtom_holds {Atom Other : Type} (map : Atom → Other)
+    (valuation : Valuation Other) (literal : Lit Atom) :
+    (literal.mapAtom map).Holds valuation ↔ literal.Holds (valuation ∘ map) := by
+  cases literal with
+  | mk atom polarity => cases polarity <;> simp [Lit.mapAtom, Lit.Holds]
+
+@[simp] theorem Clause.mapAtom_holds {Atom Other : Type} (map : Atom → Other)
+    (valuation : Valuation Other) (clause : Clause Atom) :
+    (clause.mapAtom map).Holds valuation ↔ clause.Holds (valuation ∘ map) := by
+  constructor
+  · rintro ⟨literal, member, holds⟩
+    obtain ⟨source, sourceMember, rfl⟩ := List.mem_map.mp member
+    exact ⟨source, sourceMember, (Lit.mapAtom_holds map valuation source).mp holds⟩
+  · rintro ⟨literal, member, holds⟩
+    exact ⟨literal.mapAtom map, List.mem_map.mpr ⟨literal, member, rfl⟩,
+      (Lit.mapAtom_holds map valuation literal).mpr holds⟩
+
+@[simp] theorem Cnf.mapAtom_holds {Atom Other : Type} (map : Atom → Other)
+    (valuation : Valuation Other) (cnf : Cnf Atom) :
+    (cnf.mapAtom map).Holds valuation ↔ cnf.Holds (valuation ∘ map) := by
+  simp [Cnf.mapAtom, Cnf.Holds]
+
+@[simp] theorem Cube.mapAtom_holds {Atom Other : Type} (map : Atom → Other)
+    (valuation : Valuation Other) (cube : Cube Atom) :
+    (cube.mapAtom map).Holds valuation ↔ cube.Holds (valuation ∘ map) := by
+  constructor
+  · intro mapped literal member
+    exact (Lit.mapAtom_holds map valuation literal).mpr <| mapped _
+      (List.mem_map.mpr ⟨literal, member, rfl⟩)
+  · intro source literal member
+    obtain ⟨original, originalMember, rfl⟩ := List.mem_map.mp member
+    exact (Lit.mapAtom_holds map valuation original).mp (source original originalMember)
+
+@[simp] theorem Dnf.mapAtom_holds {Atom Other : Type} (map : Atom → Other)
+    (valuation : Valuation Other) (dnf : Dnf Atom) :
+    (dnf.mapAtom map).Holds valuation ↔ dnf.Holds (valuation ∘ map) := by
+  simp [Dnf.mapAtom, Dnf.Holds]
+
+@[simp] theorem Sequent.mapAtom_holds {Atom Other : Type} (map : Atom → Other)
+    (valuation : Valuation Other) (sequent : Sequent Atom) :
+    (sequent.mapAtom map).Holds valuation ↔ sequent.Holds (valuation ∘ map) := by
+  simp [Sequent.mapAtom, Sequent.Holds]
+
+theorem Sequent.mapAtom_sound {Atom : Type} (sequent : Sequent Atom)
+    (map : Atom → Atom) (sound : sequent.Sound) (valuation : Valuation Atom)
+    (preserves : ∀ atom, valuation (map atom) ↔ valuation atom) :
+    (sequent.mapAtom map).Holds valuation := by
+  rw [Sequent.mapAtom_holds]
+  have same : valuation ∘ map = valuation := by
+    funext atom
+    exact propext (preserves atom)
+  rw [same]
+  exact sound valuation
+
+def replaceOneAtom [DecidableEq Atom] (source target atom : Atom) : Atom :=
+  if atom = source then target else atom
+
+def Sequent.replaceAtom [DecidableEq Atom] (sequent : Sequent Atom)
+    (source target : Atom) : Sequent Atom :=
+  sequent.mapAtom (replaceOneAtom source target)
+
+theorem replaceOneAtom_preserves [DecidableEq Atom] (source target : Atom)
+    (valuation : Valuation Atom) (equivalent : valuation source ↔ valuation target) :
+    ∀ atom, valuation (replaceOneAtom source target atom) ↔ valuation atom := by
+  intro atom
+  by_cases same : atom = source
+  · subst atom
+    simpa [replaceOneAtom] using equivalent.symm
+  · simp [replaceOneAtom, same]
+
+theorem Sequent.replaceAtom_holds [DecidableEq Atom] (sequent : Sequent Atom)
+    (source target : Atom) (sound : sequent.Holds valuation)
+    (equivalent : valuation source ↔ valuation target) :
+    (sequent.replaceAtom source target).Holds valuation := by
+  change (sequent.mapAtom (replaceOneAtom source target)).Holds valuation
+  rw [Sequent.mapAtom_holds]
+  have same : valuation ∘ replaceOneAtom source target = valuation := by
+    funext atom
+    exact propext (replaceOneAtom_preserves source target valuation equivalent atom)
+  simpa [same] using sound
+
 /-! ## Untyped atoms and partial HOL interpretations
 
 The classical arena deliberately does not know which atoms name well-typed HOL

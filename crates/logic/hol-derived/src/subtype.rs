@@ -43,9 +43,12 @@
 //! rather than rebuilding it.
 
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Binder, Kernel, KernelError, Ref, SubtypeAxiom, ThmId};
+use covalence_logic_hol::{
+    Binder, Kernel, KernelError, Lit, Ref, SubtypeAxiom, ThmId,
+    builtin::{Op1, Op2},
+};
 
-use crate::{ChosenModel, ModelError, ModelExt};
+use crate::{ChosenModel, ExistsError, ModelError, ModelExt, open_exists};
 
 /// A failure in the derived guarded-subtype construction.
 #[derive(Debug, Snafu)]
@@ -63,6 +66,12 @@ pub enum SubtypeError {
         /// Underlying chosen-model failure.
         source: ModelError,
     },
+    /// Opening the chosen representation or abstraction failed.
+    #[snafu(display("guarded-subtype witness selection failed: {source}"))]
+    Exists {
+        /// Underlying userspace existential-opening failure.
+        source: ExistsError,
+    },
 }
 
 impl From<KernelError> for SubtypeError {
@@ -74,6 +83,12 @@ impl From<KernelError> for SubtypeError {
 impl From<ModelError> for SubtypeError {
     fn from(source: ModelError) -> Self {
         Self::Model { source }
+    }
+}
+
+impl From<ExistsError> for SubtypeError {
+    fn from(source: ExistsError) -> Self {
+        Self::Exists { source }
     }
 }
 
@@ -106,11 +121,22 @@ pub struct Subtype {
     pub rep_abs: Ref,
     /// `∀ b : sub. guard (rep b)`.
     pub rep_guarded: Ref,
+    /// Right-nested conjunction of the three package laws.
+    pub property: Ref,
     /// The package sentence, and the theorem concluding it, when this subtype
     /// was built through the axiom rather than merely constructed.
     pub axiom: Option<SubtypeAxiom>,
     /// The exact chosen model and its proved, substituted package.
     pub model: Option<ChosenModel>,
+    /// The theorem concluding exactly [`property`](Self::property), when the
+    /// subtype was built through the axiom.
+    pub property_theorem: Option<ThmId>,
+    /// The theorem concluding exactly [`abs_rep`](Self::abs_rep).
+    pub abs_rep_theorem: Option<ThmId>,
+    /// The theorem concluding exactly [`rep_abs`](Self::rep_abs).
+    pub rep_abs_theorem: Option<ThmId>,
+    /// The theorem concluding exactly [`rep_guarded`](Self::rep_guarded).
+    pub rep_guarded_theorem: Option<ThmId>,
     /// The first name reserved for the package's own binders.
     pub base_name: u64,
 }
@@ -186,17 +212,43 @@ impl SubtypeExt for Kernel {
         let axiom = self.sub_exists(bool_ty, carrier, predicate)?;
         let model = self.choose_model(axiom.theorem)?;
         let sub = model.ty;
-        let mut built = Builder {
-            kernel: self,
-            bool_ty,
+        let representation = open_exists(self, model.specification)?;
+        let abstraction = open_exists(self, representation.body)?;
+        let [abs_rep, tail] = binary(self, abstraction.body, Op2::And)?;
+        let [rep_abs, rep_guarded] = binary(self, tail, Op2::And)?;
+        let rep_ty = self.classifier(representation.witness)?;
+        let abs_ty = self.classifier(abstraction.witness)?;
+
+        let property_theorem = self.copy_theorem(model.theorem)?;
+        self.convert_theorem(property_theorem, model.specification, abstraction.body)?;
+        let property_lit = Lit::positive(abstraction.body.get());
+        let abs_rep_theorem =
+            self.expand_conclusion(property_theorem, property_lit, Some(false))?;
+        let tail_theorem = self.expand_conclusion(property_theorem, property_lit, Some(true))?;
+        let tail_lit = Lit::positive(tail.get());
+        let rep_abs_theorem = self.expand_conclusion(tail_theorem, tail_lit, Some(false))?;
+        let rep_guarded_theorem = self.expand_conclusion(tail_theorem, tail_lit, Some(true))?;
+
+        Ok(Subtype {
             carrier,
             predicate,
-            base: axiom.base_name,
-        }
-        .over(sub)?;
-        built.axiom = Some(axiom);
-        built.model = Some(model);
-        Ok(built)
+            sub,
+            rep: representation.witness,
+            abs: abstraction.witness,
+            rep_ty,
+            abs_ty,
+            abs_rep,
+            rep_abs,
+            rep_guarded,
+            property: abstraction.body,
+            axiom: Some(axiom),
+            model: Some(model),
+            property_theorem: Some(property_theorem),
+            abs_rep_theorem: Some(abs_rep_theorem),
+            rep_abs_theorem: Some(rep_abs_theorem),
+            rep_guarded_theorem: Some(rep_guarded_theorem),
+            base_name: axiom.base_name,
+        })
     }
 
     fn subtype_terms(
@@ -261,6 +313,8 @@ impl Builder<'_> {
         let abs = self.kernel.eps(abs_ty, abs_chooser)?;
 
         let (abs_rep, rep_abs, rep_guarded) = self.law_parts(sub, rep, abs)?;
+        let tail = self.kernel.op2(Op2::And, rep_abs, rep_guarded)?;
+        let property = self.kernel.op2(Op2::And, abs_rep, tail)?;
 
         Ok(Subtype {
             carrier: self.carrier,
@@ -273,8 +327,13 @@ impl Builder<'_> {
             abs_rep,
             rep_abs,
             rep_guarded,
+            property,
             axiom: None,
             model: None,
+            property_theorem: None,
+            abs_rep_theorem: None,
+            rep_abs_theorem: None,
+            rep_guarded_theorem: None,
             base_name: self.base,
         })
     }
@@ -302,11 +361,9 @@ impl Builder<'_> {
             .tm_fv(self.name(Binder::Witness), self.carrier)?;
         let holds_witness = self.kernel.app(self.predicate, witness)?;
         let inhabited = self.kernel.exists_tm(witness, holds_witness)?;
-        let empty = self.kernel.not_tm(self.bool_ty, inhabited)?;
+        let empty = self.kernel.op1(Op1::Not, inhabited)?;
         let holds_value = self.kernel.app(self.predicate, value)?;
-        let conjunction = self.conjunction_binder()?;
-        self.kernel
-            .or_tm(self.bool_ty, conjunction, holds_value, empty)
+        self.kernel.op2(Op2::Or, holds_value, empty)
     }
 
     /// The three package laws for one candidate model type.
@@ -337,10 +394,7 @@ impl Builder<'_> {
             let guard = self.guard(carrier_value)?;
             let applied = self.kernel.app(representation, abs_a)?;
             let equality = self.kernel.eq(self.bool_ty, applied, carrier_value)?;
-            let conjunction = self.conjunction_binder()?;
-            let implication = self
-                .kernel
-                .imp_tm(self.bool_ty, conjunction, guard, equality)?;
+            let implication = self.kernel.op2(Op2::Imp, guard, equality)?;
             self.kernel
                 .forall_tm(self.bool_ty, carrier_value, implication)?
         };
@@ -362,17 +416,25 @@ impl Builder<'_> {
     ) -> Result<Ref, KernelError> {
         let (abs_rep, rep_abs, rep_guarded) =
             self.law_parts(model_ty, representation, abstraction)?;
-        let conjunction = self.conjunction_binder()?;
-        let tail = self
-            .kernel
-            .and_tm(self.bool_ty, conjunction, rep_abs, rep_guarded)?;
-        self.kernel.and_tm(self.bool_ty, conjunction, abs_rep, tail)
+        let tail = self.kernel.op2(Op2::And, rep_abs, rep_guarded)?;
+        self.kernel.op2(Op2::And, abs_rep, tail)
     }
+}
 
-    /// The bound function variable of the equality-only conjunction encoding.
-    fn conjunction_binder(&mut self) -> Result<Ref, KernelError> {
-        let unary = self.kernel.ty_arr(self.bool_ty, self.bool_ty)?;
-        let binary = self.kernel.ty_arr(self.bool_ty, unary)?;
-        self.kernel.tm_fv(self.name(Binder::Conjunction), binary)
+fn binary(kernel: &Kernel, input: Ref, op: Op2) -> Result<[Ref; 2], KernelError> {
+    if kernel.arena().op2(input) != Some(op) {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "subtype package conjunction",
+        });
     }
+    let children: Vec<_> = kernel
+        .arena()
+        .children(input)
+        .ok_or(KernelError::MissingDefinition { reference: input })?
+        .collect();
+    children
+        .try_into()
+        .map_err(|_| KernelError::InvalidTheoremRule {
+            rule: "subtype package conjunction",
+        })
 }

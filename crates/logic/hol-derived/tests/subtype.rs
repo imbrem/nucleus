@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use covalence_logic_hol::{AX_SUB, Binder, Kernel, KernelError, Ref, Sort, Table};
+use covalence_logic_hol::{AX_SUB, Binder, Kernel, KernelError, Lit, Ref, Sort, Table, ThmId};
 use covalence_logic_hol_derived::{Subtype, SubtypeError, SubtypeExt};
 
 /// A kernel with `star`, `bool`, a carrier, and a predicate over it.
@@ -60,6 +60,8 @@ fn same_shape(kernel: &Kernel, left: Ref, right: Ref) -> bool {
         if left.tag() != right.tag()
             || left.name() != right.name()
             || left.bool_value() != right.bool_value()
+            || left.op1() != right.op1()
+            || left.op2() != right.op2()
         {
             return false;
         }
@@ -71,6 +73,16 @@ fn same_shape(kernel: &Kernel, left: Ref, right: Ref) -> bool {
         pending.extend(left.into_iter().zip(right));
     }
     true
+}
+
+fn sole_conclusion(kernel: &Kernel, theorem: ThmId) -> Ref {
+    let theorem = kernel.thm().get(theorem).expect("theorem");
+    assert!(theorem.lhs.rows().next().is_none());
+    let rows = theorem.rhs.to_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].len(), 1);
+    assert!(rows[0][0].is_positive());
+    Ref::new(i32::try_from(rows[0][0].magnitude()).expect("Ref magnitude")).expect("nonzero Ref")
 }
 
 #[test]
@@ -136,6 +148,51 @@ fn rep_and_abs_have_the_types_the_laws_need() {
     assert_eq!(
         fix.kernel.classifier(restored).expect("restored type"),
         built.carrier
+    );
+}
+
+#[test]
+fn each_chosen_package_law_is_an_exact_premise_free_theorem() {
+    let mut fix = Fix::identity_on_bool().licensed();
+    let built = fix.guarded().expect("subtype");
+
+    assert_eq!(
+        sole_conclusion(
+            &fix.kernel,
+            built.property_theorem.expect("property theorem")
+        ),
+        built.property
+    );
+    assert_eq!(
+        sole_conclusion(&fix.kernel, built.abs_rep_theorem.expect("abs-rep theorem")),
+        built.abs_rep
+    );
+    assert_eq!(
+        sole_conclusion(&fix.kernel, built.rep_abs_theorem.expect("rep-abs theorem")),
+        built.rep_abs
+    );
+    assert_eq!(
+        sole_conclusion(
+            &fix.kernel,
+            built.rep_guarded_theorem.expect("guarded theorem")
+        ),
+        built.rep_guarded
+    );
+
+    let model = built.model.expect("model");
+    assert_eq!(
+        sole_conclusion(&fix.kernel, model.theorem),
+        model.specification
+    );
+    assert_eq!(
+        fix.kernel
+            .thm()
+            .get(built.property_theorem.expect("property theorem"))
+            .expect("property theorem")
+            .rhs
+            .to_rows()[0]
+            .as_slice(),
+        [Lit::positive(built.property.get())]
     );
 }
 
