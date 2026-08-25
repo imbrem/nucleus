@@ -19,6 +19,7 @@ use crate::{
     row::{Expr as Node, Row},
 };
 
+mod choice;
 mod classical;
 mod infinity;
 mod logic;

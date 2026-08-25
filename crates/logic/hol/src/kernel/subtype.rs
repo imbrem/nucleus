@@ -218,7 +218,11 @@ impl Kernel {
 
         // The model type is a *variable* here: everything below is built under
         // the `ty.exists` binder that closes over it.
-        let star = self.star()?;
+        // Reuse Boolean's checked `star` row. A fresh syntactically identical
+        // kind is not in the same equality class, and would make the bound
+        // variable incompatible with `model(model_name, package_body)` when
+        // `model_spec` substitutes that chosen type.
+        let star = self.classifier(bool_ty)?;
         let model_ty = self.ty_fv(model_name, star)?;
         let rep_ty = self.ty_arr(model_ty, carrier)?;
         let abs_ty = self.ty_arr(carrier, model_ty)?;

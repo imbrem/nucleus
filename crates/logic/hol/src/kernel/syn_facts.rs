@@ -29,7 +29,7 @@ impl Kernel {
         source: Ref,
     ) -> Result<SynFactId, KernelError> {
         let expansion = self.lower_logical(init, source)?;
-        self.require_compatible_endpoints::<Infallible>(source, expansion)?;
+        self.require_compatible_endpoints::<Infallible>(source, expansion, false)?;
         self.put_fact(
             target,
             SynFact::new(SynRel::Syn, None, None, source, expansion),
@@ -298,7 +298,7 @@ impl Kernel {
             children,
             "constructor congruence",
         )?;
-        self.require_compatible_endpoints::<Infallible>(input, output)?;
+        self.require_compatible_endpoints::<Infallible>(input, output, var.is_some())?;
         self.put_fact(target, SynFact::new(rel, var, val, input, output))
     }
 
@@ -374,7 +374,7 @@ impl Kernel {
             shape.output_body,
             "binder congruence",
         )?;
-        self.require_compatible_endpoints::<Infallible>(input, output)?;
+        self.require_compatible_endpoints::<Infallible>(input, output, var.is_some())?;
         self.put_fact(target, SynFact::new(rel, var, val, input, output))
     }
 
@@ -420,7 +420,7 @@ impl Kernel {
             output_body,
             "implicit binder congruence",
         )?;
-        self.require_compatible_endpoints::<Infallible>(input, output)?;
+        self.require_compatible_endpoints::<Infallible>(input, output, var.is_some())?;
         self.put_fact(target, SynFact::new(rel, var, val, input, output))
     }
 
@@ -467,7 +467,7 @@ impl Kernel {
         {
             return Err(Self::invalid_fact("explicit alpha binder freshness"));
         }
-        self.require_compatible_endpoints::<Infallible>(input, output)?;
+        self.require_compatible_endpoints::<Infallible>(input, output, false)?;
         self.put_fact(
             target,
             SynFact::new(SynRel::Alpha, None, None, input, output),
@@ -511,7 +511,7 @@ impl Kernel {
         {
             return Err(Self::invalid_fact("implicit alpha binder freshness"));
         }
-        self.require_compatible_endpoints::<Infallible>(input, output)?;
+        self.require_compatible_endpoints::<Infallible>(input, output, false)?;
         self.put_fact(
             target,
             SynFact::new(SynRel::Alpha, None, None, input, output),
@@ -548,7 +548,7 @@ impl Kernel {
             fact.output(),
             "type beta",
         )?;
-        self.require_compatible_endpoints::<Infallible>(source, fact.output())?;
+        self.require_compatible_endpoints::<Infallible>(source, fact.output(), false)?;
         self.put_fact(
             target,
             SynFact::new(SynRel::Conv, None, None, source, fact.output()),
@@ -584,7 +584,7 @@ impl Kernel {
             fact.output(),
             "term beta",
         )?;
-        self.require_compatible_endpoints::<Infallible>(source, fact.output())?;
+        self.require_compatible_endpoints::<Infallible>(source, fact.output(), false)?;
         self.put_fact(
             target,
             SynFact::new(SynRel::Conv, None, None, source, fact.output()),
@@ -616,7 +616,7 @@ impl Kernel {
         {
             return Err(Self::invalid_fact("term eta"));
         }
-        self.require_compatible_endpoints::<Infallible>(source, function)?;
+        self.require_compatible_endpoints::<Infallible>(source, function, false)?;
         self.put_fact(
             target,
             SynFact::new(SynRel::Conv, None, None, source, function),
@@ -660,7 +660,7 @@ impl Kernel {
         KernelError::InvalidSynFact { rule }
     }
 
-    fn fact<E>(&self, id: SynFactId) -> Result<SynFact, KernelError<E>>
+    pub(super) fn fact<E>(&self, id: SynFactId) -> Result<SynFact, KernelError<E>>
     where
         E: std::error::Error + 'static,
     {
@@ -723,7 +723,7 @@ impl Kernel {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn require_fact_match<E>(
+    pub(super) fn require_fact_match<E>(
         &self,
         evidence: SynFactId,
         rel: SynRel,
@@ -848,13 +848,26 @@ impl Kernel {
         Ok(())
     }
 
-    fn require_compatible_endpoints<E>(&self, input: Ref, output: Ref) -> Result<(), KernelError<E>>
+    fn require_compatible_endpoints<E>(
+        &self,
+        input: Ref,
+        output: Ref,
+        substitution: bool,
+    ) -> Result<(), KernelError<E>>
     where
         E: std::error::Error + 'static,
     {
         let category = self.category_as::<E>(input)?;
         self.require_category::<E>(output, category)?;
-        if category != Sort::Kind {
+        // Direct syntactic relations preserve a row's classifier. An active
+        // substitution is different: its recursively checked child facts may
+        // rewrite the classifier itself, for example
+        // `[bool / α] (x : α) = (x : bool)`. Requiring the endpoints to be in
+        // one semantic type class here would make type substitution unable to
+        // enter any term. The constructor and child checks above establish the
+        // exact classifier transformation; this final check only needs to
+        // preserve the syntactic category in that case.
+        if category != Sort::Kind && !substitution {
             let input_classifier = self.classifier_as::<E>(input)?;
             let output_classifier = self.classifier_as::<E>(output)?;
             if !self.equivalent_as::<E>(input_classifier, output_classifier)? {
@@ -1090,7 +1103,7 @@ impl Kernel {
         self.require_star::<E>(kind)
     }
 
-    /// Whether `variable` may occur anywhere beneath `root`.
+    /// Whether `variable` occurs free beneath `root`.
     ///
     /// Rows form a directed acyclic graph with sharing, so the walk needs a
     /// visited set: without one a term of `n` rows can present exponentially
@@ -1102,16 +1115,46 @@ impl Kernel {
     {
         let needle = *self.row::<E>(variable)?.expr();
         let mut visited = BTreeSet::new();
-        let mut pending = vec![root];
-        while let Some(reference) = pending.pop() {
-            if !visited.insert(reference) {
+        let mut pending = vec![(root, false)];
+        while let Some((reference, shadowed)) = pending.pop() {
+            // A shared row can be reached both inside and outside a binder, so
+            // the binding state is part of the visited key.
+            if !visited.insert((reference, shadowed)) {
                 continue;
             }
             let node = *self.row::<E>(reference)?.expr();
-            if Self::same_variable_name(node, needle) || Self::is_proxy(node) {
+            if Self::is_proxy(node) {
                 return Ok(true);
             }
-            pending.extend(node.children());
+            if Self::same_variable_name(node, needle) {
+                if !shadowed {
+                    return Ok(true);
+                }
+                continue;
+            }
+            match node {
+                Node::TyLam(binder, body) | Node::Lam(binder, body) => {
+                    let binder_node = *self.row::<E>(binder)?.expr();
+                    // The declaration itself is not a variable occurrence, but
+                    // a term binder's classifier remains outside its scope.
+                    pending.extend(
+                        binder_node
+                            .children()
+                            .into_iter()
+                            .map(|child| (child, shadowed)),
+                    );
+                    pending.push((
+                        body,
+                        shadowed || Self::same_variable_name(binder_node, needle),
+                    ));
+                }
+                Node::TyExists { name, predicate } | Node::Model { name, predicate } => {
+                    let binds_needle =
+                        matches!(needle, Node::TyFv { name: needle, .. } if needle == name);
+                    pending.push((predicate, shadowed || binds_needle));
+                }
+                _ => pending.extend(node.children().into_iter().map(|child| (child, shadowed))),
+            }
         }
         Ok(false)
     }

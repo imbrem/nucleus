@@ -17,7 +17,11 @@ pub use proof::{ProofError, load_standard_proof};
 
 mod subtype;
 
-pub use subtype::{Subtype, SubtypeExt};
+pub use subtype::{Subtype, SubtypeError, SubtypeExt};
+
+mod model;
+
+pub use model::{ChosenModel, ModelError, ModelExt};
 
 mod connection;
 

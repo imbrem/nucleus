@@ -282,13 +282,11 @@ def implicit_binder(kernel: Kernel, name: int | None, rows: Rows) -> int:
 def _unify_classifiers(kernel: Kernel, left: int, right: int, rows: Rows) -> None:
     """Make two rows classifier-compatible, as every rule's conclusion needs.
 
-    Every mint rule ends in `compatible(input, output)`: same category, and
+    Direct syntactic equalities require the same category and
     union-find-equivalent classifiers for everything but a kind. Two rows that
     spell the same type are still two references until something unions them,
-    so this proves and records that edge.
-
-    A substitution that genuinely *changes* a term's type cannot satisfy the
-    condition at all; that boundary surfaces here as a `CannotProveError`.
+    so this proves and records that edge. Active substitution does not use this
+    helper because transforming a type may legitimately reclassify a term.
     """
     if kernel.category(left) == "kind":
         return
@@ -384,8 +382,6 @@ def _substitute(
         substitute(kernel, var, val, child, rows, memo) for child in row.children
     ]
     output = _rebuild(kernel, row, [reference for reference, _ in children], rows)
-    if output != source:
-        _unify_classifiers(kernel, source, output, rows)
     fact = kernel.syn_congr(
         "syn",
         source,
@@ -440,8 +436,6 @@ def _substitute_binder(
     new_body, body_fact = substitute(kernel, var, val, body, rows, memo)
 
     output = _rebuild(kernel, row, [new_binder, new_body], rows)
-    if output != source:
-        _unify_classifiers(kernel, source, output, rows)
     fact = kernel.syn_binder_congr(
         "syn", source, output, binder_fact, body_fact, var=var, val=val
     )
@@ -479,8 +473,6 @@ def _substitute_implicit_binder(
 
     new_body, body_fact = substitute(kernel, var, val, body, rows, memo)
     output = _rebuild(kernel, row, [new_body], rows)
-    if output != source:
-        _unify_classifiers(kernel, source, output, rows)
     fact = kernel.syn_implicit_binder_congr(
         "syn", source, output, witness, body_fact, var=var, val=val
     )

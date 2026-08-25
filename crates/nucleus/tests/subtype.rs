@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use covalence_logic_hol::{AX_SUB, Binder, Kernel, KernelError, Ref, Sort, Table};
-use covalence_nucleus::{Subtype, SubtypeExt};
+use covalence_nucleus::{Subtype, SubtypeError, SubtypeExt};
 
 /// A kernel with `star`, `bool`, a carrier, and a predicate over it.
 struct Fix {
@@ -34,7 +34,7 @@ impl Fix {
         self
     }
 
-    fn guarded(&mut self) -> Result<Subtype, KernelError> {
+    fn guarded(&mut self) -> Result<Subtype, SubtypeError> {
         self.kernel
             .guarded_subtype(self.bool_ty, self.carrier, self.predicate)
     }
@@ -147,6 +147,7 @@ fn the_subtype_is_the_one_the_axiom_is_about() {
     let mut fix = Fix::identity_on_bool().licensed();
     let built = fix.guarded().expect("subtype");
     let axiom = built.axiom.expect("built through the axiom");
+    let model = built.model.expect("opened chosen model");
 
     let expected = fix
         .kernel
@@ -156,6 +157,12 @@ fn the_subtype_is_the_one_the_axiom_is_about() {
         same_shape(&fix.kernel, built.sub, expected),
         "the subtype must be `model` of the sentence's own body"
     );
+    assert_eq!(
+        built.sub, model.ty,
+        "the usable subtype is the proved choice"
+    );
+    assert_eq!(built.theorem(), Some(model.theorem));
+    assert_eq!(built.existence_theorem(), Some(axiom.theorem));
     assert_eq!(built.base_name, axiom.base_name);
 }
 
@@ -221,7 +228,9 @@ fn the_full_package_requires_the_capability() {
     let mut fix = Fix::identity_on_bool();
     assert!(matches!(
         fix.guarded(),
-        Err(KernelError::MissingAxiom { name: AX_SUB })
+        Err(SubtypeError::Kernel {
+            source: KernelError::MissingAxiom { name: AX_SUB }
+        })
     ));
 }
 

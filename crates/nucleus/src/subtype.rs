@@ -42,13 +42,48 @@
 //! caller to reconstruct them, and every construction below threads one row
 //! rather than rebuilding it.
 
+use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Binder, Kernel, KernelError, Ref, SubtypeAxiom, ThmId};
+
+use crate::{ChosenModel, ModelError, ModelExt};
+
+/// A failure in the derived guarded-subtype construction.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum SubtypeError {
+    /// A checked constructor or subtype-axiom rule rejected its inputs.
+    #[snafu(display("guarded-subtype construction was rejected: {source}"))]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+    /// The chosen-model userspace layer could not open the package theorem.
+    #[snafu(display("guarded-subtype model selection failed: {source}"))]
+    Model {
+        /// Underlying chosen-model failure.
+        source: ModelError,
+    },
+}
+
+impl From<KernelError> for SubtypeError {
+    fn from(source: KernelError) -> Self {
+        Self::Kernel { source }
+    }
+}
+
+impl From<ModelError> for SubtypeError {
+    fn from(source: ModelError) -> Self {
+        Self::Model { source }
+    }
+}
 
 /// A usable guarded subtype.
 ///
-/// The three law fields are *statements*. They are true exactly when
-/// [`theorem`](Self::theorem) is present, which is what the `ax.sub`
-/// capability buys; on their own they are just Boolean terms.
+/// The three law fields are *statements*. When [`model`](Self::model) is
+/// present, its theorem concludes the existential package from which the
+/// selected representation and abstraction are derived. The individual law
+/// projections remain ordinary userspace proof work; on their own these rows
+/// are just Boolean terms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Subtype {
     /// The carrier type the subtype was carved out of.
@@ -74,6 +109,8 @@ pub struct Subtype {
     /// The package sentence, and the theorem concluding it, when this subtype
     /// was built through the axiom rather than merely constructed.
     pub axiom: Option<SubtypeAxiom>,
+    /// The exact chosen model and its proved, substituted package.
+    pub model: Option<ChosenModel>,
     /// The first name reserved for the package's own binders.
     pub base_name: u64,
 }
@@ -85,10 +122,16 @@ impl Subtype {
         self.base_name + binder as u64
     }
 
-    /// The sequent concluding the package sentence, if this subtype came from
-    /// the axiom.
+    /// The sequent specifying the chosen subtype model, if this subtype came
+    /// from the axiom.
     #[must_use]
     pub fn theorem(&self) -> Option<ThmId> {
+        self.model.map(|model| model.theorem)
+    }
+
+    /// The original type-existence theorem, before choosing its model.
+    #[must_use]
+    pub fn existence_theorem(&self) -> Option<ThmId> {
         self.axiom.map(|axiom| axiom.theorem)
     }
 }
@@ -112,7 +155,7 @@ pub trait SubtypeExt {
         bool_ty: Ref,
         carrier: Ref,
         predicate: Ref,
-    ) -> Result<Subtype, KernelError>;
+    ) -> Result<Subtype, SubtypeError>;
 
     /// Builds the same terms without invoking the axiom.
     ///
@@ -128,7 +171,7 @@ pub trait SubtypeExt {
         bool_ty: Ref,
         carrier: Ref,
         predicate: Ref,
-    ) -> Result<Subtype, KernelError>;
+    ) -> Result<Subtype, SubtypeError>;
 }
 
 impl SubtypeExt for Kernel {
@@ -137,11 +180,12 @@ impl SubtypeExt for Kernel {
         bool_ty: Ref,
         carrier: Ref,
         predicate: Ref,
-    ) -> Result<Subtype, KernelError> {
+    ) -> Result<Subtype, SubtypeError> {
         // The axiom first: it fixes the base name and the package body, and
         // everything below has to be about *that* subtype.
         let axiom = self.sub_exists(bool_ty, carrier, predicate)?;
-        let sub = self.model(axiom.model_name, axiom.package_body)?;
+        let model = self.choose_model(axiom.theorem)?;
+        let sub = model.ty;
         let mut built = Builder {
             kernel: self,
             bool_ty,
@@ -151,6 +195,7 @@ impl SubtypeExt for Kernel {
         }
         .over(sub)?;
         built.axiom = Some(axiom);
+        built.model = Some(model);
         Ok(built)
     }
 
@@ -159,7 +204,7 @@ impl SubtypeExt for Kernel {
         bool_ty: Ref,
         carrier: Ref,
         predicate: Ref,
-    ) -> Result<Subtype, KernelError> {
+    ) -> Result<Subtype, SubtypeError> {
         let base = self.fresh_name(&[carrier, predicate])?;
         let mut builder = Builder {
             kernel: self,
@@ -171,7 +216,7 @@ impl SubtypeExt for Kernel {
         let package = builder.package_body()?;
         let model_name = builder.name(Binder::ModelType);
         let sub = builder.kernel.model(model_name, package)?;
-        builder.over(sub)
+        Ok(builder.over(sub)?)
     }
 }
 
@@ -229,6 +274,7 @@ impl Builder<'_> {
             rep_abs,
             rep_guarded,
             axiom: None,
+            model: None,
             base_name: self.base,
         })
     }
@@ -236,7 +282,7 @@ impl Builder<'_> {
     /// `∃rep. ∃abs. laws` over a bound model type — the body the sentence
     /// quantifies, rebuilt so a subtype can be constructed without the axiom.
     fn package_body(&mut self) -> Result<Ref, KernelError> {
-        let star = self.kernel.star()?;
+        let star = self.kernel.classifier(self.bool_ty)?;
         let model_ty = self.kernel.ty_fv(self.name(Binder::ModelType), star)?;
         let rep_ty = self.kernel.ty_arr(model_ty, self.carrier)?;
         let abs_ty = self.kernel.ty_arr(self.carrier, model_ty)?;
