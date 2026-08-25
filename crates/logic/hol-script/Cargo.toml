@@ -12,5 +12,8 @@ covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-parse = { path = "../../lib/parse" }
 covalence-logic-hol = { path = "../hol" }
 
+[dev-dependencies]
+covalence-logic-hol-derived = { path = "../hol-derived" }
+
 [lints]
 workspace = true

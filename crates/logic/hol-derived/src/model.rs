@@ -162,6 +162,52 @@ pub fn substitute(
     Ok(Substitution { output, fact })
 }
 
+/// Eta-expands a function with an exact requested arrow classifier.
+///
+/// Checked substitution commonly rebuilds a type into fresh but syntactically
+/// identical rows. The kernel intentionally does not infer equality merely
+/// from that physical shape. This helper constructs `λx. function x` at
+/// `function_ty`; ordinary checked application verifies the domain, and
+/// [`Kernel::lam_at`] verifies the requested classifier.
+///
+/// This carries no theorem authority. Callers needing to rewrite a theorem
+/// between `function` and the returned eta expansion must separately obtain
+/// checked conversion evidence.
+///
+/// # Errors
+///
+/// Returns an error unless `function_ty` is an arrow type compatible with
+/// `function`, or if no fresh binder name remains.
+pub fn eta_expand_at(
+    kernel: &mut Kernel,
+    function_ty: Ref,
+    function: Ref,
+) -> Result<Ref, KernelError> {
+    let actual = kernel
+        .arena()
+        .tag(function_ty)
+        .ok_or(KernelError::MissingDefinition {
+            reference: function_ty,
+        })?;
+    let mut parts = kernel
+        .arena()
+        .children(function_ty)
+        .ok_or(KernelError::WrongForm {
+            reference: function_ty,
+            expected: "an arrow type",
+            actual,
+        })?;
+    let domain = parts.next().ok_or(KernelError::WrongForm {
+        reference: function_ty,
+        expected: "an arrow type",
+        actual,
+    })?;
+    drop(parts);
+    let argument = kernel.tm_fv(kernel.fresh_name(&[function_ty, function])?, domain)?;
+    let body = kernel.app(function, argument)?;
+    kernel.lam_at(function_ty, argument, body)
+}
+
 fn find_free_type_variable(
     kernel: &Kernel,
     root: Ref,

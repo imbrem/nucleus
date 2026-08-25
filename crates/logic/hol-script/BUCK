@@ -62,6 +62,7 @@ rust_test(
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_parse": "nucleus//crates/lib/parse:covalence_lib_parse",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
+        "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -93,6 +94,7 @@ rust_test(
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_parse": "nucleus//crates/lib/parse:covalence_lib_parse",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
+        "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
         "covalence_logic_hol_script": ":covalence_logic_hol_script",
     },
     env = {

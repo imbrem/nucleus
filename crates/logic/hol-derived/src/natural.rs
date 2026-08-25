@@ -10,7 +10,10 @@
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, KernelError, Ref};
 
-use crate::{Infinity, InfinityError, InfinityExt, Subtype, SubtypeError, SubtypeExt};
+use crate::{
+    Infinity, InfinityError, InfinityExt, ModelError, Subtype, SubtypeError, SubtypeExt,
+    eta_expand_at, substitute,
+};
 
 /// The first object-language natural-number package.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,6 +89,12 @@ pub enum NaturalError {
         /// Underlying userspace failure.
         source: SubtypeError,
     },
+    /// Specializing a userspace membership schema failed.
+    #[snafu(display("natural-number membership specialization failed: {source}"))]
+    Substitution {
+        /// Underlying checked userspace substitution failure.
+        source: ModelError,
+    },
 }
 
 impl From<KernelError> for NaturalError {
@@ -106,6 +115,12 @@ impl From<SubtypeError> for NaturalError {
     }
 }
 
+impl From<ModelError> for NaturalError {
+    fn from(source: ModelError) -> Self {
+        Self::Substitution { source }
+    }
+}
+
 /// Derived natural-number operations over a checked kernel.
 pub trait NaturalExt {
     /// Chooses and carves the standard natural-number package.
@@ -119,43 +134,114 @@ pub trait NaturalExt {
     /// Returns an error if either capability is absent, `bool_ty` is not the
     /// kernel's Boolean type, or any checked intermediate construction fails.
     fn choose_naturals(&mut self, bool_ty: Ref) -> Result<Naturals, NaturalError>;
+
+    /// Chooses and carves naturals using an open userspace membership schema.
+    ///
+    /// `member_schema` must denote the definition
+    /// `'a → ('a → 'a) → 'a → bool`, with `type_parameter` as its free `'a`.
+    /// The implementation substitutes the chosen infinite carrier through the
+    /// public checked substitution API, then applies the chosen zero and
+    /// successor. This is the bridge used by the S-expression init source: the
+    /// language and schema remain outside the TCB.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as [`choose_naturals`], or
+    /// if the schema cannot be checked, specialized, or applied at the chosen
+    /// carrier.
+    fn choose_naturals_from_member_schema(
+        &mut self,
+        bool_ty: Ref,
+        type_parameter: Ref,
+        member_schema: Ref,
+    ) -> Result<Naturals, NaturalError>;
 }
 
 impl NaturalExt for Kernel {
     fn choose_naturals(&mut self, bool_ty: Ref) -> Result<Naturals, NaturalError> {
         // Check both capabilities before appending any package syntax, so a
         // missing second capability cannot leave a half-built construction.
-        if !self.arena().axioms().any(|name| name == AX_INF) {
-            return Err(KernelError::MissingAxiom { name: AX_INF }.into());
-        }
-        if !self.arena().axioms().any(|name| name == AX_SUB) {
-            return Err(KernelError::MissingAxiom { name: AX_SUB }.into());
-        }
+        require_natural_capabilities(self)?;
         let infinity = self.choose_infinity(bool_ty)?;
         let member = induction_member(self, bool_ty, &infinity)?;
-        let subtype = self.guarded_subtype(bool_ty, infinity.carrier, member)?;
-        let zero = self.app(subtype.abs, infinity.missed)?;
-
-        let n = self.tm_fv(
-            self.fresh_name(&[subtype.sub, subtype.rep, subtype.abs])?,
-            subtype.sub,
-        )?;
-        let represented = self.app(subtype.rep, n)?;
-        let next_ind = self.app(infinity.map, represented)?;
-        let next_nat = self.app(subtype.abs, next_ind)?;
-        let succ = self.lam(n, next_nat)?;
-        let induction = induction_statement(self, bool_ty, subtype.sub, zero, succ)?;
-
-        Ok(Naturals {
-            infinity,
-            member,
-            subtype,
-            ty: subtype.sub,
-            zero,
-            succ,
-            induction,
-        })
+        finish_naturals(self, bool_ty, infinity, member)
     }
+
+    fn choose_naturals_from_member_schema(
+        &mut self,
+        bool_ty: Ref,
+        type_parameter: Ref,
+        member_schema: Ref,
+    ) -> Result<Naturals, NaturalError> {
+        require_natural_capabilities(self)?;
+        let infinity = self.choose_infinity(bool_ty)?;
+        let specialized = substitute(self, type_parameter, infinity.carrier, member_schema)?;
+        let at_zero = self.app(specialized.output, infinity.missed)?;
+        // Substitution deliberately rebuilds syntax rather than hash-consing
+        // it. Its expected `carrier → carrier` row can therefore be a distinct
+        // reference from the chosen map's extensionally identical classifier.
+        // Eta expansion checks the bridge using ordinary applications and
+        // gives the argument the exact classifier expected by the schema.
+        let at_zero_ty = self.classifier(at_zero)?;
+        let actual = self
+            .arena()
+            .tag(at_zero_ty)
+            .ok_or(KernelError::MissingDefinition {
+                reference: at_zero_ty,
+            })?;
+        let expected_map_ty = self
+            .arena()
+            .children(at_zero_ty)
+            .and_then(|mut children| children.next())
+            .ok_or(KernelError::WrongForm {
+                reference: at_zero_ty,
+                expected: "a function accepting the successor map",
+                actual,
+            })?;
+        let map = eta_expand_at(self, expected_map_ty, infinity.map)?;
+        let member = self.app(at_zero, map)?;
+        finish_naturals(self, bool_ty, infinity, member)
+    }
+}
+
+fn require_natural_capabilities(kernel: &Kernel) -> Result<(), KernelError> {
+    if !kernel.arena().axioms().any(|name| name == AX_INF) {
+        return Err(KernelError::MissingAxiom { name: AX_INF });
+    }
+    if !kernel.arena().axioms().any(|name| name == AX_SUB) {
+        return Err(KernelError::MissingAxiom { name: AX_SUB });
+    }
+    Ok(())
+}
+
+fn finish_naturals(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    infinity: Infinity,
+    member: Ref,
+) -> Result<Naturals, NaturalError> {
+    let subtype = kernel.guarded_subtype(bool_ty, infinity.carrier, member)?;
+    let zero = kernel.app(subtype.abs, infinity.missed)?;
+
+    let n = kernel.tm_fv(
+        kernel.fresh_name(&[subtype.sub, subtype.rep, subtype.abs])?,
+        subtype.sub,
+    )?;
+    let represented = kernel.app(subtype.rep, n)?;
+    let next_ind = kernel.app(infinity.map, represented)?;
+    let next_nat = kernel.app(subtype.abs, next_ind)?;
+    let succ = kernel.lam(n, next_nat)?;
+    let induction = induction_statement(kernel, bool_ty, subtype.sub, zero, succ)?;
+
+    Ok(Naturals {
+        infinity,
+        member,
+        subtype,
+        ty: subtype.sub,
+        zero,
+        succ,
+        induction,
+    })
 }
 
 fn induction_member(
