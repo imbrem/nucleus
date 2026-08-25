@@ -24,6 +24,26 @@ const COPRODUCT: &str = r"
                       (= k h)))))))))))
 ";
 
+const NAT_CARVING: &str = r"
+  ; The predicate used to carve naturals out of an infinite carrier.
+  (define NatMember ('a)
+    (-> 'a (-> (-> 'a 'a) (-> 'a bool)))
+    (lambda zero 'a
+      (lambda succ (-> 'a 'a)
+        (lambda n 'a
+          (forall P (-> 'a bool)
+            (imp
+              (and
+                (P zero)
+                (forall k 'a (imp (P k) (P (succ k)))))
+              (P n)))))))
+
+  ; Explicit specialization is mandatory; the open row never leaks.
+  (define BoolNatMember ()
+    (-> bool (-> (-> bool bool) (-> bool bool)))
+    (inst NatMember bool))
+";
+
 #[test]
 fn coproduct_schema_compiles_to_a_checked_boolean_root() {
     let compiled = compile_theory(COPRODUCT).expect("coproduct schema");
@@ -93,5 +113,77 @@ fn nesting_is_bounded_before_elaboration() {
     assert!(matches!(
         compile_theory(&source),
         Err(TheoryError::Read { .. })
+    ));
+}
+
+#[test]
+fn typed_lambdas_and_explicit_schema_instantiation_are_checked() {
+    let compiled = compile_theory(
+        r"
+        (define id ('a) (-> 'a 'a) (lambda x 'a x))
+        (define const ('a 'b) (-> 'a (-> 'b 'a))
+          (lambda x 'a (lambda y 'b x)))
+        (define bool-id () (-> bool bool) (inst id bool))
+        (define bool-id-again () (-> bool bool) (inst id bool))
+        (define bool-const () (-> bool (-> bool bool)) (inst const bool bool))
+        (define truth () bool ((inst id bool) true))
+        ",
+    )
+    .expect("typed definitions");
+
+    let id = compiled.get("id").expect("open identity");
+    let bool_id = compiled.get("bool-id").expect("Boolean identity");
+    assert_eq!(compiled.get("bool-id-again"), Some(bool_id));
+    let truth = compiled.get("truth").expect("identity application");
+    assert_eq!(compiled.kernel().arena().tag(id), Some(Tag::Tm(TmTag::Lam)));
+    assert_eq!(
+        compiled.kernel().arena().tag(bool_id),
+        Some(Tag::Tm(TmTag::Lam))
+    );
+    assert_eq!(compiled.kernel().category(truth).expect("term"), Sort::Tm);
+    assert!(compiled.get("id/'a").is_some());
+}
+
+#[test]
+fn natural_induction_carving_is_a_reusable_open_definition() {
+    let compiled = compile_theory(NAT_CARVING).expect("natural carving predicate");
+    let open = compiled.get("NatMember").expect("open predicate");
+    let specialized = compiled
+        .get("BoolNatMember")
+        .expect("specialized predicate");
+    assert_eq!(
+        compiled.kernel().arena().tag(open),
+        Some(Tag::Tm(TmTag::Lam))
+    );
+    assert_eq!(
+        compiled.kernel().arena().tag(specialized),
+        Some(Tag::Tm(TmTag::Lam))
+    );
+    assert!(compiled.get("NatMember/'a").is_some());
+}
+
+#[test]
+fn polymorphic_schemata_cannot_leak_their_original_free_type_rows() {
+    assert!(matches!(
+        compile_theory(
+            r"
+            (define id ('a) (-> 'a 'a) (lambda x 'a x))
+            (define leaked () (-> bool bool) id)
+            ",
+        ),
+        Err(TheoryError::Invalid { .. })
+    ));
+    assert!(matches!(
+        compile_theory(
+            r"
+            (define id ('a) (-> 'a 'a) (lambda x 'a x))
+            (define wrong-arity () (-> bool bool) (inst id))
+            ",
+        ),
+        Err(TheoryError::Invalid { .. })
+    ));
+    assert!(matches!(
+        compile_theory("(define bad () bool (lambda x bool x))"),
+        Err(TheoryError::TypeMismatch { .. })
     ));
 }

@@ -98,6 +98,12 @@ pub enum TheoryError {
         /// Repeated lexical name.
         name: String,
     },
+    /// A declared result type disagrees with the checked inferred type.
+    #[snafu(display("definition {name:?} does not have its declared type"))]
+    TypeMismatch {
+        /// Definition whose annotation was rejected.
+        name: String,
+    },
     /// Checked construction rejected the elaborated syntax.
     #[snafu(display("checked theory construction failed: {source}"))]
     Kernel {
@@ -131,8 +137,10 @@ enum Token<'a> {
 ///
 /// ```text
 /// declaration := (define name ('type-parameter ...) term)
+///              | (define name ('type-parameter ...) type term)
 /// type        := bool | 'type-parameter | (-> type type)
 /// term        := true | false | name | (term term ...)
+///              | (lambda name type term) | (inst name type ...)
 ///              | (not term) | (and term term) | (or term term)
 ///              | (imp term term) | (= term term)
 ///              | (exists name type term) | (forall name type term)
@@ -241,17 +249,26 @@ fn trivia(input: &mut &str) {
     }
 }
 
-struct Compiler {
+#[derive(Clone, Copy)]
+struct Schema<'a> {
+    parameters: &'a [SExpr<'a>],
+    annotation: Option<&'a SExpr<'a>>,
+    body: &'a SExpr<'a>,
+}
+
+struct Compiler<'a> {
     kernel: Kernel,
     star: Ref,
     bool_ty: Ref,
     definitions: BTreeMap<String, Ref>,
+    schemata: BTreeMap<String, Schema<'a>>,
+    instances: BTreeMap<(String, Vec<Ref>), Ref>,
     symbols: BTreeMap<String, Ref>,
     arrows: BTreeMap<(Ref, Ref), Ref>,
     next_name: u64,
 }
 
-impl Compiler {
+impl<'a> Compiler<'a> {
     fn new() -> Result<Self, TheoryError> {
         let mut kernel = Kernel::new();
         let star = kernel.star()?;
@@ -261,16 +278,18 @@ impl Compiler {
             star,
             bool_ty,
             definitions: BTreeMap::new(),
+            schemata: BTreeMap::new(),
+            instances: BTreeMap::new(),
             symbols: BTreeMap::new(),
             arrows: BTreeMap::new(),
             next_name: 0,
         })
     }
 
-    fn declaration(&mut self, form: &SExpr<'_>) -> Result<(), TheoryError> {
+    fn declaration(&mut self, form: &'a SExpr<'a>) -> Result<(), TheoryError> {
         let items = list(form, "a define form")?;
-        if items.len() != 4 || atom(&items[0])? != "define" {
-            return invalid("expected (define name ('type ...) term)");
+        if !matches!(items.len(), 4 | 5) || atom(&items[0])? != "define" {
+            return invalid("expected (define name ('type ...) [type] term)");
         }
         let name = atom(&items[1])?;
         if name.contains('/') {
@@ -282,8 +301,9 @@ impl Compiler {
             });
         }
 
+        let parameters = list(&items[2], "a type-parameter list")?;
         let mut types = BTreeMap::new();
-        for parameter in list(&items[2], "a type-parameter list")? {
+        for parameter in parameters {
             let parameter = atom(parameter)?;
             if !parameter.starts_with('\'') || parameter.len() == 1 || parameter.contains('/') {
                 return invalid("type parameters must begin with ' and cannot contain /");
@@ -298,8 +318,26 @@ impl Compiler {
             types.insert(parameter.to_owned(), reference);
         }
 
-        let root = self.term(&items[3], &types, &BTreeMap::new())?;
+        let (annotation, body) = if items.len() == 5 {
+            (Some(&items[3]), &items[4])
+        } else {
+            (None, &items[3])
+        };
+        let root = if let Some(annotation) = annotation {
+            let expected = self.ty(annotation, &types)?;
+            self.term_at(body, expected, &types, &BTreeMap::new(), name)?
+        } else {
+            self.term(body, &types, &BTreeMap::new())?
+        };
         self.definitions.insert(name.to_owned(), root);
+        self.schemata.insert(
+            name.to_owned(),
+            Schema {
+                parameters,
+                annotation,
+                body,
+            },
+        );
         self.symbols.insert(name.to_owned(), root);
         for (parameter, reference) in types {
             self.symbols
@@ -341,14 +379,96 @@ impl Compiler {
         match expression {
             SExpr::Atom("true") => Ok(self.kernel.bool(self.bool_ty, true)?),
             SExpr::Atom("false") => Ok(self.kernel.bool(self.bool_ty, false)?),
-            SExpr::Atom(name) => terms
-                .get(*name)
-                .or_else(|| self.definitions.get(*name))
-                .copied()
-                .ok_or_else(|| TheoryError::Unknown {
-                    name: (*name).to_owned(),
-                }),
+            SExpr::Atom(name) => {
+                if let Some(reference) = terms.get(*name) {
+                    return Ok(*reference);
+                }
+                let schema =
+                    self.schemata
+                        .get(*name)
+                        .copied()
+                        .ok_or_else(|| TheoryError::Unknown {
+                            name: (*name).to_owned(),
+                        })?;
+                if !schema.parameters.is_empty() {
+                    return invalid(format!(
+                        "polymorphic schema {name:?} requires explicit instantiation"
+                    ));
+                }
+                self.definitions
+                    .get(*name)
+                    .copied()
+                    .ok_or_else(|| TheoryError::Unknown {
+                        name: (*name).to_owned(),
+                    })
+            }
             SExpr::List(items) => self.application(items, types, terms),
+        }
+    }
+
+    fn term_at(
+        &mut self,
+        expression: &SExpr<'_>,
+        expected: Ref,
+        types: &BTreeMap<String, Ref>,
+        terms: &BTreeMap<String, Ref>,
+        definition: &str,
+    ) -> Result<Ref, TheoryError> {
+        if let SExpr::List(items) = expression
+            && matches!(items.first(), Some(SExpr::Atom("lambda")))
+        {
+            if items.len() != 4 {
+                return invalid("lambda expects a name, type, and body");
+            }
+            let name = atom(&items[1])?;
+            if terms.contains_key(name) {
+                return Err(TheoryError::DuplicateBinder {
+                    name: name.to_owned(),
+                });
+            }
+            let mut parts = self.kernel.arena().children(expected).ok_or_else(|| {
+                TheoryError::TypeMismatch {
+                    name: definition.to_owned(),
+                }
+            })?;
+            if self.kernel.arena().tag(expected)
+                != Some(covalence_logic_hol::Tag::Ty(
+                    covalence_logic_hol::TyTag::Arr,
+                ))
+            {
+                return Err(TheoryError::TypeMismatch {
+                    name: definition.to_owned(),
+                });
+            }
+            let domain = parts.next().ok_or_else(|| TheoryError::TypeMismatch {
+                name: definition.to_owned(),
+            })?;
+            let codomain = parts.next().ok_or_else(|| TheoryError::TypeMismatch {
+                name: definition.to_owned(),
+            })?;
+            drop(parts);
+            let declared_domain = self.ty(&items[2], types)?;
+            if !self.kernel.ty_eq(declared_domain, domain)? {
+                return Err(TheoryError::TypeMismatch {
+                    name: definition.to_owned(),
+                });
+            }
+            let numeric_name = self.name();
+            let binder = self.kernel.tm_fv(numeric_name, domain)?;
+            let mut nested = terms.clone();
+            nested.insert(name.to_owned(), binder);
+            let body = self.term_at(&items[3], codomain, types, &nested, definition)?;
+            return Ok(self.kernel.lam_at(expected, binder, body)?);
+        }
+
+        let value = self.term(expression, types, terms)?;
+        let actual = self.kernel.classifier(value)?;
+        if self.kernel.ty_eq(actual, expected)? {
+            Ok(value)
+        } else {
+            Err(TheoryError::TypeMismatch {
+                name: definition.to_owned(),
+            })
         }
     }
 
@@ -368,6 +488,8 @@ impl Compiler {
                 "or" => return self.binary(items, types, terms, Self::or),
                 "imp" => return self.binary(items, types, terms, Self::imp),
                 "=" => return self.binary(items, types, terms, Self::equal),
+                "lambda" => return self.lambda(items, types, terms),
+                "inst" => return self.instantiate(items, types),
                 "exists" => return self.quantifier(items, types, terms, false),
                 "forall" => return self.quantifier(items, types, terms, true),
                 "ty.exists" => return self.type_quantifier(items, types, terms, false),
@@ -441,6 +563,89 @@ impl Compiler {
         } else {
             Ok(self.kernel.exists_tm(binder, body)?)
         }
+    }
+
+    fn lambda(
+        &mut self,
+        items: &[SExpr<'_>],
+        types: &BTreeMap<String, Ref>,
+        terms: &BTreeMap<String, Ref>,
+    ) -> Result<Ref, TheoryError> {
+        if items.len() != 4 {
+            return invalid("lambda expects a name, type, and body");
+        }
+        let name = atom(&items[1])?;
+        if terms.contains_key(name) {
+            return Err(TheoryError::DuplicateBinder {
+                name: name.to_owned(),
+            });
+        }
+        let ty = self.ty(&items[2], types)?;
+        let numeric_name = self.name();
+        let binder = self.kernel.tm_fv(numeric_name, ty)?;
+        let mut nested = terms.clone();
+        nested.insert(name.to_owned(), binder);
+        let body = self.term(&items[3], types, &nested)?;
+        Ok(self.kernel.lam(binder, body)?)
+    }
+
+    fn instantiate(
+        &mut self,
+        items: &[SExpr<'_>],
+        types: &BTreeMap<String, Ref>,
+    ) -> Result<Ref, TheoryError> {
+        let Some(name_expr) = items.get(1) else {
+            return invalid("inst expects a schema name and its type arguments");
+        };
+        let name = atom(name_expr)?;
+        let schema = self
+            .schemata
+            .get(name)
+            .copied()
+            .ok_or_else(|| TheoryError::Unknown {
+                name: name.to_owned(),
+            })?;
+        if schema.parameters.len() != items.len().saturating_sub(2) {
+            return invalid(format!(
+                "schema {name:?} expects {} type arguments",
+                schema.parameters.len()
+            ));
+        }
+
+        // Type arguments are interpreted in the caller's type scope, while
+        // the schema body is re-elaborated in a fresh scope containing only
+        // its formal parameters. This is macro expansion, not proof evidence:
+        // every produced row still passes through checked kernel constructors.
+        let mut arguments = Vec::with_capacity(schema.parameters.len());
+        for argument in &items[2..] {
+            arguments.push(self.ty(argument, types)?);
+        }
+        let key = (name.to_owned(), arguments.clone());
+        if let Some(reference) = self.instances.get(&key) {
+            return Ok(*reference);
+        }
+
+        let mut substitutions = BTreeMap::new();
+        for (parameter, argument) in schema.parameters.iter().zip(arguments) {
+            substitutions.insert(atom(parameter)?.to_owned(), argument);
+        }
+        // A top-level schema is closed with respect to term binders. Reusing
+        // the caller's term scope here would allow accidental capture when a
+        // local binder happened to share a global definition's source name.
+        let root = if let Some(annotation) = schema.annotation {
+            let expected = self.ty(annotation, &substitutions)?;
+            self.term_at(
+                schema.body,
+                expected,
+                &substitutions,
+                &BTreeMap::new(),
+                name,
+            )?
+        } else {
+            self.term(schema.body, &substitutions, &BTreeMap::new())?
+        };
+        self.instances.insert(key, root);
+        Ok(root)
     }
 
     fn type_quantifier(
