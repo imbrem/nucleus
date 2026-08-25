@@ -662,6 +662,21 @@ impl GuestKernel for HostKernel {
             .map_err(|error| error.to_string())
     }
 
+    fn inf_exists(&self, bool_type: u64) -> Result<wit::InfinityAxiom, String> {
+        let axiom = self
+            .0
+            .borrow_mut()
+            .inf_exists(reference(bool_type)?)
+            .map_err(|error| error.to_string())?;
+        Ok(wit::InfinityAxiom {
+            exists_type: ref_index(axiom.exists_type),
+            body: ref_index(axiom.body),
+            carrier_name: axiom.carrier_name,
+            base_name: axiom.base_name,
+            theorem: axiom.theorem.get().unsigned_abs().into(),
+        })
+    }
+
     fn sub_exists(
         &self,
         bool_type: u64,

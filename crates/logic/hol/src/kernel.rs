@@ -20,6 +20,7 @@ use crate::{
 };
 
 mod classical;
+mod infinity;
 mod logic;
 mod subtype;
 mod syn_facts;
@@ -28,6 +29,7 @@ pub use covalence_logic_classical::{
     CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, Dnf, DnfId, Lit,
     LitError, LitVec, Refutation, ThmId, ThmRef,
 };
+pub use infinity::{AX_INF, INFINITY_BINDER_COUNT, InfinityAxiom, InfinityBinder};
 pub use subtype::{AX_SUB, BINDER_COUNT, Binder, SubtypeAxiom};
 
 /// A recoverable failure at the checked kernel boundary.
@@ -972,7 +974,7 @@ impl Kernel {
     ///
     /// Returns an error for every currently unsupported name.
     pub fn add_axiom(&mut self, name: &str) -> Result<(), KernelError> {
-        if !matches!(name, "ax.inf" | subtype::AX_SUB) {
+        if !matches!(name, infinity::AX_INF | subtype::AX_SUB) {
             return Err(KernelError::UnsupportedAxiom {
                 name: name.to_owned(),
             });

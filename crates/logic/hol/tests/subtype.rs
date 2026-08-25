@@ -223,3 +223,86 @@ fn an_unknown_capability_is_still_refused() {
         Err(KernelError::UnsupportedAxiom { .. })
     ));
 }
+
+// --- the axiom of infinity -------------------------------------------------
+
+#[test]
+fn concluding_infinity_requires_its_own_capability() {
+    let mut fix = Fix::new();
+    let bool_ty = fix.bool_ty;
+    assert!(matches!(
+        fix.kernel.inf_exists(bool_ty),
+        Err(KernelError::MissingAxiom {
+            name: covalence_logic_hol::AX_INF
+        })
+    ));
+    // `ax.sub` does not license `ax.inf`: the capabilities are separate.
+    fix.kernel.add_axiom(AX_SUB).expect("subtype capability");
+    assert!(matches!(
+        fix.kernel.inf_exists(bool_ty),
+        Err(KernelError::MissingAxiom { .. })
+    ));
+}
+
+#[test]
+fn the_infinity_sentence_is_a_closed_proposition() {
+    let mut fix = Fix::new();
+    let bool_ty = fix.bool_ty;
+    fix.kernel
+        .add_axiom(covalence_logic_hol::AX_INF)
+        .expect("capability");
+    let axiom = fix.kernel.inf_exists(bool_ty).expect("axiom");
+
+    assert_eq!(
+        fix.kernel.category(axiom.exists_type).expect("sentence"),
+        Sort::Tm
+    );
+    let classifier = fix
+        .kernel
+        .classifier(axiom.exists_type)
+        .expect("classifier");
+    assert!(
+        fix.kernel
+            .equivalent(classifier, bool_ty)
+            .expect("equivalent"),
+        "the infinity sentence is Boolean"
+    );
+    assert_eq!(
+        axiom.carrier_name,
+        axiom.name_of(covalence_logic_hol::InfinityBinder::Carrier)
+    );
+
+    let sequent = fix.kernel.thm().get(axiom.theorem).expect("sequent");
+    assert!(
+        sequent.lhs.to_rows().is_empty(),
+        "the axiom is premise-free"
+    );
+    assert_eq!(
+        sequent.rhs.to_rows()[0].as_slice(),
+        [Lit::positive(axiom.exists_type.get())]
+    );
+}
+
+#[test]
+fn the_infinity_body_names_a_carrier_that_cannot_yet_be_opened() {
+    // The sentence asserts a carrier exists; naming it needs `ty.exists`
+    // elimination, which the kernel does not offer. What a caller *can* do is
+    // form the carrier as a model of the body, which is a different type — so
+    // this pins the gap rather than papering over it.
+    let mut fix = Fix::new();
+    let bool_ty = fix.bool_ty;
+    fix.kernel
+        .add_axiom(covalence_logic_hol::AX_INF)
+        .expect("capability");
+    let axiom = fix.kernel.inf_exists(bool_ty).expect("axiom");
+
+    let chosen = fix
+        .kernel
+        .model(axiom.carrier_name, axiom.body)
+        .expect("a model of the body is well-formed");
+    assert_eq!(fix.kernel.category(chosen).expect("model"), Sort::Ty);
+    assert_ne!(
+        chosen, axiom.exists_type,
+        "choosing a model is not the same as eliminating the existential"
+    );
+}
