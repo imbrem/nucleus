@@ -7795,9 +7795,7 @@ macro_rules! __export_standard_proof_impl {
 #[doc(inline)]
 pub(crate) use __export_standard_proof_impl as export;
 #[cfg(target_arch = "wasm32")]
-#[unsafe(
-    link_section = "component-type:wit-bindgen:0.41.0:nucleus:proof@0.1.0:standard-proof:encoded world"
-)]
+#[unsafe(link_section = "component-type:wit-bindgen:0.41.0:nucleus:proof@0.1.0:standard-proof:encoded world")]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
 pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 5930] = *b"\
