@@ -9,11 +9,25 @@ naturals — the carrier may contain elements the map never reaches from the
 missed point, and nothing so far rules them out.  Induction is exactly the
 statement that there are none.
 
-So the naturals are carved out rather than assumed: `Reachable` is the
-intersection of every subset containing the point and closed under the map,
-and the subtype it cuts satisfies Peano *by construction*, induction included.
-This is the classical half of the bootstrap — the object-language half carves
-the same subtype with `ax.sub`.
+So the naturals are carved out rather than assumed, and the carving is the
+content: `natModelOfInjectiveNotSurjective` is a *theorem* that a model can be
+extracted from any injective, non-surjective endomap.  `Reachable` is the
+intersection of every subset containing the missed point and closed under the
+map, and the subtype it cuts satisfies Peano by construction — induction
+included, which is exactly what the intersection buys.
+
+The starting point cannot be chosen freely.  It has to be one the map misses,
+which is what non-surjectivity supplies; `ArbitraryPoint` exhibits an injective
+non-surjective map on which any other choice lands in a cycle.  The missed
+point is load-bearing, not a convenience.
+
+Categoricity then makes "the naturals" well defined rather than merely
+inhabited: `ofNat`/`toNat` are mutually inverse, `transport` carries any model
+to any other, and it commutes with zero, successor and addition.
+
+This is the classical half of the bootstrap.  The object-language half carves
+the same subtype with `ax.sub`, and stops short of naming the carrier until
+`ty.exists` elimination exists.
 -/
 
 namespace Nucleus.HolE.Infinity
@@ -79,6 +93,67 @@ def natModel (s : CInfinityStructure A) : CNatModel where
     exact (Subtype.ext rfl : (⟨x.1, reachable⟩ : {a // s.Reachable a}) = x) ▸ holds
 
 end CInfinityStructure
+
+/-- Non-surjectivity *supplies* a missed point; it does not merely assert one
+exists somewhere. -/
+theorem exists_missed_of_not_surjective {A : CPointed} {next : A.carrier → A.carrier}
+    (nonsurjective : ¬ Function.Surjective next) : ∃ z, ∀ x, next x ≠ z :=
+  Classical.byContradiction fun none_missed =>
+    nonsurjective fun target =>
+      Classical.byContradiction fun unhit =>
+        none_missed ⟨target, fun x hit => unhit ⟨x, hit⟩⟩
+
+/-- An injective endomap that is not surjective is a Dedekind-infinite
+structure, with the missed point chosen from the failure of surjectivity. -/
+noncomputable def CInfinityStructure.ofInjectiveNotSurjective {A : CPointed}
+    (next : A.carrier → A.carrier) (injective : Function.Injective next)
+    (nonsurjective : ¬ Function.Surjective next) : CInfinityStructure A where
+  next := next
+  missed := Classical.choose (exists_missed_of_not_surjective nonsurjective)
+  reflectsEquality := fun _ _ => ⟨fun images => injective images, fun equal => equal ▸ rfl⟩
+  misses := Classical.choose_spec (exists_missed_of_not_surjective nonsurjective)
+
+/-- **A model of the naturals can be extracted from any injective endomap that
+is not surjective.**
+
+Not merely "exists": `natModel` is the extraction, and this is it applied to
+the structure non-surjectivity hands over.  The carving is the whole content —
+Dedekind-infinity says the carrier has room, and the theorem says the naturals
+are the part of that room the map actually reaches. -/
+noncomputable def natModelOfInjectiveNotSurjective {A : CPointed}
+    (next : A.carrier → A.carrier) (injective : Function.Injective next)
+    (nonsurjective : ¬ Function.Surjective next) : CNatModel :=
+  (CInfinityStructure.ofInjectiveNotSurjective next injective nonsurjective).natModel
+
+/-! ## The starting point has to be one the map misses
+
+An injective non-surjective map and *some* distinguished point is not enough:
+the point must be outside the map's image, which is what `misses` says and what
+non-surjectivity supplies.  Starting anywhere else can land in a cycle, and
+then the carved-out part is finite and `succ_ne_zero` fails. -/
+
+namespace ArbitraryPoint
+
+/-- Injective, not surjective, and carrying a two-element cycle. -/
+def next : Nat ⊕ Bool → Nat ⊕ Bool
+  | .inl index => .inl (index + 1)
+  | .inr flag => .inr (!flag)
+
+theorem next_injective : Function.Injective next := by
+  rintro (m | a) (n | b) equality <;> simp_all [next]
+
+theorem next_not_surjective : ¬ Function.Surjective next := by
+  intro surjective
+  obtain ⟨preimage, hit⟩ := surjective (.inl 0)
+  cases preimage <;> simp [next] at hit
+
+/-- Two steps from `inr true` returns to it.  So had the construction been
+allowed to start there, `zero` would be the successor of something reachable —
+no argument from injectivity or non-surjectivity can rescue it, because both
+hold here. -/
+theorem cycle : next (next (.inr true)) = .inr true := by decide
+
+end ArbitraryPoint
 
 /-- **A model of the naturals exists, given the axiom of infinity.**
 
@@ -289,6 +364,37 @@ theorem mul_comm (x y : M.carrier) : M.mul x y = M.mul y x := by
   · simp
   · intro z ih
     simp only [M.mul_succ, M.succ_mul, ih]
+
+/-! ## Any two models are the same model
+
+Categoricity within a model (`ofNat_toNat_inverse`) immediately gives it
+between models, which is what licenses the definite article: *the* naturals. -/
+
+/-- Read an element of one model as an element of another. -/
+noncomputable def transport (M N : CNatModel) (x : M.carrier) : N.carrier :=
+  N.ofNat (M.toNat x)
+
+@[simp] theorem transport_zero (M N : CNatModel) :
+    transport M N M.zero = N.zero := by
+  simp [transport]
+
+@[simp] theorem transport_succ (M N : CNatModel) (x : M.carrier) :
+    transport M N (M.succ x) = N.succ (transport M N x) := by
+  simp [transport]
+
+@[simp] theorem transport_transport (M N : CNatModel) (x : M.carrier) :
+    transport N M (transport M N x) = x := by
+  simp [transport]
+
+/-- Transport is a homomorphism for addition, so the arithmetic does not depend
+on which model it was done in. -/
+theorem transport_add (M N : CNatModel) (x y : M.carrier) :
+    transport M N (M.add x y) = N.add (transport M N x) (transport M N y) := by
+  refine M.induction
+    (fun y => transport M N (M.add x y) = N.add (transport M N x) (transport M N y)) ?_ ?_ y
+  · simp
+  · intro z ih
+    simp [ih]
 
 end CNatModel
 
