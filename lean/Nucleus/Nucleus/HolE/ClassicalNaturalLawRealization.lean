@@ -202,4 +202,199 @@ theorem zeroNeSuccessor_true_iff
       equalityEval).mpr
     simp [Infinity.classicalEqBool, separated x]
 
+/-- Boolean induction has exactly the semantic law consumed by `CNatDecl`. -/
+theorem induction_true_iff
+    (A : Empty.Ty types) (zero : Empty.Term Empty.Ctx.empty A)
+    (successor : Empty.Term Empty.Ctx.empty (A.arr A))
+    (env : CTypeEnv types) (zeroValue : (A.denote env).carrier)
+    (successorValue : (A.denote env).carrier → (A.denote env).carrier)
+    (zeroEval : Empty.Eval zero env emptyCBoundEnv (A.denote env) zeroValue)
+    (successorEval : Empty.Eval successor env emptyCBoundEnv
+      (Empty.cArrow (A.denote env) (A.denote env)) successorValue) :
+    Empty.Eval (induction A zero successor) env emptyCBoundEnv cBool true ↔
+      ∀ P : (A.denote env).carrier → Bool,
+        P zeroValue = true →
+        (∀ x, P x = true → P (successorValue x) = true) →
+      ∀ x, P x = true := by
+  have boolDenote : Empty.FamK.boolTy.denote env = cBool := by
+    unfold Empty.FamK.denote
+    rw [cSem_certificate_coherent Empty.FamK.boolTy.kinded.certificate
+      CChecks.boolTy env]
+    rfl
+  rw [induction, Empty.Eval.forallTm_true_iff, Empty.FamK.denote_arr]
+  rw [boolDenote]
+  change (∀ P : (A.denote env).carrier → Bool, _) ↔ _
+  constructor
+  · intro every P base step x
+    change (Empty.cArrow (A.denote env) cBool).carrier at P
+    let predicateType := A.arr Empty.FamK.boolTy
+    let predicateContext := Empty.Ctx.empty.extend predicateType
+    let boundP := extendCBoundEnv
+      (Empty.cArrow (A.denote env) cBool) P emptyCBoundEnv
+    have predicateEval : Empty.Eval (Empty.Term.bv predicateContext 0)
+        env boundP (Empty.cArrow (A.denote env) cBool) P := by
+      apply Empty.Eval.bv
+      dsimp [boundP]
+      rw [extendCBoundEnv_zero, alignCValue_self]
+    have zeroBound : Empty.Eval (zero.weaken predicateType) env boundP
+        (A.denote env) zeroValue := by
+      exact Empty.Eval.weakenAt zero predicateType env emptyCBoundEnv
+        (Empty.cArrow (A.denote env) cBool) P (A.denote env) zeroValue zeroEval
+    have baseEval : Empty.Eval
+        (Empty.Term.app (Empty.Term.bv predicateContext 0)
+          (zero.weaken predicateType)) env boundP cBool (P zeroValue) :=
+      Empty.Eval.appBool _ _ env boundP P zeroValue predicateEval zeroBound
+    have stepEval : Empty.Eval
+        (Empty.forallTm A (Empty.imp
+          (Empty.Term.app ((Empty.Term.bv predicateContext 0).weaken A)
+            (Empty.Term.bv (predicateContext.extend A) 0))
+          (Empty.Term.app ((Empty.Term.bv predicateContext 0).weaken A)
+            (Empty.Term.app ((successor.weaken predicateType).weaken A)
+              (Empty.Term.bv (predicateContext.extend A) 0)))))
+        env boundP cBool true := by
+      apply (Empty.Eval.forallTm_true_iff A _ env boundP).mpr
+      intro n
+      apply (Empty.imp_true_iff _ _ env _).mpr
+      intro pnTrue
+      let boundPN := extendCBoundEnv (A.denote env) n boundP
+      have predicateN : Empty.Eval
+          ((Empty.Term.bv predicateContext 0).weaken A) env boundPN
+          (Empty.cArrow (A.denote env) cBool) P :=
+        Empty.Eval.weaken _ A env boundP n _ _ predicateEval
+      have nEval : Empty.Eval (Empty.Term.bv (predicateContext.extend A) 0)
+          env boundPN (A.denote env) n := by
+        apply Empty.Eval.bv
+        dsimp [boundPN]
+        rw [extendCBoundEnv_zero, alignCValue_self]
+      have successorP : Empty.Eval (successor.weaken predicateType) env boundP
+          (Empty.cArrow (A.denote env) (A.denote env)) successorValue := by
+        exact Empty.Eval.weakenAt successor predicateType env emptyCBoundEnv
+          (Empty.cArrow (A.denote env) cBool) P _ _ successorEval
+      have successorPN : Empty.Eval ((successor.weaken predicateType).weaken A)
+          env boundPN (Empty.cArrow (A.denote env) (A.denote env))
+          successorValue :=
+        Empty.Eval.weaken _ A env boundP n _ _ successorP
+      have successorNEval := Empty.Eval.app
+        ((successor.weaken predicateType).weaken A)
+        (Empty.Term.bv (predicateContext.extend A) 0) env boundPN
+        successorValue n successorPN nEval
+      have pnEval := Empty.Eval.appBool
+        ((Empty.Term.bv predicateContext 0).weaken A)
+        (Empty.Term.bv (predicateContext.extend A) 0) env boundPN
+        P n predicateN nEval
+      have psnEval := Empty.Eval.appBool
+        ((Empty.Term.bv predicateContext 0).weaken A)
+        (Empty.Term.app ((successor.weaken predicateType).weaken A)
+          (Empty.Term.bv (predicateContext.extend A) 0)) env boundPN
+        P (successorValue n) predicateN successorNEval
+      have pn : P n = true := pnEval.value_unique pnTrue
+      have psn : P (successorValue n) = true := step n pn
+      exact psn ▸ psnEval
+    have baseEvalTrue : Empty.Eval
+        (Empty.Term.app (Empty.Term.bv predicateContext 0)
+          (zero.weaken predicateType)) env boundP cBool true :=
+      base ▸ baseEval
+    have premiseEval := Empty.Eval.and_of_true _ _ env boundP baseEvalTrue stepEval
+    have body := every P
+    rw [Empty.imp_true_iff] at body
+    have conclusion := body premiseEval
+    have all := (Empty.Eval.forallTm_true_iff A _ env boundP).mp conclusion
+    have px := all x
+    let boundPX := extendCBoundEnv (A.denote env) x boundP
+    have predicateX : Empty.Eval
+        ((Empty.Term.bv predicateContext 0).weaken A) env boundPX
+        (Empty.cArrow (A.denote env) cBool) P :=
+      Empty.Eval.weaken _ A env boundP x _ _ predicateEval
+    have xEval : Empty.Eval (Empty.Term.bv (predicateContext.extend A) 0)
+        env boundPX (A.denote env) x := by
+      apply Empty.Eval.bv
+      dsimp [boundPX]
+      rw [extendCBoundEnv_zero, alignCValue_self]
+    have pxEval := Empty.Eval.appBool
+      ((Empty.Term.bv predicateContext 0).weaken A)
+      (Empty.Term.bv (predicateContext.extend A) 0) env boundPX
+      P x predicateX xEval
+    exact pxEval.value_unique px
+  · intro principle P
+    change (Empty.cArrow (A.denote env) cBool).carrier at P
+    let predicateType := A.arr Empty.FamK.boolTy
+    let predicateContext := Empty.Ctx.empty.extend predicateType
+    let boundP := extendCBoundEnv
+      (Empty.cArrow (A.denote env) cBool) P emptyCBoundEnv
+    have predicateEval : Empty.Eval (Empty.Term.bv predicateContext 0)
+        env boundP (Empty.cArrow (A.denote env) cBool) P := by
+      apply Empty.Eval.bv
+      dsimp [boundP]
+      rw [extendCBoundEnv_zero, alignCValue_self]
+    have zeroBound : Empty.Eval (zero.weaken predicateType) env boundP
+        (A.denote env) zeroValue :=
+      Empty.Eval.weakenAt zero predicateType env emptyCBoundEnv
+        (Empty.cArrow (A.denote env) cBool) P (A.denote env) zeroValue zeroEval
+    have baseEval : Empty.Eval
+        (Empty.Term.app (Empty.Term.bv predicateContext 0)
+          (zero.weaken predicateType)) env boundP cBool (P zeroValue) :=
+      Empty.Eval.appBool _ _ env boundP P zeroValue predicateEval zeroBound
+    apply (Empty.imp_true_iff _ _ env boundP).mpr
+    intro premise
+    have components := (Empty.and_true_iff _ _ env boundP).mp premise
+    have base : P zeroValue = true := baseEval.value_unique components.1
+    have step : ∀ n, P n = true → P (successorValue n) = true := by
+      have everyStep := (Empty.Eval.forallTm_true_iff A _ env boundP).mp components.2
+      intro n pn
+      let boundPN := extendCBoundEnv (A.denote env) n boundP
+      have predicateN : Empty.Eval
+          ((Empty.Term.bv predicateContext 0).weaken A) env boundPN
+          (Empty.cArrow (A.denote env) cBool) P :=
+        Empty.Eval.weaken _ A env boundP n _ _ predicateEval
+      have nEval : Empty.Eval (Empty.Term.bv (predicateContext.extend A) 0)
+          env boundPN (A.denote env) n := by
+        apply Empty.Eval.bv
+        dsimp [boundPN]
+        rw [extendCBoundEnv_zero, alignCValue_self]
+      have successorP : Empty.Eval (successor.weaken predicateType) env boundP
+          (Empty.cArrow (A.denote env) (A.denote env)) successorValue :=
+        Empty.Eval.weakenAt successor predicateType env emptyCBoundEnv
+          (Empty.cArrow (A.denote env) cBool) P _ _ successorEval
+      have successorPN : Empty.Eval ((successor.weaken predicateType).weaken A)
+          env boundPN (Empty.cArrow (A.denote env) (A.denote env))
+          successorValue :=
+        Empty.Eval.weaken _ A env boundP n _ _ successorP
+      have successorNEval := Empty.Eval.app
+        ((successor.weaken predicateType).weaken A)
+        (Empty.Term.bv (predicateContext.extend A) 0) env boundPN
+        successorValue n successorPN nEval
+      have pnEval := Empty.Eval.appBool
+        ((Empty.Term.bv predicateContext 0).weaken A)
+        (Empty.Term.bv (predicateContext.extend A) 0) env boundPN
+        P n predicateN nEval
+      have psnEval := Empty.Eval.appBool
+        ((Empty.Term.bv predicateContext 0).weaken A)
+        (Empty.Term.app ((successor.weaken predicateType).weaken A)
+          (Empty.Term.bv (predicateContext.extend A) 0)) env boundPN
+        P (successorValue n) predicateN successorNEval
+      have implication := (Empty.imp_true_iff _ _ env boundPN).mp (everyStep n)
+      have pnTrue : Empty.Eval
+          (Empty.Term.app ((Empty.Term.bv predicateContext 0).weaken A)
+            (Empty.Term.bv (predicateContext.extend A) 0))
+          env boundPN cBool true := pn ▸ pnEval
+      exact psnEval.value_unique (implication pnTrue)
+    have all := principle P base step
+    apply (Empty.Eval.forallTm_true_iff A _ env boundP).mpr
+    intro x
+    let boundPX := extendCBoundEnv (A.denote env) x boundP
+    have predicateX : Empty.Eval
+        ((Empty.Term.bv predicateContext 0).weaken A) env boundPX
+        (Empty.cArrow (A.denote env) cBool) P :=
+      Empty.Eval.weaken _ A env boundP x _ _ predicateEval
+    have xEval : Empty.Eval (Empty.Term.bv (predicateContext.extend A) 0)
+        env boundPX (A.denote env) x := by
+      apply Empty.Eval.bv
+      dsimp [boundPX]
+      rw [extendCBoundEnv_zero, alignCValue_self]
+    have pxEval := Empty.Eval.appBool
+      ((Empty.Term.bv predicateContext 0).weaken A)
+      (Empty.Term.bv (predicateContext.extend A) 0) env boundPX
+      P x predicateX xEval
+    exact (all x) ▸ pxEval
+
 end Nucleus.HolE.Empty.NaturalLaw
