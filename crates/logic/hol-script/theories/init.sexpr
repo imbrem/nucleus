@@ -35,3 +35,51 @@
               (P zero)
               (forall k 'a (imp (P k) (P (succ k)))))
             (P n)))))))
+
+; The graph predicate for primitive recursion.  It is deliberately generic in
+; both the natural carrier and codomain: userspace specializes it to `nat`,
+; proves existence and uniqueness from `nat.induction`, and only then selects
+; `nat.rec` with Hilbert choice.  This schema itself asserts nothing.
+(define NatRecSpec ('a 'c)
+  (-> 'a
+    (-> (-> 'a 'a)
+      (-> 'c
+        (-> (-> 'a (-> 'c 'c))
+          (-> (-> 'a 'c) bool)))))
+  (lambda zero 'a
+    (lambda succ (-> 'a 'a)
+      (lambda base 'c
+        (lambda step (-> 'a (-> 'c 'c))
+          (lambda candidate (-> 'a 'c)
+            (and
+              (= (candidate zero) base)
+              (forall n 'a
+                (= (candidate (succ n))
+                   (step n (candidate n)))))))))))
+
+; The least recursion graph, represented impredicatively as the intersection
+; of every binary predicate containing the base pair and closed under the
+; recursion step.  Like NatRecSpec, this is only an open definition: the
+; userspace derived layer must prove base, closure, totality, and functionality.
+(define NatRecGraph ('a 'c)
+  (-> 'a
+    (-> (-> 'a 'a)
+      (-> 'c
+        (-> (-> 'a (-> 'c 'c))
+          (-> 'a (-> 'c bool))))))
+  (lambda zero 'a
+    (lambda succ (-> 'a 'a)
+      (lambda base 'c
+        (lambda step (-> 'a (-> 'c 'c))
+          (lambda n 'a
+            (lambda y 'c
+              (forall R (-> 'a (-> 'c bool))
+                (imp
+                  (and
+                    ((R zero) base)
+                    (forall k 'a
+                      (forall z 'c
+                        (imp
+                          ((R k) z)
+                          ((R (succ k)) ((step k) z))))))
+                  ((R n) y))))))))))

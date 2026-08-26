@@ -275,6 +275,96 @@ theorem natrec_unique {C : Type} (base : C) (step : M.carrier → C → C)
   · intro y ih
     simp [at_succ y, ih]
 
+/-! ## The impredicative recursion graph
+
+This is the semantic counterpart of the opcode-free `NatRecGraph` schema.
+It is the intersection of every relation containing the base pair and closed
+under the recursive step.  The equivalence below is the model argument behind
+the userspace graph construction and its Hilbert-choice selection. -/
+
+def RecGraph {C : Type} (base : C) (step : M.carrier → C → C)
+    (n : M.carrier) (value : C) : Prop :=
+  ∀ relation : M.carrier → C → Prop,
+    relation M.zero base →
+    (∀ k z, relation k z → relation (M.succ k) (step k z)) →
+    relation n value
+
+theorem recGraph_base {C : Type} (base : C) (step : M.carrier → C → C) :
+    M.RecGraph base step M.zero base := by
+  intro relation atZero _
+  exact atZero
+
+theorem recGraph_step {C : Type} (base : C) (step : M.carrier → C → C)
+    {n : M.carrier} {value : C} (holds : M.RecGraph base step n value) :
+    M.RecGraph base step (M.succ n) (step n value) := by
+  intro relation atZero atSucc
+  exact atSucc n value (holds relation atZero atSucc)
+
+theorem recGraph_natrec {C : Type} (base : C) (step : M.carrier → C → C)
+    (n : M.carrier) : M.RecGraph base step n (M.natrec base step n) := by
+  refine M.induction (fun n => M.RecGraph base step n (M.natrec base step n)) ?_ ?_ n
+  · simpa using M.recGraph_base base step
+  · intro k holds
+    simpa using M.recGraph_step base step holds
+
+theorem recGraph_iff {C : Type} (base : C) (step : M.carrier → C → C)
+    (n : M.carrier) (value : C) :
+    M.RecGraph base step n value ↔ value = M.natrec base step n := by
+  constructor
+  · intro holds
+    exact holds (fun k z => z = M.natrec base step k) (by simp)
+      (by intro k z equality; simpa [equality])
+  · rintro rfl
+    exact M.recGraph_natrec base step n
+
+theorem recGraph_total {C : Type} (base : C) (step : M.carrier → C → C)
+    (n : M.carrier) : ∃ value, M.RecGraph base step n value :=
+  ⟨M.natrec base step n, M.recGraph_natrec base step n⟩
+
+theorem recGraph_functional {C : Type} (base : C) (step : M.carrier → C → C)
+    {n : M.carrier} {left right : C}
+    (leftHolds : M.RecGraph base step n left)
+    (rightHolds : M.RecGraph base step n right) : left = right := by
+  rw [M.recGraph_iff base step n left] at leftHolds
+  rw [M.recGraph_iff base step n right] at rightHolds
+  exact leftHolds.trans rightHolds.symm
+
+noncomputable def graphRecursor {C : Type} (base : C)
+    (step : M.carrier → C → C) (n : M.carrier) : C :=
+  Classical.choose (M.recGraph_total base step n)
+
+theorem graphRecursor_graph {C : Type} (base : C) (step : M.carrier → C → C)
+    (n : M.carrier) : M.RecGraph base step n (M.graphRecursor base step n) :=
+  Classical.choose_spec (M.recGraph_total base step n)
+
+theorem graphRecursor_eq_natrec {C : Type} (base : C)
+    (step : M.carrier → C → C) :
+    M.graphRecursor base step = M.natrec base step := by
+  funext n
+  exact (M.recGraph_iff base step n (M.graphRecursor base step n)).mp
+    (M.graphRecursor_graph base step n)
+
+@[simp] theorem graphRecursor_zero {C : Type} (base : C)
+    (step : M.carrier → C → C) :
+    M.graphRecursor base step M.zero = base := by
+  rw [M.graphRecursor_eq_natrec base step]
+  exact M.natrec_zero base step
+
+@[simp] theorem graphRecursor_succ {C : Type} (base : C)
+    (step : M.carrier → C → C) (n : M.carrier) :
+    M.graphRecursor base step (M.succ n) =
+      step n (M.graphRecursor base step n) := by
+  rw [M.graphRecursor_eq_natrec base step]
+  exact M.natrec_succ base step n
+
+theorem graphRecursor_unique {C : Type} (base : C)
+    (step : M.carrier → C → C) (candidate : M.carrier → C)
+    (atZero : candidate M.zero = base)
+    (atSucc : ∀ n, candidate (M.succ n) = step n (candidate n)) :
+    candidate = M.graphRecursor base step := by
+  rw [M.graphRecursor_eq_natrec base step]
+  exact M.natrec_unique base step candidate atZero atSucc
+
 /-! ## Addition
 
 Defined by recursion on the *second* argument, which is the convention that
