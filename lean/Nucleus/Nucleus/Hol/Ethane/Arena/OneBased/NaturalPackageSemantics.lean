@@ -328,6 +328,37 @@ structure IntrinsicAssertion (resolve : Resolver) (arena : Arena)
   lowered : Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
     (.nil : TmScope ClassicalSig 0) (toClassicalTm expression) = some term.tm
 
+/-- Representation evidence for an intrinsic assertion at one fixed arena
+reference.  Fixing the reference in the type is convenient for generated
+frozen-package certificates and prevents a detached equality from being used
+to relabel an otherwise unrelated theorem row. -/
+structure IntrinsicAssertionAt (resolve : Resolver) (arena : Arena)
+    (reference : Ref)
+    (term : InfinityTm ClassicalSig
+      (Nucleus.HolE.emptyBound : BoundCtx ClassicalSig [] 0) .boolTy) where
+  expression : EmptyTm
+  fact : WireSequent
+  resolves : Resolves (coreResolver resolve) arena.holCore reference
+    (.term .boolTy expression)
+  member : fact ∈ arena.hol.thm
+  assertion : fact.semantic = Sequent.assert reference
+  lowered : Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+    (.nil : TmScope ClassicalSig 0) (toClassicalTm expression) = some term.tm
+
+def IntrinsicAssertionAt.toAssertion {resolve : Resolver} {arena : Arena}
+    {reference : Ref}
+    {term : InfinityTm ClassicalSig
+      (Nucleus.HolE.emptyBound : BoundCtx ClassicalSig [] 0) .boolTy}
+    (evidence : IntrinsicAssertionAt resolve arena reference term) :
+    IntrinsicAssertion resolve arena term where
+  reference := reference
+  expression := evidence.expression
+  fact := evidence.fact
+  resolves := evidence.resolves
+  member := evidence.member
+  assertion := evidence.assertion
+  lowered := evidence.lowered
+
 def IntrinsicAssertion.decoded {resolve : Resolver} {arena : Arena}
     {term : InfinityTm ClassicalSig
       (Nucleus.HolE.emptyBound : BoundCtx ClassicalSig [] 0) .boolTy}
@@ -451,6 +482,77 @@ structure IntrinsicNaturalPackageCertificate (resolve : Resolver) (arena : Arena
     (Empty.NaturalLaw.zeroNeSuccessor carrier zero successor).toIntrinsic
   induction : IntrinsicAssertion resolve arena
     (Empty.NaturalLaw.induction carrier zero successor).toIntrinsic
+
+/-- Exact checked row and lowering evidence for a natural package, before
+choosing evaluator values.  Determinism supplies those values canonically, so
+generated arena evidence need not duplicate semantic evaluation proofs. -/
+structure IntrinsicNaturalPackageRows (resolve : Resolver) (arena : Arena)
+    (interpretation : PartialValuation Ref)
+    (carrierRef zeroRef successorRef successorInjectiveRef
+      zeroNeSuccessorRef inductionRef : Ref) where
+  agreement : HolEvaluationAgrees resolve arena interpretation
+  carrierSyntax : EmptyTy
+  zeroSyntax : EmptyTm
+  successorSyntax : EmptyTm
+  carrier : Empty.Ty []
+  zero : Empty.Term Empty.Ctx.empty carrier
+  successor : Empty.Term Empty.Ctx.empty (carrier.arr carrier)
+  carrierResolves : Resolves (coreResolver resolve) arena.holCore carrierRef
+    (.family .star carrierSyntax)
+  zeroResolves : Resolves (coreResolver resolve) arena.holCore zeroRef
+    (.term carrierSyntax zeroSyntax)
+  successorResolves : Resolves (coreResolver resolve) arena.holCore successorRef
+    (.term (.arr carrierSyntax carrierSyntax) successorSyntax)
+  carrierLowered : Nucleus.HolE.Named.lowerTy (.nil : TyScope [])
+    (toClassicalTy carrierSyntax) = some carrier.raw
+  zeroLowered : Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+    (.nil : TmScope ClassicalSig 0) (toClassicalTm zeroSyntax) = some zero.raw
+  successorLowered : Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+    (.nil : TmScope ClassicalSig 0) (toClassicalTm successorSyntax) =
+      some successor.raw
+  successorInjective : IntrinsicAssertionAt resolve arena successorInjectiveRef
+    (Empty.NaturalLaw.successorInjective carrier successor).toIntrinsic
+  zeroNeSuccessor : IntrinsicAssertionAt resolve arena zeroNeSuccessorRef
+    (Empty.NaturalLaw.zeroNeSuccessor carrier zero successor).toIntrinsic
+  induction : IntrinsicAssertionAt resolve arena inductionRef
+    (Empty.NaturalLaw.induction carrier zero successor).toIntrinsic
+
+namespace IntrinsicNaturalPackageRows
+
+/-- Canonically choose the two deterministic evaluator values and complete a
+natural-package certificate from exact checked representation evidence. -/
+noncomputable def toCertificate
+    (rows : IntrinsicNaturalPackageRows resolve arena interpretation carrierRef
+      zeroRef successorRef successorInjectiveRef zeroNeSuccessorRef inductionRef) :
+    IntrinsicNaturalPackageCertificate resolve arena interpretation where
+  agreement := rows.agreement
+  carrierRef := carrierRef
+  zeroRef := zeroRef
+  successorRef := successorRef
+  carrierSyntax := rows.carrierSyntax
+  zeroSyntax := rows.zeroSyntax
+  successorSyntax := rows.successorSyntax
+  carrier := rows.carrier
+  zero := rows.zero
+  successor := rows.successor
+  zeroValue := Infinity.iValue rows.zero.toIntrinsic emptyCTypeEnv
+    emptyCBoundEnv (rows.carrier.denote emptyCTypeEnv)
+  successorValue := Infinity.iValue rows.successor.toIntrinsic emptyCTypeEnv
+    emptyCBoundEnv (Empty.cArrow (rows.carrier.denote emptyCTypeEnv)
+      (rows.carrier.denote emptyCTypeEnv))
+  carrierResolves := rows.carrierResolves
+  zeroResolves := rows.zeroResolves
+  successorResolves := rows.successorResolves
+  carrierLowered := rows.carrierLowered
+  zeroLowered := rows.zeroLowered
+  successorLowered := rows.successorLowered
+  zeroEval := Infinity.IEval.canonical _ _ _ _
+  successorEval := Infinity.IEval.canonical _ _ _ _
+  successorInjective := rows.successorInjective.toAssertion
+  zeroNeSuccessor := rows.zeroNeSuccessor.toAssertion
+  induction := rows.induction.toAssertion
+
+end IntrinsicNaturalPackageRows
 
 namespace IntrinsicNaturalPackageCertificate
 
