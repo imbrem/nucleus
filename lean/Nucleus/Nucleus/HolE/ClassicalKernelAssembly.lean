@@ -30,6 +30,7 @@ theorem classicalEqTmRuleLaws : ClassicalEqTmRuleLaws where
 theorem classicalKernelRuleLaws : ClassicalKernelRuleLaws :=
   let eqLaws := classicalEqTmRuleLaws
   { eqMp := classical_eqMp
+    abs := classical_abs
     choice := classical_choice
     generalize := classical_generalize
     weakenBound := classical_weakenBound

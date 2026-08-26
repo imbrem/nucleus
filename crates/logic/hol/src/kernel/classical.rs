@@ -54,6 +54,20 @@ pub struct ApThm {
     pub theorem: ThmId,
 }
 
+/// The exact theorem and syntax produced by abstracting an equality.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AbsThm {
+    /// Lambda abstraction of the equality's left operand.
+    pub left: Ref,
+    /// Lambda abstraction of the equality's right operand.
+    pub right: Ref,
+    /// Object-language equality between [`left`](Self::left) and
+    /// [`right`](Self::right).
+    pub equality: Ref,
+    /// The theorem preserving the source premise matrix.
+    pub theorem: ThmId,
+}
+
 /// The exact theorem and syntax produced by universal introduction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ForallThm {
@@ -349,6 +363,67 @@ impl Kernel {
         ))?;
         *self = staged;
         Ok(ApThm {
+            left,
+            right,
+            equality,
+            theorem,
+        })
+    }
+
+    /// Abstracts both sides of a proved equality (`ABS_THM`).
+    ///
+    /// From `Γ ⊢ l = r`, derives `Γ ⊢ (λbinder. l) = (λbinder. r)` when
+    /// `binder` is absent from every proposition in `Γ`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the source has exactly one positive equality
+    /// conclusion, `binder` is a checked term variable, and it is not free in
+    /// any premise proposition. Rejection is transactional.
+    pub fn abs_thm(&mut self, theorem: ThmId, binder: Ref) -> Result<AbsThm, KernelError> {
+        let source_theorem = self.require_thm(theorem)?;
+        let source = sole_positive_conclusion(source_theorem)?;
+        let premises = source_theorem.lhs.to_owned();
+        let bool_ty = self.require_bool_term::<std::convert::Infallible>(source)?;
+        self.require_form::<std::convert::Infallible>(binder, "tm.fv", |node| {
+            matches!(node, Node::TmFv { .. })
+        })?;
+        let binder_ty = self.classifier(binder)?;
+        let Node::Eq(_body_ty, left_body, right_body) = *self.row(source)?.expr() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "ABS_THM equality conclusion",
+            });
+        };
+        for literal in premises.rows().flat_map(|row| row.iter()).copied() {
+            if self.contains_variable::<std::convert::Infallible>(reference(literal), binder)? {
+                return Err(KernelError::InvalidTheoremRule {
+                    rule: "ABS_THM freshness",
+                });
+            }
+        }
+
+        let mut staged = Self {
+            arena: self.arena.clone(),
+            init_prefix: self.init_prefix,
+        };
+        let body_ty = staged.classifier(left_body)?;
+        let right_body_ty = staged.classifier(right_body)?;
+        if !staged.equivalent(body_ty, right_body_ty)? {
+            return Err(KernelError::ClassifierMismatch {
+                expected: body_ty,
+                actual: right_body_ty,
+            });
+        }
+        let function_ty = staged.ty_arr(binder_ty, body_ty)?;
+        let left = staged.lam_at(function_ty, binder, left_body)?;
+        let right = staged.lam_at(function_ty, binder, right_body)?;
+        let equality = staged.eq(bool_ty, left, right)?;
+        let theorem = staged.push_theorem(Thm::new(
+            premises,
+            Dnf::new(vec![unit_row(positive(equality))]),
+        ))?;
+        *self = staged;
+        Ok(AbsThm {
             left,
             right,
             equality,
@@ -1709,6 +1784,61 @@ mod tests {
 
         let before = kernel.arena().clone();
         assert!(kernel.refl(reference(p), reference(p)).is_err());
+        assert_eq!(*kernel.arena(), before);
+    }
+
+    #[test]
+    fn abstraction_congruence_checks_freshness_transactionally() {
+        let Fixture { mut kernel, p, .. } = fixture();
+        let bool_ty = kernel.classifier(reference(p)).unwrap();
+        let binder = kernel.tm_fv(700, bool_ty).unwrap();
+        let source = kernel.refl(bool_ty, reference(p)).unwrap();
+
+        let abstracted = kernel.abs_thm(source.theorem, binder).unwrap();
+        let function_ty = kernel.classifier(abstracted.left).unwrap();
+        assert_eq!(kernel.classifier(abstracted.right).unwrap(), function_ty);
+        kernel
+            .type_arrow_member::<std::convert::Infallible>(function_ty)
+            .unwrap();
+        assert_eq!(
+            unit_conclusions(kernel.require_thm(abstracted.theorem).unwrap()),
+            [positive(abstracted.equality)]
+        );
+        assert!(
+            kernel
+                .require_thm(abstracted.theorem)
+                .unwrap()
+                .lhs
+                .rows()
+                .next()
+                .is_none()
+        );
+
+        let truth = kernel.bool(bool_ty, true).unwrap();
+        let contextual = kernel.copy_theorem(source.theorem).unwrap();
+        kernel.weaken(contextual, &[positive(truth)], &[]).unwrap();
+        let contextual = kernel.abs_thm(contextual, binder).unwrap();
+        assert_eq!(
+            unit_premises(kernel.require_thm(contextual.theorem).unwrap()),
+            [positive(truth)]
+        );
+
+        let captures = kernel.eq(bool_ty, binder, binder).unwrap();
+        let captures_theorem = kernel.copy_theorem(source.theorem).unwrap();
+        kernel
+            .weaken(captures_theorem, &[positive(captures)], &[])
+            .unwrap();
+        let before = kernel.arena().clone();
+        assert!(kernel.abs_thm(captures_theorem, binder).is_err());
+        assert_eq!(*kernel.arena(), before);
+
+        let before = kernel.arena().clone();
+        assert!(kernel.abs_thm(source.theorem, bool_ty).is_err());
+        assert_eq!(*kernel.arena(), before);
+
+        let malformed = kernel.push_sequent(&[], &[p]).unwrap();
+        let before = kernel.arena().clone();
+        assert!(kernel.abs_thm(malformed, binder).is_err());
         assert_eq!(*kernel.arena(), before);
     }
 

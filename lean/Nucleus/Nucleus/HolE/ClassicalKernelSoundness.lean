@@ -17,6 +17,15 @@ Every field has exactly the semantic shape of its corresponding `Proves`
 constructor; ordinary hypotheses, truth, Boolean cases, reflexivity, and
 hypothesis-map are already proved directly in `ClassicalSoundness`. -/
 structure ClassicalKernelRuleLaws where
+  abs : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
+      {H : List (Tm ClassicalSig types depth)} {A B : Ty ClassicalSig types}
+      {left right : Tm ClassicalSig types (depth + 1)},
+    TypedHyps Γ H → Kinded A → Kinded B →
+    HasTypeDefEq Γ (.eq (.arr A B) (.lam A left) (.lam A right)) .boolTy →
+    HasTypeDefEq (extendBound A Γ) left B →
+    HasTypeDefEq (extendBound A Γ) right B →
+    CEntails (Γ := extendBound A Γ) (H.map weaken) (.eq B left right) →
+    CEntails (Γ := Γ) H (.eq (.arr A B) (.lam A left) (.lam A right))
   eqMp : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
       {H : List (Tm ClassicalSig types depth)} {A : Ty ClassicalSig types}
       {p x y : Tm ClassicalSig types depth},
@@ -129,6 +138,8 @@ theorem Proves.sound_of_kernel_laws (laws : ClassicalKernelRuleLaws) :
   | boolCases typed hp conclusionTyping leftTyped rightTyped left right ihl ihr =>
       exact CEntails.boolCases hp (rightTyped _ (List.mem_cons_self)) ihl ihr
   | eqRefl typed conclusionTyping hA hx => exact CEntails.eqRefl hA hx conclusionTyping
+  | abs typed hA hB conclusionTyping leftTyping rightTyping premise ih =>
+      exact laws.abs typed hA hB conclusionTyping leftTyping rightTyping ih
   | eqMp typed hA conclusionTyping hp hx hy equality premise iheq ihp =>
       exact laws.eqMp hA conclusionTyping hp hx hy equality.conclusionTyping
         premise.conclusionTyping iheq ihp

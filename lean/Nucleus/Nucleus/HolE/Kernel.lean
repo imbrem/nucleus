@@ -95,6 +95,13 @@ inductive Proves {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
       (conclusionTyping : HasTypeDefEq Γ (.eq A x x) .boolTy)
       (hA : Kinded A) (hx : HasTypeDefEq Γ x A) :
       Proves Γ H (.eq A x x)
+  | abs (typed : TypedHyps Γ H) (hA : Kinded A) (hB : Kinded B)
+      (conclusionTyping : HasTypeDefEq Γ
+        (.eq (.arr A B) (.lam A left) (.lam A right)) .boolTy)
+      (leftTyping : HasTypeDefEq (extendBound A Γ) left B)
+      (rightTyping : HasTypeDefEq (extendBound A Γ) right B) :
+      Proves (extendBound A Γ) (H.map weaken) (.eq B left right) →
+      Proves Γ H (.eq (.arr A B) (.lam A left) (.lam A right))
   | eqMp (typed : TypedHyps Γ H) (hA : Kinded A)
       (conclusionTyping : HasTypeDefEq Γ (.app p y) .boolTy)
       (hp : HasTypeDefEq Γ p (.arr A .boolTy)) (hx : HasTypeDefEq Γ x A)

@@ -1,9 +1,9 @@
 //! Standard equality rules derived from the small checked HOL surface.
 
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref, Tag, ThmId, TmTag};
+use covalence_logic_hol::{Kernel, KernelError, Ref, SynRel, Tag, ThmId, TmTag};
 
-use crate::{ModelError, SyntaxError, join_same_syntax, substitute};
+use crate::{ForallError, ModelError, SyntaxError, forall_elim, join_same_syntax, substitute};
 
 /// A proved object-language equality and its endpoints.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,6 +40,12 @@ pub enum EqualityError {
         /// Underlying userspace certification failure.
         source: SyntaxError,
     },
+    /// Universal specialization failed.
+    #[snafu(display("derived function extensionality specialization failed: {source}"))]
+    Forall {
+        /// Underlying userspace universal-elimination failure.
+        source: ForallError,
+    },
     /// A theorem does not have the equality shape required by the rule.
     #[snafu(display("theorem {theorem:?} does not conclude one positive equality"))]
     WrongTheorem {
@@ -64,6 +70,71 @@ impl From<SyntaxError> for EqualityError {
     fn from(source: SyntaxError) -> Self {
         Self::Syntax { source }
     }
+}
+
+impl From<ForallError> for EqualityError {
+    fn from(source: ForallError) -> Self {
+        Self::Forall { source }
+    }
+}
+
+/// Derives function extensionality from universal pointwise equality.
+///
+/// Given a theorem of `∀x. f x = g x` and a fresh checked variable `binder`,
+/// this specializes at `binder`, applies the kernel's standard abstraction
+/// congruence rule, and eta-converts both sides to derive `f = g`.
+///
+/// # Errors
+///
+/// Returns an error unless the theorem has the displayed checked shape,
+/// `binder` has the quantified domain and is fresh for every premise, and all
+/// abstraction and eta certificates are accepted. Rejection is transactional.
+pub fn function_extensionality(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    theorem: ThmId,
+    binder: Ref,
+) -> Result<ProvedEquality, EqualityError> {
+    let mut staged = kernel.fork();
+    let specialized = forall_elim(&mut staged, theorem, binder)?;
+    let (_pointwise, _codomain, left_application, right_application) =
+        equality_conclusion(&staged, specialized.theorem)?;
+    let [left, left_argument] = application_children(&staged, left_application, theorem)?;
+    let [right, right_argument] = application_children(&staged, right_application, theorem)?;
+    join_same_syntax(&mut staged, left_argument, binder)?;
+    join_same_syntax(&mut staged, right_argument, binder)?;
+    let abstracted = staged.abs_thm(specialized.theorem, binder)?;
+    let (_source, function_ty, _left_lambda, _right_lambda) =
+        equality_conclusion(&staged, abstracted.theorem)?;
+    let left_function_ty = staged.classifier(left)?;
+    let right_function_ty = staged.classifier(right)?;
+    join_same_syntax(&mut staged, function_ty, left_function_ty)?;
+    join_same_syntax(&mut staged, function_ty, right_function_ty)?;
+    let left_eta = staged.tm_eta_fact(None, abstracted.left)?;
+    let right_eta = staged.tm_eta_fact(None, abstracted.right)?;
+    let equality = staged.eq(bool_ty, left, right)?;
+    let [target_function_ty, _target_left, _target_right] =
+        equality_children(&staged, equality, theorem)?;
+    let type_conversion = join_same_syntax(&mut staged, function_ty, target_function_ty)?;
+    let type_conversion = staged.syn_refine(None, type_conversion, SynRel::Conv)?;
+    let conversion = staged.syn_congr(
+        None,
+        SynRel::Conv,
+        None,
+        None,
+        abstracted.equality,
+        equality,
+        &[type_conversion, left_eta, right_eta],
+    )?;
+    staged.union_syn_fact(conversion)?;
+    staged.convert_conclusions(abstracted.theorem, abstracted.equality, equality)?;
+    *kernel = staged;
+    Ok(ProvedEquality {
+        left,
+        right,
+        equality,
+        theorem: abstracted.theorem,
+    })
 }
 
 /// Derives equality symmetry using only `REFL`, `AP_TERM`, and `EQ_MP`.
@@ -193,18 +264,42 @@ fn equality_conclusion(
         i32::try_from(row[0].magnitude()).map_err(|_| EqualityError::WrongTheorem { theorem })?,
     )
     .ok_or(EqualityError::WrongTheorem { theorem })?;
+    let [domain, left, right] = equality_children(kernel, equality, theorem)?;
+    Ok((equality, domain, left, right))
+}
+
+fn equality_children(
+    kernel: &Kernel,
+    equality: Ref,
+    theorem: ThmId,
+) -> Result<[Ref; 3], EqualityError> {
     if kernel.arena().tag(equality) != Some(Tag::Tm(TmTag::Eq)) {
         return Err(EqualityError::WrongTheorem { theorem });
     }
-    let children = kernel
+    kernel
         .arena()
         .children(equality)
         .ok_or(EqualityError::WrongTheorem { theorem })?
-        .collect::<Vec<_>>();
-    let [domain, left, right] = children.as_slice() else {
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|_| EqualityError::WrongTheorem { theorem })
+}
+
+fn application_children(
+    kernel: &Kernel,
+    application: Ref,
+    theorem: ThmId,
+) -> Result<[Ref; 2], EqualityError> {
+    if kernel.arena().tag(application) != Some(Tag::Tm(TmTag::App)) {
         return Err(EqualityError::WrongTheorem { theorem });
-    };
-    Ok((equality, *domain, *left, *right))
+    }
+    kernel
+        .arena()
+        .children(application)
+        .ok_or(EqualityError::WrongTheorem { theorem })?
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|_| EqualityError::WrongTheorem { theorem })
 }
 
 fn beta_application(

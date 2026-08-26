@@ -1,5 +1,7 @@
 use covalence_logic_hol::{Kernel, Lit};
-use covalence_logic_hol_derived::{equality_symmetry, equality_transitivity};
+use covalence_logic_hol_derived::{
+    equality_symmetry, equality_transitivity, function_extensionality,
+};
 
 fn positive(reference: covalence_logic_hol::Ref) -> Lit {
     Lit::positive(reference.get())
@@ -76,5 +78,34 @@ fn transitivity_rejects_a_mismatched_middle_without_admission() {
     let before = kernel.arena().clone();
 
     assert!(equality_transitivity(&mut kernel, bool_ty, left, right).is_err());
+    assert_eq!(*kernel.arena(), before);
+}
+
+#[test]
+fn function_extensionality_is_derived_from_abs_and_eta() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let function_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+    let function = kernel.tm_fv(10, function_ty).unwrap();
+    let binder = kernel.tm_fv(11, bool_ty).unwrap();
+    let application = kernel.app(function, binder).unwrap();
+    let pointwise = kernel.refl(bool_ty, application).unwrap();
+    let universal = kernel.forall_intro(pointwise.theorem, binder).unwrap();
+    let fresh = kernel.tm_fv(12, bool_ty).unwrap();
+
+    let extensional =
+        function_extensionality(&mut kernel, bool_ty, universal.theorem, fresh).unwrap();
+
+    assert_eq!((extensional.left, extensional.right), (function, function));
+    let theorem = kernel.thm().get(extensional.theorem).unwrap();
+    assert_eq!(theorem.lhs.rows().count(), 0);
+    assert_eq!(
+        theorem.rhs.rows().collect::<Vec<_>>(),
+        vec![&[positive(extensional.equality)][..]]
+    );
+
+    let before = kernel.arena().clone();
+    assert!(function_extensionality(&mut kernel, bool_ty, universal.theorem, function).is_err());
     assert_eq!(*kernel.arena(), before);
 }
