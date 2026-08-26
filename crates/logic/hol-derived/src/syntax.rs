@@ -202,9 +202,248 @@ pub fn join_alpha_equivalent(
     left: Ref,
     right: Ref,
 ) -> Result<SynFactId, SyntaxError> {
-    let fact = join_via_fresh_normal_form(kernel, left, right)?;
+    let fact = derive_alpha_pair(kernel, left, right, &mut BTreeMap::new())
+        .or_else(|_| join_via_fresh_normal_form(kernel, left, right))?;
     kernel.union_syn_fact(fact)?;
     Ok(fact)
+}
+
+fn derive_alpha_pair(
+    kernel: &mut Kernel,
+    left: Ref,
+    right: Ref,
+    memo: &mut BTreeMap<(Ref, Ref), SynFactId>,
+) -> Result<SynFactId, SyntaxError> {
+    if let Some(&fact) = memo.get(&(left, right)) {
+        return Ok(fact);
+    }
+    if left == right {
+        let fact = kernel.syn_refl(None, SynRel::Alpha, left)?;
+        memo.insert((left, right), fact);
+        return Ok(fact);
+    }
+    let left_tag = kernel.arena().tag(left).ok_or(SyntaxError::Different)?;
+    let right_tag = kernel.arena().tag(right).ok_or(SyntaxError::Different)?;
+    if left_tag != right_tag {
+        return Err(SyntaxError::Different);
+    }
+    let fact = match left_tag {
+        Tag::Tm(TmTag::Lam) | Tag::Ty(TyTag::Lam) => {
+            derive_explicit_alpha(kernel, left, right, left_tag, memo)?
+        }
+        Tag::Ty(TyTag::Model) | Tag::Tm(TmTag::TyExists | TmTag::TyForall) => {
+            derive_implicit_alpha(kernel, left, right, left_tag, memo)?
+        }
+        _ => derive_alpha_congruence(kernel, left, right, memo)?,
+    };
+    memo.insert((left, right), fact);
+    Ok(fact)
+}
+
+fn derive_explicit_alpha(
+    kernel: &mut Kernel,
+    left: Ref,
+    right: Ref,
+    tag: Tag,
+    memo: &mut BTreeMap<(Ref, Ref), SynFactId>,
+) -> Result<SynFactId, SyntaxError> {
+    let [left_binder, left_body] = pair(kernel, left)?;
+    let [right_binder, right_body] = pair(kernel, right)?;
+    let left_classifier = kernel.classifier(left_binder)?;
+    let right_classifier = kernel.classifier(right_binder)?;
+    let classifiers = derive_alpha_pair(kernel, left_classifier, right_classifier, memo)?;
+    kernel.union_syn_fact(classifiers)?;
+    let fresh_name = kernel.fresh_name(&[left, right])?;
+    let fresh_binder = match tag {
+        Tag::Tm(TmTag::Lam) => kernel.tm_fv(fresh_name, left_classifier)?,
+        Tag::Ty(TyTag::Lam) => kernel.ty_fv(fresh_name, left_classifier)?,
+        _ => return Err(SyntaxError::Different),
+    };
+    let left_substitution = substitute(kernel, left_binder, fresh_binder, left_body)
+        .map_err(|_| SyntaxError::Different)?;
+    let right_substitution = substitute(kernel, right_binder, fresh_binder, right_body)
+        .map_err(|_| SyntaxError::Different)?;
+    let left_substitution_fact = kernel.syn_refine(None, left_substitution.fact, SynRel::Alpha)?;
+    let right_substitution_fact =
+        kernel.syn_refine(None, right_substitution.fact, SynRel::Alpha)?;
+    let left_intermediate = match tag {
+        Tag::Tm(TmTag::Lam) => kernel.lam(fresh_binder, left_substitution.output)?,
+        Tag::Ty(TyTag::Lam) => kernel.ty_lam(fresh_binder, left_substitution.output)?,
+        _ => return Err(SyntaxError::Different),
+    };
+    let right_intermediate = match tag {
+        Tag::Tm(TmTag::Lam) => kernel.lam(fresh_binder, right_substitution.output)?,
+        Tag::Ty(TyTag::Lam) => kernel.ty_lam(fresh_binder, right_substitution.output)?,
+        _ => return Err(SyntaxError::Different),
+    };
+    let intermediate_classifiers = derive_alpha_pair(
+        kernel,
+        kernel.classifier(left_intermediate)?,
+        kernel.classifier(right_intermediate)?,
+        memo,
+    )?;
+    kernel.union_syn_fact(intermediate_classifiers)?;
+    for (source, intermediate) in [(left, left_intermediate), (right, right_intermediate)] {
+        let classifier = derive_alpha_pair(
+            kernel,
+            kernel.classifier(source)?,
+            kernel.classifier(intermediate)?,
+            memo,
+        )?;
+        kernel.union_syn_fact(classifier)?;
+    }
+    let left_classifier_fact = kernel.syn_refl(None, SynRel::Alpha, left_classifier)?;
+    let right_classifier_fact = kernel.syn_symm(None, classifiers)?;
+    let left_renamed = kernel.syn_alpha_binder(
+        None,
+        left,
+        left_intermediate,
+        left_classifier_fact,
+        left_substitution_fact,
+    )?;
+    let right_renamed = kernel.syn_alpha_binder(
+        None,
+        right,
+        right_intermediate,
+        right_classifier_fact,
+        right_substitution_fact,
+    )?;
+    let body = derive_alpha_pair(
+        kernel,
+        left_substitution.output,
+        right_substitution.output,
+        memo,
+    )?;
+    kernel.union_syn_fact(body)?;
+    let binder = kernel.syn_refl(None, SynRel::Alpha, fresh_binder)?;
+    let middle = kernel.syn_binder_congr(
+        None,
+        SynRel::Alpha,
+        None,
+        None,
+        left_intermediate,
+        right_intermediate,
+        binder,
+        body,
+    )?;
+    let right_renamed = kernel.syn_symm(None, right_renamed)?;
+    let left_middle = kernel.syn_trans(None, left_renamed, middle)?;
+    Ok(kernel.syn_trans(None, left_middle, right_renamed)?)
+}
+
+fn derive_implicit_alpha(
+    kernel: &mut Kernel,
+    left: Ref,
+    right: Ref,
+    tag: Tag,
+    memo: &mut BTreeMap<(Ref, Ref), SynFactId>,
+) -> Result<SynFactId, SyntaxError> {
+    let left_name = kernel.arena().name(left).ok_or(SyntaxError::Different)?;
+    let right_name = kernel.arena().name(right).ok_or(SyntaxError::Different)?;
+    let left_body = only_child(kernel, left)?;
+    let right_body = only_child(kernel, right)?;
+    let left_star = kernel.classifier(kernel.classifier(left_body)?)?;
+    let right_star = kernel.classifier(kernel.classifier(right_body)?)?;
+    let star = derive_alpha_pair(kernel, left_star, right_star, memo)?;
+    kernel.union_syn_fact(star)?;
+    let left_binder =
+        bound_type(kernel, left_body, left_name)?.unwrap_or(kernel.ty_fv(left_name, left_star)?);
+    let right_binder = bound_type(kernel, right_body, right_name)?
+        .unwrap_or(kernel.ty_fv(right_name, right_star)?);
+    let fresh_name = kernel.fresh_name(&[left, right])?;
+    let fresh_binder = kernel.ty_fv(fresh_name, left_star)?;
+    let left_substitution = substitute(kernel, left_binder, fresh_binder, left_body)
+        .map_err(|_| SyntaxError::Different)?;
+    let right_substitution = substitute(kernel, right_binder, fresh_binder, right_body)
+        .map_err(|_| SyntaxError::Different)?;
+    let left_substitution_fact = kernel.syn_refine(None, left_substitution.fact, SynRel::Alpha)?;
+    let right_substitution_fact =
+        kernel.syn_refine(None, right_substitution.fact, SynRel::Alpha)?;
+    let left_intermediate = build_implicit(kernel, tag, fresh_name, left_substitution.output)?;
+    let right_intermediate = build_implicit(kernel, tag, fresh_name, right_substitution.output)?;
+    let left_renamed = kernel.syn_alpha_implicit_binder(
+        None,
+        left,
+        left_intermediate,
+        left_binder,
+        fresh_binder,
+        left_substitution_fact,
+    )?;
+    let right_renamed = kernel.syn_alpha_implicit_binder(
+        None,
+        right,
+        right_intermediate,
+        right_binder,
+        fresh_binder,
+        right_substitution_fact,
+    )?;
+    let body = derive_alpha_pair(
+        kernel,
+        left_substitution.output,
+        right_substitution.output,
+        memo,
+    )?;
+    kernel.union_syn_fact(body)?;
+    let middle = kernel.syn_implicit_binder_congr(
+        None,
+        SynRel::Alpha,
+        None,
+        None,
+        left_intermediate,
+        right_intermediate,
+        fresh_binder,
+        body,
+    )?;
+    let right_renamed = kernel.syn_symm(None, right_renamed)?;
+    let left_middle = kernel.syn_trans(None, left_renamed, middle)?;
+    Ok(kernel.syn_trans(None, left_middle, right_renamed)?)
+}
+
+fn build_implicit(kernel: &mut Kernel, tag: Tag, name: u64, body: Ref) -> Result<Ref, SyntaxError> {
+    Ok(match tag {
+        Tag::Ty(TyTag::Model) => kernel.model(name, body)?,
+        Tag::Tm(TmTag::TyExists) => kernel.ty_exists(name, body)?,
+        Tag::Tm(TmTag::TyForall) => kernel.ty_forall(name, body)?,
+        _ => return Err(SyntaxError::Different),
+    })
+}
+
+fn derive_alpha_congruence(
+    kernel: &mut Kernel,
+    left: Ref,
+    right: Ref,
+    memo: &mut BTreeMap<(Ref, Ref), SynFactId>,
+) -> Result<SynFactId, SyntaxError> {
+    if kernel.category(left)? != Sort::Kind {
+        let classifiers = derive_alpha_pair(
+            kernel,
+            kernel.classifier(left)?,
+            kernel.classifier(right)?,
+            memo,
+        )?;
+        kernel.union_syn_fact(classifiers)?;
+    }
+    if kernel.arena().name(left) != kernel.arena().name(right)
+        || kernel.arena().bool_value(left) != kernel.arena().bool_value(right)
+        || kernel.arena().op1(left) != kernel.arena().op1(right)
+        || kernel.arena().op2(left) != kernel.arena().op2(right)
+    {
+        return Err(SyntaxError::Different);
+    }
+    let left_children = children(kernel, left)?;
+    let right_children = children(kernel, right)?;
+    if left_children.len() != right_children.len() {
+        return Err(SyntaxError::Different);
+    }
+    let facts = left_children
+        .into_iter()
+        .zip(right_children)
+        .map(|(left, right)| derive_alpha_pair(kernel, left, right, memo))
+        .collect::<Result<Vec<_>, _>>()?;
+    for &fact in &facts {
+        kernel.union_syn_fact(fact)?;
+    }
+    Ok(kernel.syn_congr(None, SynRel::Alpha, None, None, left, right, &facts)?)
 }
 
 fn children(kernel: &Kernel, reference: Ref) -> Result<Vec<Ref>, SyntaxError> {
