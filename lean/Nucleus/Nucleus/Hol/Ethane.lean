@@ -28,6 +28,7 @@ import Nucleus.Hol.Ethane.Arena.OneBased.SynCacheTransport
 import Nucleus.Hol.Ethane.Arena.OneBased.UnionFind
 import Nucleus.Hol.Ethane.Arena.OneBased.Kernel
 import Nucleus.Hol.Ethane.Arena.OneBased.Copy
+import Nucleus.Hol.Ethane.Arena.OneBased.LogicalCopy
 import Nucleus.Hol.Ethane.Arena.OneBased.Rules
 import Nucleus.Hol.Ethane.Arena.OneBased.SynFacts
 import Nucleus.Hol.Ethane.Arena.OneBased.Api
