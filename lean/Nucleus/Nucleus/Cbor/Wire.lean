@@ -40,6 +40,18 @@ private def argument? (info : Nat) (input : List UInt8) :
     | 31 => some (none, input)
     | _ => none
 
+/-- Decode one initial byte plus its optional fixed-width argument. Keeping
+this cursor operation explicit lets every major type share one verified head
+roundtrip. -/
+private def parseHead? : List UInt8 →
+    Option (Nat × Nat × Option UInt64 × List UInt8)
+  | [] => none
+  | head :: input => do
+      let major := head.toNat / 32
+      let info := head.toNat % 32
+      let (argument, rest) ← argument? info input
+      some (major, info, argument, rest)
+
 private def takeBytes (n : UInt64) (input : List UInt8) :
     Option (List UInt8 × List UInt8) :=
   if n.toNat ≤ input.length then some (input.take n.toNat, input.drop n.toNat) else none
@@ -47,10 +59,8 @@ private def takeBytes (n : UInt64) (input : List UInt8) :
 mutual
   private def parseItem : Nat → List UInt8 → Option (Cbor × List UInt8)
     | 0, _ => none
-    | fuel + 1, head :: input => do
-        let major := head.toNat / 32
-        let info := head.toNat % 32
-        let (arg, rest) ← argument? info input
+    | fuel + 1, input => do
+        let (major, info, arg, rest) ← parseHead? input
         match major with
         | 0 => match arg with
           | some n => some (.primitive (.integer (.unsigned n)), rest)
@@ -110,7 +120,6 @@ mutual
                 some (.primitive (.simple (UInt8.ofNat n.toNat)), rest) else none
             | none => none
         | _ => none
-    | _, [] => none
 
   private def parseItems : Nat → Nat → List UInt8 → Option (List Cbor × List UInt8)
     | _, 0, input => some ([], input)
@@ -245,6 +254,54 @@ private def head (major : Nat) (n : UInt64) : List UInt8 :=
   else if n ≤ 0xffff then UInt8.ofNat (32 * major + 25) :: beBytes 2 n
   else if n ≤ 0xffffffff then UInt8.ofNat (32 * major + 26) :: beBytes 4 n
   else UInt8.ofNat (32 * major + 27) :: beBytes 8 n
+
+private def headInfo (value : UInt64) : Nat :=
+  if value < 24 then value.toNat
+  else if value ≤ 0xff then 24
+  else if value ≤ 0xffff then 25
+  else if value ≤ 0xffff_ffff then 26
+  else 27
+
+private theorem splitHeadByte (major info : Nat) (majorFits : major < 8)
+    (infoFits : info < 32) :
+    (UInt8.ofNat (32 * major + info)).toNat / 32 = major ∧
+      (UInt8.ofNat (32 * major + info)).toNat % 32 = info := by
+  change ((32 * major + info) % 256) / 32 = major ∧
+    ((32 * major + info) % 256) % 32 = info
+  omega
+
+set_option linter.flexible false in
+private theorem parseHead?_head (major : Nat) (value : UInt64)
+    (suffix : List UInt8) (majorFits : major < 8) :
+    parseHead? (head major value ++ suffix) =
+      some (major, headInfo value, some value, suffix) := by
+  unfold head headInfo
+  split <;> rename_i small
+  · have valueFits : value.toNat < 24 := by
+      simpa using UInt64.lt_iff_toNat_lt.mp small
+    have split := splitHeadByte major value.toNat majorFits (by omega)
+    simp only [List.cons_append, List.nil_append, parseHead?]
+    rw [split.1, split.2]
+    simp [argument?, valueFits]
+  split <;> rename_i oneByte
+  · have split := splitHeadByte major 24 majorFits (by decide)
+    simp only [List.cons_append, parseHead?]
+    rw [split.1, split.2, argument?_beBytes_one value suffix oneByte]
+    rfl
+  split <;> rename_i twoBytes
+  · have split := splitHeadByte major 25 majorFits (by decide)
+    simp only [List.cons_append, parseHead?]
+    rw [split.1, split.2, argument?_beBytes_two value suffix twoBytes]
+    rfl
+  split <;> rename_i fourBytes
+  · have split := splitHeadByte major 26 majorFits (by decide)
+    simp only [List.cons_append, parseHead?]
+    rw [split.1, split.2, argument?_beBytes_four value suffix fourBytes]
+    rfl
+  · have split := splitHeadByte major 27 majorFits (by decide)
+    simp only [List.cons_append, parseHead?]
+    rw [split.1, split.2, argument?_beBytes_eight value suffix]
+    rfl
 
 private def lexLt (a b : List UInt8) : Bool :=
   if a.length != b.length then a.length < b.length else a < b
