@@ -1,6 +1,6 @@
 import Nucleus.Hol.Ethane.Arena.OneBased.DenseKernelTransport
 import Nucleus.HolE.ClassicalNaturals
-import Nucleus.HolE.ClassicalSoundness
+import Nucleus.HolE.ClassicalRealization
 
 /-!
 # Semantic certificates for checked natural-number packages
@@ -53,6 +53,26 @@ def ClassicallyEvaluates (term : EmptyTm) (type : EmptyTy) (semantic : CPointed)
     CRealizes
       (Γ := (Nucleus.HolE.emptyBound : Nucleus.HolE.BoundCtx ClassicalSig [] 0))
       emptyCTypeEnv emptyCBoundEnv loweredTerm loweredType semantic value
+
+/-- Closed deterministic evaluation has one value, independently of the
+proof-relevant conversion certificate hidden by `CRealizes`. -/
+theorem ClassicallyEvaluates.value_unique
+    {term : EmptyTm} {type : EmptyTy} {semantic : CPointed}
+    {left right : semantic.carrier}
+    (leftEval : ClassicallyEvaluates term type semantic left)
+    (rightEval : ClassicallyEvaluates term type semantic right) :
+    left = right := by
+  obtain ⟨leftTerm, leftType, leftTermLowered, leftTypeLowered, leftRealizes⟩ :=
+    leftEval
+  obtain ⟨rightTerm, rightType, rightTermLowered, rightTypeLowered,
+    rightRealizes⟩ := rightEval
+  have termEqual : leftTerm = rightTerm := by
+    exact Option.some.inj (leftTermLowered.symm.trans rightTermLowered)
+  have typeEqual : leftType = rightType := by
+    exact Option.some.inj (leftTypeLowered.symm.trans rightTypeLowered)
+  subst rightTerm
+  subst rightType
+  exact leftRealizes.value_unique rightRealizes
 
 /-- Truth of one closed, Boolean-valued Ethane expression in the deterministic
 classical HolE semantics. -/
