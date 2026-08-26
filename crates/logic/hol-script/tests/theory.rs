@@ -602,6 +602,29 @@ fn projected_init_slice_is_deterministic_complete_and_opcode_free() {
 }
 
 #[test]
+fn projected_init_slice_has_stable_natural_semantic_identity() {
+    let init = logical_init();
+    let slice = compile_init_slice(&init).expect("projected slice");
+    let naturals = slice.naturals();
+
+    assert_eq!(slice.prefix().len(), 1_331);
+    assert_eq!(
+        slice.prefix().addr().as_bytes(),
+        &[
+            0x43, 0x0b, 0x82, 0xba, 0xc6, 0xa0, 0x63, 0x12, 0x0e, 0x17, 0x54, 0x53, 0x30, 0xec,
+            0xa1, 0x15, 0x5e, 0xff, 0xb0, 0x99, 0x74, 0x3d, 0x1c, 0x44, 0xb4, 0xe1, 0xad, 0x81,
+            0x13, 0xd1, 0x5b, 0x86,
+        ],
+    );
+    assert_eq!(naturals.ty.get(), 433);
+    assert_eq!(naturals.zero.get(), 502);
+    assert_eq!(naturals.succ.get(), 517);
+    assert_eq!(naturals.induction.get(), 654);
+    assert_eq!(naturals.succ_injective.get(), 783);
+    assert_eq!(naturals.zero_ne_succ.get(), 793);
+}
+
+#[test]
 fn frozen_member_schema_replays_through_a_checked_compact_alias() {
     let init = logical_init();
     let slice = compile_init_slice(&init).expect("projected slice");
