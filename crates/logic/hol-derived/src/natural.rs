@@ -175,6 +175,21 @@ pub struct Naturals {
     pub subtype: Subtype,
 }
 
+/// A checked application of the natural-number induction principle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NaturalInduction {
+    /// The predicate supplied to the induction principle.
+    pub predicate: Ref,
+    /// The specialized proposition at zero.
+    pub base: Ref,
+    /// The universally quantified successor step.
+    pub step: Ref,
+    /// The universally quantified conclusion.
+    pub universal: Ref,
+    /// Exact theorem `⊢ universal`.
+    pub theorem: ThmId,
+}
+
 impl Deref for Naturals {
     type Target = NaturalsDecl;
 
@@ -194,6 +209,71 @@ impl Naturals {
     #[must_use]
     pub fn symbols(&self) -> impl ExactSizeIterator<Item = (&'static str, Ref)> {
         self.declaration.symbols()
+    }
+
+    /// Returns the exact checked `nat → bool` type expected by induction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the resident induction declaration no longer has
+    /// its certified equality-encoded universal shape.
+    pub fn predicate_ty(&self, kernel: &Kernel) -> Result<Ref, NaturalError> {
+        let (predicate, _) = universal_parts(kernel, self.induction)?;
+        Ok(kernel.classifier(predicate)?)
+    }
+
+    /// Applies natural induction to exact, premise-free base and step proofs.
+    ///
+    /// This is userspace orchestration over the checked induction theorem and
+    /// ordinary Gentzen rules. The input theorems are copied before conversion,
+    /// and rejection leaves `kernel` unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `predicate` has type `nat → bool`, `base_theorem`
+    /// proves exactly `predicate zero`, `step_theorem` proves exactly
+    /// `∀n. predicate n → predicate (succ n)`, both have empty premise
+    /// contexts, and every checked specialization and Gentzen step succeeds.
+    pub fn induct(
+        &self,
+        kernel: &mut Kernel,
+        predicate: Ref,
+        base_theorem: ThmId,
+        step_theorem: ThmId,
+    ) -> Result<NaturalInduction, NaturalError> {
+        let mut staged = kernel.fork();
+        let result = self.induct_inner(&mut staged, predicate, base_theorem, step_theorem)?;
+        *kernel = staged;
+        Ok(result)
+    }
+
+    fn induct_inner(
+        &self,
+        kernel: &mut Kernel,
+        predicate: Ref,
+        base_theorem: ThmId,
+        step_theorem: ThmId,
+    ) -> Result<NaturalInduction, NaturalError> {
+        let specialized = forall_elim(kernel, self.proof.induction, predicate)?;
+        let [premises, universal] = exact_op2(kernel, specialized.proposition, Op2::Imp)?;
+        let [base, step] = exact_op2(kernel, premises, Op2::And)?;
+
+        let base_copy = exact_premise_free_copy(kernel, base_theorem, base)?;
+        let step_copy = exact_premise_free_copy(kernel, step_theorem, step)?;
+        let premises_theorem = kernel.and_right(base_copy, step_copy, positive(premises))?;
+        let theorem = modus_ponens(
+            kernel,
+            specialized.theorem,
+            premises_theorem,
+            specialized.proposition,
+        )?;
+        Ok(NaturalInduction {
+            predicate,
+            base,
+            step,
+            universal,
+            theorem,
+        })
     }
 }
 
@@ -1527,6 +1607,26 @@ fn sole_conclusion(kernel: &Kernel, theorem: ThmId) -> Result<Ref, NaturalError>
     .ok_or(NaturalError::WrongForm {
         expected: "a nonzero theorem proposition",
     })
+}
+
+fn exact_premise_free_copy(
+    kernel: &mut Kernel,
+    theorem: ThmId,
+    target: Ref,
+) -> Result<ThmId, NaturalError> {
+    let row = kernel.thm().get(theorem).ok_or(NaturalError::WrongForm {
+        expected: "a resident theorem",
+    })?;
+    if row.lhs.rows().next().is_some() {
+        return Err(NaturalError::WrongForm {
+            expected: "a premise-free theorem",
+        });
+    }
+    let source = sole_conclusion(kernel, theorem)?;
+    crate::join_alpha_equivalent(kernel, source, target)?;
+    let copied = kernel.copy_theorem(theorem)?;
+    kernel.convert_conclusions(copied, source, target)?;
+    Ok(copied)
 }
 
 fn exact_children<const N: usize>(

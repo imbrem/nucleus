@@ -4,12 +4,12 @@
 //! avoids ambient parameters and leaves the kernel to check only ordinary HOL
 //! construction, conversion, equality, and universal rules.
 
-use covalence_logic_hol::{Kernel, Ref, SynFactId, SynRel, Tag, ThmId, TmTag};
+use covalence_logic_hol::{Kernel, Lit, Ref, SynFactId, SynRel, Tag, ThmId, TmTag, builtin::Op2};
 
 use crate::{
     NaturalError, NaturalNameSupply, NaturalRecExt, NaturalRecSchemas, NaturalRecursor,
     NaturalRecursorDecl, NaturalRecursorProof, Naturals, equality_transitivity, forall_elim,
-    join_same_syntax,
+    join_same_syntax, substitute,
 };
 
 /// Stable natural-arithmetic definitions and law statements.
@@ -29,6 +29,8 @@ pub struct NaturalArithmeticDecl {
     pub add_zero: Ref,
     /// `∀n m. add (succ n) m = succ (add n m)`.
     pub add_successor: Ref,
+    /// `∀n. add n zero = n`.
+    pub add_right_zero: Ref,
     /// Private recursion package from which multiplication is selected.
     pub mul_rec: NaturalRecursorDecl,
     /// Multiplication, with its recursive argument first.
@@ -68,6 +70,7 @@ impl NaturalArithmeticDecl {
             ("nat.add", self.add),
             ("nat.add.zero", self.add_zero),
             ("nat.add.successor", self.add_successor),
+            ("nat.add.right_zero", self.add_right_zero),
             ("nat.mul", self.mul),
             ("nat.mul.zero", self.mul_zero),
             ("nat.mul.successor", self.mul_successor),
@@ -90,6 +93,7 @@ impl NaturalArithmeticDecl {
             add: map(self.add)?,
             add_zero: map(self.add_zero)?,
             add_successor: map(self.add_successor)?,
+            add_right_zero: map(self.add_right_zero)?,
             mul_rec: self.mul_rec.try_map(&mut map)?,
             mul: map(self.mul)?,
             mul_zero: map(self.mul_zero)?,
@@ -110,6 +114,8 @@ pub struct NaturalArithmeticProof {
     pub add_zero: ThmId,
     /// Exact theorem `⊢ add_successor`.
     pub add_successor: ThmId,
+    /// Exact theorem `⊢ add_right_zero`.
+    pub add_right_zero: ThmId,
     /// Exact theorem handles for the multiplication recursor package.
     pub mul_rec: NaturalRecursorProof,
     /// Exact theorem `⊢ mul_zero`.
@@ -239,6 +245,15 @@ impl NaturalArithmeticExt for Kernel {
             add.zero_theorem,
             add.successor_theorem,
         )?;
+        let (add_right_zero, add_right_zero_theorem) = prove_add_right_zero(
+            self,
+            &mut names,
+            naturals,
+            bool_ty,
+            add.function,
+            add.zero_theorem,
+            add.successor_theorem,
+        )?;
 
         Ok(NaturalArithmetic {
             declaration: NaturalArithmeticDecl {
@@ -247,6 +262,7 @@ impl NaturalArithmeticExt for Kernel {
                 add: add.function,
                 add_zero: add.zero,
                 add_successor: add.successor,
+                add_right_zero,
                 mul_rec: mul.recursor.declaration(),
                 mul: mul.function,
                 mul_zero: mul.zero,
@@ -259,6 +275,7 @@ impl NaturalArithmeticExt for Kernel {
                 add_rec: add.recursor.proof(),
                 add_zero: add.zero_theorem,
                 add_successor: add.successor_theorem,
+                add_right_zero: add_right_zero_theorem,
                 mul_rec: mul.recursor.proof(),
                 mul_zero: mul.zero_theorem,
                 mul_successor: mul.successor_theorem,
@@ -410,6 +427,70 @@ fn prove_one_plus_one(
     join_same_syntax(kernel, proof.equality, proposition)?;
     kernel.convert_conclusions(proof.theorem, proof.equality, proposition)?;
     Ok((one, two, proposition, proof.theorem))
+}
+
+fn prove_add_right_zero(
+    kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
+    naturals: &Naturals,
+    bool_ty: Ref,
+    add: Ref,
+    add_zero_theorem: ThmId,
+    add_successor_theorem: ThmId,
+) -> Result<(Ref, ThmId), NaturalError> {
+    let natural = names.variable(kernel, naturals.ty)?;
+    let left = apply2(kernel, add, natural, naturals.zero)?;
+    let body = kernel.eq(bool_ty, left, natural)?;
+    let predicate = kernel.lam_at(naturals.predicate_ty(kernel)?, natural, body)?;
+
+    let zero_left = apply2(kernel, add, naturals.zero, naturals.zero)?;
+    let zero_body = kernel.eq(bool_ty, zero_left, naturals.zero)?;
+    let base = predicate_application(kernel, natural, predicate, body, naturals.zero, zero_body)?;
+    let zero_at_zero = forall_elim(kernel, add_zero_theorem, naturals.zero)?;
+    join_same_syntax(kernel, zero_at_zero.proposition, zero_body)?;
+    kernel.convert_conclusions(zero_at_zero.theorem, zero_at_zero.proposition, zero_body)?;
+    kernel.convert_conclusions(zero_at_zero.theorem, zero_body, base)?;
+
+    let successor = kernel.app(naturals.succ, natural)?;
+    let successor_left = apply2(kernel, add, successor, naturals.zero)?;
+    let successor_body = kernel.eq(bool_ty, successor_left, successor)?;
+    let at_successor =
+        predicate_application(kernel, natural, predicate, body, successor, successor_body)?;
+
+    let hypothesis = kernel.identity(positive(body))?;
+    let lifted = kernel.ap_term(hypothesis, naturals.succ)?;
+    let successor_at_n = forall_elim(kernel, add_successor_theorem, natural)?;
+    let successor_at_n_zero = forall_elim(kernel, successor_at_n.theorem, naturals.zero)?;
+    let transitive =
+        equality_transitivity(kernel, bool_ty, successor_at_n_zero.theorem, lifted.theorem)?;
+    join_same_syntax(kernel, transitive.equality, successor_body)?;
+    kernel.convert_conclusions(transitive.theorem, transitive.equality, successor_body)?;
+    kernel.convert_conclusions(transitive.theorem, successor_body, at_successor)?;
+
+    let at_natural = predicate_application(kernel, natural, predicate, body, natural, body)?;
+    kernel.convert_theorem(transitive.theorem, body, at_natural)?;
+    let step_implication = kernel.op2(Op2::Imp, at_natural, at_successor)?;
+    let step = kernel.imp_right(transitive.theorem, positive(step_implication))?;
+    let step = kernel.forall_intro(step, natural)?;
+    let induction = naturals.induct(kernel, predicate, zero_at_zero.theorem, step.theorem)?;
+    Ok((induction.universal, induction.theorem))
+}
+
+fn predicate_application(
+    kernel: &mut Kernel,
+    binder: Ref,
+    predicate: Ref,
+    body: Ref,
+    argument: Ref,
+    target: Ref,
+) -> Result<Ref, NaturalError> {
+    let application = kernel.app(predicate, argument)?;
+    let substitution = substitute(kernel, binder, argument, body)?;
+    let beta = kernel.tm_beta_fact(None, application, substitution.fact)?;
+    let same = join_same_syntax(kernel, substitution.output, target)?;
+    let conversion = kernel.syn_trans(None, beta, same)?;
+    kernel.union_syn_fact(conversion)?;
+    Ok(application)
 }
 
 fn successor_step(
@@ -727,4 +808,8 @@ fn next_global_name(kernel: &Kernel) -> Result<u64, NaturalError> {
 fn apply2(kernel: &mut Kernel, function: Ref, left: Ref, right: Ref) -> Result<Ref, NaturalError> {
     let at_left = kernel.app(function, left)?;
     Ok(kernel.app(at_left, right)?)
+}
+
+fn positive(reference: Ref) -> Lit {
+    Lit::positive(reference.get())
 }

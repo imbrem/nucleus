@@ -592,6 +592,13 @@ fn retarget_arithmetic_proof(
             generated.add_successor,
             exact.add_successor,
         )?,
+        add_right_zero: retarget_exact_theorem(
+            init,
+            kernel,
+            proof.add_right_zero,
+            generated.add_right_zero,
+            exact.add_right_zero,
+        )?,
         mul_rec: retarget_recursor_proof(
             init,
             kernel,

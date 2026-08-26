@@ -536,6 +536,7 @@ fn projected_init_slice_is_deterministic_complete_and_opcode_free() {
         "nat.induction",
         "nat.add",
         "nat.add.successor",
+        "nat.add.right_zero",
         "nat.mul",
         "nat.mul.successor",
         "nat.one_plus_one",
@@ -833,6 +834,7 @@ fn frozen_arithmetic_package_replays_to_exact_statement_rows() {
     for (theorem, proposition) in [
         (arithmetic.proof.add_zero, declaration.add_zero),
         (arithmetic.proof.add_successor, declaration.add_successor),
+        (arithmetic.proof.add_right_zero, declaration.add_right_zero),
         (arithmetic.proof.mul_zero, declaration.mul_zero),
         (arithmetic.proof.mul_successor, declaration.mul_successor),
         (arithmetic.proof.one_plus_one, declaration.one_plus_one),
@@ -888,6 +890,7 @@ fn check_primitive_arithmetic(
     for (proposition, theorem) in [
         (declaration.add_zero, proof.add_zero),
         (declaration.add_successor, proof.add_successor),
+        (declaration.add_right_zero, proof.add_right_zero),
         (declaration.mul_zero, proof.mul_zero),
         (declaration.mul_successor, proof.mul_successor),
         (declaration.one_plus_one, proof.one_plus_one),
@@ -901,7 +904,7 @@ fn check_primitive_arithmetic(
     }
     assert_eq!(arithmetic.get("nat.add"), Some(declaration.add));
     assert_eq!(arithmetic.get("nat.mul"), Some(declaration.mul));
-    assert_eq!(arithmetic.symbols().len(), 9);
+    assert_eq!(arithmetic.symbols().len(), 10);
 }
 
 #[test]

@@ -1,7 +1,7 @@
 //! End-to-end coverage for the first userspace natural-number package.
 
-use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Ref, Sort};
-use covalence_logic_hol_derived::{NaturalError, NaturalExt};
+use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Lit, Ref, Sort, builtin::Op2};
+use covalence_logic_hol_derived::{NaturalError, NaturalExt, substitute};
 
 fn prelude() -> (Kernel, Ref) {
     let mut kernel = Kernel::new();
@@ -108,4 +108,106 @@ fn construction_is_deterministic() {
         )
     };
     assert_eq!(build(), build());
+}
+
+fn positive(reference: Ref) -> Lit {
+    Lit::positive(reference.get())
+}
+
+fn prove_constant_true(
+    kernel: &mut Kernel,
+    predicate: Ref,
+    binder: Ref,
+    argument: Ref,
+    truth: Ref,
+) -> (Ref, covalence_logic_hol::ThmId) {
+    let application = kernel
+        .app(predicate, argument)
+        .expect("predicate application");
+    let substitution = substitute(kernel, binder, argument, truth).expect("constant substitution");
+    let beta = kernel
+        .tm_beta_fact(None, application, substitution.fact)
+        .expect("beta fact");
+    kernel.union_syn_fact(beta).expect("register beta fact");
+    let theorem = kernel.true_right(positive(truth)).expect("truth theorem");
+    kernel
+        .convert_conclusions(theorem, truth, application)
+        .expect("convert truth to constant predicate");
+    (application, theorem)
+}
+
+#[test]
+fn induction_is_a_transactional_userspace_combinator() {
+    let (mut kernel, bool_ty) = prelude();
+    kernel.add_axiom(AX_INF).expect("infinity capability");
+    kernel.add_axiom(AX_SUB).expect("subtype capability");
+    let naturals = kernel.choose_naturals(bool_ty).expect("naturals");
+    let truth = kernel.bool(bool_ty, true).expect("truth");
+    let induction_function = kernel
+        .arena()
+        .children(naturals.induction)
+        .expect("induction equality")
+        .nth(1)
+        .expect("induction function");
+    let induction_predicate = kernel
+        .arena()
+        .children(induction_function)
+        .expect("induction lambda")
+        .next()
+        .expect("induction predicate");
+    let predicate_ty = kernel
+        .classifier(induction_predicate)
+        .expect("predicate type");
+    let binder = kernel
+        .tm_fv(
+            kernel.fresh_name(&[naturals.ty]).expect("fresh name"),
+            naturals.ty,
+        )
+        .expect("binder");
+    let predicate = kernel
+        .lam_at(predicate_ty, binder, truth)
+        .expect("constant predicate");
+
+    let (_, base) = prove_constant_true(&mut kernel, predicate, binder, naturals.zero, truth);
+    let step_binder = kernel
+        .tm_fv(
+            kernel.fresh_name(&[predicate]).expect("fresh step name"),
+            naturals.ty,
+        )
+        .expect("step binder");
+    let next = kernel
+        .app(naturals.succ, step_binder)
+        .expect("successor application");
+    let at_step = kernel.app(predicate, step_binder).expect("step antecedent");
+    let (at_next, next_truth) = prove_constant_true(&mut kernel, predicate, binder, next, truth);
+    let step_implication = kernel
+        .op2(Op2::Imp, at_step, at_next)
+        .expect("step implication");
+    kernel
+        .weaken(next_truth, &[positive(at_step)], &[])
+        .expect("step hypothesis");
+    let step = kernel
+        .imp_right(next_truth, positive(step_implication))
+        .expect("step implication introduction");
+    let step = kernel
+        .forall_intro(step, step_binder)
+        .expect("step universal introduction");
+
+    let induction = naturals
+        .induct(&mut kernel, predicate, base, step.theorem)
+        .expect("induction");
+    let theorem = kernel.thm().get(induction.theorem).expect("result theorem");
+    assert!(theorem.lhs.rows().next().is_none());
+    assert_eq!(
+        theorem.rhs.rows().collect::<Vec<_>>(),
+        vec![&[positive(induction.universal)][..]]
+    );
+
+    let contextual = kernel.identity(positive(induction.base)).expect("identity");
+    let before = kernel.arena().clone();
+    assert!(matches!(
+        naturals.induct(&mut kernel, predicate, contextual, step.theorem),
+        Err(NaturalError::WrongForm { .. })
+    ));
+    assert_eq!(*kernel.arena(), before);
 }
