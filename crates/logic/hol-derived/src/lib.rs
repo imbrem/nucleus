@@ -5,6 +5,7 @@
 //! admitted only through public checked [`Kernel`](covalence_logic_hol::Kernel)
 //! operations.
 
+mod coproduct;
 mod equality;
 mod exists;
 mod forall;
@@ -16,6 +17,7 @@ mod natural_rec;
 mod subtype;
 mod syntax;
 
+pub use coproduct::{CoproductError, CoproductSchema};
 pub use equality::{EqualityError, ProvedEquality, equality_symmetry, equality_transitivity};
 pub use exists::{ExistsError, OpenedExists, OpenedExistsDecl, open_exists, open_exists_at};
 pub use forall::{ForallError, ProvedTerm, forall_elim};

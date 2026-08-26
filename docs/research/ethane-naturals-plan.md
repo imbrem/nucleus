@@ -17,13 +17,22 @@ side in full: `CNatModel`, the carving of a model out of any infinite type
 `add` and `mul` with commutativity and associativity, and `transport` between
 any two models. That is a theorem _about the meaning_ of `ax.inf`.
 
-Nothing of that exists as Ethane syntax. There is no `nat` row, no `nat.rec`
-definition in the executable init slice, and no object-language theorem whose
-statement mentions a natural number. `theories/init-boolean.checked.json`
-stops at `imp` — ten declarations, the Boolean fragment. `theories/init.json`
-is a design sketch (`"status": "design-sketch"`) that already names `ind`,
-`nat`, `nat.rec`, `nat.add`, `nat.mul`, `nat.le`, `nat.lt` with the intended
-bodies. The sketch is the target; the checked slice is the floor.
+That gap is now partly closed. The userspace init builder produces an exact,
+opcode-free checked prefix containing `ind`, `nat`, `nat.rec`, `nat.add`,
+`nat.mul`, their construction interfaces and defining equations, and the unary
+theorem `nat.one_plus_one`. Every theorem can be replayed against its exact
+frozen statement row, independently of unrelated rows appended after the
+prefix. The S-expression parser, elaborator, name dictionary, projection, and
+proof orchestration live in `covalence-logic-hol-script` or
+`covalence-logic-hol-derived`; none is a kernel rule or serialized proof
+authority.
+
+The remaining gap is semantic and algebraic rather than representational. The
+explicit Lean bridge from the frozen Ethane package to `CNatModel` has not yet
+landed, nor have associativity, commutativity, distributivity, order, literals,
+or accelerated arithmetic. `theories/init-boolean.checked.json` remains the
+small logical bootstrap manifest; the larger init slice is reproducibly built
+and projected by userspace rather than checked in as hand-authored arena JSON.
 
 So the work is to close the gap between a Lean theorem about models and an
 Ethane arena that proves things.
@@ -85,6 +94,13 @@ Lean obligation is that the object-level recursor denotes it.
 Done when: `nat.rec` reduces on `nat.zero` and on `nat.succ n` by kernel
 conversion, not by an axiom.
 
+Implementation checkpoint: the frozen slice contains the selected recursor,
+its total functional graph, exact zero and successor equations, and the exact
+uniqueness theorem. The construction uses ordinary checked HOL rules and can
+be replayed from the open `NatRecGraph` and `NatRecSpec` schemata. The remaining
+phase-2 obligation is the explicit Lean denotation bridge to
+`CNatModel.natrec`.
+
 This is the phase most likely to be painful, because `eps` at a function type
 plus a uniqueness argument is a lot of object-language plumbing. Budget for it.
 
@@ -103,6 +119,12 @@ Done when: `1 + 1 = 2` is provable — the Principia target — where `1` and `2
 are `nat.succ nat.zero` and `nat.succ (nat.succ nat.zero)`. Note that at this
 point the proof uses no literals and no acceleration: it is the unary proof,
 and it is the one that certifies everything after it.
+
+Implementation checkpoint: closed function-valued recursors now define
+`nat.add` and `nat.mul`; their zero and successor equations and the exact unary
+`nat.one_plus_one` theorem are frozen and replayable. The larger law set named
+above—associativity, commutativity, and distributivity—remains phase-3 work and
+is the next proof-level dependency of the algebraic hierarchy.
 
 ## Phase 4 — `tm.nat` literals and accelerated builtins
 
