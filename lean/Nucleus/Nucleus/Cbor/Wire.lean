@@ -8,10 +8,11 @@ The parser accepts definite and indefinite arrays, maps, byte/text strings,
 all integer argument widths, tags, simple values, and IEEE float widths. It
 returns one item plus unconsumed input; `parse?` requires exactly one item.
 
-The deterministic encoder uses definite lengths, shortest integer/length/tag
-arguments, and RFC 8949 length-first ordering of encoded map keys. Its domain
-is `CborSyn.Reasonable`, exactly because deterministic CBOR forbids indefinite
-lengths while a definite head carries at most a 64-bit argument.
+The width-preserving deterministic encoder uses definite lengths, shortest
+integer/length/tag arguments, and RFC 8949 length-first ordering of encoded map
+keys. `CborSyn.Reasonable` is exactly its finite-length domain. The stricter
+`Canonical` artifact profile additionally rejects duplicate canonical map keys
+and floating-point widths whose preferred serialization is not yet formalized.
 -/
 
 namespace Nucleus
@@ -296,6 +297,170 @@ end
     canonicalize (.map .mapNil) = .map .mapNil := by
   rw [canonicalize, canonicalizeEntries, sortCanonicalEntries, CborSyn.mapOfList]
 
+/-- The canonical byte identity of a map key. Nested maps are transformed to
+their deterministic entry order before encoding, so syntactically reordered
+but extensionally identical keys collide here. -/
+private def canonicalKeyBytes (key : Cbor) : List UInt8 :=
+  encodeSyn (canonicalize key)
+
+private def canonicalMapKeyBytes : CborSyn .map → List (List UInt8)
+  | .mapNil => []
+  | .mapCons key _ tail => canonicalKeyBytes key :: canonicalMapKeyBytes tail
+
+/-! ## Canonical artifact profile
+
+The total CBOR syntax and parser deliberately preserve invalid or ambiguous
+wire inputs. Content-addressed Nucleus objects use a smaller profile: all
+container lengths are definite and bounded, children satisfy the same profile,
+floating-point widths are excluded until preferred-serialization semantics are
+formalized, and map keys have distinct canonical encodings. -/
+
+mutual
+
+/-- Values admitted as canonical content-addressed artifacts. -/
+def Canonical : Cbor → Prop
+  | .primitive (.integer _) => True
+  | .primitive (.bytes value) => value.length ≤ Bytes.maxDefiniteLength
+  | .primitive (.text value) => value.toUTF8.size ≤ Bytes.maxDefiniteLength
+  | .primitive (.simple _) => True
+  | .primitive (.float16 _) => False
+  | .primitive (.float32 _) => False
+  | .primitive (.float64 _) => False
+  | .array items =>
+      items.arrayLength ≤ Bytes.maxDefiniteLength ∧ CanonicalArray items
+  | .map entries =>
+      entries.mapLength ≤ Bytes.maxDefiniteLength ∧ CanonicalMap entries ∧
+        (canonicalMapKeyBytes entries).Nodup
+  | .tag _ content => Canonical content
+
+private def CanonicalArray : CborSyn .array → Prop
+  | .arrayNil => True
+  | .arrayCons head tail => Canonical head ∧ CanonicalArray tail
+
+private def CanonicalMap : CborSyn .map → Prop
+  | .mapNil => True
+  | .mapCons key value tail =>
+      Canonical key ∧ Canonical value ∧ CanonicalMap tail
+
+end
+
+mutual
+
+/-- Structural decision procedure for the canonical artifact profile. -/
+def canonicalDecidable (value : Cbor) : Decidable (Canonical value) :=
+  match value with
+  | .primitive (.integer _) =>
+      @decidable_of_iff _ True (by simp [Canonical]) inferInstance
+  | .primitive (.bytes bytes) =>
+      @decidable_of_iff _ (bytes.length ≤ Bytes.maxDefiniteLength)
+        (by simp [Canonical]) (Nat.decLe _ _)
+  | .primitive (.text text) =>
+      @decidable_of_iff _ (text.toUTF8.size ≤ Bytes.maxDefiniteLength)
+        (by simp [Canonical]) (Nat.decLe _ _)
+  | .primitive (.simple _) =>
+      @decidable_of_iff _ True (by simp [Canonical]) inferInstance
+  | .primitive (.float16 _) =>
+      @decidable_of_iff _ False (by simp [Canonical]) inferInstance
+  | .primitive (.float32 _) =>
+      @decidable_of_iff _ False (by simp [Canonical]) inferInstance
+  | .primitive (.float64 _) =>
+      @decidable_of_iff _ False (by simp [Canonical]) inferInstance
+  | .array items =>
+      @decidable_of_iff _
+        (items.arrayLength ≤ Bytes.maxDefiniteLength ∧ CanonicalArray items)
+        (by simp [Canonical])
+        (@instDecidableAnd _ _ (Nat.decLe _ _) (canonicalArrayDecidable items))
+  | .map entries =>
+      @decidable_of_iff _
+        (entries.mapLength ≤ Bytes.maxDefiniteLength ∧ CanonicalMap entries ∧
+          (canonicalMapKeyBytes entries).Nodup)
+        (by simp [Canonical])
+        (@instDecidableAnd _ _ (Nat.decLe _ _)
+          (@instDecidableAnd _ _ (canonicalMapDecidable entries) inferInstance))
+  | .tag _ content =>
+      @decidable_of_iff _ (Canonical content) (by simp [Canonical])
+        (canonicalDecidable content)
+
+private def canonicalArrayDecidable (items : CborSyn .array) :
+    Decidable (CanonicalArray items) :=
+  match items with
+  | .arrayNil =>
+      @decidable_of_iff _ True (by simp [CanonicalArray]) inferInstance
+  | .arrayCons head tail =>
+      @decidable_of_iff _ (Canonical head ∧ CanonicalArray tail)
+        (by simp [CanonicalArray])
+        (@instDecidableAnd _ _ (canonicalDecidable head)
+          (canonicalArrayDecidable tail))
+
+private def canonicalMapDecidable (entries : CborSyn .map) :
+    Decidable (CanonicalMap entries) :=
+  match entries with
+  | .mapNil =>
+      @decidable_of_iff _ True (by simp [CanonicalMap]) inferInstance
+  | .mapCons key value tail =>
+      @decidable_of_iff _ (Canonical key ∧ Canonical value ∧ CanonicalMap tail)
+        (by simp [CanonicalMap])
+        (@instDecidableAnd _ _ (canonicalDecidable key)
+          (@instDecidableAnd _ _ (canonicalDecidable value)
+            (canonicalMapDecidable tail)))
+
+end
+
+instance (value : Cbor) : Decidable (Canonical value) :=
+  canonicalDecidable value
+
+mutual
+
+/-- Every canonical artifact lies in the existing definite-length encoder
+domain. -/
+theorem Canonical.reasonable {value : Cbor} (canonical : Canonical value) :
+    value.Reasonable := by
+  cases value with
+  | primitive primitive =>
+      cases primitive with
+      | integer value => exact .integer value
+      | bytes value =>
+          rw [Canonical] at canonical
+          exact .bytes value canonical
+      | text value =>
+          rw [Canonical] at canonical
+          exact .text value canonical
+      | simple value => exact .simple value
+      | float16 _ => simp [Canonical] at canonical
+      | float32 _ => simp [Canonical] at canonical
+      | float64 _ => simp [Canonical] at canonical
+  | array items =>
+      rw [Canonical] at canonical
+      exact .array items canonical.1 (CanonicalArray.reasonable canonical.2)
+  | map entries =>
+      rw [Canonical] at canonical
+      exact .map entries canonical.1 (CanonicalMap.reasonable canonical.2.1)
+  | tag number content =>
+      rw [Canonical] at canonical
+      exact .tag number content (Canonical.reasonable canonical)
+
+private theorem CanonicalArray.reasonable {items : CborSyn .array}
+    (canonical : CanonicalArray items) : items.Reasonable := by
+  cases items with
+  | arrayNil => exact .arrayNil
+  | arrayCons head tail =>
+      rw [CanonicalArray] at canonical
+      exact .arrayCons head tail (Canonical.reasonable canonical.1)
+        (CanonicalArray.reasonable canonical.2)
+
+private theorem CanonicalMap.reasonable {entries : CborSyn .map}
+    (canonical : CanonicalMap entries) : entries.Reasonable := by
+  cases entries with
+  | mapNil => exact .mapNil
+  | mapCons key value tail =>
+      rw [CanonicalMap] at canonical
+      exact .mapCons key value tail
+        (Canonical.reasonable canonical.1)
+        (Canonical.reasonable canonical.2.1)
+        (CanonicalMap.reasonable canonical.2.2)
+
+end
+
 /-- Deterministic map order is length-first encoded-key order, not source
 order. This concrete regression also keeps the transformation executable. -/
 theorem canonicalize_unsorted_integer_map :
@@ -324,32 +489,81 @@ theorem canonicalize_duplicate_integer_keys :
     canonicalizeEntries, sortCanonicalEntries, insertCanonicalEntry,
     canonicalEntryLt, lexLt, encodeSyn, head]
 
-/-- RFC deterministic encoding candidate. On `Reasonable` values every length
-fits the definite argument field. -/
+/-- Duplicate canonical key encodings are excluded from content-addressed
+objects even though the general structural parser retains them. -/
+theorem duplicate_integer_keys_not_canonical :
+    ¬ Canonical (.map (CborSyn.mapOfList [
+      (.primitive (.integer (.unsigned 1)), .primitive .true),
+      (.primitive (.integer (.unsigned 1)), .primitive .false)])) := by
+  intro canonical
+  rw [Canonical] at canonical
+  simp [CborSyn.mapOfList, canonicalMapKeyBytes, canonicalKeyBytes,
+    encodeSyn, head] at canonical
+
+/-- Width-preserving deterministic encoding. On `Reasonable` values every
+length fits the definite argument field. This total representation policy is
+not by itself RFC-valid or canonical; see `Canonical`. -/
 def deterministic (value : {v : Cbor // v.Reasonable}) : Bytes :=
   bytesOfList (encodeSyn value.1)
+
+/-- Deterministic bytes for the strict canonical artifact profile. -/
+def canonicalDeterministic (value : {v : Cbor // Canonical v}) : Bytes :=
+  deterministic ⟨value.1, value.2.reasonable⟩
+
+/-- Executable checked entry point for canonical content-addressed artifacts. -/
+def canonicalDeterministic? (value : Cbor) : Option Bytes :=
+  if canonical : Canonical value then
+    some (canonicalDeterministic ⟨value, canonical⟩)
+  else
+    none
+
+@[simp] theorem canonicalDeterministic?_float16 (bits : UInt16) :
+    canonicalDeterministic? (.primitive (.float16 bits)) = none := by
+  simp [canonicalDeterministic?, Canonical]
+
+@[simp] theorem canonicalDeterministic?_float32 (bits : UInt32) :
+    canonicalDeterministic? (.primitive (.float32 bits)) = none := by
+  simp [canonicalDeterministic?, Canonical]
+
+@[simp] theorem canonicalDeterministic?_float64 (bits : UInt64) :
+    canonicalDeterministic? (.primitive (.float64 bits)) = none := by
+  simp [canonicalDeterministic?, Canonical]
+
+/-- Relational form of the canonical artifact encoding. -/
+def CanonicalEncoding (value : Cbor) (bytes : Bytes) : Prop :=
+  ∃ canonical : Canonical value, bytes = canonicalDeterministic ⟨value, canonical⟩
+
+/-- Canonical encoding is a partial function even though the general parser
+accepts a broader structural language. -/
+theorem canonicalEncoding_unique {value : Cbor} {left right : Bytes}
+    (leftCanonical : CanonicalEncoding value left)
+    (rightCanonical : CanonicalEncoding value right) : left = right := by
+  rcases leftCanonical with ⟨_, rfl⟩
+  rcases rightCanonical with ⟨_, rfl⟩
+  rfl
 
 /-- Executable checked entry point for callers holding an unrestricted CBOR
 value. -/
 def deterministic? (value : Cbor) : Option Bytes :=
   if h : value.Reasonable then some (deterministic ⟨value, h⟩) else none
 
-/-- Relational presentation requested by RFC-style specifications. -/
-def RfcDeterministicEncoding (value : Cbor) (bytes : Bytes) : Prop :=
+/-- Relational presentation of the length-bounded, width-preserving encoder. -/
+def LengthBoundedDeterministicEncoding (value : Cbor) (bytes : Bytes) : Prop :=
   ∃ h : value.Reasonable, bytes = deterministic ⟨value, h⟩
 
-/-- Agreement with the chosen encoder also proves uniqueness of the RFC
+/-- Agreement with the chosen encoder proves uniqueness of the length-bounded
 deterministic relation on every reasonable value. -/
 theorem deterministic_unique {value : Cbor} {a b : Bytes}
-    (ha : RfcDeterministicEncoding value a)
-    (hb : RfcDeterministicEncoding value b) : a = b := by
+    (ha : LengthBoundedDeterministicEncoding value a)
+    (hb : LengthBoundedDeterministicEncoding value b) : a = b := by
   rcases ha with ⟨ha, rfl⟩
   rcases hb with ⟨hb, rfl⟩
   rfl
 
 /-- Unreasonable values are outside the RFC deterministic relation. -/
 theorem deterministic_undefined_of_not_reasonable {value : Cbor}
-    (h : ¬ value.Reasonable) : ¬ ∃ bytes, RfcDeterministicEncoding value bytes := by
+    (h : ¬ value.Reasonable) :
+    ¬ ∃ bytes, LengthBoundedDeterministicEncoding value bytes := by
   rintro ⟨_, hv, _⟩
   exact h hv
 

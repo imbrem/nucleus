@@ -9,11 +9,12 @@ lengths, so it needs every byte/text/array/map length to fit CBOR's 64-bit
 argument field. `Reasonable` is the decidable, inductive domain predicate for
 that relation; it is not a predicate for CBOR encodability in general.
 
-A later wire-format module should define RFC deterministic encoding as a
-relation `RfcDeterministicEncoding : Cbor → Bytes → Prop` and a total chosen
-encoder `encode : Cbor → Bytes`. Its central agreement theorem should be:
+A later wire-format module should define a length-bounded deterministic
+encoding relation and a chosen encoder. Its central agreement theorem should
+be:
 
-`Reasonable value → (RfcDeterministicEncoding value bytes ↔ bytes = encode value)`.
+`Reasonable value → (LengthBoundedDeterministicEncoding value bytes ↔
+bytes = encode value)`.
 
 Consequently:
 
@@ -22,6 +23,11 @@ Consequently:
 * uniqueness is proved directly by agreement with the same total encoder that
   also handles unreasonable values;
 * no byte string is related to an unreasonable value.
+
+This bound alone is deliberately not called canonical or RFC-valid. In
+particular it neither rejects duplicate map keys nor chooses preferred
+floating-point widths. `CborWire.Canonical` supplies the stricter initial
+content-addressed profile.
 
 Outside this RFC-defined domain, the total encoder can deterministically use
 indefinite containers and maximal `2^64 - 1` chunks. That remains valid CBOR,
