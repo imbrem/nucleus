@@ -278,6 +278,12 @@ fn compiled_recursion_graph_has_a_checked_base_theorem() {
         (graph.total, graph.total_theorem),
         (graph.has_shape, graph.has_shape_theorem),
         (graph.zero_value, graph.zero_value_theorem),
+        (graph.successor_value, graph.successor_value_theorem),
+        (graph.zero_functional, graph.zero_functional_theorem),
+        (graph.functional, graph.functional_theorem),
+        (graph.rec_graph, graph.rec_graph_theorem),
+        (graph.rec_zero, graph.rec_zero_theorem),
+        (graph.rec_successor, graph.rec_successor_theorem),
     ] {
         let theorem = kernel.thm().get(theorem).expect("graph theorem");
         assert!(theorem.lhs.rows().next().is_none());

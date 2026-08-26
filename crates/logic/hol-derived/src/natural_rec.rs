@@ -7,7 +7,10 @@
 
 use covalence_logic_hol::{Kernel, Ref, SynFactId, SynRel, Tag, ThmId, TmTag, builtin::Op2};
 
-use crate::{NaturalError, Naturals, forall_elim, join_same_syntax, substitute};
+use crate::{
+    NaturalError, Naturals, equality_symmetry, equality_transitivity, forall_elim,
+    join_same_syntax, substitute,
+};
 
 /// A specialized recursion graph and the introduction laws proved so far.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,6 +39,32 @@ pub struct NaturalRecGraph {
     pub zero_value: Ref,
     /// Exact premise-free theorem `⊢ zero_value`.
     pub zero_value_theorem: ThmId,
+    /// `∀n y. graph (succ n) y → ∃z. graph n z ∧ y = step n z`.
+    pub successor_value: Ref,
+    /// Exact premise-free theorem `⊢ successor_value`.
+    pub successor_value_theorem: ThmId,
+    /// `∀y z. graph zero y → graph zero z → y = z`.
+    pub zero_functional: Ref,
+    /// Exact premise-free theorem `⊢ zero_functional`.
+    pub zero_functional_theorem: ThmId,
+    /// `∀n y z. graph n y → graph n z → y = z`.
+    pub functional: Ref,
+    /// Exact premise-free theorem `⊢ functional`.
+    pub functional_theorem: ThmId,
+    /// Selected primitive recursor `nat → codomain`.
+    pub rec: Ref,
+    /// `∀n. graph n (rec n)`.
+    pub rec_graph: Ref,
+    /// Exact premise-free theorem `⊢ rec_graph`.
+    pub rec_graph_theorem: ThmId,
+    /// `rec zero = base`.
+    pub rec_zero: Ref,
+    /// Exact premise-free theorem `⊢ rec_zero`.
+    pub rec_zero_theorem: ThmId,
+    /// `∀n. rec (succ n) = step n (rec n)`.
+    pub rec_successor: Ref,
+    /// Exact premise-free theorem `⊢ rec_successor`.
+    pub rec_successor_theorem: ThmId,
 }
 
 /// Userspace primitive-recursion construction over a checked kernel.
@@ -108,6 +137,39 @@ impl NaturalRecExt for Kernel {
         )?;
         let (zero_value, zero_value_theorem) =
             prove_graph_zero_value(self, naturals, graph, shape, has_shape_theorem, codomain)?;
+        let (successor_value, successor_value_theorem) = prove_graph_successor_value(
+            self,
+            naturals,
+            graph,
+            shape,
+            has_shape_theorem,
+            step,
+            codomain,
+        )?;
+        let (zero_functional, zero_functional_theorem) =
+            prove_zero_functionality(self, naturals, graph, zero_value_theorem, codomain)?;
+        let (functional, functional_theorem) = prove_graph_functionality(
+            self,
+            naturals,
+            graph,
+            step,
+            successor_value_theorem,
+            zero_functional_theorem,
+            codomain,
+        )?;
+        let (rec, rec_graph, rec_graph_theorem) =
+            select_graph_function(self, naturals, graph, total, total_theorem)?;
+        let (rec_zero, rec_zero_theorem) =
+            prove_rec_zero(self, naturals, rec, rec_graph_theorem, zero_value_theorem)?;
+        let (rec_successor, rec_successor_theorem) = prove_rec_successor(
+            self,
+            naturals,
+            rec,
+            step,
+            rec_graph_theorem,
+            step_theorem,
+            functional_theorem,
+        )?;
         Ok(NaturalRecGraph {
             graph,
             base: base_proposition,
@@ -121,6 +183,19 @@ impl NaturalRecExt for Kernel {
             has_shape_theorem,
             zero_value,
             zero_value_theorem,
+            successor_value,
+            successor_value_theorem,
+            zero_functional,
+            zero_functional_theorem,
+            functional,
+            functional_theorem,
+            rec,
+            rec_graph,
+            rec_graph_theorem,
+            rec_zero,
+            rec_zero_theorem,
+            rec_successor,
+            rec_successor_theorem,
         })
     }
 }
@@ -751,6 +826,686 @@ fn successor_shape_contradiction(
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn prove_graph_successor_value(
+    kernel: &mut Kernel,
+    naturals: &Naturals,
+    graph: Ref,
+    shape: Ref,
+    has_shape_theorem: ThmId,
+    recursion_step: Ref,
+    codomain: Ref,
+) -> Result<(Ref, ThmId), NaturalError> {
+    let natural = kernel.tm_fv(kernel.fresh_name(&[graph, shape])?, naturals.ty)?;
+    let value = kernel.tm_fv(kernel.fresh_name(&[natural])?, codomain)?;
+    let witness = kernel.tm_fv(kernel.fresh_name(&[value])?, codomain)?;
+    let successor = kernel.app(naturals.succ, natural)?;
+    let graph_at_successor = apply2(kernel, graph, successor, value)?;
+    let graph_at_witness = apply2(kernel, graph, natural, witness)?;
+    let step_at_natural = kernel.app(recursion_step, natural)?;
+    let expected_value = kernel.app(step_at_natural, witness)?;
+    let bool_ty = kernel.classifier(graph_at_successor)?;
+    let value_equality = kernel.eq(bool_ty, value, expected_value)?;
+    let witness_body = kernel.op2(Op2::And, graph_at_witness, value_equality)?;
+    let exists_witness = kernel.exists_tm(witness, witness_body)?;
+    let implication = kernel.op2(Op2::Imp, graph_at_successor, exists_witness)?;
+
+    let shape_at_successor = apply2(kernel, shape, successor, value)?;
+    let assumed = kernel.identity(positive(graph_at_successor))?;
+    let shape_at_index =
+        forall_elim(kernel, has_shape_theorem, successor).map_err(|_| NaturalError::WrongForm {
+            expected: "graph shape inversion at a successor",
+        })?;
+    let shape_at_value = forall_elim(kernel, shape_at_index.theorem, value).map_err(|_| {
+        NaturalError::WrongForm {
+            expected: "graph shape inversion at a successor value",
+        }
+    })?;
+    let [shape_source, shape_target] = exact_op2(kernel, shape_at_value.proposition, Op2::Imp)?;
+    join_same_syntax(kernel, graph_at_successor, shape_source)?;
+    join_same_syntax(kernel, shape_at_successor, shape_target)?;
+    kernel.convert_conclusions(assumed, graph_at_successor, shape_source)?;
+    let shape_theorem = modus_ponens(
+        kernel,
+        shape_at_value.theorem,
+        assumed,
+        shape_at_value.proposition,
+    )?;
+    kernel.convert_conclusions(shape_theorem, shape_target, shape_at_successor)?;
+    let (shape_application, shape_body) =
+        expand_graph_application(kernel, shape, successor, value)?;
+    join_same_syntax(kernel, shape_at_successor, shape_application)?;
+    kernel.convert_conclusions(shape_theorem, shape_at_successor, shape_body)?;
+    let [base_case, successor_case] = exact_op2(kernel, shape_body, Op2::Or)?;
+
+    let base_branch = successor_base_contradiction(
+        kernel,
+        naturals,
+        natural,
+        base_case,
+        positive(exists_witness),
+    )?;
+    let successor_branch = successor_shape_witness(
+        kernel,
+        naturals,
+        graph,
+        recursion_step,
+        natural,
+        value,
+        successor_case,
+        exists_witness,
+        bool_ty,
+    )?;
+    let cases = kernel.or_left(base_branch, successor_branch, positive(shape_body))?;
+    let witness_theorem = kernel.cut(shape_theorem, cases, positive(shape_body))?;
+    kernel.contract_theorem(witness_theorem)?;
+    let implication_theorem = kernel.imp_right(witness_theorem, positive(implication))?;
+    let at_value = kernel.forall_intro(implication_theorem, value)?;
+    let generalized = kernel.forall_intro(at_value.theorem, natural)?;
+    Ok((generalized.universal, generalized.theorem))
+}
+
+fn successor_base_contradiction(
+    kernel: &mut Kernel,
+    naturals: &Naturals,
+    natural: Ref,
+    base_case: Ref,
+    conclusion: covalence_logic_hol::Lit,
+) -> Result<ThmId, NaturalError> {
+    let [successor_is_zero, _value_is_base] = exact_op2(kernel, base_case, Op2::And)?;
+    let successor_equality = project_and_left(kernel, base_case)?;
+    let bool_ty = kernel.classifier(successor_is_zero)?;
+    let reversed = equality_symmetry(kernel, bool_ty, successor_equality)?;
+    let separation = forall_elim(kernel, naturals.zero_ne_succ_theorem, natural).map_err(|_| {
+        NaturalError::WrongForm {
+            expected: "zero-successor separation at the inverted successor",
+        }
+    })?;
+    let [separated_equality] = exact_op1(
+        kernel,
+        separation.proposition,
+        covalence_logic_hol::builtin::Op1::Not,
+    )?;
+    join_same_syntax(kernel, reversed.equality, separated_equality)?;
+    kernel.convert_conclusions(reversed.theorem, reversed.equality, separated_equality)?;
+    let negative =
+        kernel.expand_conclusion(separation.theorem, positive(separation.proposition), None)?;
+    let contradiction = kernel.resolve(reversed.theorem, negative, positive(separated_equality))?;
+    kernel.weaken(contradiction, &[], &[conclusion])?;
+    Ok(contradiction)
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn successor_shape_witness(
+    kernel: &mut Kernel,
+    naturals: &Naturals,
+    graph: Ref,
+    recursion_step: Ref,
+    natural: Ref,
+    value: Ref,
+    successor_case: Ref,
+    target_exists: Ref,
+    bool_ty: Ref,
+) -> Result<ThmId, NaturalError> {
+    let [predecessor_predicate, predecessor] =
+        exact_children(kernel, successor_case, Tag::Tm(TmTag::App))?;
+    let (outer_application, inner_exists, outer_beta) =
+        beta_apply(kernel, predecessor_predicate, predecessor)?;
+    join_same_syntax(kernel, successor_case, outer_application)?;
+    kernel.union_syn_fact(outer_beta)?;
+    let [value_predicate, predecessor_value] =
+        exact_children(kernel, inner_exists, Tag::Tm(TmTag::App))?;
+    let (inner_application, successor_data, inner_beta) =
+        beta_apply(kernel, value_predicate, predecessor_value)?;
+    join_same_syntax(kernel, inner_exists, inner_application)?;
+    kernel.union_syn_fact(inner_beta)?;
+    let [predecessor_graph, equalities] = exact_op2(kernel, successor_data, Op2::And)?;
+    let [successor_equality, predecessor_value_equality] = exact_op2(kernel, equalities, Op2::And)?;
+
+    let graph_data = project_and_left(kernel, successor_data)?;
+    let equalities_data = project_and_right(kernel, successor_data)?;
+    let successor_data_theorem = project_and_left(kernel, equalities)?;
+    let successor_data_theorem = kernel.cut(
+        equalities_data,
+        successor_data_theorem,
+        positive(equalities),
+    )?;
+    let value_data_theorem = project_and_right(kernel, equalities)?;
+    let value_data_theorem =
+        kernel.cut(equalities_data, value_data_theorem, positive(equalities))?;
+
+    let injective_at_natural = forall_elim(kernel, naturals.succ_injective_theorem, natural)
+        .map_err(|_| NaturalError::WrongForm {
+            expected: "successor injectivity at the target predecessor",
+        })?;
+    let injective_at_predecessor = forall_elim(kernel, injective_at_natural.theorem, predecessor)
+        .map_err(|_| NaturalError::WrongForm {
+        expected: "successor injectivity at the shape predecessor",
+    })?;
+    let [injective_source, _index_equality] =
+        exact_op2(kernel, injective_at_predecessor.proposition, Op2::Imp)?;
+    join_same_syntax(kernel, successor_equality, injective_source)?;
+    kernel.convert_conclusions(successor_data_theorem, successor_equality, injective_source)?;
+    let equal_predecessors = modus_ponens(
+        kernel,
+        injective_at_predecessor.theorem,
+        successor_data_theorem,
+        injective_at_predecessor.proposition,
+    )?;
+
+    let graph_binder =
+        kernel.tm_fv(kernel.fresh_name(&[graph, predecessor_value])?, naturals.ty)?;
+    let graph_body = apply2(kernel, graph, graph_binder, predecessor_value)?;
+    let graph_predicate = kernel.lam(graph_binder, graph_body)?;
+    let target_graph = apply2(kernel, graph, natural, predecessor_value)?;
+    let transported_graph = transport_right_to_left(
+        kernel,
+        bool_ty,
+        equal_predecessors,
+        graph_predicate,
+        target_graph,
+        predecessor_graph,
+        graph_data,
+    )?;
+
+    let value_binder = kernel.tm_fv(
+        kernel.fresh_name(&[recursion_step, predecessor_value])?,
+        naturals.ty,
+    )?;
+    let step_at_binder = kernel.app(recursion_step, value_binder)?;
+    let stepped_value = kernel.app(step_at_binder, predecessor_value)?;
+    let equality_body = kernel.eq(bool_ty, value, stepped_value)?;
+    let equality_predicate = kernel.lam(value_binder, equality_body)?;
+    let step_at_natural = kernel.app(recursion_step, natural)?;
+    let target_step_value = kernel.app(step_at_natural, predecessor_value)?;
+    let target_value_equality = kernel.eq(bool_ty, value, target_step_value)?;
+    let transported_value = transport_right_to_left(
+        kernel,
+        bool_ty,
+        equal_predecessors,
+        equality_predicate,
+        target_value_equality,
+        predecessor_value_equality,
+        value_data_theorem,
+    )?;
+
+    let [target_predicate, _target_choice] =
+        exact_children(kernel, target_exists, Tag::Tm(TmTag::App))?;
+    let (witness_application, target_body, witness_beta) =
+        beta_apply(kernel, target_predicate, predecessor_value)?;
+    kernel.union_syn_fact(witness_beta)?;
+    let [target_graph_body, target_value_body] = exact_op2(kernel, target_body, Op2::And)?;
+    join_same_syntax(kernel, target_graph, target_graph_body)?;
+    join_same_syntax(kernel, target_value_equality, target_value_body)?;
+    kernel.convert_conclusions(transported_graph, target_graph, target_graph_body)?;
+    kernel.convert_conclusions(transported_value, target_value_equality, target_value_body)?;
+    let body_theorem =
+        kernel.and_right(transported_graph, transported_value, positive(target_body))?;
+    kernel.contract_theorem(body_theorem)?;
+    kernel.convert_conclusions(body_theorem, target_body, witness_application)?;
+    let witness_theorem = kernel.choice_intro_at(body_theorem, target_exists)?;
+    kernel.convert_theorem(witness_theorem, successor_data, successor_case)?;
+    Ok(witness_theorem)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn transport_right_to_left(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    index_equality: ThmId,
+    predicate: Ref,
+    left_target: Ref,
+    right_source: Ref,
+    source_theorem: ThmId,
+) -> Result<ThmId, NaturalError> {
+    let index = sole_conclusion(kernel, index_equality)?;
+    let [_domain, left, right] = exact_children(kernel, index, Tag::Tm(TmTag::Eq))?;
+    let lifted = kernel.ap_term(index_equality, predicate)?;
+    let (left_application, left_output, left_beta) = beta_apply(kernel, predicate, left)?;
+    let (right_application, right_output, right_beta) = beta_apply(kernel, predicate, right)?;
+    join_same_syntax(kernel, lifted.left, left_application)?;
+    join_same_syntax(kernel, lifted.right, right_application)?;
+    join_same_syntax(kernel, left_output, left_target)?;
+    join_same_syntax(kernel, right_output, right_source)?;
+    kernel.union_syn_fact(left_beta)?;
+    kernel.union_syn_fact(right_beta)?;
+    let source = kernel.copy_theorem(source_theorem)?;
+    kernel.convert_conclusions(source, right_source, lifted.right)?;
+    let reversed = equality_symmetry(kernel, bool_ty, lifted.theorem)?;
+    let result = kernel.eq_mp(reversed.theorem, source)?;
+    kernel.convert_conclusions(result, lifted.left, left_target)?;
+    Ok(result)
+}
+
+fn prove_zero_functionality(
+    kernel: &mut Kernel,
+    naturals: &Naturals,
+    graph: Ref,
+    zero_value_theorem: ThmId,
+    codomain: Ref,
+) -> Result<(Ref, ThmId), NaturalError> {
+    let left = kernel.tm_fv(kernel.fresh_name(&[graph, naturals.zero])?, codomain)?;
+    let right = kernel.tm_fv(kernel.fresh_name(&[left])?, codomain)?;
+    let graph_left = apply2(kernel, graph, naturals.zero, left)?;
+    let graph_right = apply2(kernel, graph, naturals.zero, right)?;
+    let bool_ty = kernel.classifier(graph_left)?;
+    let equality = kernel.eq(bool_ty, left, right)?;
+    let inner_implication = kernel.op2(Op2::Imp, graph_right, equality)?;
+    let outer_implication = kernel.op2(Op2::Imp, graph_left, inner_implication)?;
+
+    let left_assumption = kernel.identity(positive(graph_left))?;
+    let right_assumption = kernel.identity(positive(graph_right))?;
+    let zero_at_left =
+        forall_elim(kernel, zero_value_theorem, left).map_err(|_| NaturalError::WrongForm {
+            expected: "zero graph inversion at the left value",
+        })?;
+    let zero_at_right =
+        forall_elim(kernel, zero_value_theorem, right).map_err(|_| NaturalError::WrongForm {
+            expected: "zero graph inversion at the right value",
+        })?;
+    let [left_source, _left_equality] = exact_op2(kernel, zero_at_left.proposition, Op2::Imp)?;
+    let [right_source, _right_equality] = exact_op2(kernel, zero_at_right.proposition, Op2::Imp)?;
+    join_same_syntax(kernel, graph_left, left_source)?;
+    join_same_syntax(kernel, graph_right, right_source)?;
+    kernel.convert_conclusions(left_assumption, graph_left, left_source)?;
+    kernel.convert_conclusions(right_assumption, graph_right, right_source)?;
+    let left_to_base = modus_ponens(
+        kernel,
+        zero_at_left.theorem,
+        left_assumption,
+        zero_at_left.proposition,
+    )?;
+    let right_to_base = modus_ponens(
+        kernel,
+        zero_at_right.theorem,
+        right_assumption,
+        zero_at_right.proposition,
+    )?;
+    let base_to_right = equality_symmetry(kernel, bool_ty, right_to_base)?;
+    let result = equality_transitivity(kernel, bool_ty, left_to_base, base_to_right.theorem)?;
+    join_same_syntax(kernel, result.equality, equality)?;
+    kernel.convert_conclusions(result.theorem, result.equality, equality)?;
+    let inner = kernel.imp_right(result.theorem, positive(inner_implication))?;
+    let outer = kernel.imp_right(inner, positive(outer_implication))?;
+    let at_right = kernel.forall_intro(outer, right)?;
+    let generalized = kernel.forall_intro(at_right.theorem, left)?;
+    Ok((generalized.universal, generalized.theorem))
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn prove_graph_functionality(
+    kernel: &mut Kernel,
+    naturals: &Naturals,
+    graph: Ref,
+    recursion_step: Ref,
+    successor_value_theorem: ThmId,
+    zero_functional_theorem: ThmId,
+    codomain: Ref,
+) -> Result<(Ref, ThmId), NaturalError> {
+    let zero_functional = sole_conclusion(kernel, zero_functional_theorem)?;
+    let successor_value = sole_conclusion(kernel, successor_value_theorem)?;
+    let index = kernel.tm_fv(
+        kernel.fresh_name(&[graph, recursion_step, zero_functional, successor_value])?,
+        naturals.ty,
+    )?;
+    let left = kernel.tm_fv(kernel.fresh_name(&[index, zero_functional])?, codomain)?;
+    let right = kernel.tm_fv(kernel.fresh_name(&[left, successor_value])?, codomain)?;
+    let graph_left = apply2(kernel, graph, index, left)?;
+    let graph_right = apply2(kernel, graph, index, right)?;
+    let bool_ty = kernel.classifier(graph_left)?;
+    let equality = kernel.eq(bool_ty, left, right)?;
+    let inner_implication = kernel.op2(Op2::Imp, graph_right, equality)?;
+    let outer_implication = kernel.op2(Op2::Imp, graph_left, inner_implication)?;
+    let at_right = kernel.forall_tm(bool_ty, right, outer_implication)?;
+    let at_left = kernel.forall_tm(bool_ty, left, at_right)?;
+    let predicate = kernel.lam(index, at_left)?;
+
+    let [_induction_bool, induction_function, _induction_truth] =
+        exact_children(kernel, naturals.induction, Tag::Tm(TmTag::Eq))?;
+    let [induction_predicate, _induction_body] =
+        exact_children(kernel, induction_function, Tag::Tm(TmTag::Lam))?;
+    join_same_syntax(
+        kernel,
+        kernel.classifier(induction_predicate)?,
+        kernel.classifier(predicate)?,
+    )?;
+    let induction = forall_elim(kernel, naturals.induction_theorem, predicate).map_err(|_| {
+        NaturalError::WrongForm {
+            expected: "natural induction at graph functionality",
+        }
+    })?;
+    let [premises, conclusion] = exact_op2(kernel, induction.proposition, Op2::Imp)?;
+    let [base_target, step_target] = exact_op2(kernel, premises, Op2::And)?;
+    let base_theorem = prove_functionality_base_at(
+        kernel,
+        predicate,
+        naturals.zero,
+        base_target,
+        zero_functional_theorem,
+    )?;
+    let step_theorem = prove_functionality_step_at(
+        kernel,
+        naturals,
+        predicate,
+        recursion_step,
+        successor_value_theorem,
+        step_target,
+        bool_ty,
+    )?;
+    let premises_theorem = kernel.and_right(base_theorem, step_theorem, positive(premises))?;
+    let theorem = modus_ponens(
+        kernel,
+        induction.theorem,
+        premises_theorem,
+        induction.proposition,
+    )?;
+    Ok((conclusion, theorem))
+}
+
+fn prove_functionality_base_at(
+    kernel: &mut Kernel,
+    predicate: Ref,
+    zero: Ref,
+    target: Ref,
+    zero_functional_theorem: ThmId,
+) -> Result<ThmId, NaturalError> {
+    let (application, expanded, beta) = beta_apply(kernel, predicate, zero)?;
+    join_same_syntax(kernel, target, application)?;
+    kernel.union_syn_fact(beta)?;
+    let [_outer_bool, outer_function, outer_truth] =
+        exact_children(kernel, expanded, Tag::Tm(TmTag::Eq))?;
+    let [left, inner_universal] = exact_children(kernel, outer_function, Tag::Tm(TmTag::Lam))?;
+    let [outer_truth_binder, outer_truth_body] =
+        exact_children(kernel, outer_truth, Tag::Tm(TmTag::Lam))?;
+    if outer_truth_binder != left || kernel.arena().bool_value(outer_truth_body) != Some(true) {
+        return Err(NaturalError::WrongForm {
+            expected: "the outer zero-functionality universal",
+        });
+    }
+    let [_inner_bool, inner_function, inner_truth] =
+        exact_children(kernel, inner_universal, Tag::Tm(TmTag::Eq))?;
+    let [right, body] = exact_children(kernel, inner_function, Tag::Tm(TmTag::Lam))?;
+    let [inner_truth_binder, inner_truth_body] =
+        exact_children(kernel, inner_truth, Tag::Tm(TmTag::Lam))?;
+    if inner_truth_binder != right || kernel.arena().bool_value(inner_truth_body) != Some(true) {
+        return Err(NaturalError::WrongForm {
+            expected: "the inner zero-functionality universal",
+        });
+    }
+    join_universal_argument_type(kernel, zero_functional_theorem, left)?;
+    let at_left = forall_elim(kernel, zero_functional_theorem, left)?;
+    join_universal_argument_type(kernel, at_left.theorem, right)?;
+    let at_right = forall_elim(kernel, at_left.theorem, right)?;
+    join_same_syntax(kernel, at_right.proposition, body)?;
+    kernel.convert_conclusions(at_right.theorem, at_right.proposition, body)?;
+    let inner = kernel.forall_intro_at(at_right.theorem, right, inner_universal)?;
+    let outer = kernel.forall_intro_at(inner, left, expanded)?;
+    kernel.convert_conclusions(outer, expanded, target)?;
+    Ok(outer)
+}
+
+fn join_universal_argument_type(
+    kernel: &mut Kernel,
+    theorem: ThmId,
+    argument: Ref,
+) -> Result<(), NaturalError> {
+    let universal = sole_conclusion(kernel, theorem)?;
+    let [_bool_ty, function, _truth] = exact_children(kernel, universal, Tag::Tm(TmTag::Eq))?;
+    let [binder, _body] = exact_children(kernel, function, Tag::Tm(TmTag::Lam))?;
+    let expected = kernel.classifier(binder)?;
+    let actual = kernel.classifier(argument)?;
+    join_same_syntax(kernel, expected, actual)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn prove_functionality_step_at(
+    kernel: &mut Kernel,
+    naturals: &Naturals,
+    predicate: Ref,
+    recursion_step: Ref,
+    successor_value_theorem: ThmId,
+    target: Ref,
+    bool_ty: Ref,
+) -> Result<ThmId, NaturalError> {
+    let [_step_bool, step_function, step_truth] =
+        exact_children(kernel, target, Tag::Tm(TmTag::Eq))?;
+    let [natural, step_implication] = exact_children(kernel, step_function, Tag::Tm(TmTag::Lam))?;
+    let [step_truth_binder, step_truth_body] =
+        exact_children(kernel, step_truth, Tag::Tm(TmTag::Lam))?;
+    if step_truth_binder != natural || kernel.arena().bool_value(step_truth_body) != Some(true) {
+        return Err(NaturalError::WrongForm {
+            expected: "the graph-functionality induction step universal",
+        });
+    }
+    let [property_at_natural, property_at_successor] =
+        exact_op2(kernel, step_implication, Op2::Imp)?;
+    let property_assumption = kernel.identity(positive(property_at_natural))?;
+    let (natural_application, expanded_natural, natural_beta) =
+        beta_apply(kernel, predicate, natural)?;
+    join_same_syntax(kernel, property_at_natural, natural_application)?;
+    kernel.union_syn_fact(natural_beta)?;
+    kernel.convert_conclusions(property_assumption, property_at_natural, expanded_natural)?;
+
+    let successor = kernel.app(naturals.succ, natural)?;
+    let (successor_application, expanded_successor, successor_beta) =
+        beta_apply(kernel, predicate, successor)?;
+    join_same_syntax(kernel, property_at_successor, successor_application)?;
+    kernel.union_syn_fact(successor_beta)?;
+    let [_outer_bool, outer_function, outer_truth] =
+        exact_children(kernel, expanded_successor, Tag::Tm(TmTag::Eq))?;
+    let [left, inner_universal] = exact_children(kernel, outer_function, Tag::Tm(TmTag::Lam))?;
+    let [outer_truth_binder, outer_truth_body] =
+        exact_children(kernel, outer_truth, Tag::Tm(TmTag::Lam))?;
+    if outer_truth_binder != left || kernel.arena().bool_value(outer_truth_body) != Some(true) {
+        return Err(NaturalError::WrongForm {
+            expected: "the outer successor-functionality universal",
+        });
+    }
+    let [_inner_bool, inner_function, inner_truth] =
+        exact_children(kernel, inner_universal, Tag::Tm(TmTag::Eq))?;
+    let [right, functionality_body] = exact_children(kernel, inner_function, Tag::Tm(TmTag::Lam))?;
+    let [inner_truth_binder, inner_truth_body] =
+        exact_children(kernel, inner_truth, Tag::Tm(TmTag::Lam))?;
+    if inner_truth_binder != right || kernel.arena().bool_value(inner_truth_body) != Some(true) {
+        return Err(NaturalError::WrongForm {
+            expected: "the inner successor-functionality universal",
+        });
+    }
+    let [left_graph, right_implication] = exact_op2(kernel, functionality_body, Op2::Imp)?;
+    let [right_graph, target_equality] = exact_op2(kernel, right_implication, Op2::Imp)?;
+    let left_assumption = kernel.identity(positive(left_graph))?;
+    let right_assumption = kernel.identity(positive(right_graph))?;
+
+    let left_preimage = successor_preimage_at(
+        kernel,
+        successor_value_theorem,
+        natural,
+        left,
+        left_graph,
+        left_assumption,
+    )?;
+    let right_preimage = successor_preimage_at(
+        kernel,
+        successor_value_theorem,
+        natural,
+        right,
+        right_graph,
+        right_assumption,
+    )?;
+    let (left_witness, left_body, left_preimage_theorem) = open_choice_body(kernel, left_preimage)?;
+    let (right_witness, right_body, right_preimage_theorem) =
+        open_choice_body(kernel, right_preimage)?;
+    let [left_predecessor_graph, _left_value_equality] = exact_op2(kernel, left_body, Op2::And)?;
+    let [right_predecessor_graph, _right_value_equality] = exact_op2(kernel, right_body, Op2::And)?;
+    let left_graph_theorem = project_and_left(kernel, left_body)?;
+    let left_graph_theorem = kernel.cut(
+        left_preimage_theorem,
+        left_graph_theorem,
+        positive(left_body),
+    )?;
+    let right_graph_theorem = project_and_left(kernel, right_body)?;
+    let right_graph_theorem = kernel.cut(
+        right_preimage_theorem,
+        right_graph_theorem,
+        positive(right_body),
+    )?;
+    let left_value_theorem = project_and_right(kernel, left_body)?;
+    let left_value_theorem = kernel.cut(
+        left_preimage_theorem,
+        left_value_theorem,
+        positive(left_body),
+    )?;
+    let right_value_theorem = project_and_right(kernel, right_body)?;
+    let right_value_theorem = kernel.cut(
+        right_preimage_theorem,
+        right_value_theorem,
+        positive(right_body),
+    )?;
+
+    let property_at_left =
+        forall_elim(kernel, property_assumption, left_witness).map_err(|_| {
+            NaturalError::WrongForm {
+                expected: "the functionality hypothesis at the left predecessor value",
+            }
+        })?;
+    let property_at_right =
+        forall_elim(kernel, property_at_left.theorem, right_witness).map_err(|_| {
+            NaturalError::WrongForm {
+                expected: "the functionality hypothesis at the right predecessor value",
+            }
+        })?;
+    let [left_source, right_property] = exact_op2(kernel, property_at_right.proposition, Op2::Imp)?;
+    let [right_source, _witness_equality] = exact_op2(kernel, right_property, Op2::Imp)?;
+    join_same_syntax(kernel, left_predecessor_graph, left_source)?;
+    join_same_syntax(kernel, right_predecessor_graph, right_source)?;
+    kernel.convert_conclusions(left_graph_theorem, left_predecessor_graph, left_source)?;
+    kernel.convert_conclusions(right_graph_theorem, right_predecessor_graph, right_source)?;
+    let after_left = modus_ponens(
+        kernel,
+        property_at_right.theorem,
+        left_graph_theorem,
+        property_at_right.proposition,
+    )?;
+    let witness_equality = modus_ponens(kernel, after_left, right_graph_theorem, right_property)?;
+
+    let step_at_natural = kernel.app(recursion_step, natural)?;
+    let stepped_equality = kernel.ap_term(witness_equality, step_at_natural)?;
+    let left_to_step = proved_equality_from_theorem(kernel, left_value_theorem)?;
+    let right_to_step = proved_equality_from_theorem(kernel, right_value_theorem)?;
+    let stepped_equality = retarget_equality(
+        kernel,
+        bool_ty,
+        stepped_equality.theorem,
+        left_to_step.right,
+        right_to_step.right,
+    )?;
+    let through_step = equality_transitivity(
+        kernel,
+        bool_ty,
+        left_to_step.theorem,
+        stepped_equality.theorem,
+    )?;
+    let step_to_right = equality_symmetry(kernel, bool_ty, right_to_step.theorem)?;
+    let result =
+        equality_transitivity(kernel, bool_ty, through_step.theorem, step_to_right.theorem)?;
+    join_same_syntax(kernel, result.equality, target_equality)?;
+    kernel.convert_conclusions(result.theorem, result.equality, target_equality)?;
+    kernel.contract_theorem(result.theorem)?;
+    let inner_implication = kernel.imp_right(result.theorem, positive(right_implication))?;
+    let outer_implication = kernel.imp_right(inner_implication, positive(functionality_body))?;
+    let at_right = kernel.forall_intro_at(outer_implication, right, inner_universal)?;
+    let at_left = kernel.forall_intro_at(at_right, left, expanded_successor)?;
+    kernel.convert_conclusions(at_left, expanded_successor, property_at_successor)?;
+    let induction_step = kernel.imp_right(at_left, positive(step_implication))?;
+    kernel.contract_theorem(induction_step)?;
+    Ok(kernel.forall_intro_at(induction_step, natural, target)?)
+}
+
+fn successor_preimage_at(
+    kernel: &mut Kernel,
+    theorem: ThmId,
+    natural: Ref,
+    value: Ref,
+    graph_proposition: Ref,
+    graph_theorem: ThmId,
+) -> Result<ThmId, NaturalError> {
+    let at_natural =
+        forall_elim(kernel, theorem, natural).map_err(|_| NaturalError::WrongForm {
+            expected: "successor inversion at the induction predecessor",
+        })?;
+    let at_value =
+        forall_elim(kernel, at_natural.theorem, value).map_err(|_| NaturalError::WrongForm {
+            expected: "successor inversion at the induction value",
+        })?;
+    let [source, _target] = exact_op2(kernel, at_value.proposition, Op2::Imp)?;
+    join_same_syntax(kernel, graph_proposition, source)?;
+    kernel.convert_conclusions(graph_theorem, graph_proposition, source)?;
+    modus_ponens(
+        kernel,
+        at_value.theorem,
+        graph_theorem,
+        at_value.proposition,
+    )
+}
+
+fn open_choice_body(
+    kernel: &mut Kernel,
+    theorem: ThmId,
+) -> Result<(Ref, Ref, ThmId), NaturalError> {
+    let exists = sole_conclusion(kernel, theorem)?;
+    let [predicate, witness] = exact_children(kernel, exists, Tag::Tm(TmTag::App))?;
+    let (application, body, beta) = beta_apply(kernel, predicate, witness)?;
+    join_same_syntax(kernel, exists, application)?;
+    kernel.union_syn_fact(beta)?;
+    kernel.convert_conclusions(theorem, exists, body)?;
+    Ok((witness, body, theorem))
+}
+
+fn proved_equality_from_theorem(
+    kernel: &Kernel,
+    theorem: ThmId,
+) -> Result<crate::ProvedEquality, NaturalError> {
+    let equality = sole_conclusion(kernel, theorem)?;
+    let [_domain, left, right] = exact_children(kernel, equality, Tag::Tm(TmTag::Eq))?;
+    Ok(crate::ProvedEquality {
+        left,
+        right,
+        equality,
+        theorem,
+    })
+}
+
+fn retarget_equality(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    theorem: ThmId,
+    left: Ref,
+    right: Ref,
+) -> Result<crate::ProvedEquality, NaturalError> {
+    let source = proved_equality_from_theorem(kernel, theorem)?;
+    let target = kernel.eq(bool_ty, left, right)?;
+    let [source_domain, _source_left, _source_right] =
+        exact_children(kernel, source.equality, Tag::Tm(TmTag::Eq))?;
+    let [target_domain, _target_left, _target_right] =
+        exact_children(kernel, target, Tag::Tm(TmTag::Eq))?;
+    let domain = join_same_syntax(kernel, source_domain, target_domain)?;
+    let left_fact = join_same_syntax(kernel, source.left, left)?;
+    let right_fact = join_same_syntax(kernel, source.right, right)?;
+    let congruence = kernel.syn_congr(
+        None,
+        SynRel::Conv,
+        None,
+        None,
+        source.equality,
+        target,
+        &[domain, left_fact, right_fact],
+    )?;
+    kernel.union_syn_fact(congruence)?;
+    kernel.convert_conclusions(theorem, source.equality, target)?;
+    proved_equality_from_theorem(kernel, theorem)
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn prove_graph_total(
     kernel: &mut Kernel,
     naturals: &Naturals,
@@ -876,6 +1631,231 @@ fn prove_graph_total(
         induction_at_predicate.proposition,
     )?;
     Ok((induction_total, total))
+}
+
+/// Selects the unique graph value pointwise using the witness already present
+/// in the equality/choice encoding of totality.  This is deliberately a
+/// userspace construction: choice, beta conversion, congruence, and universal
+/// introduction are all checked by the ordinary kernel surface.
+fn select_graph_function(
+    kernel: &mut Kernel,
+    naturals: &Naturals,
+    graph: Ref,
+    total: Ref,
+    total_theorem: ThmId,
+) -> Result<(Ref, Ref, ThmId), NaturalError> {
+    let [_bool_ty, total_function, truth_function] =
+        exact_children(kernel, total, Tag::Tm(TmTag::Eq))?;
+    let [natural, exists_value] = exact_children(kernel, total_function, Tag::Tm(TmTag::Lam))?;
+    let [truth_binder, truth_body] = exact_children(kernel, truth_function, Tag::Tm(TmTag::Lam))?;
+    if truth_binder != natural || kernel.arena().bool_value(truth_body) != Some(true) {
+        return Err(NaturalError::WrongForm {
+            expected: "the graph totality universal",
+        });
+    }
+    join_same_syntax(kernel, kernel.classifier(natural)?, naturals.ty)?;
+    let [total_predicate, total_argument] =
+        exact_children(kernel, exists_value, Tag::Tm(TmTag::App))?;
+    join_same_syntax(kernel, total_argument, natural)?;
+    let (total_application, expanded_exists, total_beta) =
+        beta_apply(kernel, total_predicate, natural)?;
+    join_same_syntax(kernel, total_application, exists_value)?;
+    kernel.union_syn_fact(total_beta)?;
+    let [predicate, choice] = exact_children(kernel, expanded_exists, Tag::Tm(TmTag::App))?;
+    let rec = kernel.lam(natural, choice)?;
+
+    let selected_exists =
+        forall_elim(kernel, total_theorem, natural).map_err(|_| NaturalError::WrongForm {
+            expected: "graph totality specialized at a natural",
+        })?;
+    join_same_syntax(kernel, selected_exists.proposition, exists_value)?;
+    kernel.convert_conclusions(
+        selected_exists.theorem,
+        selected_exists.proposition,
+        expanded_exists,
+    )?;
+    let (exists_application, selected_graph, exists_beta) = beta_apply(kernel, predicate, choice)?;
+    join_same_syntax(kernel, exists_application, expanded_exists)?;
+    kernel.union_syn_fact(exists_beta)?;
+    kernel.convert_conclusions(selected_exists.theorem, expanded_exists, selected_graph)?;
+
+    let (rec_application, selected_value, rec_beta) = beta_apply(kernel, rec, natural)?;
+    join_same_syntax(kernel, selected_value, choice)?;
+    kernel.union_syn_fact(rec_beta)?;
+    let graph_at_natural = kernel.app(graph, natural)?;
+    let rec_graph_at_natural = kernel.app(graph_at_natural, rec_application)?;
+    let choice_graph_at_natural = kernel.app(graph_at_natural, choice)?;
+    join_same_syntax(kernel, choice_graph_at_natural, selected_graph)?;
+    let graph_refl = kernel.syn_refl(None, SynRel::Syn, graph_at_natural)?;
+    let rec_congruence = kernel.syn_congr(
+        None,
+        SynRel::Conv,
+        None,
+        None,
+        rec_graph_at_natural,
+        choice_graph_at_natural,
+        &[graph_refl, rec_beta],
+    )?;
+    kernel.union_syn_fact(rec_congruence)?;
+    kernel.convert_conclusions(
+        selected_exists.theorem,
+        selected_graph,
+        rec_graph_at_natural,
+    )?;
+    let bool_ty = kernel.classifier(rec_graph_at_natural)?;
+    let rec_graph = kernel.forall_tm(bool_ty, natural, rec_graph_at_natural)?;
+    let rec_graph_theorem = kernel.forall_intro_at(selected_exists.theorem, natural, rec_graph)?;
+    Ok((rec, rec_graph, rec_graph_theorem))
+}
+
+fn prove_rec_zero(
+    kernel: &mut Kernel,
+    naturals: &Naturals,
+    rec: Ref,
+    rec_graph_theorem: ThmId,
+    zero_value_theorem: ThmId,
+) -> Result<(Ref, ThmId), NaturalError> {
+    let rec_at_zero = kernel.app(rec, naturals.zero)?;
+    let selected_at_zero = forall_elim(kernel, rec_graph_theorem, naturals.zero).map_err(|_| {
+        NaturalError::WrongForm {
+            expected: "the selected recursion graph at zero",
+        }
+    })?;
+    let zero_value_at_rec = forall_elim(kernel, zero_value_theorem, rec_at_zero).map_err(|_| {
+        NaturalError::WrongForm {
+            expected: "graph zero inversion at the selected value",
+        }
+    })?;
+    let [source, equality] = exact_op2(kernel, zero_value_at_rec.proposition, Op2::Imp)?;
+    join_same_syntax(kernel, source, selected_at_zero.proposition)?;
+    kernel.convert_conclusions(
+        selected_at_zero.theorem,
+        selected_at_zero.proposition,
+        source,
+    )?;
+    let theorem = modus_ponens(
+        kernel,
+        zero_value_at_rec.theorem,
+        selected_at_zero.theorem,
+        zero_value_at_rec.proposition,
+    )?;
+    Ok((equality, theorem))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_rec_successor(
+    kernel: &mut Kernel,
+    naturals: &Naturals,
+    rec: Ref,
+    recursion_step: Ref,
+    rec_graph_theorem: ThmId,
+    graph_step_theorem: ThmId,
+    functional_theorem: ThmId,
+) -> Result<(Ref, ThmId), NaturalError> {
+    let natural = kernel.tm_fv(kernel.fresh_name(&[rec, recursion_step])?, naturals.ty)?;
+    let rec_at_natural = kernel.app(rec, natural)?;
+    let successor = kernel.app(naturals.succ, natural)?;
+    let rec_at_successor = kernel.app(rec, successor)?;
+    let step_at_natural = kernel.app(recursion_step, natural)?;
+    let stepped_value = kernel.app(step_at_natural, rec_at_natural)?;
+
+    let graph_at_natural =
+        forall_elim(kernel, rec_graph_theorem, natural).map_err(|_| NaturalError::WrongForm {
+            expected: "the selected recursion graph at a natural",
+        })?;
+    let graph_step_at_natural =
+        forall_elim(kernel, graph_step_theorem, natural).map_err(|_| NaturalError::WrongForm {
+            expected: "the recursion graph step at a natural",
+        })?;
+    let graph_step_at_value = forall_elim(kernel, graph_step_at_natural.theorem, rec_at_natural)
+        .map_err(|_| NaturalError::WrongForm {
+            expected: "the recursion graph step at the selected value",
+        })?;
+    let [step_source, _step_target] = exact_op2(kernel, graph_step_at_value.proposition, Op2::Imp)?;
+    join_same_syntax(kernel, graph_at_natural.proposition, step_source)?;
+    kernel.convert_conclusions(
+        graph_at_natural.theorem,
+        graph_at_natural.proposition,
+        step_source,
+    )?;
+    let stepped_graph = modus_ponens(
+        kernel,
+        graph_step_at_value.theorem,
+        graph_at_natural.theorem,
+        graph_step_at_value.proposition,
+    )?;
+    let selected_successor =
+        forall_elim(kernel, rec_graph_theorem, successor).map_err(|_| NaturalError::WrongForm {
+            expected: "the selected recursion graph at a successor",
+        })?;
+
+    let functional_at_successor =
+        forall_elim(kernel, functional_theorem, successor).map_err(|_| {
+            NaturalError::WrongForm {
+                expected: "graph functionality at a successor",
+            }
+        })?;
+    let functional_at_successor = beta_reduce_conclusion(
+        kernel,
+        functional_at_successor.proposition,
+        functional_at_successor.theorem,
+    )?;
+    let functional_at_selected = forall_elim(kernel, functional_at_successor.1, rec_at_successor)
+        .map_err(|_| NaturalError::WrongForm {
+        expected: "graph functionality at the selected successor value",
+    })?;
+    let functional_at_selected = beta_reduce_conclusion(
+        kernel,
+        functional_at_selected.proposition,
+        functional_at_selected.theorem,
+    )?;
+    let functional_at_step =
+        forall_elim(kernel, functional_at_selected.1, stepped_value).map_err(|_| {
+            NaturalError::WrongForm {
+                expected: "graph functionality at the recursive step value",
+            }
+        })?;
+    let [selected_source, remaining] = exact_op2(kernel, functional_at_step.proposition, Op2::Imp)?;
+    join_same_syntax(kernel, selected_source, selected_successor.proposition)?;
+    kernel.convert_conclusions(
+        selected_successor.theorem,
+        selected_successor.proposition,
+        selected_source,
+    )?;
+    let after_selected = modus_ponens(
+        kernel,
+        functional_at_step.theorem,
+        selected_successor.theorem,
+        functional_at_step.proposition,
+    )?;
+    let [stepped_source, equality] = exact_op2(kernel, remaining, Op2::Imp)?;
+    let stepped_conclusion = sole_conclusion(kernel, stepped_graph)?;
+    join_same_syntax(kernel, stepped_source, stepped_conclusion)?;
+    kernel.convert_conclusions(stepped_graph, stepped_conclusion, stepped_source)?;
+    let theorem = modus_ponens(kernel, after_selected, stepped_graph, remaining)?;
+    let bool_ty = kernel.classifier(equality)?;
+    let universal = kernel.forall_tm(bool_ty, natural, equality)?;
+    let theorem = kernel.forall_intro_at(theorem, natural, universal)?;
+    Ok((universal, theorem))
+}
+
+fn beta_reduce_conclusion(
+    kernel: &mut Kernel,
+    proposition: Ref,
+    theorem: ThmId,
+) -> Result<(Ref, ThmId), NaturalError> {
+    if kernel.arena().tag(proposition) != Some(Tag::Tm(TmTag::App)) {
+        return Ok((proposition, theorem));
+    }
+    let [function, argument] = exact_children(kernel, proposition, Tag::Tm(TmTag::App))?;
+    if kernel.arena().tag(function) != Some(Tag::Tm(TmTag::Lam)) {
+        return Ok((proposition, theorem));
+    }
+    let (application, body, beta) = beta_apply(kernel, function, argument)?;
+    join_same_syntax(kernel, application, proposition)?;
+    kernel.union_syn_fact(beta)?;
+    kernel.convert_conclusions(theorem, proposition, body)?;
+    Ok((body, theorem))
 }
 
 fn expand_graph_application(
