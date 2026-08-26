@@ -1,5 +1,7 @@
 use covalence_logic_hol::{AX_SUB, Kernel, Sort};
-use covalence_logic_hol_derived::{CoproductExt, forall_elim, join_same_syntax};
+use covalence_logic_hol_derived::{
+    CoproductCandidateLaws, CoproductExt, forall_elim, join_same_syntax,
+};
 
 #[test]
 fn guarded_coproduct_has_checked_carrier_type_and_injections() {
@@ -236,4 +238,93 @@ fn every_coproduct_representation_is_in_an_injection_image() {
         kernel.arena().op2(cases.disjunction),
         Some(covalence_logic_hol::builtin::Op2::Or)
     );
+
+    let opened = coproduct.open_cases(&mut kernel, cases).unwrap();
+    for (branch, premise, injection, summand) in [
+        (opened.left, cases.left, coproduct.inl, coproduct.left),
+        (opened.right, cases.right, coproduct.inr, coproduct.right),
+    ] {
+        assert_eq!(kernel.classifier(branch.witness).unwrap(), summand);
+        let expected_injected = kernel.app(injection, branch.witness).unwrap();
+        join_same_syntax(&mut kernel, branch.injected, expected_injected).unwrap();
+        let expected_equality = kernel.eq(bool_ty, value, expected_injected).unwrap();
+        join_same_syntax(&mut kernel, branch.value_equality, expected_equality).unwrap();
+        let theorem = kernel.thm().get(branch.theorem).unwrap();
+        assert_eq!(
+            theorem.lhs.rows().collect::<Vec<_>>(),
+            vec![&[covalence_logic_hol::Lit::positive(premise.get())][..]]
+        );
+        assert_eq!(
+            theorem.rhs.rows().collect::<Vec<_>>(),
+            vec![
+                &[covalence_logic_hol::Lit::positive(
+                    branch.value_equality.get()
+                )][..]
+            ]
+        );
+    }
+    let eliminated = coproduct
+        .eliminate_cases(
+            &mut kernel,
+            cases,
+            opened.left.theorem,
+            opened.right.theorem,
+        )
+        .unwrap();
+    let theorem = kernel.thm().get(eliminated).unwrap();
+    assert_eq!(theorem.lhs.rows().count(), 0);
+    assert_eq!(theorem.rhs.rows().count(), 2);
+}
+
+#[test]
+fn every_mediator_with_the_computation_laws_is_extensionally_unique() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let right_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+    kernel.add_axiom(AX_SUB).unwrap();
+    let coproduct = kernel.coproduct(bool_ty, bool_ty, right_ty).unwrap();
+    let eliminator = coproduct.eliminator(&mut kernel, right_ty).unwrap();
+    let left_map = kernel.tm_fv(700, eliminator.left_map_ty).unwrap();
+    let right_map = kernel.tm_fv(701, eliminator.right_map_ty).unwrap();
+    let laws = coproduct
+        .prove_case_laws(&mut kernel, eliminator, left_map, right_map)
+        .unwrap();
+    let partial = kernel.app(eliminator.function, left_map).unwrap();
+    let candidate_function = kernel.app(partial, right_map).unwrap();
+    let candidate = CoproductCandidateLaws {
+        function: candidate_function,
+        left: laws.left,
+        left_theorem: laws.left_theorem,
+        right: laws.right,
+        right_theorem: laws.right_theorem,
+    };
+
+    let before = kernel.arena().clone();
+    let malformed = CoproductCandidateLaws {
+        right: laws.left,
+        right_theorem: laws.left_theorem,
+        ..candidate
+    };
+    assert!(
+        coproduct
+            .prove_unique_mediator(&mut kernel, eliminator, left_map, right_map, malformed)
+            .is_err()
+    );
+    assert_eq!(*kernel.arena(), before);
+
+    let unique = coproduct
+        .prove_unique_mediator(&mut kernel, eliminator, left_map, right_map, candidate)
+        .unwrap();
+
+    let theorem = kernel.thm().get(unique.theorem).unwrap();
+    assert_eq!(theorem.lhs.rows().count(), 0);
+    assert_eq!(
+        theorem.rhs.rows().collect::<Vec<_>>(),
+        vec![&[covalence_logic_hol::Lit::positive(unique.equality.get())][..]]
+    );
+    let expected = kernel
+        .eq(bool_ty, candidate_function, unique.canonical)
+        .unwrap();
+    join_same_syntax(&mut kernel, unique.equality, expected).unwrap();
 }
