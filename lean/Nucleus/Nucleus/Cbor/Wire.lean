@@ -886,6 +886,101 @@ end
 
 mutual
 
+/-- Structural decision procedure for deterministic wire-normal evidence.
+This remains kernel-reduced evidence; it does not use the native compiler. -/
+def wireNormalDecidable (value : Cbor) : Decidable (WireNormal value) :=
+  match value with
+  | .primitive (.integer (.unsigned value)) => isTrue (.unsigned value)
+  | .primitive (.integer (.negative value)) => isTrue (.negative value)
+  | .primitive (.bytes value) =>
+      match Nat.decLe value.length Bytes.maxDefiniteLength with
+      | isTrue fits => isTrue (.bytes value fits)
+      | isFalse tooLong => isFalse fun normal => by
+          cases normal
+          exact tooLong ‹_›
+  | .primitive (.text value) =>
+      match Nat.decLe value.toUTF8.size Bytes.maxDefiniteLength with
+      | isTrue fits => isTrue (.text value fits)
+      | isFalse tooLong => isFalse fun normal => by
+          cases normal
+          exact tooLong ‹_›
+  | .primitive (.simple value) => isTrue (.simple value)
+  | .primitive (.float16 _) => isFalse fun normal => by cases normal
+  | .primitive (.float32 _) => isFalse fun normal => by cases normal
+  | .primitive (.float64 _) => isFalse fun normal => by cases normal
+  | .array items =>
+      match Nat.decLe items.arrayLength Bytes.maxDefiniteLength,
+          wireNormalArrayDecidable items with
+      | isTrue fits, isTrue normal => isTrue (.array items fits normal)
+      | isFalse tooLong, _ => isFalse fun evidence => by
+          cases evidence
+          exact tooLong ‹_›
+      | _, isFalse invalid => isFalse fun evidence => by
+          cases evidence
+          exact invalid ‹_›
+  | .map entries =>
+      match Nat.decLe entries.mapLength Bytes.maxDefiniteLength,
+          decEq (sortEntries (encodeEntries entries)) (encodeEntries entries),
+          wireNormalMapDecidable entries with
+      | isTrue fits, isTrue ordered, isTrue normal =>
+          isTrue (.map entries fits ordered normal)
+      | isFalse tooLong, _, _ => isFalse fun evidence => by
+          cases evidence
+          exact tooLong ‹_›
+      | _, isFalse unordered, _ => isFalse fun evidence => by
+          cases evidence
+          exact unordered ‹_›
+      | _, _, isFalse invalid => isFalse fun evidence => by
+          cases evidence
+          exact invalid ‹_›
+  | .tag number content =>
+      match wireNormalDecidable content with
+      | isTrue normal => isTrue (.tag number content normal)
+      | isFalse invalid => isFalse fun evidence => by
+          cases evidence
+          exact invalid ‹_›
+
+private def wireNormalArrayDecidable (items : CborSyn .array) :
+    Decidable (WireNormalArray items) :=
+  match items with
+  | .arrayNil => isTrue .nil
+  | .arrayCons head tail =>
+      match wireNormalDecidable head, wireNormalArrayDecidable tail with
+      | isTrue headNormal, isTrue tailNormal =>
+          isTrue (.cons headNormal tailNormal)
+      | isFalse invalid, _ => isFalse fun evidence => by
+          cases evidence
+          exact invalid ‹_›
+      | _, isFalse invalid => isFalse fun evidence => by
+          cases evidence
+          exact invalid ‹_›
+
+private def wireNormalMapDecidable (entries : CborSyn .map) :
+    Decidable (WireNormalMap entries) :=
+  match entries with
+  | .mapNil => isTrue .nil
+  | .mapCons key value tail =>
+      match wireNormalDecidable key, wireNormalDecidable value,
+          wireNormalMapDecidable tail with
+      | isTrue keyNormal, isTrue valueNormal, isTrue tailNormal =>
+          isTrue (.cons keyNormal valueNormal tailNormal)
+      | isFalse invalid, _, _ => isFalse fun evidence => by
+          cases evidence
+          exact invalid ‹_›
+      | _, isFalse invalid, _ => isFalse fun evidence => by
+          cases evidence
+          exact invalid ‹_›
+      | _, _, isFalse invalid => isFalse fun evidence => by
+          cases evidence
+          exact invalid ‹_›
+
+end
+
+instance (value : Cbor) : Decidable (WireNormal value) :=
+  wireNormalDecidable value
+
+mutual
+
 /-- Wire-normal evidence implies the existing deterministic encoder domain. -/
 theorem WireNormal.reasonable {value : Cbor} (normal : WireNormal value) :
     value.Reasonable := by
