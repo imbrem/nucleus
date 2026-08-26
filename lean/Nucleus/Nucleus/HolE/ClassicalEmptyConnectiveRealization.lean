@@ -68,4 +68,61 @@ theorem imp_value_iff (left right : BoolTm Γ) (env : CTypeEnv types)
     rw [equal]
     exact computed
 
+/-- Truth of conjunction is conjunction of truth, independently of the
+particular proof-relevant checking certificates used by its operands. -/
+theorem and_true_iff (left right : BoolTm Γ) (env : CTypeEnv types)
+    (bound : CBoundEnv depth) :
+    Eval (Empty.and left right) env bound cBool true ↔
+      Eval left env bound cBool true ∧ Eval right env bound cBool true := by
+  let leftValue := Infinity.iValue left.toIntrinsic env bound cBool
+  let rightValue := Infinity.iValue right.toIntrinsic env bound cBool
+  change Bool at leftValue rightValue
+  have leftEval : Eval left env bound cBool leftValue := Eval.canonical left env bound cBool
+  have rightEval : Eval right env bound cBool rightValue := Eval.canonical right env bound cBool
+  rw [and_value_iff left right env bound leftValue rightValue true leftEval rightEval]
+  constructor
+  · intro computed
+    have computed' := computed.symm
+    rw [Bool.and_eq_true] at computed'
+    have leftTrue : leftValue = true := computed'.1
+    have rightTrue : rightValue = true := computed'.2
+    exact ⟨leftTrue ▸ leftEval, rightTrue ▸ rightEval⟩
+  · rintro ⟨leftTrue, rightTrue⟩
+    have leftEqual : leftValue = true := leftEval.value_unique leftTrue
+    have rightEqual : rightValue = true := rightEval.value_unique rightTrue
+    symm
+    rw [Bool.and_eq_true]
+    exact ⟨leftEqual, rightEqual⟩
+
+/-- Material implication is true exactly when truth of its antecedent implies
+truth of its consequent. -/
+theorem imp_true_iff (left right : BoolTm Γ) (env : CTypeEnv types)
+    (bound : CBoundEnv depth) :
+    Eval (Empty.imp left right) env bound cBool true ↔
+      (Eval left env bound cBool true → Eval right env bound cBool true) := by
+  let leftValue := Infinity.iValue left.toIntrinsic env bound cBool
+  let rightValue := Infinity.iValue right.toIntrinsic env bound cBool
+  change Bool at leftValue rightValue
+  have leftEval : Eval left env bound cBool leftValue := Eval.canonical left env bound cBool
+  have rightEval : Eval right env bound cBool rightValue := Eval.canonical right env bound cBool
+  rw [imp_value_iff left right env bound leftValue rightValue true leftEval rightEval]
+  constructor
+  · intro computed leftTrue
+    have leftEqual : leftValue = true := leftEval.value_unique leftTrue
+    have rightEqual : rightValue = true := by
+      have computed' := computed.symm
+      rw [leftEqual] at computed'
+      simpa using computed'
+    exact rightEqual ▸ rightEval
+  · intro implication
+    cases leftCase : leftValue
+    · symm
+      rfl
+    · have leftTrue : Eval left env bound cBool true := leftCase ▸ leftEval
+      have rightTrue := implication leftTrue
+      have rightEqual : rightValue = true := rightEval.value_unique rightTrue
+      symm
+      rw [rightEqual]
+      rfl
+
 end Nucleus.HolE.Empty

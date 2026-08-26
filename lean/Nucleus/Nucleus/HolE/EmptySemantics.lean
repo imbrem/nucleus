@@ -201,6 +201,35 @@ theorem weaken (term : Term Γ A) (C : Ty types) (env : CTypeEnv types)
     _ = cSem term.typing.certificate env bound expected := by rw [environment]
     _ = ⟨value⟩ := evaluation term.typing.certificate
 
+/-- Weakening ignores the newly bound value, even when the semantic head is
+presented through a different pointed carrier than the syntactic binder's
+canonical denotation.  This avoids irrelevant transports when an equal
+function-space denotation was normalized by a caller. -/
+theorem weakenAt (term : Term Γ A) (C : Ty types) (env : CTypeEnv types)
+    (bound : CBoundEnv depth) (headSemantic : CPointed)
+    (head : headSemantic.carrier) (expected : CPointed)
+    (value : expected.carrier)
+    (evaluation : Eval term env bound expected value) :
+    Eval (term.weaken C) env (extendCBoundEnv headSemantic head bound)
+      expected value := by
+  unfold Eval Infinity.IEval at evaluation ⊢
+  intro checking
+  simp only [Term.toIntrinsic, Term.weaken, Ctx.extend] at checking ⊢
+  let target := (term.typing.weaken (B := C.raw)).certificate
+  rw [cSem_certificate_coherent checking target env]
+  have environment :
+      (extendCBoundEnv headSemantic head bound).rename Fin.succ = bound := by
+    funext index target
+    rfl
+  calc
+    cSem target env (extendCBoundEnv headSemantic head bound) expected =
+        cSem term.typing.certificate env
+          ((extendCBoundEnv headSemantic head bound).rename Fin.succ) expected :=
+      cSem_rename_raw term.typing.certificate Fin.succ (fun _ => rfl) target
+        env _ expected
+    _ = cSem term.typing.certificate env bound expected := by rw [environment]
+    _ = ⟨value⟩ := evaluation term.typing.certificate
+
 theorem app (function : Term Γ (A.arr B)) (argument : Term Γ A)
     (env : CTypeEnv types) (bound : CBoundEnv depth)
     (functionValue : (A.denote env).carrier → (B.denote env).carrier)
