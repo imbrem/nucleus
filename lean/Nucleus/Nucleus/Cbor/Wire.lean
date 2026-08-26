@@ -31,6 +31,10 @@ private def listOfBytes (xs : Bytes) : List UInt8 := xs.data.data.toList
   apply Array.toList_inj.mp
   exact List.toList_data_toByteArray
 
+@[simp] private theorem listOfBytes_bytesOfList (value : List UInt8) :
+    listOfBytes (bytesOfList value) = value := by
+  simp [listOfBytes, bytesOfList]
+
 private def readNat : Nat → List UInt8 → Option (UInt64 × List UInt8)
   | 0, input => some (0, input)
   | n + 1, b :: rest => do
@@ -195,7 +199,10 @@ end
 /-- Parse exactly one complete CBOR data item. -/
 def parse? (bytes : Bytes) : Option Cbor := do
   let input := listOfBytes bytes
-  let (value, rest) ← parseItem (input.length + 1) input
+  -- Every encoded item contributes a head byte, while definite array/map
+  -- cursors spend one additional fuel unit per child/pair. Twice the byte
+  -- length is therefore a structural bound even for maximally nested input.
+  let (value, rest) ← parseItem (2 * input.length) input
   if rest.isEmpty then some value else none
 
 private def beBytes (count : Nat) (n : UInt64) : List UInt8 :=
@@ -263,6 +270,17 @@ private def head (major : Nat) (n : UInt64) : List UInt8 :=
   else if n ≤ 0xffff then UInt8.ofNat (32 * major + 25) :: beBytes 2 n
   else if n ≤ 0xffffffff then UInt8.ofNat (32 * major + 26) :: beBytes 4 n
   else UInt8.ofNat (32 * major + 27) :: beBytes 8 n
+
+private theorem head_length_pos (major : Nat) (value : UInt64) :
+    0 < (head major value).length := by
+  unfold head
+  split
+  · simp
+  · split
+    · simp
+    · split
+      · simp
+      · split <;> simp
 
 private def headInfo (value : UInt64) : Nat :=
   if value < 24 then value.toNat
@@ -352,18 +370,20 @@ end
 
 /-! ## Primitive cursor roundtrips -/
 
-private theorem parseItem_encode_unsigned (value : UInt64)
+private theorem parseItem_encode_unsigned (fuel : Nat) (value : UInt64)
     (suffix : List UInt8) :
-    parseItem 1 (encodeSyn (.primitive (.integer (.unsigned value))) ++ suffix) =
+    parseItem (fuel + 1)
+      (encodeSyn (.primitive (.integer (.unsigned value))) ++ suffix) =
       some (.primitive (.integer (.unsigned value)), suffix) := by
   rw [encodeSyn]
   simp only [parseItem]
   rw [parseHead?_head 0 value suffix (by decide)]
   rfl
 
-private theorem parseItem_encode_negative (value : UInt64)
+private theorem parseItem_encode_negative (fuel : Nat) (value : UInt64)
     (suffix : List UInt8) :
-    parseItem 1 (encodeSyn (.primitive (.integer (.negative value))) ++ suffix) =
+    parseItem (fuel + 1)
+      (encodeSyn (.primitive (.integer (.negative value))) ++ suffix) =
       some (.primitive (.integer (.negative value)), suffix) := by
   rw [encodeSyn]
   simp only [parseItem]
@@ -384,9 +404,10 @@ private theorem takeBytes_length (payload suffix : List UInt8)
   simp [takeBytes, roundtrip]
 
 set_option linter.flexible false in
-private theorem parseItem_encode_bytes (value : Bytes) (suffix : List UInt8)
+private theorem parseItem_encode_bytes (fuel : Nat) (value : Bytes)
+    (suffix : List UInt8)
     (fits : value.length ≤ Bytes.maxDefiniteLength) :
-    parseItem 1 (encodeSyn (.primitive (.bytes value)) ++ suffix) =
+    parseItem (fuel + 1) (encodeSyn (.primitive (.bytes value)) ++ suffix) =
       some (.primitive (.bytes value), suffix) := by
   let payload := listOfBytes value
   have payloadLength : payload.length = value.length := by
@@ -394,7 +415,8 @@ private theorem parseItem_encode_bytes (value : Bytes) (suffix : List UInt8)
   have payloadFits : payload.length ≤ Bytes.maxDefiniteLength := by
     simpa [payloadLength] using fits
   rw [encodeSyn]
-  change parseItem 1 (head 2 (UInt64.ofNat value.length) ++ payload ++ suffix) = _
+  change parseItem (fuel + 1)
+    (head 2 (UInt64.ofNat value.length) ++ payload ++ suffix) = _
   rw [List.append_assoc]
   simp only [parseItem]
   rw [parseHead?_head 2 (UInt64.ofNat value.length) (payload ++ suffix) (by decide)]
@@ -419,9 +441,10 @@ private theorem fromUTF8?_toUTF8 (value : String) :
     exact (invalid value.isValidUTF8).elim
 
 set_option linter.flexible false in
-private theorem parseItem_encode_text (value : String) (suffix : List UInt8)
+private theorem parseItem_encode_text (fuel : Nat) (value : String)
+    (suffix : List UInt8)
     (fits : value.toUTF8.size ≤ Bytes.maxDefiniteLength) :
-    parseItem 1 (encodeSyn (.primitive (.text value)) ++ suffix) =
+    parseItem (fuel + 1) (encodeSyn (.primitive (.text value)) ++ suffix) =
       some (.primitive (.text value), suffix) := by
   let payload := value.toUTF8.data.toList
   have payloadLength : payload.length = value.toUTF8.size := by
@@ -429,7 +452,7 @@ private theorem parseItem_encode_text (value : String) (suffix : List UInt8)
   have payloadFits : payload.length ≤ Bytes.maxDefiniteLength := by
     simpa [payloadLength] using fits
   rw [encodeSyn]
-  change parseItem 1
+  change parseItem (fuel + 1)
     (head 3 (UInt64.ofNat value.toUTF8.size) ++ payload ++ suffix) = _
   rw [List.append_assoc]
   simp only [parseItem]
@@ -465,8 +488,9 @@ private theorem encodeSyn_simple_eq_head (value : UInt8) :
     rw [if_pos oneByte]
     simp [beBytes]
 
-private theorem parseItem_encode_simple (value : UInt8) (suffix : List UInt8) :
-    parseItem 1 (encodeSyn (.primitive (.simple value)) ++ suffix) =
+private theorem parseItem_encode_simple (fuel : Nat) (value : UInt8)
+    (suffix : List UInt8) :
+    parseItem (fuel + 1) (encodeSyn (.primitive (.simple value)) ++ suffix) =
       some (.primitive (.simple value), suffix) := by
   rw [encodeSyn_simple_eq_head]
   simp only [parseItem]
@@ -511,13 +535,34 @@ private theorem parseItem_encode_tag (fuel : Nat) (number : UInt64)
 /-! ## Array cursor roundtrips
 
 Array decoding spends one unit of fuel for every cons cell before decoding its
-head.  Quantifying an item's cursor theorem over every fuel greater than its
-structural size makes that bookkeeping compositional: an array proof only has
-to add the sizes of its head and tail.
+head. The explicit cursor budget accounts for those steps as well as nested
+items; ordinary CBOR node count alone is not a sufficient bound.
 -/
 
+mutual
+  /-- Exact structural fuel sufficient for one deterministic item parse. -/
+  private def cursorBudget : Cbor → Nat
+    | .primitive _ => 1
+    | .array items => arrayCursorBudget items + 1
+    | .map entries => mapCursorBudget entries + 1
+    | .tag _ content => cursorBudget content + 1
+
+  /-- Array-list fuel includes the cursor step spent by each cons cell. -/
+  private def arrayCursorBudget : CborSyn .array → Nat
+    | .arrayNil => 0
+    | .arrayCons head tail =>
+        max (cursorBudget head) (arrayCursorBudget tail) + 1
+
+  /-- Map-list fuel includes one cursor step per key/value pair. -/
+  private def mapCursorBudget : CborSyn .map → Nat
+    | .mapNil => 0
+    | .mapCons key value tail =>
+        max (max (cursorBudget key) (cursorBudget value))
+          (mapCursorBudget tail) + 1
+end
+
 private def CursorRoundtrip (source parsed : Cbor) : Prop :=
-  ∀ fuel suffix, source.size < fuel →
+  ∀ fuel suffix, cursorBudget source ≤ fuel →
     parseItem fuel (encodeSyn source ++ suffix) = some (parsed, suffix)
 
 private inductive ArrayCursorRoundtrip :
@@ -530,40 +575,51 @@ private inductive ArrayCursorRoundtrip :
       ArrayCursorRoundtrip (.arrayCons sourceHead sourceTail)
         (.arrayCons parsedHead parsedTail)
 
+@[simp] private theorem arrayOfList_toArrayList_self :
+    (items : CborSyn .array) → CborSyn.arrayOfList items.toArrayList = items
+  | .arrayNil => by simp [CborSyn.toArrayList, CborSyn.arrayOfList]
+  | .arrayCons head tail => by
+      simp [CborSyn.toArrayList, CborSyn.arrayOfList,
+        arrayOfList_toArrayList_self tail]
+
 private theorem parseItems_encode_array {source parsed : CborSyn .array}
     (roundtrip : ArrayCursorRoundtrip source parsed) (fuel : Nat)
-    (suffix : List UInt8) (enough : source.size < fuel) :
+    (suffix : List UInt8) (enough : arrayCursorBudget source ≤ fuel) :
     parseItems fuel source.arrayLength (encodeSyn source ++ suffix) =
       some (parsed.toArrayList, suffix) := by
   induction roundtrip generalizing fuel with
-  | nil => simp [CborSyn.size, CborSyn.arrayLength, encodeSyn, parseItems,
+  | nil => simp [CborSyn.arrayLength, encodeSyn, parseItems,
       CborSyn.toArrayList]
   | @cons sourceHead parsedHead sourceTail parsedTail head tail ih =>
       cases fuel with
-      | zero => simp at enough
+      | zero => simp [arrayCursorBudget] at enough
       | succ fuel =>
-          have headEnough : sourceHead.size < fuel := by
-            simp only [CborSyn.size] at enough
-            omega
-          have tailEnough : sourceTail.size < fuel := by
-            simp only [CborSyn.size] at enough
-            omega
-          simp only [CborSyn.size, CborSyn.arrayLength, encodeSyn,
+          have combined :
+              max (cursorBudget sourceHead) (arrayCursorBudget sourceTail) ≤
+                fuel := by
+            simpa [arrayCursorBudget] using enough
+          have headEnough : cursorBudget sourceHead ≤ fuel :=
+            le_trans (Nat.le_max_left _ _) combined
+          have tailEnough : arrayCursorBudget sourceTail ≤ fuel :=
+            le_trans (Nat.le_max_right _ _) combined
+          simp only [CborSyn.arrayLength, encodeSyn,
             List.append_assoc, parseItems]
           rw [head fuel (encodeSyn sourceTail ++ suffix) headEnough]
-          rw [ih fuel suffix tailEnough]
+          dsimp
+          rw [ih fuel tailEnough]
           simp [CborSyn.toArrayList]
 
 private theorem parseItem_encode_array {source parsed : CborSyn .array}
     (fits : source.arrayLength ≤ Bytes.maxDefiniteLength)
     (roundtrip : ArrayCursorRoundtrip source parsed) (fuel : Nat)
-    (suffix : List UInt8) (enough : 1 + source.size < fuel) :
+    (suffix : List UInt8) (enough : cursorBudget (.array source) ≤ fuel) :
     parseItem fuel (encodeSyn (.array source) ++ suffix) =
       some (.array parsed, suffix) := by
   cases fuel with
-  | zero => simp at enough
+  | zero => simp [cursorBudget] at enough
   | succ fuel =>
-      have itemsEnough : source.size < fuel := by omega
+      have itemsEnough : arrayCursorBudget source ≤ fuel := by
+        simpa [cursorBudget] using enough
       have lengthFits : source.arrayLength < 2 ^ 64 := by
         unfold Bytes.maxDefiniteLength at fits
         omega
@@ -576,7 +632,8 @@ private theorem parseItem_encode_array {source parsed : CborSyn .array}
       simp only [parseItem]
       rw [parseHead?_head 4 (UInt64.ofNat source.arrayLength)
         (encodeSyn source ++ suffix) (by decide)]
-      simp only [lengthRoundtrip]
+      dsimp
+      rw [lengthRoundtrip]
       rw [parseItems_encode_array roundtrip fuel suffix itemsEnough]
       simp
 
@@ -665,6 +722,340 @@ private theorem encodeEntries_mapOfList_sortCanonicalEntries
     encodeEntries (CborSyn.mapOfList (sortCanonicalEntries entries)) =
       sortEntries (entries.map encodeEntry) := by
   rw [encodeEntries_mapOfList, map_encodeEntry_sortCanonicalEntries]
+
+private theorem encodeEntries_length : (entries : CborSyn .map) →
+    (encodeEntries entries).length = entries.mapLength
+  | .mapNil => by simp [encodeEntries, CborSyn.mapLength]
+  | .mapCons key value tail => by
+      simp [encodeEntries, CborSyn.mapLength, encodeEntries_length tail]
+
+private theorem flatMap_encodeEntries : (entries : CborSyn .map) →
+    (encodeEntries entries).flatMap (fun entry => entry.1 ++ entry.2) =
+      encodeSyn entries
+  | .mapNil => by simp [encodeEntries, encodeSyn]
+  | .mapCons key value tail => by
+      simp [encodeEntries, encodeSyn, flatMap_encodeEntries tail]
+
+/-! ## Map cursor roundtrips -/
+
+/-- Pairwise cursor roundtrips in parser encounter order. Keeping this relation
+on map syntax (rather than a finite-map quotient) preserves duplicate keys and
+their values exactly. -/
+private inductive MapCursorRoundtrip :
+    CborSyn .map → CborSyn .map → Prop where
+  | nil : MapCursorRoundtrip .mapNil .mapNil
+  | cons {sourceKey sourceValue parsedKey parsedValue : Cbor}
+      {sourceTail parsedTail : CborSyn .map}
+      (key : CursorRoundtrip sourceKey parsedKey)
+      (value : CursorRoundtrip sourceValue parsedValue)
+      (tail : MapCursorRoundtrip sourceTail parsedTail) :
+      MapCursorRoundtrip (.mapCons sourceKey sourceValue sourceTail)
+        (.mapCons parsedKey parsedValue parsedTail)
+
+@[simp] private theorem mapOfList_toMapList_self :
+    (entries : CborSyn .map) → CborSyn.mapOfList entries.toMapList = entries
+  | .mapNil => by simp [CborSyn.toMapList, CborSyn.mapOfList]
+  | .mapCons key value tail => by
+      simp [CborSyn.toMapList, CborSyn.mapOfList,
+        mapOfList_toMapList_self tail]
+
+/-- `parsePairs` consumes deterministic entry bytes in their encoded encounter
+order. Equal keys remain separate entries; no lookup or deduplication occurs. -/
+private theorem parsePairs_encode_map {source parsed : CborSyn .map}
+    (roundtrip : MapCursorRoundtrip source parsed) (fuel : Nat)
+    (suffix : List UInt8) (enough : mapCursorBudget source ≤ fuel) :
+    parsePairs fuel source.mapLength (encodeSyn source ++ suffix) =
+      some (parsed.toMapList, suffix) := by
+  induction roundtrip generalizing fuel suffix with
+  | nil => simp [CborSyn.mapLength, encodeSyn, parsePairs,
+      CborSyn.toMapList]
+  | @cons sourceKey sourceValue parsedKey parsedValue sourceTail parsedTail
+      key value tail ih =>
+      cases fuel with
+      | zero => simp [mapCursorBudget] at enough
+      | succ fuel =>
+          have combined :
+              max (max (cursorBudget sourceKey) (cursorBudget sourceValue))
+                (mapCursorBudget sourceTail) ≤ fuel := by
+            simpa [mapCursorBudget] using enough
+          have keyEnough : cursorBudget sourceKey ≤ fuel :=
+            le_trans (Nat.le_max_left _ _)
+              (le_trans (Nat.le_max_left _ _) combined)
+          have valueEnough : cursorBudget sourceValue ≤ fuel :=
+            le_trans (Nat.le_max_right _ _)
+              (le_trans (Nat.le_max_left _ _) combined)
+          have tailEnough : mapCursorBudget sourceTail ≤ fuel :=
+            le_trans (Nat.le_max_right _ _) combined
+          simp only [CborSyn.mapLength, encodeSyn,
+            List.append_assoc, parsePairs]
+          rw [key fuel
+            (encodeSyn sourceValue ++ (encodeSyn sourceTail ++ suffix)) keyEnough]
+          dsimp
+          rw [value fuel (encodeSyn sourceTail ++ suffix) valueEnough]
+          dsimp
+          rw [ih fuel suffix tailEnough]
+          simp [CborSyn.toMapList]
+
+/-- Definite-map decoding recovers the exact map syntax supplied by the
+entrywise cursor relation, in wire order. -/
+private theorem parseItem_encode_ordered_map {source parsed : CborSyn .map}
+    (fits : source.mapLength ≤ Bytes.maxDefiniteLength)
+    (ordered : sortEntries (encodeEntries source) = encodeEntries source)
+    (roundtrip : MapCursorRoundtrip source parsed) (fuel : Nat)
+    (suffix : List UInt8) (enough : cursorBudget (.map source) ≤ fuel) :
+    parseItem fuel (encodeSyn (.map source) ++ suffix) =
+      some (.map parsed, suffix) := by
+  cases fuel with
+  | zero => simp [cursorBudget] at enough
+  | succ fuel =>
+      have pairsEnough : mapCursorBudget source ≤ fuel := by
+        simpa [cursorBudget] using enough
+      have lengthFits : source.mapLength < 2 ^ 64 := by
+        unfold Bytes.maxDefiniteLength at fits
+        omega
+      have lengthFits' : source.mapLength < 18446744073709551616 := by
+        simpa using lengthFits
+      have lengthRoundtrip :
+          (UInt64.ofNat source.mapLength).toNat = source.mapLength := by
+        rw [UInt64.toNat_ofNat', Nat.mod_eq_of_lt lengthFits']
+      rw [encodeSyn, List.append_assoc]
+      rw [ordered]
+      rw [encodeEntries_length]
+      simp only [parseItem]
+      rw [parseHead?_head 5 (UInt64.ofNat source.mapLength)
+        ((encodeEntries source).flatMap
+          (fun entry => entry.1 ++ entry.2) ++ suffix) (by decide)]
+      dsimp
+      rw [lengthRoundtrip]
+      rw [flatMap_encodeEntries]
+      change (do
+        let (items, remaining) ←
+          parsePairs fuel source.mapLength (encodeSyn source ++ suffix)
+        some (CborSyn.map (CborSyn.mapOfList items), remaining)) = _
+      rw [parsePairs_encode_map roundtrip fuel suffix pairsEnough]
+      simp
+
+/-! ## Canonical wire-order evidence
+
+This is the consumer-facing profile needed by content-addressed arena
+artifacts.  Unlike unrestricted `CborSyn`, every map is already in the exact
+deterministic byte order emitted on the wire.  The evidence is structural and
+contains no parser execution trace.
+-/
+
+mutual
+
+/-- A length-bounded CBOR value whose maps already occur in deterministic wire
+order. Duplicate entries are retained; combine this with `Canonical` when map
+key uniqueness is required for content-addressed objects. -/
+inductive WireNormal : Cbor → Prop where
+  | unsigned (value : UInt64) :
+      WireNormal (.primitive (.integer (.unsigned value)))
+  | negative (value : UInt64) :
+      WireNormal (.primitive (.integer (.negative value)))
+  | bytes (value : Bytes) (fits : value.length ≤ Bytes.maxDefiniteLength) :
+      WireNormal (.primitive (.bytes value))
+  | text (value : String)
+      (fits : value.toUTF8.size ≤ Bytes.maxDefiniteLength) :
+      WireNormal (.primitive (.text value))
+  | simple (value : UInt8) : WireNormal (.primitive (.simple value))
+  | array (items : CborSyn .array)
+      (fits : items.arrayLength ≤ Bytes.maxDefiniteLength)
+      (normal : WireNormalArray items) : WireNormal (.array items)
+  | map (entries : CborSyn .map)
+      (fits : entries.mapLength ≤ Bytes.maxDefiniteLength)
+      (ordered : sortEntries (encodeEntries entries) = encodeEntries entries)
+      (normal : WireNormalMap entries) : WireNormal (.map entries)
+  | tag (number : UInt64) (content : Cbor) (normal : WireNormal content) :
+      WireNormal (.tag number content)
+
+private inductive WireNormalArray : CborSyn .array → Prop where
+  | nil : WireNormalArray .arrayNil
+  | cons {head : Cbor} {tail : CborSyn .array}
+      (headNormal : WireNormal head) (tailNormal : WireNormalArray tail) :
+      WireNormalArray (.arrayCons head tail)
+
+private inductive WireNormalMap : CborSyn .map → Prop where
+  | nil : WireNormalMap .mapNil
+  | cons {key value : Cbor} {tail : CborSyn .map}
+      (keyNormal : WireNormal key) (valueNormal : WireNormal value)
+      (tailNormal : WireNormalMap tail) :
+      WireNormalMap (.mapCons key value tail)
+
+end
+
+mutual
+
+/-- Wire-normal evidence implies the existing deterministic encoder domain. -/
+theorem WireNormal.reasonable {value : Cbor} (normal : WireNormal value) :
+    value.Reasonable := by
+  cases normal with
+  | unsigned value => exact .integer (.unsigned value)
+  | negative value => exact .integer (.negative value)
+  | bytes value fits => exact .bytes value fits
+  | text value fits => exact .text value fits
+  | simple value => exact .simple value
+  | array items fits itemsNormal =>
+      exact .array items fits (WireNormalArray.reasonable itemsNormal)
+  | map entries fits _ entriesNormal =>
+      exact .map entries fits (WireNormalMap.reasonable entriesNormal)
+  | tag number content contentNormal =>
+      exact .tag number content (WireNormal.reasonable contentNormal)
+
+private theorem WireNormalArray.reasonable {items : CborSyn .array}
+    (normal : WireNormalArray items) : items.Reasonable := by
+  cases normal with
+  | nil => exact .arrayNil
+  | cons headNormal tailNormal =>
+      exact .arrayCons _ _ (WireNormal.reasonable headNormal)
+        (WireNormalArray.reasonable tailNormal)
+
+private theorem WireNormalMap.reasonable {entries : CborSyn .map}
+    (normal : WireNormalMap entries) : entries.Reasonable := by
+  cases normal with
+  | nil => exact .mapNil
+  | cons keyNormal valueNormal tailNormal =>
+      exact .mapCons _ _ _ (WireNormal.reasonable keyNormal)
+        (WireNormal.reasonable valueNormal)
+        (WireNormalMap.reasonable tailNormal)
+
+end
+
+mutual
+
+private theorem WireNormal.cursorRoundtrip {source : Cbor}
+    (normal : WireNormal source) : CursorRoundtrip source source := by
+  intro fuel suffix enough
+  cases normal with
+  | unsigned value =>
+      cases fuel with
+      | zero => simp [cursorBudget] at enough
+      | succ fuel => simpa [Nat.succ_eq_add_one] using
+          parseItem_encode_unsigned fuel value suffix
+  | negative value =>
+      cases fuel with
+      | zero => simp [cursorBudget] at enough
+      | succ fuel => simpa [Nat.succ_eq_add_one] using
+          parseItem_encode_negative fuel value suffix
+  | bytes value fits =>
+      cases fuel with
+      | zero => simp [cursorBudget] at enough
+      | succ fuel => simpa [Nat.succ_eq_add_one] using
+          parseItem_encode_bytes fuel value suffix fits
+  | text value fits =>
+      cases fuel with
+      | zero => simp [cursorBudget] at enough
+      | succ fuel => simpa [Nat.succ_eq_add_one] using
+          parseItem_encode_text fuel value suffix fits
+  | simple value =>
+      cases fuel with
+      | zero => simp [cursorBudget] at enough
+      | succ fuel => simpa [Nat.succ_eq_add_one] using
+          parseItem_encode_simple fuel value suffix
+  | array items fits itemsNormal =>
+      exact parseItem_encode_array fits
+        (WireNormalArray.cursorRoundtrip itemsNormal) fuel suffix enough
+  | map entries fits ordered entriesNormal =>
+      exact parseItem_encode_ordered_map fits ordered
+        (WireNormalMap.cursorRoundtrip entriesNormal) fuel suffix enough
+  | tag number content contentNormal =>
+      cases fuel with
+      | zero => simp [cursorBudget] at enough
+      | succ fuel =>
+          have childEnough : cursorBudget content ≤ fuel := by
+            simpa [cursorBudget] using enough
+          exact parseItem_encode_tag fuel number content content suffix
+            (WireNormal.cursorRoundtrip contentNormal fuel suffix childEnough)
+
+private theorem WireNormalArray.cursorRoundtrip {source : CborSyn .array}
+    (normal : WireNormalArray source) : ArrayCursorRoundtrip source source := by
+  cases normal with
+  | nil => exact .nil
+  | cons headNormal tailNormal =>
+      exact .cons (WireNormal.cursorRoundtrip headNormal)
+        (WireNormalArray.cursorRoundtrip tailNormal)
+
+private theorem WireNormalMap.cursorRoundtrip {source : CborSyn .map}
+    (normal : WireNormalMap source) : MapCursorRoundtrip source source := by
+  cases normal with
+  | nil => exact .nil
+  | cons keyNormal valueNormal tailNormal =>
+      exact .cons (WireNormal.cursorRoundtrip keyNormal)
+        (WireNormal.cursorRoundtrip valueNormal)
+        (WireNormalMap.cursorRoundtrip tailNormal)
+
+end
+
+mutual
+
+private theorem WireNormal.cursorBudget_bound {source : Cbor}
+    (normal : WireNormal source) :
+    cursorBudget source + 1 ≤ 2 * (encodeSyn source).length := by
+  cases normal with
+  | unsigned value =>
+      have positive := head_length_pos 0 value
+      simp only [cursorBudget, encodeSyn]
+      omega
+  | negative value =>
+      have positive := head_length_pos 1 value
+      simp only [cursorBudget, encodeSyn]
+      omega
+  | bytes value _ =>
+      have positive := head_length_pos 2 (UInt64.ofNat value.length)
+      simp only [cursorBudget, encodeSyn, List.length_append]
+      omega
+  | text value _ =>
+      have positive := head_length_pos 3 (UInt64.ofNat value.toUTF8.size)
+      simp only [cursorBudget, encodeSyn, List.length_append]
+      omega
+  | simple value =>
+      simp only [cursorBudget, encodeSyn]
+      split <;> simp
+  | array items _ itemsNormal =>
+      have itemsBound := WireNormalArray.cursorBudget_bound itemsNormal
+      have positive := head_length_pos 4 (UInt64.ofNat items.arrayLength)
+      simp only [cursorBudget, encodeSyn, List.length_append]
+      omega
+  | map entries _ ordered entriesNormal =>
+      have entriesBound := WireNormalMap.cursorBudget_bound entriesNormal
+      have positive := head_length_pos 5 (UInt64.ofNat entries.mapLength)
+      simp only [cursorBudget, encodeSyn, List.length_append]
+      rw [ordered, encodeEntries_length, flatMap_encodeEntries]
+      omega
+  | tag number content contentNormal =>
+      have contentBound := WireNormal.cursorBudget_bound contentNormal
+      have positive := head_length_pos 6 number
+      simp only [cursorBudget, encodeSyn, List.length_append]
+      omega
+
+private theorem WireNormalArray.cursorBudget_bound {source : CborSyn .array}
+    (normal : WireNormalArray source) :
+    arrayCursorBudget source ≤ 2 * (encodeSyn source).length := by
+  cases normal with
+  | nil => simp [arrayCursorBudget, encodeSyn]
+  | @cons head tail headNormal tailNormal =>
+      have headBound := WireNormal.cursorBudget_bound headNormal
+      have tailBound := WireNormalArray.cursorBudget_bound tailNormal
+      have headPositive : 0 < (encodeSyn head).length := by
+        omega
+      simp only [arrayCursorBudget, encodeSyn, List.length_append]
+      omega
+
+private theorem WireNormalMap.cursorBudget_bound {source : CborSyn .map}
+    (normal : WireNormalMap source) :
+    mapCursorBudget source ≤ 2 * (encodeSyn source).length := by
+  cases normal with
+  | nil => simp [mapCursorBudget, encodeSyn]
+  | @cons key value tail keyNormal valueNormal tailNormal =>
+      have keyBound := WireNormal.cursorBudget_bound keyNormal
+      have valueBound := WireNormal.cursorBudget_bound valueNormal
+      have tailBound := WireNormalMap.cursorBudget_bound tailNormal
+      have keyPositive : 0 < (encodeSyn key).length := by omega
+      have valuePositive : 0 < (encodeSyn value).length := by omega
+      simp only [mapCursorBudget, encodeSyn, List.length_append]
+      omega
+
+end
 
 mutual
 
@@ -915,6 +1306,34 @@ length fits the definite argument field. This total representation policy is
 not by itself RFC-valid or canonical; see `Canonical`. -/
 def deterministic (value : {v : Cbor // v.Reasonable}) : Bytes :=
   bytesOfList (encodeSyn value.1)
+
+/-- Deterministic bytes decode to the identical syntax when every map is
+already in deterministic wire order. This is the reusable byte-level boundary
+for canonical arena encoders; parser/compiler correctness is not assumed. -/
+theorem parse?_deterministic_wireNormal (value : Cbor)
+    (normal : WireNormal value) :
+    parse? (deterministic ⟨value, normal.reasonable⟩) = some value := by
+  unfold parse? deterministic
+  simp only [listOfBytes_bytesOfList]
+  have enough : cursorBudget value ≤ 2 * (encodeSyn value).length := by
+    have bound := WireNormal.cursorBudget_bound normal
+    omega
+  have parsed :
+      parseItem (2 * (encodeSyn value).length) (encodeSyn value) =
+        some (value, []) := by
+    simpa only [List.append_nil] using WireNormal.cursorRoundtrip normal
+      (2 * (encodeSyn value).length) [] enough
+  rw [parsed]
+  simp
+
+/-- Regression for the parser-fuel bound: each definite array cursor consumes
+fuel in addition to its head byte, so `input.length + 1` was insufficient for
+even two nested singleton arrays. -/
+theorem parse?_nested_singleton_arrays :
+    parse? ⟨([129, 129, 0] : List UInt8).toByteArray⟩ =
+      some (.array (.arrayCons (.array (.arrayCons
+        (.primitive (.integer (.unsigned 0))) .arrayNil)) .arrayNil)) := by
+  rfl
 
 /-- Deterministic bytes for the strict canonical artifact profile. -/
 def canonicalDeterministic (value : {v : Cbor // Canonical v}) : Bytes :=
