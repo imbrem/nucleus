@@ -317,6 +317,19 @@ impl Kernel {
         &self.arena
     }
 
+    /// Forks the complete checked state for transactional userspace work.
+    ///
+    /// The fork retains the exact init-prefix identity, definitions, proof
+    /// rows, and caches. Mutating it has no effect on `self`; callers may
+    /// replace the original only after a multi-step derived operation succeeds.
+    #[must_use]
+    pub fn fork(&self) -> Self {
+        Self {
+            arena: self.arena.clone(),
+            init_prefix: self.init_prefix,
+        }
+    }
+
     /// Forgets checked construction and returns the raw arena.
     #[must_use]
     pub fn into_arena(self) -> Arena {

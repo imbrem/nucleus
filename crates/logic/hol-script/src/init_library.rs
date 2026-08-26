@@ -4,11 +4,14 @@ use std::collections::BTreeMap;
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    AX_INF, AX_SUB, CheckedPrefix, Kernel, KernelError, Ref, init::Compiled as LogicalInit,
+    AX_INF, AX_SUB, CheckedPrefix, InfinityAxiom, Kernel, KernelError, Lit, Ref, ThmId,
+    init::Compiled as LogicalInit,
 };
 use covalence_logic_hol_derived::{
-    NaturalArithmetic, NaturalArithmeticDecl, NaturalArithmeticExt, NaturalError, NaturalExt,
-    NaturalRecSchemas, Naturals, NaturalsDecl,
+    ChosenModel, Infinity, InfinityDecl, InfinityError, ModelExt, NaturalArithmetic,
+    NaturalArithmeticDecl, NaturalArithmeticExt, NaturalError, NaturalExt, NaturalRecSchemas,
+    Naturals, NaturalsDecl, OpenedExists, OpenedExistsDecl, SyntaxError, join_alpha_equivalent,
+    open_exists_at,
 };
 
 use crate::{
@@ -84,6 +87,195 @@ impl InitSlice {
     pub const fn recursion_schemas(&self) -> NaturalRecSchemas {
         self.recursion_schemas
     }
+
+    /// Replays the foundational infinity proof against this slice's exact rows.
+    ///
+    /// Representation lowering, name lookup, and proof orchestration all stay
+    /// in this userspace crate. The supplied kernel must be a fork of this
+    /// slice; every resulting theorem is admitted by existing checked HOL and
+    /// Gentzen rules and concludes an exact declaration reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the logical prefix or declaration is mismatched, or
+    /// if any checked construction, substitution, beta, conversion, or
+    /// conjunction-projection step is rejected.
+    pub fn prove_infinity(
+        &self,
+        init: &LogicalInit,
+        kernel: &mut Kernel,
+    ) -> Result<Infinity, InitLibraryError> {
+        let mut staged = kernel.fork();
+        let package = self.prove_infinity_inner(init, &mut staged)?;
+        *kernel = staged;
+        Ok(package)
+    }
+
+    fn prove_infinity_inner(
+        &self,
+        init: &LogicalInit,
+        kernel: &mut Kernel,
+    ) -> Result<Infinity, InitLibraryError> {
+        let declaration = self.naturals.infinity;
+        let roots = declaration.references().collect::<Vec<_>>();
+        let aliases = kernel
+            .compact_logical_trees(init, &roots)
+            .map_err(|source| InitLibraryError::Kernel { source })?;
+        let [
+            axiom_alias,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            property_alias,
+            reflects_alias,
+            avoids_alias,
+        ] = aliases.as_slice()
+        else {
+            unreachable!("InfinityDecl::references has a fixed field count")
+        };
+        let axiom = kernel
+            .inf_exists_at(
+                self.get("bool")
+                    .ok_or(InitLibraryError::MissingSymbol { name: "bool" })?,
+                declaration.axiom.base_name,
+            )
+            .map_err(|source| InitLibraryError::Kernel { source })?;
+        join_alpha_equivalent(kernel, axiom.exists_type, axiom_alias.compact)
+            .map_err(|source| InitLibraryError::Syntax { source })?;
+        kernel
+            .convert_theorem(
+                axiom.theorem,
+                axiom.exists_type,
+                declaration.axiom.exists_type,
+            )
+            .map_err(|source| InitLibraryError::Kernel { source })?;
+
+        let (model, map, missed) = open_infinity_structure(kernel, axiom.theorem, declaration)?;
+
+        let [
+            property_theorem,
+            reflects_equality_theorem,
+            avoids_missed_theorem,
+        ] = prove_infinity_laws(
+            kernel,
+            model.theorem,
+            model.specification,
+            InfinityLawTargets {
+                property: declaration.property,
+                property_alias: property_alias.compact,
+                reflects_equality: declaration.reflects_equality,
+                reflects_alias: reflects_alias.compact,
+                avoids_missed: declaration.avoids_missed,
+                avoids_alias: avoids_alias.compact,
+            },
+        )
+        .map_err(|source| InitLibraryError::Kernel { source })?;
+
+        Ok(Infinity {
+            axiom: InfinityAxiom {
+                exists_type: declaration.axiom.exists_type,
+                body: declaration.axiom.body,
+                carrier_name: declaration.axiom.carrier_name,
+                base_name: declaration.axiom.base_name,
+                theorem: axiom.theorem,
+            },
+            model,
+            carrier: declaration.carrier,
+            map: declaration.map,
+            missed_exists: declaration.missed_exists,
+            missed: declaration.missed,
+            property: declaration.property,
+            reflects_equality: declaration.reflects_equality,
+            avoids_missed: declaration.avoids_missed,
+            theorem: property_theorem,
+            reflects_equality_theorem,
+            avoids_missed_theorem,
+            map_beta: map.beta,
+            missed_beta: missed.beta,
+        })
+    }
+}
+
+fn open_infinity_structure(
+    kernel: &mut Kernel,
+    axiom: ThmId,
+    declaration: InfinityDecl,
+) -> Result<(ChosenModel, OpenedExists, OpenedExists), InitLibraryError> {
+    let model = kernel
+        .choose_model_at(axiom, declaration.model)
+        .map_err(|source| InitLibraryError::Infinity {
+            source: source.into(),
+        })?;
+    let map = open_exists_at(
+        kernel,
+        model.specification,
+        OpenedExistsDecl {
+            witness: declaration.map,
+            body: declaration.missed_exists,
+        },
+    )
+    .map_err(|source| InitLibraryError::Infinity {
+        source: source.into(),
+    })?;
+    let missed = open_exists_at(
+        kernel,
+        map.body,
+        OpenedExistsDecl {
+            witness: declaration.missed,
+            body: declaration.property,
+        },
+    )
+    .map_err(|source| InitLibraryError::Infinity {
+        source: source.into(),
+    })?;
+    Ok((model, map, missed))
+}
+
+#[derive(Clone, Copy)]
+struct InfinityLawTargets {
+    property: Ref,
+    property_alias: Ref,
+    reflects_equality: Ref,
+    reflects_alias: Ref,
+    avoids_missed: Ref,
+    avoids_alias: Ref,
+}
+
+fn prove_infinity_laws(
+    kernel: &mut Kernel,
+    model_theorem: ThmId,
+    specification: Ref,
+    targets: InfinityLawTargets,
+) -> Result<[ThmId; 3], KernelError> {
+    let property_theorem = kernel.copy_theorem(model_theorem)?;
+    kernel.convert_theorem(property_theorem, specification, targets.property)?;
+    kernel.convert_theorem(property_theorem, targets.property, targets.property_alias)?;
+    let conjunction = Lit::positive(targets.property_alias.get());
+    let reflects_equality_theorem =
+        kernel.expand_conclusion(property_theorem, conjunction, Some(false))?;
+    let avoids_missed_theorem =
+        kernel.expand_conclusion(property_theorem, conjunction, Some(true))?;
+    kernel.convert_theorem(
+        reflects_equality_theorem,
+        targets.reflects_alias,
+        targets.reflects_equality,
+    )?;
+    kernel.convert_theorem(
+        avoids_missed_theorem,
+        targets.avoids_alias,
+        targets.avoids_missed,
+    )?;
+    kernel.convert_theorem(property_theorem, targets.property_alias, targets.property)?;
+    Ok([
+        property_theorem,
+        reflects_equality_theorem,
+        avoids_missed_theorem,
+    ])
 }
 
 impl InitLibrary {
@@ -237,6 +429,18 @@ pub enum InitLibraryError {
     Natural {
         /// Derived construction failure.
         source: NaturalError,
+    },
+    /// Exact foundational replay was rejected.
+    #[snafu(display("could not replay init-library infinity: {source}"))]
+    Infinity {
+        /// Userspace infinity derivation failure.
+        source: InfinityError,
+    },
+    /// Checked syntax transport during exact replay was rejected.
+    #[snafu(display("could not transport init-library syntax: {source}"))]
+    Syntax {
+        /// Userspace syntax-certificate failure.
+        source: SyntaxError,
     },
 }
 
