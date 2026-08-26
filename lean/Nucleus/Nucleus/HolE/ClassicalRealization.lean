@@ -18,6 +18,22 @@ theorem CRealizes.exists_of_type
   let value := (cDefSem checking env bound expected).down
   exact ⟨value, checking, rfl⟩
 
+/-- Realization is independent of the proof-relevant typing or conversion
+certificate used to compute it. -/
+theorem CRealizes.value_unique
+    {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
+    {A : Ty ClassicalSig types} {env : CTypeEnv types} {bound : CBoundEnv depth}
+    {expected : CPointed} {left right : expected.carrier}
+    (leftRealizes : CRealizes (Γ := Γ) env bound term A expected left)
+    (rightRealizes : CRealizes (Γ := Γ) env bound term A expected right) :
+    left = right := by
+  obtain ⟨leftChecking, leftValue⟩ := leftRealizes
+  obtain ⟨rightChecking, rightValue⟩ := rightRealizes
+  have values : (ULift.up left : ULift expected.carrier) = ULift.up right :=
+    leftValue.symm.trans <|
+      (leftChecking.coherent rightChecking env bound expected).trans rightValue
+  exact congrArg ULift.down values
+
 /-- A Boolean term has one of the two Boolean realizations. -/
 theorem CRealizes.bool_cases
     {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
