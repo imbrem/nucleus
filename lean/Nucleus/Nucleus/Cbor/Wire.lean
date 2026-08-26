@@ -884,6 +884,63 @@ private inductive WireNormalMap : CborSyn .map → Prop where
 
 end
 
+namespace WireNormal
+
+/-- Build wire-normal evidence for an array from its list representation.
+This keeps the private indexed-tail evidence out of generated certificates. -/
+theorem arrayOfList (values : List Cbor)
+    (fits : values.length ≤ Bytes.maxDefiniteLength)
+    (normal : ∀ value ∈ values, WireNormal value) :
+    WireNormal (Cbor.arrayOfList values) := by
+  have lengthEq : (CborSyn.arrayOfList values).arrayLength = values.length := by
+    clear fits normal
+    induction values with
+    | nil => simp [CborSyn.arrayOfList, CborSyn.arrayLength]
+    | cons head tail ih => simp [CborSyn.arrayOfList, CborSyn.arrayLength, ih]
+  have itemsNormal : WireNormalArray (CborSyn.arrayOfList values) := by
+    clear fits lengthEq
+    induction values with
+    | nil => exact .nil
+    | cons head tail ih =>
+        exact .cons (normal head (by simp))
+          (ih fun value member => normal value (by simp [member]))
+  apply WireNormal.array (CborSyn.arrayOfList values)
+  · simpa [lengthEq] using fits
+  · exact itemsNormal
+
+/-- Build wire-normal evidence for a map from its encounter-order list.
+The ordering premise is intentionally explicit: generated certificates must
+show that their map entries already have deterministic encoded-key order. -/
+theorem mapOfList (entries : List (Cbor × Cbor))
+    (fits : entries.length ≤ Bytes.maxDefiniteLength)
+    (ordered : sortEntries (encodeEntries (CborSyn.mapOfList entries)) =
+      encodeEntries (CborSyn.mapOfList entries))
+    (normal : ∀ entry ∈ entries,
+      WireNormal entry.1 ∧ WireNormal entry.2) :
+    WireNormal (.map (CborSyn.mapOfList entries)) := by
+  have lengthEq : (CborSyn.mapOfList entries).mapLength = entries.length := by
+    clear fits ordered normal
+    induction entries with
+    | nil => simp [CborSyn.mapOfList, CborSyn.mapLength]
+    | cons entry tail ih =>
+        rcases entry with ⟨key, value⟩
+        simp [CborSyn.mapOfList, CborSyn.mapLength, ih]
+  have entriesNormal : WireNormalMap (CborSyn.mapOfList entries) := by
+    clear fits ordered lengthEq
+    induction entries with
+    | nil => exact .nil
+    | cons entry tail ih =>
+        rcases entry with ⟨key, value⟩
+        exact .cons (normal (key, value) (by simp)).1
+          (normal (key, value) (by simp)).2
+          (ih fun entry member => normal entry (by simp [member]))
+  apply WireNormal.map (CborSyn.mapOfList entries)
+  · simpa [lengthEq] using fits
+  · exact ordered
+  · exact entriesNormal
+
+end WireNormal
+
 mutual
 
 /-- Structural decision procedure for deterministic wire-normal evidence.

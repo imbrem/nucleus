@@ -51,9 +51,24 @@ fn reader_is_exhausted(reader: &mut impl Read) -> Result<bool, DecodeError> {
 ///
 /// Returns an error if the writer rejects the encoded bytes.
 pub fn serialize(arena: &Arena, writer: impl Write) -> Result<(), EncodeError> {
+    let value = canonical_value(arena)?;
+    covalence_lib_cbor::into_writer(&value, writer).map_err(|error| EncodeError(error.to_string()))
+}
+
+/// Returns the canonical `CBOR` value serialized by [`serialize`].
+///
+/// This is a userspace representation helper, not a source of proof authority.
+/// Consumers that generate certificates must still check the resulting value
+/// against its encoded bytes in the target proof kernel.
+///
+/// # Errors
+///
+/// Returns an error if the arena cannot be represented as a `CBOR` value or if
+/// canonical map-key encoding fails or contains a duplicate key.
+pub fn canonical_value(arena: &Arena) -> Result<Value, EncodeError> {
     let mut value = Value::serialized(arena).map_err(|error| EncodeError(error.to_string()))?;
     canonicalize(&mut value)?;
-    covalence_lib_cbor::into_writer(&value, writer).map_err(|error| EncodeError(error.to_string()))
+    Ok(value)
 }
 
 fn canonicalize(value: &mut Value) -> Result<(), EncodeError> {
