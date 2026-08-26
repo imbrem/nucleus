@@ -11,40 +11,34 @@ use crate::{
     equality_transitivity, forall_elim, join_same_syntax,
 };
 
-/// Checked addition, multiplication, recursion equations, and small numerals.
+/// Stable natural-arithmetic definitions and law statements.
+///
+/// This descriptor contains syntax references only. It can therefore be
+/// remapped into a projected init slice without carrying theorem-slot identity
+/// from the kernel in which the package was first proved.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct NaturalArithmetic {
+pub struct NaturalArithmeticDecl {
     /// Addition, with its recursive argument first.
     pub add: Ref,
     /// `∀m. add zero m = m`.
     pub add_zero: Ref,
-    /// Exact theorem `⊢ add_zero`.
-    pub add_zero_theorem: ThmId,
     /// `∀n m. add (succ n) m = succ (add n m)`.
     pub add_successor: Ref,
-    /// Exact theorem `⊢ add_successor`.
-    pub add_successor_theorem: ThmId,
     /// Multiplication, with its recursive argument first.
     pub mul: Ref,
     /// `∀m. mul zero m = zero`.
     pub mul_zero: Ref,
-    /// Exact theorem `⊢ mul_zero`.
-    pub mul_zero_theorem: ThmId,
     /// `∀n m. mul (succ n) m = add (mul n m) m`.
     pub mul_successor: Ref,
-    /// Exact theorem `⊢ mul_successor`.
-    pub mul_successor_theorem: ThmId,
     /// `succ zero`.
     pub one: Ref,
     /// `succ one`.
     pub two: Ref,
     /// `add one one = two`.
     pub one_plus_one: Ref,
-    /// Exact theorem `⊢ add one one = two`.
-    pub one_plus_one_theorem: ThmId,
 }
 
-impl NaturalArithmetic {
+impl NaturalArithmeticDecl {
     /// Resolves one stable external name.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Ref> {
@@ -67,6 +61,63 @@ impl NaturalArithmetic {
             ("nat.one_plus_one", self.one_plus_one),
         ]
         .into_iter()
+    }
+
+    /// Remaps every syntax reference while preserving the package shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error produced by `map`.
+    pub fn try_map<E>(self, mut map: impl FnMut(Ref) -> Result<Ref, E>) -> Result<Self, E> {
+        Ok(Self {
+            add: map(self.add)?,
+            add_zero: map(self.add_zero)?,
+            add_successor: map(self.add_successor)?,
+            mul: map(self.mul)?,
+            mul_zero: map(self.mul_zero)?,
+            mul_successor: map(self.mul_successor)?,
+            one: map(self.one)?,
+            two: map(self.two)?,
+            one_plus_one: map(self.one_plus_one)?,
+        })
+    }
+}
+
+/// Exact theorem handles certifying a [`NaturalArithmeticDecl`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NaturalArithmeticProof {
+    /// Exact theorem `⊢ add_zero`.
+    pub add_zero: ThmId,
+    /// Exact theorem `⊢ add_successor`.
+    pub add_successor: ThmId,
+    /// Exact theorem `⊢ mul_zero`.
+    pub mul_zero: ThmId,
+    /// Exact theorem `⊢ mul_successor`.
+    pub mul_successor: ThmId,
+    /// Exact theorem `⊢ add one one = two`.
+    pub one_plus_one: ThmId,
+}
+
+/// A natural-arithmetic declaration certified in one checked kernel.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NaturalArithmetic {
+    /// Stable definitions and theorem statements.
+    pub declaration: NaturalArithmeticDecl,
+    /// Kernel-local exact theorem handles.
+    pub proof: NaturalArithmeticProof,
+}
+
+impl NaturalArithmetic {
+    /// Resolves one stable external name in the declaration.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<Ref> {
+        self.declaration.get(name)
+    }
+
+    /// Iterates the declaration's external dictionary.
+    #[must_use]
+    pub fn symbols(&self) -> impl ExactSizeIterator<Item = (&'static str, Ref)> {
+        self.declaration.symbols()
     }
 }
 
@@ -142,61 +193,80 @@ impl NaturalArithmeticExt for Kernel {
         let (mul_successor, mul_successor_theorem) =
             specialize_mul_successor(self, naturals, specialized_successor.theorem, mul, add)?;
 
-        let one = self.app(naturals.succ, naturals.zero)?;
-        let two = self.app(naturals.succ, one)?;
-        let successor_at_zero = forall_elim(self, add_successor_theorem, naturals.zero)?;
-        let successor_at_one = forall_elim(self, successor_at_zero.theorem, one)?;
-        let zero_at_one = forall_elim(self, add_zero_theorem, one)?;
-        let lifted_zero = self.ap_term(zero_at_one.theorem, naturals.succ)?;
-        let successor_equality = sole_conclusion(self, successor_at_one.theorem)?;
-        let [successor_domain, _successor_left, middle] = exact_equality(self, successor_equality)?;
-        let lifted_equality = sole_conclusion(self, lifted_zero.theorem)?;
-        let [_lifted_domain, lifted_left, lifted_right] = exact_equality(self, lifted_equality)?;
-        let middle_fact = join_same_syntax(self, lifted_left, middle)?;
-        let right_fact = self.syn_refl(None, SynRel::Syn, lifted_right)?;
-        retarget_equality(
+        let (one, two, one_plus_one, one_plus_one_theorem) = prove_one_plus_one(
             self,
-            lifted_zero.theorem,
-            Some(successor_domain),
-            middle,
-            lifted_right,
-            middle_fact,
-            right_fact,
-        )?;
-        let one_plus_one_proof = equality_transitivity(
-            // Keep this derivation intentionally explicit: the equality
-            // helper requires literal agreement at the shared endpoint.
-            self,
+            naturals,
             bool_ty,
-            successor_at_one.theorem,
-            lifted_zero.theorem,
-        )?;
-        let one_plus_one_left = apply2(self, add, one, one)?;
-        let one_plus_one = self.eq(bool_ty, one_plus_one_left, two)?;
-        join_same_syntax(self, one_plus_one_proof.equality, one_plus_one)?;
-        self.convert_conclusions(
-            one_plus_one_proof.theorem,
-            one_plus_one_proof.equality,
-            one_plus_one,
+            add,
+            add_zero_theorem,
+            add_successor_theorem,
         )?;
 
         Ok(NaturalArithmetic {
-            add,
-            add_zero,
-            add_zero_theorem,
-            add_successor,
-            add_successor_theorem,
-            mul,
-            mul_zero,
-            mul_zero_theorem,
-            mul_successor,
-            mul_successor_theorem,
-            one,
-            two,
-            one_plus_one,
-            one_plus_one_theorem: one_plus_one_proof.theorem,
+            declaration: NaturalArithmeticDecl {
+                add,
+                add_zero,
+                add_successor,
+                mul,
+                mul_zero,
+                mul_successor,
+                one,
+                two,
+                one_plus_one,
+            },
+            proof: NaturalArithmeticProof {
+                add_zero: add_zero_theorem,
+                add_successor: add_successor_theorem,
+                mul_zero: mul_zero_theorem,
+                mul_successor: mul_successor_theorem,
+                one_plus_one: one_plus_one_theorem,
+            },
         })
     }
+}
+
+fn prove_one_plus_one(
+    kernel: &mut Kernel,
+    naturals: &Naturals,
+    bool_ty: Ref,
+    add: Ref,
+    add_zero_theorem: ThmId,
+    add_successor_theorem: ThmId,
+) -> Result<(Ref, Ref, Ref, ThmId), NaturalError> {
+    let one = kernel.app(naturals.succ, naturals.zero)?;
+    let two = kernel.app(naturals.succ, one)?;
+    let successor_at_zero = forall_elim(kernel, add_successor_theorem, naturals.zero)?;
+    let successor_at_one = forall_elim(kernel, successor_at_zero.theorem, one)?;
+    let zero_at_one = forall_elim(kernel, add_zero_theorem, one)?;
+    let lifted_zero = kernel.ap_term(zero_at_one.theorem, naturals.succ)?;
+    let successor_equality = sole_conclusion(kernel, successor_at_one.theorem)?;
+    let [successor_domain, _successor_left, middle] = exact_equality(kernel, successor_equality)?;
+    let lifted_equality = sole_conclusion(kernel, lifted_zero.theorem)?;
+    let [_lifted_domain, lifted_left, lifted_right] = exact_equality(kernel, lifted_equality)?;
+    let middle_fact = join_same_syntax(kernel, lifted_left, middle)?;
+    let right_fact = kernel.syn_refl(None, SynRel::Syn, lifted_right)?;
+    retarget_equality(
+        kernel,
+        lifted_zero.theorem,
+        Some(successor_domain),
+        middle,
+        lifted_right,
+        middle_fact,
+        right_fact,
+    )?;
+    let proof = equality_transitivity(
+        // Keep this derivation intentionally explicit: the equality helper
+        // requires literal agreement at the shared endpoint.
+        kernel,
+        bool_ty,
+        successor_at_one.theorem,
+        lifted_zero.theorem,
+    )?;
+    let left = apply2(kernel, add, one, one)?;
+    let proposition = kernel.eq(bool_ty, left, two)?;
+    join_same_syntax(kernel, proof.equality, proposition)?;
+    kernel.convert_conclusions(proof.theorem, proof.equality, proposition)?;
+    Ok((one, two, proposition, proof.theorem))
 }
 
 fn successor_step(kernel: &mut Kernel, naturals: &Naturals) -> Result<Ref, NaturalError> {

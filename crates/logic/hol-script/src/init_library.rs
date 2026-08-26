@@ -7,7 +7,8 @@ use covalence_logic_hol::{
     AX_INF, AX_SUB, CheckedPrefix, Kernel, KernelError, Ref, init::Compiled as LogicalInit,
 };
 use covalence_logic_hol_derived::{
-    NaturalArithmetic, NaturalArithmeticExt, NaturalError, NaturalExt, NaturalRecSchemas, Naturals,
+    NaturalArithmetic, NaturalArithmeticDecl, NaturalArithmeticExt, NaturalError, NaturalExt,
+    NaturalRecSchemas, Naturals,
 };
 
 use crate::{
@@ -34,6 +35,7 @@ pub struct InitLibrary {
 pub struct InitSlice {
     prefix: CheckedPrefix,
     symbols: BTreeMap<String, Ref>,
+    arithmetic: NaturalArithmeticDecl,
 }
 
 impl InitSlice {
@@ -61,6 +63,12 @@ impl InitSlice {
         self.symbols
             .iter()
             .map(|(name, reference)| (name.as_str(), *reference))
+    }
+
+    /// Returns the exact arithmetic declaration resident in this slice.
+    #[must_use]
+    pub const fn arithmetic(&self) -> &NaturalArithmeticDecl {
+        &self.arithmetic
     }
 }
 
@@ -133,6 +141,11 @@ impl InitLibrary {
         let copied = projected
             .copy_objects_lowered_from(init, &self.kernel, &roots)
             .map_err(|source| InitLibraryError::Kernel { source })?;
+        let arithmetic = self.arithmetic.declaration.try_map(|source| {
+            copied
+                .get(source)
+                .ok_or(InitLibraryError::UnmappedReference { reference: source })
+        })?;
         let symbols = self
             .symbols
             .into_iter()
@@ -146,6 +159,7 @@ impl InitLibrary {
         Ok(InitSlice {
             prefix: projected.into_checked_prefix(),
             symbols,
+            arithmetic,
         })
     }
 }
@@ -177,6 +191,12 @@ pub enum InitLibraryError {
     UnmappedSymbol {
         /// External name whose reference could not be remapped.
         name: String,
+    },
+    /// A typed package descriptor named a row absent from the projection map.
+    #[snafu(display("init-library reference {reference:?} was not projected"))]
+    UnmappedReference {
+        /// Source reference absent from the completed copy map.
+        reference: Ref,
     },
     /// A checked kernel capability could not be installed.
     #[snafu(display("could not install init-library capability: {source}"))]
