@@ -243,6 +243,36 @@ fn equality_requires_the_two_sides_to_share_a_type_class() {
 }
 
 #[test]
+fn equality_can_retain_an_exact_equivalent_operand_type() {
+    let mut fix = Fix::new();
+    let star = fix.star;
+    let bool_ty = fix.bool_ty;
+    let alias = fix.bool_ty(star).expect("second bool type");
+    let left = fix.lit(true);
+    let right = fix.bool(alias, false).expect("literal at the twin type");
+    fix.prover()
+        .union_equal(&mut fix.kernel, bool_ty, alias)
+        .expect("merge the duplicate type rows");
+
+    let equality = fix
+        .eq_at(bool_ty, alias, left, right)
+        .expect("targeted equality");
+    assert_eq!(
+        fix.arena()
+            .children(equality)
+            .expect("equality children")
+            .collect::<Vec<_>>(),
+        [alias, left, right]
+    );
+
+    let unrelated = fix.ty_fv(7, star).expect("unrelated type");
+    assert!(matches!(
+        fix.eq_at(bool_ty, unrelated, left, right),
+        Err(KernelError::ClassifierMismatch { .. })
+    ));
+}
+
+#[test]
 fn choice_requires_a_predicate_over_exactly_the_chosen_type() {
     let mut fix = Fix::new();
     let star = fix.star;

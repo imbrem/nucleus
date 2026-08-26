@@ -802,18 +802,46 @@ impl Kernel {
     /// Returns an error unless both operand types occupy one union-find class
     /// and `bool_ty` is Boolean.
     pub fn eq(&mut self, bool_ty: Ref, left: Ref, right: Ref) -> Result<Ref, KernelError> {
+        let ty = self.classifier(left)?;
+        self.eq_at(bool_ty, ty, left, right)
+    }
+
+    /// Appends object-language equality with an exact stored operand type.
+    ///
+    /// This allocation-target form is useful to checked elaborators which
+    /// have already transported a type row and need the resulting syntax to
+    /// retain that row rather than an equivalent operand classifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `ty` is a type, both operands have classifiers
+    /// equivalent to `ty`, and `bool_ty` is Boolean.
+    pub fn eq_at(
+        &mut self,
+        bool_ty: Ref,
+        ty: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Ref, KernelError> {
         self.require_bool_type::<Infallible>(bool_ty)?;
+        self.require_star_type::<Infallible>(ty)?;
         self.require_category::<Infallible>(left, Sort::Tm)?;
         self.require_category::<Infallible>(right, Sort::Tm)?;
         let left_ty = self.classifier(left)?;
         let right_ty = self.classifier(right)?;
-        if !self.equivalent(left_ty, right_ty)? {
+        if !self.equivalent(ty, left_ty)? {
             return Err(KernelError::ClassifierMismatch {
-                expected: left_ty,
+                expected: ty,
+                actual: left_ty,
+            });
+        }
+        if !self.equivalent(ty, right_ty)? {
+            return Err(KernelError::ClassifierMismatch {
+                expected: ty,
                 actual: right_ty,
             });
         }
-        self.push::<Infallible>(Row::new(Node::Eq(left_ty, left, right)), Some(bool_ty))
+        self.push::<Infallible>(Row::new(Node::Eq(ty, left, right)), Some(bool_ty))
     }
 
     /// Appends Hilbert choice.
