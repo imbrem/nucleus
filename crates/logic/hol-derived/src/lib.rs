@@ -35,4 +35,4 @@ pub use natural_rec::{
     NaturalRecursor, NaturalRecursorDecl, NaturalRecursorProof,
 };
 pub use subtype::{Subtype, SubtypeAxiomDecl, SubtypeDecl, SubtypeError, SubtypeExt, SubtypeProof};
-pub use syntax::{SyntaxError, join_same_syntax};
+pub use syntax::{SyntaxError, join_alpha_equivalent, join_same_syntax};

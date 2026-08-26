@@ -3,7 +3,8 @@
 use covalence_lib_json::serde_json;
 use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Sort, Tag, TmTag, init};
 use covalence_logic_hol_derived::{
-    NaturalArithmeticExt, NaturalExt, NaturalRecExt, NaturalRecSchemas, join_same_syntax,
+    NaturalArithmeticExt, NaturalExt, NaturalRecExt, NaturalRecSchemas, join_alpha_equivalent,
+    join_same_syntax,
 };
 use covalence_logic_hol_script::{
     INIT_SOURCE, LogicEncoding, TheoryError, TheoryOptions, compile_init, compile_init_library,
@@ -528,6 +529,25 @@ fn frozen_member_schema_replays_through_a_checked_compact_alias() {
         .expect("replayed natural derivation");
 
     assert_eq!(replayed.symbols().len(), slice.naturals().symbols().len());
+    let frozen_symbols = slice.naturals().symbols().collect::<Vec<_>>();
+    let roots = frozen_symbols
+        .iter()
+        .map(|(_, frozen)| *frozen)
+        .collect::<Vec<_>>();
+    let frozen_aliases = certificate
+        .compact_logical_trees(&init, &roots)
+        .expect("compact frozen natural declaration");
+    let frozen = frozen_symbols
+        .into_iter()
+        .zip(frozen_aliases)
+        .map(|((name, _), alias)| (name, alias.compact))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    join_alpha_equivalent(
+        &mut certificate,
+        replayed.get("ind").expect("generated carrier"),
+        frozen["ind"],
+    )
+    .expect("retarget selected carrier to frozen syntax");
     assert!(certificate.arena().len() > slice.prefix().len());
     assert_eq!(
         certificate.init_prefix(),

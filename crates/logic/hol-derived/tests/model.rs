@@ -1,7 +1,9 @@
 //! End-to-end userspace opening of type-existential model packages.
 
 use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Lit, Ref, Sort, SynRel, Tag};
-use covalence_logic_hol_derived::{ModelError, ModelExt, join_same_syntax, substitute};
+use covalence_logic_hol_derived::{
+    ModelError, ModelExt, join_alpha_equivalent, join_same_syntax, substitute,
+};
 
 fn prelude() -> (Kernel, Ref, Ref) {
     let mut kernel = Kernel::new();
@@ -88,6 +90,42 @@ fn a_non_existential_theorem_is_rejected_before_model_construction() {
         before,
         "shape rejection is non-mutating"
     );
+}
+
+#[test]
+fn alpha_join_renames_nested_explicit_and_implicit_binders() {
+    let (mut kernel, star, bool_ty) = prelude();
+    let left_ty = kernel.ty_fv(10, star).expect("left type binder");
+    let left_value = kernel.tm_fv(11, left_ty).expect("left value binder");
+    let left_body = kernel
+        .eq(bool_ty, left_value, left_value)
+        .expect("left body");
+    let left_lambda = kernel.lam(left_value, left_body).expect("left lambda");
+    let left_predicate = kernel
+        .eq(bool_ty, left_lambda, left_lambda)
+        .expect("left predicate");
+    let left = kernel
+        .ty_forall(10, left_predicate)
+        .expect("left universal");
+
+    let right_ty = kernel.ty_fv(20, star).expect("right type binder");
+    let right_value = kernel.tm_fv(21, right_ty).expect("right value binder");
+    let right_body = kernel
+        .eq(bool_ty, right_value, right_value)
+        .expect("right body");
+    let right_lambda = kernel.lam(right_value, right_body).expect("right lambda");
+    let right_predicate = kernel
+        .eq(bool_ty, right_lambda, right_lambda)
+        .expect("right predicate");
+    let right = kernel
+        .ty_forall(20, right_predicate)
+        .expect("right universal");
+
+    let fact = join_alpha_equivalent(&mut kernel, left, right).expect("alpha certificate");
+    let fact = kernel.syn_fact(fact).expect("resident fact");
+    assert_eq!(fact.rel(), SynRel::Alpha);
+    assert_eq!((fact.input(), fact.output()), (left, right));
+    assert!(kernel.equivalent(left, right).expect("joined endpoints"));
 }
 
 #[test]
