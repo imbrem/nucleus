@@ -43,6 +43,13 @@ inductive Proves {Sig : Signature} [SigTyping Sig] : {depth : Nat} →
       Proves Γ H q
   | eqRefl (typed : TypedHyps Γ H) (hA : Kinded A)
       (hx : HasType Γ x A) : Proves Γ H (.eq A x x)
+  | abs {depth : Nat} {Γ : BoundCtx Sig depth} {H : List (Tm Sig depth)}
+      {A B : Ty Sig} {left right : Tm Sig (depth + 1)}
+      (typed : TypedHyps Γ H) (hA : Kinded A) (hB : Kinded B)
+      (leftTyping : HasType (extendBound A Γ) left B)
+      (rightTyping : HasType (extendBound A Γ) right B) :
+      Proves (extendBound A Γ) (H.map weaken) (.eq B left right) →
+      Proves Γ H (.eq (.arr A B) (.lam A left) (.lam A right))
   | eqMp (typed : TypedHyps Γ H) (hA : Kinded A)
       (hp : HasType Γ p (.arr A .boolTy)) (hx : HasType Γ x A)
       (hy : HasType Γ y A) : Proves Γ H (.eq A x y) → Proves Γ H (.app p x) →

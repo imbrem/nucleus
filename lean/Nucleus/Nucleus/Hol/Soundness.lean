@@ -134,6 +134,39 @@ theorem Proves.sound {Sig : Signature} [SigTyping Sig] [UniqueSigTyping Sig]
   | eqRefl typed hA hx =>
       obtain ⟨value, evaluation⟩ := hx.eval_exists freeEnv boundEnv
       exact .eqTrue hA evaluation evaluation rfl
+  | @abs depth Γ H A B left right typed hA hB leftTyping rightTyping premise ih =>
+      let leftFunction : DenoteTy (.arr A B) := fun argument =>
+        Classical.choose (leftTyping.eval_exists freeEnv
+          (extendBoundEnv argument boundEnv))
+      let rightFunction : DenoteTy (.arr A B) := fun argument =>
+        Classical.choose (rightTyping.eval_exists freeEnv
+          (extendBoundEnv argument boundEnv))
+      have leftEval : Eval Γ freeEnv boundEnv (.lam A left) (.arr A B) leftFunction :=
+        .lam hA fun argument =>
+          Classical.choose_spec (leftTyping.eval_exists freeEnv
+            (extendBoundEnv argument boundEnv))
+      have rightEval : Eval Γ freeEnv boundEnv (.lam A right) (.arr A B) rightFunction :=
+        .lam hA fun argument =>
+          Classical.choose_spec (rightTyping.eval_exists freeEnv
+            (extendBoundEnv argument boundEnv))
+      have equal : leftFunction = rightFunction := by
+        funext argument
+        have lifted : HypsTrue freeEnv (extendBoundEnv argument boundEnv) (H.map weaken) := by
+          intro proposition member
+          obtain ⟨original, originalMember, rfl⟩ := List.mem_map.mp member
+          exact (hypotheses original originalMember).rename (ρ := Fin.succ)
+            (target := extendBoundEnv argument boundEnv) (fun _ => rfl) (by
+              intro i C lookup
+              rfl)
+        have pointwise := ih (extendBoundEnv argument boundEnv) lifted
+        obtain ⟨leftValue, rightValue, leftPoint, rightPoint, same⟩ :=
+          pointwise.eq_true_inv
+        have leftChosen := Classical.choose_spec
+          (leftTyping.eval_exists freeEnv (extendBoundEnv argument boundEnv))
+        have rightChosen := Classical.choose_spec
+          (rightTyping.eval_exists freeEnv (extendBoundEnv argument boundEnv))
+        exact (leftChosen.unique leftPoint).trans (same.trans (rightPoint.unique rightChosen))
+      exact .eqTrue (.arr hA hB) leftEval rightEval equal
   | eqMp typed hA hp hx hy equality application ihEquality ihApplication =>
       have equalityTrue := ihEquality boundEnv hypotheses
       have applicationTrue := ihApplication boundEnv hypotheses

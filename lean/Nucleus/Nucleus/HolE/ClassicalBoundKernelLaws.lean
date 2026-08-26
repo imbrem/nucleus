@@ -1,4 +1,5 @@
 import Nucleus.HolE.ClassicalBoundTransport
+import Nucleus.HolE.ClassicalCoreKernelLaws
 
 /-! # Classical kernel laws for bound-variable transport -/
 
@@ -32,6 +33,74 @@ theorem classical_weakenBound
   let target := conclusionTyping.certificate
   refine ⟨target, ?_⟩
   exact (cDefSem_weaken source target env bound cBool).trans sourceTrue
+
+theorem classical_abs
+    {Γ : BoundCtx ClassicalSig types depth}
+    {H : List (Tm ClassicalSig types depth)} {A B : Ty ClassicalSig types}
+    {left right : Tm ClassicalSig types (depth + 1)}
+    (typed : TypedHyps Γ H) (hA : Kinded A) (hB : Kinded B)
+    (conclusionTyping : HasTypeDefEq Γ
+      (.eq (.arr A B) (.lam A left) (.lam A right)) .boolTy)
+    (_leftTyping : HasTypeDefEq (extendBound A Γ) left B)
+    (_rightTyping : HasTypeDefEq (extendBound A Γ) right B)
+    (premise : CEntails (Γ := extendBound A Γ) (H.map weaken)
+      (.eq B left right)) :
+    CEntails (Γ := Γ) H (.eq (.arr A B) (.lam A left) (.lam A right)) := by
+  intro env bound typedContext valid truthsH
+  classical
+  refine ⟨conclusionTyping.certificate, ?_⟩
+  rw [conclusionTyping.certificate.rawView_semantics]
+  cases viewEq : conclusionTyping.certificate.rawView with
+  | mk rawType raw =>
+    simp only [CDefRawView.sem]
+    cases raw with
+    | eq cArr leftChecking rightChecking =>
+      cases leftChecking with
+      | lam leftBody cA cCodomain leftBodyChecking =>
+        cases rightChecking with
+        | lam rightBody rightA rightCodomain rightBodyChecking =>
+          rw [cA.unique hA.certificate, cCodomain.unique hB.certificate,
+            rightA.unique hA.certificate, rightCodomain.unique hB.certificate,
+            cArr.unique (.arr hA.certificate hB.certificate)]
+          have functionsEqual :
+              (cSem (CChecks.lam left hA.certificate hB.certificate leftBodyChecking)
+                env bound (cSem (.arr hA.certificate hB.certificate) env)).down =
+              (cSem (CChecks.lam right hA.certificate hB.certificate rightBodyChecking)
+                env bound (cSem (.arr hA.certificate hB.certificate) env)).down := by
+            simp only [cSem]
+            rw [alignCValue_self, alignCValue_self]
+            funext argument
+            have mappedTrue : CHypsTrue (Γ := extendBound A Γ) env
+                (extendCBoundEnv (denoteChecked hA env) argument bound)
+                (H.map weaken) := by
+              intro q member
+              obtain ⟨source, sourceMember, rfl⟩ := List.mem_map.mp member
+              exact (truthsH source sourceMember).weaken
+                (denoteChecked hA env) argument (typed source sourceMember)
+            obtain ⟨pointwiseChecking, pointwiseTrue⟩ := premise env
+              (extendCBoundEnv (denoteChecked hA env) argument bound)
+              (typedContext.extend hA)
+              (extendCBoundEnv_valid hA typedContext env bound valid argument) mappedTrue
+            let realizes : CRealizes (Γ := extendBound A Γ) env
+                (extendCBoundEnv (denoteChecked hA env) argument bound)
+                (.eq B left right) .boolTy cBool true :=
+              ⟨pointwiseChecking, pointwiseTrue⟩
+            obtain ⟨leftPoint, rightPoint, pointwiseEqual⟩ :=
+              realizes.eq_true_elim hB
+            have leftCoherent := (CDefChecks.exact leftBodyChecking).coherent
+              (CDefChecks.exact leftPoint) env
+              (extendCBoundEnv (denoteChecked hA env) argument bound)
+              (denoteChecked hB env)
+            have rightCoherent := (CDefChecks.exact rightBodyChecking).coherent
+              (CDefChecks.exact rightPoint) env
+              (extendCBoundEnv (denoteChecked hA env) argument bound)
+              (denoteChecked hB env)
+            exact congrArg ULift.down
+              (leftCoherent.trans (pointwiseEqual.trans rightCoherent.symm))
+          change ULift.up (alignCValue cBool cBool (decide (_ = _))) = ULift.up true
+          rw [functionsEqual]
+          simp only [decide_true]
+          exact congrArg ULift.up (alignCValue_self cBool true)
 
 theorem classical_generalize
     {Γ : BoundCtx ClassicalSig types depth}

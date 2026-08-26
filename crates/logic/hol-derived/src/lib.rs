@@ -21,7 +21,10 @@ pub use coproduct::{
     Coproduct, CoproductComputation, CoproductEliminator, CoproductError, CoproductExt,
     CoproductLaws, CoproductSchema,
 };
-pub use equality::{EqualityError, ProvedEquality, equality_symmetry, equality_transitivity};
+pub use equality::{
+    EqualityError, ProvedEquality, equality_symmetry, equality_transitivity,
+    function_extensionality,
+};
 pub use exists::{ExistsError, OpenedExists, OpenedExistsDecl, open_exists, open_exists_at};
 pub use forall::{ForallError, ProvedTerm, forall_elim};
 pub use infinity::{

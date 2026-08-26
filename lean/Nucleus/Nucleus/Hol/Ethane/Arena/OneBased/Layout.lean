@@ -498,6 +498,20 @@ def Arena.FunctionApplicationEquality (resolve : Resolver) (arena : Arena)
     Resolves (coreResolver resolve) arena.holCore target
       (.term boolType (.eq codomain (.app function value) (.app varied value)))
 
+/-- A source equality and the equality obtained by abstracting both operands
+over one checked free variable. Rust separately checks that the variable is
+fresh for the theorem's entire premise matrix. -/
+def Arena.AbstractionEquality (resolve : Resolver) (arena : Arena)
+    (source binder target : Ref) : Prop :=
+  ∃ boolType domain codomain name left right,
+    Resolves (coreResolver resolve) arena.holCore source
+      (.term boolType (.eq codomain left right)) ∧
+    Resolves (coreResolver resolve) arena.holCore binder
+      (.term domain (.tmFv name domain)) ∧
+    Resolves (coreResolver resolve) arena.holCore target
+      (.term boolType (.eq (.arr domain codomain)
+        (.lam name domain left) (.lam name domain right)))
+
 /-- A checked term and its reflexive object-language equality (`REFL`). -/
 def Arena.ReflexiveEquality (resolve : Resolver) (arena : Arena)
     (term target : Ref) : Prop :=
@@ -582,6 +596,13 @@ structure Arena.HolInterpretationSound (resolve : Resolver) (arena : Arena)
   argument. This is the reference-level form of HOL's standard `AP_THM` rule. -/
   applyFunction : ∀ {source argument target sourceProp targetProp},
     arena.FunctionApplicationEquality resolve source argument target →
+    interpretation source = some sourceProp →
+    interpretation target = some targetProp →
+    (sourceProp → targetProp)
+  /-- Equality remains true after abstracting both operands over a fresh
+  checked variable (`ABS_THM`). -/
+  abstract : ∀ {source binder target sourceProp targetProp},
+    arena.AbstractionEquality resolve source binder target →
     interpretation source = some sourceProp →
     interpretation target = some targetProp →
     (sourceProp → targetProp)
@@ -849,6 +870,37 @@ theorem Arena.holTheorem_applyFunction {trusted : Arena → Prop}
   have rightHolds := sourceHolds leftHolds
   rw [exactRight] at rightHolds
   exact (Sequent.assertRight_holds valuation source).mp rightHolds
+
+/-- A theorem of equality may be abstracted over a checked variable fresh for
+its premise matrix. This is the semantic contract of Rust's `ABS_THM`; syntax
+construction, the free-variable scan, and theorem-slot allocation are
+separate refinements. -/
+theorem Arena.holTheorem_abstract {trusted : Arena → Prop}
+    {resolve : Resolver} {arena : Arena} {interpretation : PartialValuation Ref}
+    (valid : arena.KernelValid trusted resolve interpretation)
+    {fact : WireSequent} (member : fact ∈ arena.hol.thm)
+    {source binder target : Ref}
+    (exactRight : fact.semantic.right = (Sequent.assert source).right)
+    (sourceBool : ContextClaim (coreResolver resolve) arena.holCore source)
+    (targetBool : ContextClaim (coreResolver resolve) arena.holCore target)
+    (abstraction : arena.AbstractionEquality resolve source binder target) :
+    ∀ ambientValuation,
+      arena.ambientTheory.Admits (arena.ImportOk trusted resolve)
+        (arena.ImportSort resolve) ambientValuation →
+      ∀ valuation : Valuation Ref, valuation.Completes interpretation →
+        (⟨fact.semantic.left, (Sequent.assert target).right⟩ : Sequent Ref).Holds valuation := by
+  intro ambientValuation admitted valuation completion leftHolds
+  obtain ⟨sourceProp, sourceFound⟩ := valid.holInterpretation.total source sourceBool
+  obtain ⟨targetProp, targetFound⟩ := valid.holInterpretation.total target targetBool
+  change (Sequent.assert target).right.Holds valuation
+  rw [Sequent.assertRight_holds]
+  apply (completion target targetProp targetFound).mpr
+  apply valid.holInterpretation.abstract abstraction sourceFound targetFound
+  apply (completion source sourceProp sourceFound).mp
+  have sourceHolds := valid.holTheorems ambientValuation admitted fact member valuation completion
+    leftHolds
+  rw [exactRight] at sourceHolds
+  exact (Sequent.assertRight_holds valuation source).mp sourceHolds
 
 /-- A proved equality remains true after applying one checked function. -/
 theorem Arena.holTheorem_applyArgument {trusted : Arena → Prop}
