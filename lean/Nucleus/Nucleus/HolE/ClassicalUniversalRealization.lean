@@ -2,6 +2,7 @@ import Nucleus.HolE.ClassicalApplicationRealization
 import Nucleus.HolE.ClassicalEqualityRealization
 import Nucleus.HolE.ClassicalIntrinsicRealization
 import Nucleus.HolE.ClassicalLambdaRealization
+import Nucleus.HolE.EmptySemantics
 
 /-! # Deterministic semantics of equality-encoded universal quantification -/
 
@@ -74,3 +75,24 @@ theorem IEval.forallTm_true_iff
 end Infinity
 
 end Nucleus.HolE
+
+namespace Nucleus.HolE.Empty
+
+open Nucleus.HolE
+
+set_option relaxedAutoImplicit true
+
+/-- Checked-API form of `Infinity.IEval.forallTm_true_iff`. -/
+theorem Eval.forallTm_true_iff
+    {types : List Kind} {depth : Nat} {Γ : Empty.Ctx types depth}
+    (A : Empty.Ty types) (body : Empty.BoolTm (Γ.extend A))
+    (env : CTypeEnv types) (bound : CBoundEnv depth) :
+    Eval (Empty.forallTm A body) env bound cBool true ↔
+      ∀ argument : (A.denote env).carrier,
+        Eval body env
+          (extendCBoundEnv (A.denote env) argument bound) cBool true := by
+  unfold Eval
+  rw [Term.toIntrinsic_forallTm]
+  exact Infinity.IEval.forallTm_true_iff A.kinded body.toIntrinsic env bound
+
+end Nucleus.HolE.Empty
