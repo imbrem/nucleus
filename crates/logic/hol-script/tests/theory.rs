@@ -1,7 +1,7 @@
 //! End-to-end coverage for the untrusted theory front end.
 
 use covalence_lib_json::serde_json;
-use covalence_logic_hol::{AX_INF, AX_SUB, Sort, Tag, TmTag, init};
+use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Ref, Sort, Tag, TmTag, init};
 use covalence_logic_hol_derived::{NaturalExt, NaturalRecExt, NaturalRecSchemas, join_same_syntax};
 use covalence_logic_hol_script::{
     INIT_SOURCE, LogicEncoding, TheoryError, TheoryOptions, compile_init, compile_theory,
@@ -395,6 +395,69 @@ fn compiled_recursion_schemata_drive_the_complete_checked_package() {
             vec![&[covalence_logic_hol::Lit::positive(proposition.get())][..]]
         );
     }
+
+    check_constructed_recursion_codomain(
+        &mut kernel,
+        &naturals,
+        schemas,
+        schema,
+        specification_schema,
+    );
+}
+
+fn check_constructed_recursion_codomain(
+    kernel: &mut Kernel,
+    naturals: &covalence_logic_hol_derived::Naturals,
+    schemas: NaturalRecSchemas,
+    schema: Ref,
+    specification_schema: Ref,
+) {
+    // A frontend-constructed codomain need not reuse the init compiler's
+    // physical `kind.star` row. Checked type substitution must use the
+    // equality columns rather than rejecting that harmless allocation detail.
+    let function_ty = kernel.ty_arr(naturals.ty, naturals.ty).expect("nat -> nat");
+    let value = kernel
+        .tm_fv(
+            kernel
+                .fresh_name(&[schema, specification_schema])
+                .expect("fresh value"),
+            naturals.ty,
+        )
+        .expect("value binder");
+    let function_base = kernel.lam(value, value).expect("identity base");
+    let index = kernel
+        .tm_fv(
+            kernel
+                .fresh_name(&[function_base, schema])
+                .expect("fresh index"),
+            naturals.ty,
+        )
+        .expect("index binder");
+    let previous = kernel
+        .tm_fv(
+            kernel
+                .fresh_name(&[index, specification_schema])
+                .expect("fresh function"),
+            function_ty,
+        )
+        .expect("function binder");
+    let step_body = kernel.lam(previous, previous).expect("step body");
+    let function_step = kernel.lam(index, step_body).expect("function step");
+    let function_rec = kernel
+        .natural_rec_from_schemata(naturals, schemas, function_ty, function_base, function_step)
+        .expect("function-valued recursion package");
+    let recursor_ty = kernel
+        .classifier(function_rec.graph.rec)
+        .expect("recursor classifier");
+    let expected_ty = kernel
+        .ty_arr(naturals.ty, function_ty)
+        .expect("expected recursor type");
+    join_same_syntax(kernel, recursor_ty, expected_ty).expect("recursor type syntax");
+    assert!(
+        kernel
+            .ty_eq(recursor_ty, expected_ty)
+            .expect("type equality")
+    );
 }
 
 #[test]

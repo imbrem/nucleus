@@ -400,7 +400,7 @@ impl TypeSubstitution<'_> {
                     input
                 } else {
                     let bool_ty = self.kernel.classifier(input)?;
-                    self.kernel.eq(bool_ty, left, right)?
+                    self.kernel.eq_at(bool_ty, ty, left, right)?
                 };
                 let fact = self.kernel.syn_congr(
                     None,
