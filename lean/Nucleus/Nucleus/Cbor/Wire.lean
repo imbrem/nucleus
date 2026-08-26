@@ -886,6 +886,72 @@ end
 
 namespace WireNormal
 
+/-- Structural wire-normal evidence for a list of CBOR values.
+
+Unlike a proposition quantified over list membership, this representation can
+be built and checked in bounded chunks, then combined with `append`.  Generated
+artifact certificates therefore do not need one enormous elaboration term. -/
+inductive ValueList : List Cbor → Prop where
+  | nil : ValueList []
+  | cons {head : Cbor} {tail : List Cbor}
+      (headNormal : WireNormal head) (tailNormal : ValueList tail) :
+      ValueList (head :: tail)
+
+namespace ValueList
+
+/-- Concatenate two independently checked value-list certificates. -/
+theorem append {left right : List Cbor}
+    (leftNormal : ValueList left) (rightNormal : ValueList right) :
+    ValueList (left ++ right) := by
+  induction leftNormal with
+  | nil => exact rightNormal
+  | cons headNormal _ ih => exact .cons headNormal ih
+
+/-- Forget the structural certificate into its extensional membership form. -/
+theorem all {values : List Cbor} (normal : ValueList values) :
+    ∀ value ∈ values, WireNormal value := by
+  intro value member
+  induction normal with
+  | nil => simp at member
+  | @cons head tail headNormal tailNormal ih =>
+      rcases List.mem_cons.mp member with equality | member
+      · simpa [equality] using headNormal
+      · exact ih member
+
+end ValueList
+
+/-- Structural wire-normal evidence for a list of CBOR map entries. -/
+inductive EntryList : List (Cbor × Cbor) → Prop where
+  | nil : EntryList []
+  | cons {key value : Cbor} {tail : List (Cbor × Cbor)}
+      (keyNormal : WireNormal key) (valueNormal : WireNormal value)
+      (tailNormal : EntryList tail) : EntryList ((key, value) :: tail)
+
+namespace EntryList
+
+/-- Concatenate two independently checked map-entry certificates. -/
+theorem append {left right : List (Cbor × Cbor)}
+    (leftNormal : EntryList left) (rightNormal : EntryList right) :
+    EntryList (left ++ right) := by
+  induction leftNormal with
+  | nil => exact rightNormal
+  | cons keyNormal valueNormal _ ih =>
+      exact .cons keyNormal valueNormal ih
+
+/-- Forget the structural certificate into its extensional membership form. -/
+theorem all {entries : List (Cbor × Cbor)} (normal : EntryList entries) :
+    ∀ entry ∈ entries, WireNormal entry.1 ∧ WireNormal entry.2 := by
+  intro entry member
+  induction normal with
+  | nil => simp at member
+  | @cons key value tail keyNormal valueNormal tailNormal ih =>
+      rcases List.mem_cons.mp member with equality | member
+      · subst entry
+        exact ⟨keyNormal, valueNormal⟩
+      · exact ih member
+
+end EntryList
+
 /-- Build wire-normal evidence for an array from its list representation.
 This keeps the private indexed-tail evidence out of generated certificates. -/
 theorem arrayOfList (values : List Cbor)
@@ -907,6 +973,13 @@ theorem arrayOfList (values : List Cbor)
   apply WireNormal.array (CborSyn.arrayOfList values)
   · simpa [lengthEq] using fits
   · exact itemsNormal
+
+/-- Build array evidence from a chunk-composable structural list witness. -/
+theorem arrayOfListValues (values : List Cbor)
+    (fits : values.length ≤ Bytes.maxDefiniteLength)
+    (normal : ValueList values) :
+    WireNormal (Cbor.arrayOfList values) :=
+  arrayOfList values fits normal.all
 
 /-- Build wire-normal evidence for a map from its encounter-order list.
 The ordering premise is intentionally explicit: generated certificates must
@@ -938,6 +1011,17 @@ theorem mapOfList (entries : List (Cbor × Cbor))
   · simpa [lengthEq] using fits
   · exact ordered
   · exact entriesNormal
+
+/-- Build map evidence from a chunk-composable structural entry witness.
+Map ordering remains an explicit whole-map premise because deterministic order
+also constrains the boundary between independently generated chunks. -/
+theorem mapOfListEntries (entries : List (Cbor × Cbor))
+    (fits : entries.length ≤ Bytes.maxDefiniteLength)
+    (ordered : sortEntries (encodeEntries (CborSyn.mapOfList entries)) =
+      encodeEntries (CborSyn.mapOfList entries))
+    (normal : EntryList entries) :
+    WireNormal (.map (CborSyn.mapOfList entries)) :=
+  mapOfList entries fits ordered normal.all
 
 end WireNormal
 
@@ -1453,6 +1537,17 @@ theorem not_wireNormal_unsorted_integer_map :
       apply notOrdered
       simpa [CborSyn.mapOfList, encodeEntries, sortEntries, insertEntry, lexLt,
         encodeSyn, head] using ordered
+
+/-- Independently checked chunks compose into one array certificate without
+re-running a decision procedure over their contents. -/
+theorem wireNormal_chunked_array :
+    WireNormal (Cbor.arrayOfList
+      ([.primitive (.integer (.unsigned 1))] ++
+        [.primitive (.text "chunk")])) := by
+  apply WireNormal.arrayOfListValues _ (by decide)
+  exact WireNormal.ValueList.append
+    (.cons (.unsigned 1) .nil)
+    (.cons (.text "chunk" (by decide)) .nil)
 
 /-- The encoder's current insertion ordering retains duplicate entries but
 reverses an equal-key run. The byte-roundtrip theorem must preserve this exact
