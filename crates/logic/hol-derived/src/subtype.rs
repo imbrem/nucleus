@@ -111,6 +111,8 @@ pub struct Subtype {
     pub sub: Ref,
     /// `rep : sub → carrier`.
     pub rep: Ref,
+    /// Existential selecting [`abs`](Self::abs).
+    pub abs_exists: Ref,
     /// `abs : carrier → sub`.
     pub abs: Ref,
     /// The `sub → carrier` row classifying [`rep`](Self::rep).
@@ -121,6 +123,8 @@ pub struct Subtype {
     pub abs_rep: Ref,
     /// `∀ a : carrier. guard a → rep (abs a) = a`.
     pub rep_abs: Ref,
+    /// Conjunction of [`rep_abs`](Self::rep_abs) and [`rep_guarded`](Self::rep_guarded).
+    pub rep_property: Ref,
     /// `∀ b : sub. guard (rep b)`.
     pub rep_guarded: Ref,
     /// Right-nested conjunction of the three package laws.
@@ -171,6 +175,8 @@ pub struct SubtypeDecl {
     pub sub: Ref,
     /// Representation function.
     pub rep: Ref,
+    /// Existential selecting the abstraction function.
+    pub abs_exists: Ref,
     /// Abstraction function.
     pub abs: Ref,
     /// Exact representation-function type.
@@ -181,6 +187,8 @@ pub struct SubtypeDecl {
     pub abs_rep: Ref,
     /// Guarded representation-after-abstraction law.
     pub rep_abs: Ref,
+    /// Conjunction of the guarded representation laws.
+    pub rep_property: Ref,
     /// Guard law for represented values.
     pub rep_guarded: Ref,
     /// Conjunction of package laws.
@@ -201,11 +209,13 @@ impl SubtypeDecl {
             self.predicate,
             self.sub,
             self.rep,
+            self.abs_exists,
             self.abs,
             self.rep_ty,
             self.abs_ty,
             self.abs_rep,
             self.rep_abs,
+            self.rep_property,
             self.rep_guarded,
             self.property,
         ]
@@ -250,11 +260,13 @@ impl SubtypeDecl {
             predicate: map(self.predicate)?,
             sub: map(self.sub)?,
             rep: map(self.rep)?,
+            abs_exists: map(self.abs_exists)?,
             abs: map(self.abs)?,
             rep_ty: map(self.rep_ty)?,
             abs_ty: map(self.abs_ty)?,
             abs_rep: map(self.abs_rep)?,
             rep_abs: map(self.rep_abs)?,
+            rep_property: map(self.rep_property)?,
             rep_guarded: map(self.rep_guarded)?,
             property: map(self.property)?,
             axiom,
@@ -290,11 +302,13 @@ impl Subtype {
             predicate: self.predicate,
             sub: self.sub,
             rep: self.rep,
+            abs_exists: self.abs_exists,
             abs: self.abs,
             rep_ty: self.rep_ty,
             abs_ty: self.abs_ty,
             abs_rep: self.abs_rep,
             rep_abs: self.rep_abs,
+            rep_property: self.rep_property,
             rep_guarded: self.rep_guarded,
             property: self.property,
             axiom: match self.axiom {
@@ -427,11 +441,13 @@ impl SubtypeExt for Kernel {
             predicate,
             sub,
             rep: representation.witness,
+            abs_exists: representation.body,
             abs: abstraction.witness,
             rep_ty,
             abs_ty,
             abs_rep,
             rep_abs,
+            rep_property: tail,
             rep_guarded,
             property: abstraction.body,
             axiom: Some(axiom),
@@ -504,6 +520,7 @@ impl Builder<'_> {
         let abs_laws = self.laws(sub, rep, abstraction)?;
         let abs_chooser = self.kernel.lam(abstraction, abs_laws)?;
         let abs = self.kernel.eps(abs_ty, abs_chooser)?;
+        let abs_exists = self.kernel.app(abs_chooser, abs)?;
 
         let (abs_rep, rep_abs, rep_guarded) = self.law_parts(sub, rep, abs)?;
         let tail = self.kernel.op2(Op2::And, rep_abs, rep_guarded)?;
@@ -514,11 +531,13 @@ impl Builder<'_> {
             predicate: self.predicate,
             sub,
             rep,
+            abs_exists,
             abs,
             rep_ty,
             abs_ty,
             abs_rep,
             rep_abs,
+            rep_property: tail,
             rep_guarded,
             property,
             axiom: None,

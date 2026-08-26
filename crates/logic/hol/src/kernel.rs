@@ -179,6 +179,17 @@ pub struct LogicalAlias {
     pub fact: SynFactId,
 }
 
+/// A checked opcode-free expansion of one compact logical syntax tree.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LogicalExpansion {
+    /// Original root, which may contain logical opcodes.
+    pub compact: Ref,
+    /// Recursively expanded opcode-free root.
+    pub raw: Ref,
+    /// Direct syntactic fact `compact = raw`.
+    pub fact: SynFactId,
+}
+
 /// An immutable arena snapshot known to have been assembled by a kernel.
 ///
 /// A prefix carries no source manifest or naming authority. It is simply the
@@ -975,6 +986,98 @@ impl Kernel {
                 actual,
             }),
         }
+    }
+
+    /// Recursively expands logical opcodes in one resident syntax DAG.
+    ///
+    /// Every surrounding constructor is rebuilt around expanded children and
+    /// related by the ordinary checked congruence and logical-lowering rules.
+    /// The operation is transactional and leaves the original rows resident.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the exact logical init prefix is installed and
+    /// every reachable local row can be rebuilt by checked constructors.
+    pub fn lower_logical_tree(
+        &mut self,
+        init: &Compiled,
+        root: Ref,
+    ) -> Result<LogicalExpansion, KernelError> {
+        self.lower_logical_trees(init, &[root])
+            .map(|expansions| expansions[0])
+    }
+
+    /// Recursively expands several logical syntax DAGs with shared output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`lower_logical_tree`](Self::lower_logical_tree). An empty root slice is
+    /// a no-op.
+    pub fn lower_logical_trees(
+        &mut self,
+        init: &Compiled,
+        roots: &[Ref],
+    ) -> Result<Vec<LogicalExpansion>, KernelError> {
+        for &root in roots {
+            self.category_as::<Infallible>(root)?;
+        }
+        if !self.arena.has_definition_prefix(init.arena()) {
+            return Err(KernelError::InitPrefixMismatch);
+        }
+        let mut staged = self.fork();
+        let mut memo = BTreeMap::new();
+        let mut expansions = Vec::with_capacity(roots.len());
+        for &compact in roots {
+            let (raw, fact) = staged.lower_logical_visit(init, compact, &mut memo)?;
+            staged.union_syn_fact(fact)?;
+            expansions.push(LogicalExpansion { compact, raw, fact });
+        }
+        *self = staged;
+        Ok(expansions)
+    }
+
+    fn lower_logical_visit(
+        &mut self,
+        init: &Compiled,
+        input: Ref,
+        memo: &mut BTreeMap<Ref, (Ref, SynFactId)>,
+    ) -> Result<(Ref, SynFactId), KernelError> {
+        if let Some(&result) = memo.get(&input) {
+            return Ok(result);
+        }
+        let row = self.row::<Infallible>(input)?.clone();
+        if matches!(*row.expr(), Node::TmFv { .. } | Node::TyFv { .. }) {
+            let fact = self.syn_refl(None, crate::SynRel::Syn, input)?;
+            memo.insert(input, (input, fact));
+            return Ok((input, fact));
+        }
+        let children = row.expr().children();
+        let mut remapped = BTreeMap::new();
+        let mut child_facts = Vec::with_capacity(children.len());
+        for child in children {
+            let (output, fact) = self.lower_logical_visit(init, child, memo)?;
+            remapped.insert(child, output);
+            child_facts.push(fact);
+        }
+        for &fact in &child_facts {
+            self.union_syn_fact(fact)?;
+        }
+        let changed = remapped.iter().any(|(input, output)| input != output);
+        let (generic, generic_fact) =
+            self.rebuild_logical_container(init, input, &row, &remapped, &child_facts, changed)?;
+        let result = if matches!(
+            *self.row::<Infallible>(generic)?.expr(),
+            Node::Op1(..) | Node::Op2(..)
+        ) {
+            let lowering = self.logical_lower_fact(None, init, generic)?;
+            let raw = self.syn_fact(lowering)?.output();
+            (raw, self.syn_trans(None, generic_fact, lowering)?)
+        } else {
+            (generic, generic_fact)
+        };
+        memo.insert(input, result);
+        Ok(result)
     }
 
     /// Rebuilds one raw syntax tree with compact logical opcode aliases.

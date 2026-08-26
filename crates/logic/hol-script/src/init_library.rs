@@ -4,14 +4,14 @@ use std::collections::BTreeMap;
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    AX_INF, AX_SUB, CheckedPrefix, InfinityAxiom, Kernel, KernelError, Lit, Ref, ThmId,
-    init::Compiled as LogicalInit,
+    AX_INF, AX_SUB, CheckedPrefix, InfinityAxiom, Kernel, KernelError, Lit, Ref, SubtypeAxiom,
+    ThmId, init::Compiled as LogicalInit,
 };
 use covalence_logic_hol_derived::{
     ChosenModel, Infinity, InfinityDecl, InfinityError, ModelExt, NaturalArithmetic,
     NaturalArithmeticDecl, NaturalArithmeticExt, NaturalError, NaturalExt, NaturalRecSchemas,
-    Naturals, NaturalsDecl, OpenedExists, OpenedExistsDecl, SyntaxError, join_alpha_equivalent,
-    open_exists_at,
+    Naturals, NaturalsDecl, OpenedExists, OpenedExistsDecl, Subtype, SubtypeDecl, SubtypeError,
+    SyntaxError, join_alpha_equivalent, open_exists_at,
 };
 
 use crate::{
@@ -199,6 +199,137 @@ impl InitSlice {
             missed_beta: missed.beta,
         })
     }
+
+    /// Replays the guarded-subtype package against this slice's exact rows.
+    ///
+    /// As with [`prove_infinity`](Self::prove_infinity), all descriptor and
+    /// representation work is untrusted userspace orchestration. The operation
+    /// is transactional and every returned theorem concludes its exact frozen
+    /// declaration row.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong prefix or malformed declaration, or when
+    /// any existing checked subtype, model, beta, conversion, or Gentzen rule
+    /// rejects the replay.
+    pub fn prove_subtype(
+        &self,
+        init: &LogicalInit,
+        kernel: &mut Kernel,
+    ) -> Result<Subtype, InitLibraryError> {
+        let mut staged = kernel.fork();
+        let package = self.prove_subtype_inner(init, &mut staged)?;
+        *kernel = staged;
+        Ok(package)
+    }
+
+    fn prove_subtype_inner(
+        &self,
+        init: &LogicalInit,
+        kernel: &mut Kernel,
+    ) -> Result<Subtype, InitLibraryError> {
+        let declaration = self.naturals.subtype;
+        let axiom_decl = declaration
+            .axiom
+            .ok_or(InitLibraryError::MissingSubtypeAxiom)?;
+        let roots = declaration.references().collect::<Vec<_>>();
+        let aliases = kernel
+            .compact_logical_trees(init, &roots)
+            .map_err(|source| InitLibraryError::Kernel { source })?;
+        let [
+            _carrier_alias,
+            _predicate_alias,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            abs_rep_alias,
+            rep_abs_alias,
+            rep_property_alias,
+            rep_guarded_alias,
+            property_alias,
+            _axiom_alias,
+            _,
+            _,
+            _,
+            _,
+        ] = aliases.as_slice()
+        else {
+            unreachable!("SubtypeDecl::references has a fixed field count")
+        };
+        let bool_ty = self
+            .get("bool")
+            .ok_or(InitLibraryError::MissingSymbol { name: "bool" })?;
+        let axiom = kernel
+            .sub_exists(bool_ty, declaration.carrier, declaration.predicate)
+            .map_err(|source| InitLibraryError::Kernel { source })?;
+        let raw_axiom = kernel
+            .lower_logical_tree(init, axiom.exists_type)
+            .map_err(|source| InitLibraryError::Kernel { source })?;
+        join_alpha_equivalent(kernel, raw_axiom.raw, axiom_decl.exists_type)
+            .map_err(|source| InitLibraryError::Syntax { source })?;
+        kernel
+            .convert_theorem(axiom.theorem, axiom.exists_type, axiom_decl.exists_type)
+            .map_err(|source| InitLibraryError::Kernel { source })?;
+
+        let (model, _representation, _abstraction) =
+            open_subtype_structure(kernel, axiom.theorem, declaration)?;
+        let [
+            property_theorem,
+            abs_rep_theorem,
+            rep_abs_theorem,
+            rep_guarded_theorem,
+        ] = prove_subtype_laws(
+            kernel,
+            model.theorem,
+            model.specification,
+            SubtypeLawTargets {
+                property: declaration.property,
+                property_alias: property_alias.compact,
+                abs_rep: declaration.abs_rep,
+                abs_rep_alias: abs_rep_alias.compact,
+                rep_property_alias: rep_property_alias.compact,
+                rep_abs: declaration.rep_abs,
+                rep_abs_alias: rep_abs_alias.compact,
+                rep_guarded: declaration.rep_guarded,
+                rep_guarded_alias: rep_guarded_alias.compact,
+            },
+        )
+        .map_err(|source| InitLibraryError::Kernel { source })?;
+
+        Ok(Subtype {
+            carrier: declaration.carrier,
+            predicate: declaration.predicate,
+            sub: declaration.sub,
+            rep: declaration.rep,
+            abs_exists: declaration.abs_exists,
+            abs: declaration.abs,
+            rep_ty: declaration.rep_ty,
+            abs_ty: declaration.abs_ty,
+            abs_rep: declaration.abs_rep,
+            rep_abs: declaration.rep_abs,
+            rep_property: declaration.rep_property,
+            rep_guarded: declaration.rep_guarded,
+            property: declaration.property,
+            axiom: Some(SubtypeAxiom {
+                carrier: axiom_decl.carrier,
+                predicate: axiom_decl.predicate,
+                exists_type: axiom_decl.exists_type,
+                package_body: axiom_decl.package_body,
+                model_name: axiom_decl.model_name,
+                base_name: axiom_decl.base_name,
+                theorem: axiom.theorem,
+            }),
+            model: Some(model),
+            property_theorem: Some(property_theorem),
+            abs_rep_theorem: Some(abs_rep_theorem),
+            rep_abs_theorem: Some(rep_abs_theorem),
+            rep_guarded_theorem: Some(rep_guarded_theorem),
+            base_name: declaration.base_name,
+        })
+    }
 }
 
 fn open_infinity_structure(
@@ -275,6 +406,96 @@ fn prove_infinity_laws(
         property_theorem,
         reflects_equality_theorem,
         avoids_missed_theorem,
+    ])
+}
+
+fn open_subtype_structure(
+    kernel: &mut Kernel,
+    axiom: ThmId,
+    declaration: SubtypeDecl,
+) -> Result<(ChosenModel, OpenedExists, OpenedExists), InitLibraryError> {
+    let model = kernel
+        .choose_model_at(
+            axiom,
+            declaration
+                .model
+                .ok_or(InitLibraryError::MissingSubtypeModel)?,
+        )
+        .map_err(|source| InitLibraryError::Subtype {
+            source: source.into(),
+        })?;
+    let representation = open_exists_at(
+        kernel,
+        model.specification,
+        OpenedExistsDecl {
+            witness: declaration.rep,
+            body: declaration.abs_exists,
+        },
+    )
+    .map_err(|source| InitLibraryError::Subtype {
+        source: source.into(),
+    })?;
+    let abstraction = open_exists_at(
+        kernel,
+        representation.body,
+        OpenedExistsDecl {
+            witness: declaration.abs,
+            body: declaration.property,
+        },
+    )
+    .map_err(|source| InitLibraryError::Subtype {
+        source: source.into(),
+    })?;
+    Ok((model, representation, abstraction))
+}
+
+#[derive(Clone, Copy)]
+struct SubtypeLawTargets {
+    property: Ref,
+    property_alias: Ref,
+    abs_rep: Ref,
+    abs_rep_alias: Ref,
+    rep_property_alias: Ref,
+    rep_abs: Ref,
+    rep_abs_alias: Ref,
+    rep_guarded: Ref,
+    rep_guarded_alias: Ref,
+}
+
+fn prove_subtype_laws(
+    kernel: &mut Kernel,
+    model_theorem: ThmId,
+    specification: Ref,
+    targets: SubtypeLawTargets,
+) -> Result<[ThmId; 4], KernelError> {
+    let property_theorem = kernel.copy_theorem(model_theorem)?;
+    kernel.convert_theorem(property_theorem, specification, targets.property)?;
+    kernel.convert_theorem(property_theorem, targets.property, targets.property_alias)?;
+    let property = Lit::positive(targets.property_alias.get());
+    let abs_rep_theorem = kernel.expand_conclusion(property_theorem, property, Some(false))?;
+    let rep_property_theorem = kernel.expand_conclusion(property_theorem, property, Some(true))?;
+    let rep_property = Lit::positive(targets.rep_property_alias.get());
+    let rep_abs_theorem =
+        kernel.expand_conclusion(rep_property_theorem, rep_property, Some(false))?;
+    let rep_guarded_theorem =
+        kernel.expand_conclusion(rep_property_theorem, rep_property, Some(true))?;
+    for (theorem, alias, exact) in [
+        (abs_rep_theorem, targets.abs_rep_alias, targets.abs_rep),
+        (rep_abs_theorem, targets.rep_abs_alias, targets.rep_abs),
+        (
+            rep_guarded_theorem,
+            targets.rep_guarded_alias,
+            targets.rep_guarded,
+        ),
+        (property_theorem, targets.property_alias, targets.property),
+    ] {
+        kernel.convert_theorem(theorem, alias, exact)?;
+    }
+    Ok([
+        property_theorem,
+        abs_rep_theorem,
+        rep_abs_theorem,
+        rep_guarded_theorem,
     ])
 }
 
@@ -441,6 +662,18 @@ pub enum InitLibraryError {
     Syntax {
         /// Userspace syntax-certificate failure.
         source: SyntaxError,
+    },
+    /// The frozen natural package omitted its subtype axiom descriptor.
+    #[snafu(display("init-library subtype declaration has no axiom"))]
+    MissingSubtypeAxiom,
+    /// The frozen natural package omitted its chosen subtype model descriptor.
+    #[snafu(display("init-library subtype declaration has no chosen model"))]
+    MissingSubtypeModel,
+    /// Exact guarded-subtype replay was rejected.
+    #[snafu(display("could not replay init-library subtype: {source}"))]
+    Subtype {
+        /// Userspace subtype derivation failure.
+        source: SubtypeError,
     },
 }
 

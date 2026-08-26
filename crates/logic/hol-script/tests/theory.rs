@@ -601,6 +601,56 @@ fn frozen_infinity_replay_rejects_the_wrong_prefix_transactionally() {
     );
 }
 
+#[test]
+fn frozen_subtype_package_replays_to_exact_statement_rows() {
+    let init = logical_init();
+    let slice = compile_init_slice(&init).expect("projected slice");
+    let declaration = slice.naturals().subtype;
+    let mut certificate = slice.kernel();
+    let bool_ty = slice.get("bool").expect("Boolean type");
+    for name in 20_000..20_016 {
+        certificate
+            .tm_fv(name, bool_ty)
+            .expect("unrelated ambient suffix");
+    }
+    let package = slice
+        .prove_subtype(&init, &mut certificate)
+        .expect("exact userspace subtype replay");
+
+    assert_eq!(package.declaration(), declaration);
+    let axiom = package.axiom.expect("axiom evidence");
+    let model = package.model.expect("model evidence");
+    for (theorem, proposition) in [
+        (axiom.theorem, axiom.exists_type),
+        (model.theorem, declaration.model.unwrap().specification),
+        (package.property_theorem.unwrap(), declaration.property),
+        (package.abs_rep_theorem.unwrap(), declaration.abs_rep),
+        (package.rep_abs_theorem.unwrap(), declaration.rep_abs),
+        (
+            package.rep_guarded_theorem.unwrap(),
+            declaration.rep_guarded,
+        ),
+    ] {
+        check_exact_theorem(&certificate, proposition, theorem);
+    }
+}
+
+#[test]
+fn frozen_subtype_replay_rejects_the_wrong_prefix_transactionally() {
+    let init = logical_init();
+    let slice = compile_init_slice(&init).expect("projected slice");
+    let mut wrong = Kernel::new();
+    wrong.star().expect("unrelated kernel");
+    let before = wrong.fork();
+
+    assert!(slice.prove_subtype(&init, &mut wrong).is_err());
+    assert_eq!(wrong.arena(), before.arena());
+    assert_eq!(
+        wrong.thm().live_theorems().count(),
+        before.thm().live_theorems().count()
+    );
+}
+
 fn check_exact_theorem(
     kernel: &Kernel,
     proposition: covalence_logic_hol::Ref,
