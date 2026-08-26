@@ -327,6 +327,26 @@ pub trait NaturalExt {
         type_parameter: Ref,
         member_schema: Ref,
     ) -> Result<Naturals, NaturalError>;
+
+    /// Completes natural-number syntax and proofs from already selected
+    /// infinity and guarded-subtype packages.
+    ///
+    /// This allocation-target form is useful when replaying a frozen package:
+    /// userspace can retain the exact chosen witnesses rather than selecting
+    /// extensionally equivalent but syntactically different ones again.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `member` or either supplied package is incompatible,
+    /// or if any ordinary checked constructor or proof step rejects the
+    /// derivation.
+    fn finish_naturals_from_packages(
+        &mut self,
+        bool_ty: Ref,
+        infinity: Infinity,
+        subtype: Subtype,
+        member: Ref,
+    ) -> Result<Naturals, NaturalError>;
 }
 
 impl NaturalExt for Kernel {
@@ -364,6 +384,16 @@ impl NaturalExt for Kernel {
         let member = substitute(self, map_binder, infinity.map, member_body)?.output;
         finish_naturals(self, bool_ty, infinity, member)
     }
+
+    fn finish_naturals_from_packages(
+        &mut self,
+        bool_ty: Ref,
+        infinity: Infinity,
+        subtype: Subtype,
+        member: Ref,
+    ) -> Result<Naturals, NaturalError> {
+        finish_naturals_with_subtype(self, bool_ty, infinity, subtype, member)
+    }
 }
 
 fn require_natural_capabilities(kernel: &Kernel) -> Result<(), KernelError> {
@@ -383,6 +413,16 @@ fn finish_naturals(
     member: Ref,
 ) -> Result<Naturals, NaturalError> {
     let subtype = kernel.guarded_subtype(bool_ty, infinity.carrier, member)?;
+    finish_naturals_with_subtype(kernel, bool_ty, infinity, subtype, member)
+}
+
+fn finish_naturals_with_subtype(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    infinity: Infinity,
+    subtype: Subtype,
+    member: Ref,
+) -> Result<Naturals, NaturalError> {
     let zero = kernel.app(subtype.abs, infinity.missed)?;
     let (zero_member, zero_member_theorem) = prove_member_zero(kernel, member, infinity.missed)?;
 

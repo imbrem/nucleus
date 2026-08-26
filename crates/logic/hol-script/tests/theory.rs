@@ -651,6 +651,52 @@ fn frozen_subtype_replay_rejects_the_wrong_prefix_transactionally() {
     );
 }
 
+#[test]
+fn frozen_natural_package_replays_to_exact_statement_rows() {
+    let init = logical_init();
+    let slice = compile_init_slice(&init).expect("projected slice");
+    let declaration = *slice.naturals();
+    let mut certificate = slice.kernel();
+    let bool_ty = slice.get("bool").expect("Boolean type");
+    for name in 30_000..30_016 {
+        certificate
+            .tm_fv(name, bool_ty)
+            .expect("unrelated ambient suffix");
+    }
+    let package = slice
+        .prove_naturals(&init, &mut certificate)
+        .expect("exact userspace natural replay");
+
+    assert_eq!(package.declaration, declaration);
+    for (theorem, proposition) in [
+        (package.proof.zero_member, declaration.zero_member),
+        (package.proof.member_inhabited, declaration.member_inhabited),
+        (package.proof.rep_member, declaration.rep_member),
+        (package.proof.member_succ, declaration.member_succ),
+        (package.proof.induction, declaration.induction),
+        (package.proof.succ_injective, declaration.succ_injective),
+        (package.proof.zero_ne_succ, declaration.zero_ne_succ),
+    ] {
+        check_exact_theorem(&certificate, proposition, theorem);
+    }
+}
+
+#[test]
+fn frozen_natural_replay_rejects_the_wrong_prefix_transactionally() {
+    let init = logical_init();
+    let slice = compile_init_slice(&init).expect("projected slice");
+    let mut wrong = Kernel::new();
+    wrong.star().expect("unrelated kernel");
+    let before = wrong.fork();
+
+    assert!(slice.prove_naturals(&init, &mut wrong).is_err());
+    assert_eq!(wrong.arena(), before.arena());
+    assert_eq!(
+        wrong.thm().live_theorems().count(),
+        before.thm().live_theorems().count()
+    );
+}
+
 fn check_exact_theorem(
     kernel: &Kernel,
     proposition: covalence_logic_hol::Ref,
