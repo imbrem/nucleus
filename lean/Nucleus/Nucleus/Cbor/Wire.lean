@@ -892,6 +892,38 @@ end
 
 namespace WireNormal
 
+/-- One CBOR value paired with structural deterministic-wire evidence. -/
+abbrev Certified := {value : Cbor // WireNormal value}
+
+namespace Certified
+
+/-- A certified nonnegative CBOR integer. -/
+def unsigned (value : UInt64) : Certified :=
+  ⟨.primitive (.integer (.unsigned value)), .unsigned value⟩
+
+/-- A certified negative CBOR integer argument. -/
+def negative (value : UInt64) : Certified :=
+  ⟨.primitive (.integer (.negative value)), .negative value⟩
+
+/-- A certified bounded CBOR byte string. -/
+def bytes (value : Bytes) (fits : value.length ≤ Bytes.maxDefiniteLength) : Certified :=
+  ⟨.primitive (.bytes value), .bytes value fits⟩
+
+/-- A certified bounded CBOR text string. -/
+def text (value : String)
+    (fits : value.toUTF8.size ≤ Bytes.maxDefiniteLength) : Certified :=
+  ⟨.primitive (.text value), .text value fits⟩
+
+/-- A certified CBOR simple value. -/
+def simple (value : UInt8) : Certified :=
+  ⟨.primitive (.simple value), .simple value⟩
+
+/-- Pair an already named container with its separately checked evidence. -/
+def ofNormal (value : Cbor) (normal : WireNormal value) : Certified :=
+  ⟨value, normal⟩
+
+end Certified
+
 /-- Structural wire-normal evidence for a list of CBOR values.
 
 Unlike a proposition quantified over list membership, this representation can
@@ -908,7 +940,7 @@ namespace ValueList
 /-- Project a list of individually certified values into one structural list
 certificate.  Generated artifacts can store each value and its evidence once,
 rather than duplicating the value in separate data and proof declarations. -/
-theorem ofCertified (values : List {value : Cbor // WireNormal value}) :
+theorem ofCertified (values : List Certified) :
     ValueList (values.map Subtype.val) :=
   match values with
   | [] => .nil
