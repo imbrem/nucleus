@@ -48,7 +48,9 @@ use covalence_logic_hol::{
     builtin::{Op1, Op2},
 };
 
-use crate::{ChosenModel, ExistsError, ModelError, ModelExt, open_exists};
+use crate::{
+    ChosenModel, ChosenModelDecl, ChosenModelProof, ExistsError, ModelError, ModelExt, open_exists,
+};
 
 /// A failure in the derived guarded-subtype construction.
 #[derive(Debug, Snafu)]
@@ -141,7 +143,198 @@ pub struct Subtype {
     pub base_name: u64,
 }
 
+/// Stable syntax and binder layout of a guarded-subtype axiom sentence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SubtypeAxiomDecl {
+    /// Carrier type.
+    pub carrier: Ref,
+    /// Defining predicate.
+    pub predicate: Ref,
+    /// Closed type-existence sentence.
+    pub exists_type: Ref,
+    /// Open package body.
+    pub package_body: Ref,
+    /// Bound model-type name.
+    pub model_name: u64,
+    /// First reserved package name.
+    pub base_name: u64,
+}
+
+/// Stable syntax of one guarded subtype package.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SubtypeDecl {
+    /// Carrier type.
+    pub carrier: Ref,
+    /// Defining predicate.
+    pub predicate: Ref,
+    /// Selected subtype.
+    pub sub: Ref,
+    /// Representation function.
+    pub rep: Ref,
+    /// Abstraction function.
+    pub abs: Ref,
+    /// Exact representation-function type.
+    pub rep_ty: Ref,
+    /// Exact abstraction-function type.
+    pub abs_ty: Ref,
+    /// Abstraction-after-representation law.
+    pub abs_rep: Ref,
+    /// Guarded representation-after-abstraction law.
+    pub rep_abs: Ref,
+    /// Guard law for represented values.
+    pub rep_guarded: Ref,
+    /// Conjunction of package laws.
+    pub property: Ref,
+    /// Axiom sentence, when this package was selected using `ax.sub`.
+    pub axiom: Option<SubtypeAxiomDecl>,
+    /// Exact chosen-model declaration, when selected using `ax.sub`.
+    pub model: Option<ChosenModelDecl>,
+    /// First reserved package name.
+    pub base_name: u64,
+}
+
+impl SubtypeDecl {
+    /// Iterates every syntax reference needed for exact replay.
+    pub fn references(&self) -> impl Iterator<Item = Ref> + '_ {
+        [
+            self.carrier,
+            self.predicate,
+            self.sub,
+            self.rep,
+            self.abs,
+            self.rep_ty,
+            self.abs_ty,
+            self.abs_rep,
+            self.rep_abs,
+            self.rep_guarded,
+            self.property,
+        ]
+        .into_iter()
+        .chain(
+            self.axiom
+                .into_iter()
+                .flat_map(|axiom| [axiom.exists_type, axiom.package_body]),
+        )
+        .chain(
+            self.model
+                .into_iter()
+                .flat_map(|model| [model.ty, model.predicate, model.specification]),
+        )
+    }
+
+    /// Remaps every syntax reference while retaining binder metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error produced by `map`.
+    pub fn try_map<E>(self, mut map: impl FnMut(Ref) -> Result<Ref, E>) -> Result<Self, E> {
+        let axiom = self
+            .axiom
+            .map(|axiom| {
+                Ok(SubtypeAxiomDecl {
+                    carrier: map(axiom.carrier)?,
+                    predicate: map(axiom.predicate)?,
+                    exists_type: map(axiom.exists_type)?,
+                    package_body: map(axiom.package_body)?,
+                    model_name: axiom.model_name,
+                    base_name: axiom.base_name,
+                })
+            })
+            .transpose()?;
+        let model = self
+            .model
+            .map(|model| model.try_map(&mut map))
+            .transpose()?;
+        Ok(Self {
+            carrier: map(self.carrier)?,
+            predicate: map(self.predicate)?,
+            sub: map(self.sub)?,
+            rep: map(self.rep)?,
+            abs: map(self.abs)?,
+            rep_ty: map(self.rep_ty)?,
+            abs_ty: map(self.abs_ty)?,
+            abs_rep: map(self.abs_rep)?,
+            rep_abs: map(self.rep_abs)?,
+            rep_guarded: map(self.rep_guarded)?,
+            property: map(self.property)?,
+            axiom,
+            model,
+            base_name: self.base_name,
+        })
+    }
+}
+
+/// Kernel-local theorem/cache evidence certifying a [`SubtypeDecl`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SubtypeProof {
+    /// Axiom-sentence theorem, when present.
+    pub axiom: Option<ThmId>,
+    /// Chosen-model evidence, when present.
+    pub model: Option<ChosenModelProof>,
+    /// Exact property theorem, when present.
+    pub property: Option<ThmId>,
+    /// Exact `abs_rep` theorem, when present.
+    pub abs_rep: Option<ThmId>,
+    /// Exact `rep_abs` theorem, when present.
+    pub rep_abs: Option<ThmId>,
+    /// Exact `rep_guarded` theorem, when present.
+    pub rep_guarded: Option<ThmId>,
+}
+
 impl Subtype {
+    /// Forgets theorem/cache identity while retaining exact syntax.
+    #[must_use]
+    pub const fn declaration(self) -> SubtypeDecl {
+        SubtypeDecl {
+            carrier: self.carrier,
+            predicate: self.predicate,
+            sub: self.sub,
+            rep: self.rep,
+            abs: self.abs,
+            rep_ty: self.rep_ty,
+            abs_ty: self.abs_ty,
+            abs_rep: self.abs_rep,
+            rep_abs: self.rep_abs,
+            rep_guarded: self.rep_guarded,
+            property: self.property,
+            axiom: match self.axiom {
+                Some(axiom) => Some(SubtypeAxiomDecl {
+                    carrier: axiom.carrier,
+                    predicate: axiom.predicate,
+                    exists_type: axiom.exists_type,
+                    package_body: axiom.package_body,
+                    model_name: axiom.model_name,
+                    base_name: axiom.base_name,
+                }),
+                None => None,
+            },
+            model: match self.model {
+                Some(model) => Some(model.declaration()),
+                None => None,
+            },
+            base_name: self.base_name,
+        }
+    }
+
+    /// Projects the kernel-local evidence for this declaration.
+    #[must_use]
+    pub const fn proof(self) -> SubtypeProof {
+        SubtypeProof {
+            axiom: match self.axiom {
+                Some(axiom) => Some(axiom.theorem),
+                None => None,
+            },
+            model: match self.model {
+                Some(model) => Some(model.proof()),
+                None => None,
+            },
+            property: self.property_theorem,
+            abs_rep: self.abs_rep_theorem,
+            rep_abs: self.rep_abs_theorem,
+            rep_guarded: self.rep_guarded_theorem,
+        }
+    }
+
     /// The name given to `binder`.
     #[must_use]
     pub const fn name_of(&self, binder: Binder) -> u64 {

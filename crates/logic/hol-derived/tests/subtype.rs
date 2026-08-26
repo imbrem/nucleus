@@ -89,6 +89,18 @@ fn sole_conclusion(kernel: &Kernel, theorem: ThmId) -> Ref {
 fn the_package_builds_and_every_piece_lands_in_the_right_category() {
     let mut fix = Fix::identity_on_bool().licensed();
     let built = fix.guarded().expect("subtype");
+    let declaration = built.declaration();
+    let proof = built.proof();
+
+    assert_eq!(declaration.sub, built.sub);
+    assert_eq!(declaration.property, built.property);
+    assert_eq!(proof.property, built.property_theorem);
+    assert_eq!(
+        proof.model,
+        built
+            .model
+            .map(covalence_logic_hol_derived::ChosenModel::proof)
+    );
 
     assert_eq!(fix.kernel.category(built.sub).expect("sub"), Sort::Ty);
     for term in [

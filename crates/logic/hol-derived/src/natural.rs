@@ -16,9 +16,10 @@ use covalence_logic_hol::{
 };
 
 use crate::{
-    EqualityError, ForallError, Infinity, InfinityError, InfinityExt, ModelError, ProvedEquality,
-    Subtype, SubtypeError, SubtypeExt, SyntaxError, equality_symmetry, equality_transitivity,
-    forall_elim, join_same_syntax, substitute,
+    EqualityError, ForallError, Infinity, InfinityDecl, InfinityError, InfinityExt, InfinityProof,
+    ModelError, ProvedEquality, Subtype, SubtypeDecl, SubtypeError, SubtypeExt, SubtypeProof,
+    SyntaxError, equality_symmetry, equality_transitivity, forall_elim, join_same_syntax,
+    substitute,
 };
 
 /// Stable public syntax of the first object-language natural-number package.
@@ -28,6 +29,10 @@ use crate::{
 /// userspace derivation which originally certified it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NaturalsDecl {
+    /// Private selected infinity declaration needed for exact replay.
+    pub infinity: InfinityDecl,
+    /// Private guarded-subtype declaration needed for exact replay.
+    pub subtype: SubtypeDecl,
     /// Concrete infinite carrier type.
     pub ind: Ref,
     /// Injective endomap on [`ind`](Self::ind).
@@ -63,6 +68,14 @@ pub struct NaturalsDecl {
 }
 
 impl NaturalsDecl {
+    /// Iterates every public and private syntax reference needed for replay.
+    pub fn references(&self) -> impl Iterator<Item = Ref> + '_ {
+        self.infinity
+            .references()
+            .chain(self.subtype.references())
+            .chain(self.symbols().map(|(_, reference)| reference))
+    }
+
     /// Resolves one stable init-library name in this package.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Ref> {
@@ -104,6 +117,8 @@ impl NaturalsDecl {
     /// Returns the first error produced by `map`.
     pub fn try_map<E>(self, mut map: impl FnMut(Ref) -> Result<Ref, E>) -> Result<Self, E> {
         Ok(Self {
+            infinity: self.infinity.try_map(&mut map)?,
+            subtype: self.subtype.try_map(&mut map)?,
             ind: map(self.ind)?,
             ind_succ: map(self.ind_succ)?,
             ind_zero: map(self.ind_zero)?,
@@ -127,6 +142,10 @@ impl NaturalsDecl {
 /// Exact theorem handles certifying a [`NaturalsDecl`] in one kernel.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NaturalsProof {
+    /// Evidence for the selected infinity declaration.
+    pub infinity: InfinityProof,
+    /// Evidence for the selected guarded subtype declaration.
+    pub subtype: SubtypeProof,
     /// Exact theorem `⊢ member ind.zero`.
     pub zero_member: ThmId,
     /// Exact theorem of `member_inhabited`.
@@ -424,6 +443,8 @@ fn finish_naturals(
         infinity,
         subtype,
         declaration: NaturalsDecl {
+            infinity: infinity.declaration(),
+            subtype: subtype.declaration(),
             ind: infinity.carrier,
             ind_succ: infinity.map,
             ind_zero: infinity.missed,
@@ -442,6 +463,8 @@ fn finish_naturals(
             zero_ne_succ,
         },
         proof: NaturalsProof {
+            infinity: infinity.proof(),
+            subtype: subtype.proof(),
             zero_member: zero_member_theorem,
             member_inhabited: member_inhabited_theorem,
             rep_member: rep_member_theorem,

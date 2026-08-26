@@ -19,8 +19,13 @@ mod syntax;
 pub use equality::{EqualityError, ProvedEquality, equality_symmetry, equality_transitivity};
 pub use exists::{ExistsError, OpenedExists, open_exists};
 pub use forall::{ForallError, ProvedTerm, forall_elim};
-pub use infinity::{Infinity, InfinityError, InfinityExt};
-pub use model::{ChosenModel, ModelError, ModelExt, Substitution, eta_expand_at, substitute};
+pub use infinity::{
+    Infinity, InfinityAxiomDecl, InfinityDecl, InfinityError, InfinityExt, InfinityProof,
+};
+pub use model::{
+    ChosenModel, ChosenModelDecl, ChosenModelProof, ModelError, ModelExt, Substitution,
+    eta_expand_at, substitute,
+};
 pub use natural::{NaturalError, NaturalExt, Naturals, NaturalsDecl, NaturalsProof};
 pub use natural_arithmetic::{
     NaturalArithmetic, NaturalArithmeticDecl, NaturalArithmeticExt, NaturalArithmeticProof,
@@ -29,5 +34,5 @@ pub use natural_rec::{
     NaturalRecExt, NaturalRecGraph, NaturalRecGraphDecl, NaturalRecGraphProof, NaturalRecSchemas,
     NaturalRecursor, NaturalRecursorDecl, NaturalRecursorProof,
 };
-pub use subtype::{Subtype, SubtypeError, SubtypeExt};
+pub use subtype::{Subtype, SubtypeAxiomDecl, SubtypeDecl, SubtypeError, SubtypeExt, SubtypeProof};
 pub use syntax::{SyntaxError, join_same_syntax};
