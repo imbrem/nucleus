@@ -1,6 +1,7 @@
 import Nucleus.HolE.ClassicalCoreKernelLaws
 import Nucleus.HolE.ClassicalSubtypeKernelLaws
 import Nucleus.HolE.ClassicalTypeExistentialKernelLaws
+import Nucleus.HolE.ClassicalTypeUniversalKernelLaw
 import Nucleus.HolE.ClassicalBoundKernelLaws
 import Nucleus.HolE.ClassicalEtaKernelLaw
 import Nucleus.HolE.ClassicalBetaKernelLaw

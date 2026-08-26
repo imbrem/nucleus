@@ -561,6 +561,15 @@ def Arena.Generalization (resolve : Resolver) (arena : Arena)
     Resolves (coreResolver resolve) arena.holCore target
       (.term boolType (Expr.forallTm name domain body))
 
+/-- A checked Boolean proposition and its closure over one named free type.
+This is the reference-level shape consumed by premise-free `TY_GEN`. -/
+def Arena.TypeGeneralization (resolve : Resolver) (arena : Arena)
+    (source target : Ref) : Prop :=
+  ∃ boolType name predicate,
+    Resolves (coreResolver resolve) arena.holCore source (.term boolType predicate) ∧
+    Resolves (coreResolver resolve) arena.holCore target
+      (.term boolType (.tyForall name predicate))
+
 /-- A proved predicate application and the application at its Hilbert-selected
 witness. This is the reference-level shape consumed by the choice rule. -/
 def Arena.ChoiceApplication (resolve : Resolver) (arena : Arena)
@@ -630,6 +639,13 @@ structure Arena.HolInterpretationSound (resolve : Resolver) (arena : Arena)
   (`GEN`) when that variable is fresh for its premise matrix. -/
   generalize : ∀ {source binder target sourceProp targetProp},
     arena.Generalization resolve source binder target →
+    interpretation source = some sourceProp →
+    interpretation target = some targetProp →
+    (sourceProp → targetProp)
+  /-- A premise-free theorem may be generalized over one named free type
+  (`TY_GEN`). Uniformity comes from its open type environment. -/
+  typeGeneralize : ∀ {source target sourceProp targetProp},
+    arena.TypeGeneralization resolve source target →
     interpretation source = some sourceProp →
     interpretation target = some targetProp →
     (sourceProp → targetProp)
@@ -1030,6 +1046,34 @@ theorem Arena.holTheorem_generalize {trusted : Arena → Prop}
   have rightHolds := sourceHolds leftHolds
   rw [exactRight] at rightHolds
   exact (Sequent.assertRight_holds valuation source).mp rightHolds
+
+/-- A premise-free theorem may be universally generalized over one named free
+type. `tyForallIntro_sound` supplies the underlying HolE semantic law; this is
+its one-based theorem-slot contract. -/
+theorem Arena.holTheorem_typeGeneralize {trusted : Arena → Prop}
+    {resolve : Resolver} {arena : Arena} {interpretation : PartialValuation Ref}
+    (valid : arena.KernelValid trusted resolve interpretation)
+    {fact : WireSequent} (member : fact ∈ arena.hol.thm)
+    {source target : Ref}
+    (exact : fact.semantic = Sequent.assert source)
+    (sourceBool : ContextClaim (coreResolver resolve) arena.holCore source)
+    (targetBool : ContextClaim (coreResolver resolve) arena.holCore target)
+    (generalization : arena.TypeGeneralization resolve source target) :
+    ∀ ambientValuation,
+      arena.ambientTheory.Admits (arena.ImportOk trusted resolve)
+        (arena.ImportSort resolve) ambientValuation →
+      ∀ valuation : Valuation Ref, valuation.Completes interpretation →
+        (Sequent.assert target).Holds valuation := by
+  intro ambientValuation admitted valuation completion leftHolds
+  obtain ⟨sourceProp, sourceFound⟩ := valid.holInterpretation.total source sourceBool
+  obtain ⟨targetProp, targetFound⟩ := valid.holInterpretation.total target targetBool
+  rw [Sequent.assertRight_holds]
+  apply (completion target targetProp targetFound).mpr
+  apply valid.holInterpretation.typeGeneralize generalization sourceFound targetFound
+  apply (completion source sourceProp sourceFound).mp
+  have sourceHolds := valid.holTheorems ambientValuation admitted fact member valuation completion
+  rw [exact] at sourceHolds
+  exact (Sequent.assertRight_holds valuation source).mp (sourceHolds leftHolds)
 
 /-- A theorem of one predicate application yields the application at the
 Hilbert-selected witness, preserving its premise matrix. -/
