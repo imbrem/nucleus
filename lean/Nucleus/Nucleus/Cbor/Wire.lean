@@ -508,6 +508,78 @@ private theorem parseItem_encode_tag (fuel : Nat) (number : UInt64)
   rw [contentRoundtrip]
   simp
 
+/-! ## Array cursor roundtrips
+
+Array decoding spends one unit of fuel for every cons cell before decoding its
+head.  Quantifying an item's cursor theorem over every fuel greater than its
+structural size makes that bookkeeping compositional: an array proof only has
+to add the sizes of its head and tail.
+-/
+
+private def CursorRoundtrip (source parsed : Cbor) : Prop :=
+  ∀ fuel suffix, source.size < fuel →
+    parseItem fuel (encodeSyn source ++ suffix) = some (parsed, suffix)
+
+private inductive ArrayCursorRoundtrip :
+    CborSyn .array → CborSyn .array → Prop where
+  | nil : ArrayCursorRoundtrip .arrayNil .arrayNil
+  | cons {sourceHead parsedHead : Cbor}
+      {sourceTail parsedTail : CborSyn .array}
+      (head : CursorRoundtrip sourceHead parsedHead)
+      (tail : ArrayCursorRoundtrip sourceTail parsedTail) :
+      ArrayCursorRoundtrip (.arrayCons sourceHead sourceTail)
+        (.arrayCons parsedHead parsedTail)
+
+private theorem parseItems_encode_array {source parsed : CborSyn .array}
+    (roundtrip : ArrayCursorRoundtrip source parsed) (fuel : Nat)
+    (suffix : List UInt8) (enough : source.size < fuel) :
+    parseItems fuel source.arrayLength (encodeSyn source ++ suffix) =
+      some (parsed.toArrayList, suffix) := by
+  induction roundtrip generalizing fuel with
+  | nil => simp [CborSyn.size, CborSyn.arrayLength, encodeSyn, parseItems,
+      CborSyn.toArrayList]
+  | @cons sourceHead parsedHead sourceTail parsedTail head tail ih =>
+      cases fuel with
+      | zero => simp at enough
+      | succ fuel =>
+          have headEnough : sourceHead.size < fuel := by
+            simp only [CborSyn.size] at enough
+            omega
+          have tailEnough : sourceTail.size < fuel := by
+            simp only [CborSyn.size] at enough
+            omega
+          simp only [CborSyn.size, CborSyn.arrayLength, encodeSyn,
+            List.append_assoc, parseItems]
+          rw [head fuel (encodeSyn sourceTail ++ suffix) headEnough]
+          rw [ih fuel suffix tailEnough]
+          simp [CborSyn.toArrayList]
+
+private theorem parseItem_encode_array {source parsed : CborSyn .array}
+    (fits : source.arrayLength ≤ Bytes.maxDefiniteLength)
+    (roundtrip : ArrayCursorRoundtrip source parsed) (fuel : Nat)
+    (suffix : List UInt8) (enough : 1 + source.size < fuel) :
+    parseItem fuel (encodeSyn (.array source) ++ suffix) =
+      some (.array parsed, suffix) := by
+  cases fuel with
+  | zero => simp at enough
+  | succ fuel =>
+      have itemsEnough : source.size < fuel := by omega
+      have lengthFits : source.arrayLength < 2 ^ 64 := by
+        unfold Bytes.maxDefiniteLength at fits
+        omega
+      have lengthFits' : source.arrayLength < 18446744073709551616 := by
+        simpa using lengthFits
+      have lengthRoundtrip :
+          (UInt64.ofNat source.arrayLength).toNat = source.arrayLength := by
+        rw [UInt64.toNat_ofNat', Nat.mod_eq_of_lt lengthFits']
+      rw [encodeSyn, List.append_assoc]
+      simp only [parseItem]
+      rw [parseHead?_head 4 (UInt64.ofNat source.arrayLength)
+        (encodeSyn source ++ suffix) (by decide)]
+      simp only [lengthRoundtrip]
+      rw [parseItems_encode_array roundtrip fuel suffix itemsEnough]
+      simp
+
 /-! ## Deterministic parsed normal form
 
 Encoding and parsing is not literally an identity on `Cbor`: map syntax keeps
@@ -535,6 +607,64 @@ private def sortCanonicalEntries :
     List (Cbor × Cbor) → List (Cbor × Cbor)
   | [] => []
   | head :: tail => insertCanonicalEntry head (sortCanonicalEntries tail)
+
+private def encodeEntry (entry : Cbor × Cbor) :
+    List UInt8 × List UInt8 :=
+  (encodeSyn entry.1, encodeSyn entry.2)
+
+@[simp] private theorem canonicalEntryLt_eq
+    (left right : Cbor × Cbor) :
+    canonicalEntryLt left right = lexLt (encodeEntry left).1 (encodeEntry right).1 :=
+  rfl
+
+/-- Encoding commutes with one insertion into deterministic map-key order.
+The false branch intentionally inserts after an equal key, retaining the
+encoder's duplicate-key reversal behavior. -/
+private theorem map_encodeEntry_insertCanonicalEntry
+    (entry : Cbor × Cbor) (entries : List (Cbor × Cbor)) :
+    (insertCanonicalEntry entry entries).map encodeEntry =
+      insertEntry (encodeEntry entry) (entries.map encodeEntry) := by
+  induction entries with
+  | nil => rfl
+  | cons head tail ih =>
+      simp only [insertCanonicalEntry, insertEntry, List.map_cons]
+      rw [canonicalEntryLt_eq]
+      split <;> simp_all
+
+/-- The value-level and byte-level insertion sorts are the same algorithm.
+In particular this theorem does not quotient maps by keys or discard duplicate
+entries. -/
+private theorem map_encodeEntry_sortCanonicalEntries
+    (entries : List (Cbor × Cbor)) :
+    (sortCanonicalEntries entries).map encodeEntry =
+      sortEntries (entries.map encodeEntry) := by
+  induction entries with
+  | nil => rfl
+  | cons head tail ih =>
+      simp only [sortCanonicalEntries, List.map_cons]
+      change (insertCanonicalEntry head (sortCanonicalEntries tail)).map encodeEntry =
+        insertEntry (encodeEntry head) (sortEntries (tail.map encodeEntry))
+      rw [map_encodeEntry_insertCanonicalEntry, ih]
+
+/-- Encoding a map syntax rebuilt from a list preserves that list's encounter
+order. This is the bridge used after `parsePairs`, whose result is likewise in
+wire order. -/
+@[simp] private theorem encodeEntries_mapOfList
+    (entries : List (Cbor × Cbor)) :
+    encodeEntries (CborSyn.mapOfList entries) = entries.map encodeEntry := by
+  induction entries with
+  | nil => simp [CborSyn.mapOfList, encodeEntries]
+  | cons head tail ih =>
+      rcases head with ⟨key, value⟩
+      simp [CborSyn.mapOfList, encodeEntries, encodeEntry, ih]
+
+/-- Rebuilding the value-level sorted map and then encoding its entries gives
+exactly the encoder's sorted byte pairs. -/
+private theorem encodeEntries_mapOfList_sortCanonicalEntries
+    (entries : List (Cbor × Cbor)) :
+    encodeEntries (CborSyn.mapOfList (sortCanonicalEntries entries)) =
+      sortEntries (entries.map encodeEntry) := by
+  rw [encodeEntries_mapOfList, map_encodeEntry_sortCanonicalEntries]
 
 mutual
 
