@@ -488,6 +488,23 @@ fn projected_init_slice_is_deterministic_complete_and_opcode_free() {
     {
         assert_eq!(Some(reference), first.get(name), "typed root {name}");
     }
+    for reference in first.arithmetic().references() {
+        assert!(
+            reference.get() <= i32::try_from(arena.len()).unwrap(),
+            "private replay root {reference:?} must reside in the frozen prefix"
+        );
+    }
+    let schemas = first.recursion_schemas();
+    for (name, reference) in [
+        ("NatRecGraph", schemas.graph),
+        ("NatRecGraph/'a", schemas.graph_natural),
+        ("NatRecGraph/'c", schemas.graph_codomain),
+        ("NatRecSpec", schemas.specification),
+        ("NatRecSpec/'a", schemas.specification_natural),
+        ("NatRecSpec/'c", schemas.specification_codomain),
+    ] {
+        assert_eq!(Some(reference), first.get(name), "typed schema {name}");
+    }
 }
 
 fn check_exact_theorem(
