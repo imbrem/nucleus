@@ -1371,6 +1371,32 @@ theorem canonicalize_unsorted_integer_map :
     canonicalEntryLt, lexLt, encodeSyn, head,
     show ¬ (([2] : List UInt8) < ([1] : List UInt8)) by decide]
 
+/-- The structural decision procedure accepts exact deterministic map order
+and rejects encounter order without executing the byte parser. -/
+theorem wireNormal_sorted_integer_map :
+    WireNormal (.map (CborSyn.mapOfList [
+      (.primitive (.integer (.unsigned 1)), .primitive (.integer (.unsigned 2))),
+      (.primitive (.integer (.unsigned 2)), .primitive (.integer (.unsigned 1)))])) := by
+  exact .map _ (by
+    simp [CborSyn.mapOfList, CborSyn.mapLength, Bytes.maxDefiniteLength]) (by
+      have keyOrder : ([1] : List UInt8) < [2] := by decide
+      simpa [CborSyn.mapOfList, encodeEntries, sortEntries, insertEntry, lexLt,
+        encodeSyn, head] using keyOrder) <|
+    .cons (.unsigned 1) (.unsigned 2) <|
+      .cons (.unsigned 2) (.unsigned 1) .nil
+
+theorem not_wireNormal_unsorted_integer_map :
+    ¬WireNormal (.map (CborSyn.mapOfList [
+      (.primitive (.integer (.unsigned 2)), .primitive (.integer (.unsigned 1))),
+      (.primitive (.integer (.unsigned 1)), .primitive (.integer (.unsigned 2)))])) := by
+  intro normal
+  cases normal with
+  | map _ _ ordered _ =>
+      have notOrdered : ¬(([2] : List UInt8) < [1]) := by decide
+      apply notOrdered
+      simpa [CborSyn.mapOfList, encodeEntries, sortEntries, insertEntry, lexLt,
+        encodeSyn, head] using ordered
+
 /-- The encoder's current insertion ordering retains duplicate entries but
 reverses an equal-key run. The byte-roundtrip theorem must preserve this exact
 behavior rather than silently assuming map-key uniqueness. -/
