@@ -5,7 +5,9 @@ use covalence_logic_hol::{
     InfinityAxiom, Kernel, KernelError, Lit, Ref, Sort, SynFactId, ThmId, builtin::Op2,
 };
 
-use crate::{ChosenModel, ExistsError, ModelError, ModelExt, open_exists};
+use crate::{
+    ChosenModel, ChosenModelDecl, ChosenModelProof, ExistsError, ModelError, ModelExt, open_exists,
+};
 
 /// A chosen infinite carrier and the structure supplied by `ax.inf`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,6 +38,135 @@ pub struct Infinity {
     pub map_beta: SynFactId,
     /// Inner beta certificate selecting [`missed`](Self::missed).
     pub missed_beta: SynFactId,
+}
+
+/// Stable syntax and binder layout of the infinity axiom sentence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InfinityAxiomDecl {
+    /// Closed type-existence sentence.
+    pub exists_type: Ref,
+    /// Open body quantified by the sentence.
+    pub body: Ref,
+    /// Bound carrier name.
+    pub carrier_name: u64,
+    /// First reserved binder name.
+    pub base_name: u64,
+}
+
+/// Stable syntax of the selected infinity package.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InfinityDecl {
+    /// Exact axiom sentence declaration.
+    pub axiom: InfinityAxiomDecl,
+    /// Exact selected-model declaration.
+    pub model: ChosenModelDecl,
+    /// Concrete infinite carrier.
+    pub carrier: Ref,
+    /// Injective endomap.
+    pub map: Ref,
+    /// Point outside the endomap image.
+    pub missed: Ref,
+    /// Conjunction of the two structure laws.
+    pub property: Ref,
+    /// Equality-reflection law.
+    pub reflects_equality: Ref,
+    /// Missed-point law.
+    pub avoids_missed: Ref,
+}
+
+impl InfinityDecl {
+    /// Iterates every syntax reference needed for exact replay.
+    pub fn references(&self) -> impl Iterator<Item = Ref> + '_ {
+        [self.axiom.exists_type, self.axiom.body]
+            .into_iter()
+            .chain(self.model.references())
+            .chain([
+                self.carrier,
+                self.map,
+                self.missed,
+                self.property,
+                self.reflects_equality,
+                self.avoids_missed,
+            ])
+    }
+
+    /// Remaps every syntax reference while retaining binder metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error produced by `map`.
+    pub fn try_map<E>(self, mut map: impl FnMut(Ref) -> Result<Ref, E>) -> Result<Self, E> {
+        Ok(Self {
+            axiom: InfinityAxiomDecl {
+                exists_type: map(self.axiom.exists_type)?,
+                body: map(self.axiom.body)?,
+                carrier_name: self.axiom.carrier_name,
+                base_name: self.axiom.base_name,
+            },
+            model: self.model.try_map(&mut map)?,
+            carrier: map(self.carrier)?,
+            map: map(self.map)?,
+            missed: map(self.missed)?,
+            property: map(self.property)?,
+            reflects_equality: map(self.reflects_equality)?,
+            avoids_missed: map(self.avoids_missed)?,
+        })
+    }
+}
+
+/// Kernel-local theorem and beta evidence certifying an [`InfinityDecl`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InfinityProof {
+    /// Theorem concluding the axiom sentence.
+    pub axiom: ThmId,
+    /// Selected-model evidence.
+    pub model: ChosenModelProof,
+    /// Exact theorem for the conjunction of laws.
+    pub property: ThmId,
+    /// Exact theorem for equality reflection.
+    pub reflects_equality: ThmId,
+    /// Exact theorem for the missed-point law.
+    pub avoids_missed: ThmId,
+    /// Beta certificate selecting the map.
+    pub map_beta: SynFactId,
+    /// Beta certificate selecting the missed point.
+    pub missed_beta: SynFactId,
+}
+
+impl Infinity {
+    /// Forgets theorem/cache identity while retaining exact syntax.
+    #[must_use]
+    pub const fn declaration(self) -> InfinityDecl {
+        InfinityDecl {
+            axiom: InfinityAxiomDecl {
+                exists_type: self.axiom.exists_type,
+                body: self.axiom.body,
+                carrier_name: self.axiom.carrier_name,
+                base_name: self.axiom.base_name,
+            },
+            model: self.model.declaration(),
+            carrier: self.carrier,
+            map: self.map,
+            missed: self.missed,
+            property: self.property,
+            reflects_equality: self.reflects_equality,
+            avoids_missed: self.avoids_missed,
+        }
+    }
+
+    /// Projects the kernel-local evidence for this declaration.
+    #[must_use]
+    pub const fn proof(self) -> InfinityProof {
+        InfinityProof {
+            axiom: self.axiom.theorem,
+            model: self.model.proof(),
+            property: self.theorem,
+            reflects_equality: self.reflects_equality_theorem,
+            avoids_missed: self.avoids_missed_theorem,
+            map_beta: self.map_beta,
+            missed_beta: self.missed_beta,
+        }
+    }
 }
 
 /// A failure while projecting the infinity package.

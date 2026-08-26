@@ -28,6 +28,8 @@ fn subtype_package_opens_at_the_exact_model_chosen_by_its_existential() {
         .sub_exists(bool_ty, bool_ty, predicate)
         .expect("subtype package");
     let chosen = kernel.choose_model(axiom.theorem).expect("chosen model");
+    let declaration = chosen.declaration();
+    let proof = chosen.proof();
     assert_eq!(chosen.name, axiom.model_name);
     assert_eq!(chosen.predicate, axiom.package_body);
     assert_eq!(kernel.category(chosen.ty).expect("model type"), Sort::Ty);
@@ -36,6 +38,10 @@ fn subtype_package_opens_at_the_exact_model_chosen_by_its_existential() {
         Some(Tag::Ty(covalence_logic_hol::TyTag::Model))
     );
     assert_specification_theorem(&kernel, chosen.theorem, chosen.specification);
+    assert_eq!(declaration.ty, chosen.ty);
+    assert_eq!(declaration.specification, chosen.specification);
+    assert_eq!(proof.theorem, chosen.theorem);
+    assert_eq!(proof.substitution, chosen.substitution);
 
     let fact = kernel
         .arena()

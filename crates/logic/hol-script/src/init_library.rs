@@ -145,6 +145,7 @@ impl InitLibrary {
     /// reference is not in the resulting reachable closure.
     pub fn into_slice(self, init: &LogicalInit) -> Result<InitSlice, InitLibraryError> {
         let mut roots = self.symbols.values().copied().collect::<Vec<_>>();
+        roots.extend(self.naturals.declaration.references());
         roots.extend(self.arithmetic.declaration.references());
         let mut projected = init.kernel();
         projected

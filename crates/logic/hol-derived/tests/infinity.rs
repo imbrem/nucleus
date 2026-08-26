@@ -17,6 +17,8 @@ fn infinity_projects_the_chosen_carrier_map_point_and_property() {
     let (mut kernel, bool_ty) = prelude();
     kernel.add_axiom(AX_INF).expect("infinity capability");
     let package = kernel.choose_infinity(bool_ty).expect("infinity package");
+    let declaration = package.declaration();
+    let proof = package.proof();
 
     assert_eq!(kernel.category(package.carrier).expect("carrier"), Sort::Ty);
     assert_eq!(
@@ -38,6 +40,10 @@ fn infinity_projects_the_chosen_carrier_map_point_and_property() {
             .equivalent(package.model.specification, package.property)
             .expect("beta conversion union")
     );
+    assert_eq!(declaration.carrier, package.carrier);
+    assert_eq!(declaration.property, package.property);
+    assert_eq!(proof.property, package.theorem);
+    assert_eq!(proof.model.theorem, package.model.theorem);
 
     let theorem = kernel.thm().get(package.theorem).expect("property theorem");
     let rows = theorem.rhs.to_rows();

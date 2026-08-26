@@ -33,6 +33,71 @@ pub struct ChosenModel {
     pub name: u64,
 }
 
+/// Stable syntax of one chosen type model.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChosenModelDecl {
+    /// Canonical selected model type.
+    pub ty: Ref,
+    /// Predicate before type substitution.
+    pub predicate: Ref,
+    /// Predicate specialized at [`ty`](Self::ty).
+    pub specification: Ref,
+    /// Name bound by the source type existential.
+    pub name: u64,
+}
+
+impl ChosenModelDecl {
+    /// Remaps every syntax reference while preserving binder metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error produced by `map`.
+    pub fn try_map<E>(self, mut map: impl FnMut(Ref) -> Result<Ref, E>) -> Result<Self, E> {
+        Ok(Self {
+            ty: map(self.ty)?,
+            predicate: map(self.predicate)?,
+            specification: map(self.specification)?,
+            name: self.name,
+        })
+    }
+
+    /// Iterates every syntax reference needed to replay model selection.
+    pub fn references(&self) -> impl Iterator<Item = Ref> {
+        [self.ty, self.predicate, self.specification].into_iter()
+    }
+}
+
+/// Kernel-local evidence certifying a [`ChosenModelDecl`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChosenModelProof {
+    /// Premise-free theorem concluding the exact specification.
+    pub theorem: ThmId,
+    /// Checked substitution certificate used by model selection.
+    pub substitution: SynFactId,
+}
+
+impl ChosenModel {
+    /// Forgets theorem/cache identity while retaining exact syntax.
+    #[must_use]
+    pub const fn declaration(self) -> ChosenModelDecl {
+        ChosenModelDecl {
+            ty: self.ty,
+            predicate: self.predicate,
+            specification: self.specification,
+            name: self.name,
+        }
+    }
+
+    /// Projects the kernel-local evidence for this declaration.
+    #[must_use]
+    pub const fn proof(self) -> ChosenModelProof {
+        ChosenModelProof {
+            theorem: self.theorem,
+            substitution: self.substitution,
+        }
+    }
+}
+
 /// One checked capture-avoiding substitution and its syntactic certificate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Substitution {
