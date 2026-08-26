@@ -38,6 +38,8 @@ pub enum CoproductError {
 /// A checked binary coproduct representation assembled outside the TCB.
 #[derive(Debug)]
 pub struct Coproduct {
+    /// Exact Boolean type used by predicates and equality.
+    pub bool_ty: Ref,
     /// Left summand type.
     pub left: Ref,
     /// Right summand type.
@@ -68,6 +70,46 @@ pub struct Coproduct {
     pub inr: Ref,
     /// Exact classifier row of [`inr`](Self::inr).
     pub inr_ty: Ref,
+}
+
+/// A Hilbert-choice eliminator for one coproduct codomain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoproductEliminator {
+    /// Result type.
+    pub codomain: Ref,
+    /// Exact type `left → codomain`.
+    pub left_map_ty: Ref,
+    /// Exact type `right → codomain`.
+    pub right_map_ty: Ref,
+    /// Exact type `coproduct → codomain`.
+    pub value_map_ty: Ref,
+    /// Exact curried classifier of [`function`](Self::function).
+    pub function_ty: Ref,
+    /// Curried eliminator `(left → C) → (right → C) → coproduct → C`.
+    pub function: Ref,
+}
+
+impl Coproduct {
+    /// Constructs the choice-based eliminator at one checked result type.
+    ///
+    /// Construction is transactional and introduces no theorem. Its
+    /// computation laws are a separate userspace derivation over the subtype
+    /// package's checked laws.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless this package is resident in `kernel` and
+    /// `codomain` is a checked type of kind `star`.
+    pub fn eliminator(
+        &self,
+        kernel: &mut Kernel,
+        codomain: Ref,
+    ) -> Result<CoproductEliminator, CoproductError> {
+        let mut staged = kernel.fork();
+        let eliminator = build_eliminator(&mut staged, self, codomain)?;
+        *kernel = staged;
+        Ok(eliminator)
+    }
 }
 
 /// Language-independent userspace construction of binary coproduct syntax.
@@ -225,6 +267,7 @@ fn build_coproduct(
         subtype.abs,
     )?;
     Ok(Coproduct {
+        bool_ty,
         left,
         right,
         carrier,
@@ -256,6 +299,101 @@ fn construct_subtype(
         kernel.subtype_terms(bool_ty, carrier, predicate)
     }
     .context(SubtypeSnafu)
+}
+
+fn build_eliminator(
+    kernel: &mut Kernel,
+    coproduct: &Coproduct,
+    codomain: Ref,
+) -> Result<CoproductEliminator, CoproductError> {
+    let left_map_ty = kernel
+        .ty_arr(coproduct.left, codomain)
+        .context(KernelSnafu)?;
+    let right_map_ty = kernel
+        .ty_arr(coproduct.right, codomain)
+        .context(KernelSnafu)?;
+    let value_map_ty = kernel.ty_arr(coproduct.ty, codomain).context(KernelSnafu)?;
+    let right_tail = kernel
+        .ty_arr(right_map_ty, value_map_ty)
+        .context(KernelSnafu)?;
+    let function_ty = kernel
+        .ty_arr(left_map_ty, right_tail)
+        .context(KernelSnafu)?;
+    let base = kernel
+        .fresh_name(&coproduct_references(coproduct, codomain))
+        .context(KernelSnafu)?;
+    let mut offset = 0;
+    let left_map = variable(kernel, base, &mut offset, left_map_ty)?;
+    let right_map = variable(kernel, base, &mut offset, right_map_ty)?;
+    let value = variable(kernel, base, &mut offset, coproduct.ty)?;
+    let candidate = variable(kernel, base, &mut offset, codomain)?;
+    let left_value = variable(kernel, base, &mut offset, coproduct.left)?;
+    let left_result = kernel.app(left_map, left_value).context(KernelSnafu)?;
+    let left_equality = kernel
+        .eq(coproduct.bool_ty, candidate, left_result)
+        .context(KernelSnafu)?;
+    let left_predicate = kernel
+        .lam_at(coproduct.left_predicate_ty, left_value, left_equality)
+        .context(KernelSnafu)?;
+    let right_value = variable(kernel, base, &mut offset, coproduct.right)?;
+    let right_result = kernel.app(right_map, right_value).context(KernelSnafu)?;
+    let right_equality = kernel
+        .eq(coproduct.bool_ty, candidate, right_result)
+        .context(KernelSnafu)?;
+    let right_predicate = kernel
+        .lam_at(coproduct.right_predicate_ty, right_value, right_equality)
+        .context(KernelSnafu)?;
+    let represented = kernel
+        .app(coproduct.subtype.rep, value)
+        .context(KernelSnafu)?;
+    let selects_left = kernel
+        .app(represented, left_predicate)
+        .context(KernelSnafu)?;
+    let selects_result = kernel
+        .app(selects_left, right_predicate)
+        .context(KernelSnafu)?;
+    let result_predicate_ty = kernel
+        .ty_arr(codomain, coproduct.bool_ty)
+        .context(KernelSnafu)?;
+    let result_predicate = kernel
+        .lam_at(result_predicate_ty, candidate, selects_result)
+        .context(KernelSnafu)?;
+    let chosen = kernel
+        .eps(codomain, result_predicate)
+        .context(KernelSnafu)?;
+    let function = kernel
+        .lam_at(value_map_ty, value, chosen)
+        .context(KernelSnafu)?;
+    let function = kernel
+        .lam_at(right_tail, right_map, function)
+        .context(KernelSnafu)?;
+    let function = kernel
+        .lam_at(function_ty, left_map, function)
+        .context(KernelSnafu)?;
+    Ok(CoproductEliminator {
+        codomain,
+        left_map_ty,
+        right_map_ty,
+        value_map_ty,
+        function_ty,
+        function,
+    })
+}
+
+fn coproduct_references(coproduct: &Coproduct, codomain: Ref) -> Vec<Ref> {
+    vec![
+        coproduct.bool_ty,
+        coproduct.left,
+        coproduct.right,
+        coproduct.carrier,
+        coproduct.left_church,
+        coproduct.right_church,
+        coproduct.predicate,
+        coproduct.ty,
+        coproduct.inl,
+        coproduct.inr,
+        codomain,
+    ]
 }
 
 #[allow(clippy::too_many_arguments)]
