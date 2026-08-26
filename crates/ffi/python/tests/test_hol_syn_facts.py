@@ -581,11 +581,12 @@ def test_binder_congruence_refuses_a_capturing_replacement() -> None:
         )
 
 
-def test_binder_congruence_refuses_an_ambiguous_binder() -> None:
-    """Same name, different classifier row: the kernel cannot tell them apart.
+def test_certified_duplicate_classifier_rows_shadow_one_binder() -> None:
+    """Checked classifier syntax determines named-variable identity.
 
-    Binder identity is the pair `(name, classifier reference)`, so two rows
-    whose classifiers merely became equivalent still spell one name twice.
+    Merely sharing a name remains ambiguous, but once the distinct classifier
+    rows are certified syntactically equal, both rows denote the same named
+    variable and the binder shadows substitution for either representation.
     """
     base = basis()
     kernel = base.kernel
@@ -596,16 +597,17 @@ def test_binder_congruence_refuses_an_ambiguous_binder() -> None:
     truth = base.literal(True)
     source = kernel.lam(binder, replaced)
 
-    with pytest.raises(ValueError, match="ambiguous binder identity"):
-        kernel.syn_binder_congr(
-            "syn",
-            source,
-            source,
-            kernel.syn_refl("syn", binder),
-            kernel.syn_refl("syn", replaced),
-            var=replaced,
-            val=truth,
-        )
+    fact = kernel.syn_binder_congr(
+        "syn",
+        source,
+        source,
+        kernel.syn_refl("syn", binder),
+        kernel.syn_refl("syn", replaced),
+        var=replaced,
+        val=truth,
+    )
+
+    assert fact_view(fact) == ("syn", replaced, truth, source, source)
 
 
 def test_a_binder_shadowing_needs_the_same_typed_variable() -> None:
