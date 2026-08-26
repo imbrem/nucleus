@@ -2,7 +2,8 @@
 
 use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Lit, Ref, Sort, SynRel, Tag};
 use covalence_logic_hol_derived::{
-    ModelError, ModelExt, join_alpha_equivalent, join_same_syntax, substitute,
+    ModelError, ModelExt, introduce_exists, join_alpha_equivalent, join_same_syntax, open_exists,
+    substitute,
 };
 
 fn prelude() -> (Kernel, Ref, Ref) {
@@ -146,4 +147,33 @@ fn substitution_certifies_rebuilt_duplicate_classifier_rows_on_demand() {
         .expect("checked classifier retry")
         .output;
     assert_eq!(kernel.classifier(rebuilt).expect("Boolean result"), bool_ty);
+}
+
+#[test]
+fn arbitrary_witnesses_introduce_choice_encoded_existentials_transactionally() {
+    let (mut kernel, _star, bool_ty) = prelude();
+    let binder = kernel.tm_fv(30, bool_ty).expect("binder");
+    let body = kernel.eq(bool_ty, binder, binder).expect("body");
+    let witness = kernel.bool(bool_ty, true).expect("witness");
+    let proved = kernel.refl(bool_ty, witness).expect("proved instance");
+
+    let introduced = introduce_exists(&mut kernel, proved.theorem, binder, body, witness)
+        .expect("existential introduction");
+    assert_specification_theorem(&kernel, introduced.theorem, introduced.proposition);
+    let opened = open_exists(&mut kernel, introduced.proposition).expect("opened existential");
+    let chosen_body_theorem = kernel
+        .copy_theorem(introduced.theorem)
+        .expect("copy existential theorem");
+    kernel
+        .convert_conclusions(chosen_body_theorem, introduced.proposition, opened.body)
+        .expect("open proved chosen body");
+    assert_specification_theorem(&kernel, chosen_body_theorem, opened.body);
+
+    let falsehood = kernel.bool(bool_ty, false).expect("falsehood");
+    let wrong_body = kernel
+        .eq(bool_ty, binder, falsehood)
+        .expect("mismatched body");
+    let before = kernel.arena().clone();
+    assert!(introduce_exists(&mut kernel, proved.theorem, binder, wrong_body, witness).is_err());
+    assert_eq!(*kernel.arena(), before);
 }

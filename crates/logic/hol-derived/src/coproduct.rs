@@ -9,7 +9,7 @@ use covalence_logic_hol::{
 use crate::{
     EqualityError, ExistsError, ForallError, ModelError, Subtype, SubtypeError, SubtypeExt,
     SyntaxError, equality_symmetry, equality_transitivity, forall_elim, function_extensionality,
-    join_alpha_equivalent, join_same_syntax, open_exists, substitute,
+    introduce_exists, join_alpha_equivalent, join_same_syntax, open_exists, substitute,
 };
 
 /// Failure to specialize or derive a userspace coproduct package.
@@ -1387,15 +1387,7 @@ fn introduce_mediator_exists(
     let mediator_property = kernel
         .op2(Op2::And, mediator_laws, comparison_universal)
         .context(KernelSnafu)?;
-    let mediator_predicate = kernel
-        .lam(mediator, mediator_property)
-        .context(KernelSnafu)?;
     let canonical = uniqueness.uniqueness.canonical;
-    let at_canonical = kernel
-        .app(mediator_predicate, canonical)
-        .context(KernelSnafu)?;
-    let (property_application, reduced_property, property_beta) =
-        beta_apply(kernel, mediator_predicate, canonical)?;
     let canonical_property = kernel
         .op2(Op2::And, laws.conjunction, uniqueness.universal)
         .context(KernelSnafu)?;
@@ -1406,29 +1398,14 @@ fn introduce_mediator_exists(
             positive(canonical_property),
         )
         .context(KernelSnafu)?;
-    let same_property =
-        join_alpha_equivalent(kernel, reduced_property, canonical_property).context(SyntaxSnafu)?;
-    let same_property = kernel
-        .syn_refine(None, same_property, SynRel::Conv)
-        .context(KernelSnafu)?;
-    let at_application =
-        join_same_syntax(kernel, at_canonical, property_application).context(SyntaxSnafu)?;
-    let at_application = kernel
-        .syn_refine(None, at_application, SynRel::Conv)
-        .context(KernelSnafu)?;
-    let application_to_reduced = kernel
-        .syn_trans(None, at_application, property_beta)
-        .context(KernelSnafu)?;
-    let application_to_property = kernel
-        .syn_trans(None, application_to_reduced, same_property)
-        .context(KernelSnafu)?;
-    kernel
-        .union_syn_fact(application_to_property)
-        .context(KernelSnafu)?;
-    kernel
-        .convert_conclusions(property_theorem, canonical_property, at_canonical)
-        .context(KernelSnafu)?;
-    kernel.choice_intro(property_theorem).context(KernelSnafu)
+    introduce_exists(
+        kernel,
+        property_theorem,
+        mediator,
+        mediator_property,
+        canonical,
+    )
+    .context(ExistsSnafu)
 }
 
 #[allow(clippy::too_many_arguments)]
