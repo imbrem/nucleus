@@ -791,6 +791,23 @@ theorem decodeArenaByte?_encode (arena : Layout.Arena)
     decodeArenaByte? (encodeArena arena) = some arena := by
   simp [decodeArenaByte?, decodeArena?_encode arena supported.1, supported.2]
 
+/-- Complete profile for an arena admitted at the deterministic byte boundary.
+
+`ByteWireCanonical` records the logical normalization and literal-import depth
+policy. `CborWire.WireNormal` independently records every finite CBOR length
+bound (including user-provided strings and lists) and deterministic map order.
+Keeping the latter explicit is essential: arbitrary Lean containers cannot be
+proved to fit CBOR's `UInt64` definite-length field. -/
+def DeterministicByteWireProfile (arena : Layout.Arena) : Prop :=
+  arena.ByteWireCanonical ∧ CborWire.WireNormal (encodeArena arena)
+
+/-- The combined byte profile exposes the structural wire-normal evidence
+needed by the verified deterministic parser. -/
+theorem DeterministicByteWireProfile.wireNormal
+    {arena : Layout.Arena} (profile : DeterministicByteWireProfile arena) :
+    CborWire.WireNormal (encodeArena arena) :=
+  profile.2
+
 /-- Byte-level deterministic CBOR parsing composes with the checked nested
 arena decoder whenever the structural encoding fits the definite-length wire
 domain. `encodeArena` emits every fixed field map in deterministic key order;
@@ -804,6 +821,16 @@ theorem decodeArenaByte?_parse_deterministic_wireNormal (arena : Layout.Arena)
         decodeArenaByte? = some arena := by
   rw [CborWire.parse?_deterministic_wireNormal (encodeArena arena) normal]
   exact decodeArenaByte?_encode arena supported
+
+/-- Direct checked wire contract: deterministic encoding is parsed as exactly
+one CBOR item and then decoded to the original normalized arena. -/
+theorem decodeArenaByte?_parse_deterministic (arena : Layout.Arena)
+    (profile : DeterministicByteWireProfile arena) :
+    (CborWire.parse? (CborWire.deterministic
+      ⟨encodeArena arena, profile.wireNormal.reasonable⟩)).bind
+        decodeArenaByte? = some arena :=
+  decodeArenaByte?_parse_deterministic_wireNormal arena profile.1
+    profile.wireNormal
 
 theorem decodeArenaByte?_encode_reject_depth (arena : Layout.Arena)
     (canonical : arena.WireCanonical)
