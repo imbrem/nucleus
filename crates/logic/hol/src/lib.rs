@@ -18,7 +18,7 @@ pub use kernel::{
     AX_INF, AX_SUB, ApTerm, ApThm, BINDER_COUNT, Binder, CheckedArena, CheckedPrefix, ChoiceThm,
     ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, CopyMap, Dnf, DnfId, ForallThm,
     INFINITY_BINDER_COUNT, InfinityAxiom, InfinityBinder, Kernel, KernelError, Lit, LitError,
-    LitVec, ReflThm, Refutation, SubtypeAxiom, ThmId, ThmRef,
+    LitVec, LogicalAlias, ReflThm, Refutation, SubtypeAxiom, ThmId, ThmRef,
 };
 pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
@@ -790,12 +790,6 @@ impl Arena {
             && columns_match(&self.dense.eq, &prefix.dense.eq)
             && columns_match(&self.dense.syn_eq, &prefix.dense.syn_eq)
             && columns_match(&self.dense.conv, &prefix.dense.conv)
-            && self.axs == prefix.axs
-            && self.ctx == prefix.ctx
-            && self.amb_pred == prefix.amb_pred
-            && self.amb_ax == prefix.amb_ax
-            && self.amb_ctx == prefix.amb_ctx
-            && self.amb_thm == prefix.amb_thm
     }
 
     pub(crate) fn eq_column(&self, column: EqColumn, reference: Ref) -> Option<Ref> {

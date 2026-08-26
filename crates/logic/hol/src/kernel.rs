@@ -168,6 +168,17 @@ pub struct CopyMap {
     roots: Vec<Ref>,
 }
 
+/// A checked compact alias for one opcode-free logical syntax tree.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LogicalAlias {
+    /// Original opcode-free root.
+    pub raw: Ref,
+    /// Rebuilt root using compact logical opcodes where recognized.
+    pub compact: Ref,
+    /// Direct syntactic fact `raw = compact`.
+    pub fact: SynFactId,
+}
+
 /// An immutable arena snapshot known to have been assembled by a kernel.
 ///
 /// A prefix carries no source manifest or naming authority. It is simply the
@@ -951,6 +962,225 @@ impl Kernel {
                 actual,
             }),
         }
+    }
+
+    /// Rebuilds one raw syntax tree with compact logical opcode aliases.
+    ///
+    /// Applications of the canonical `not`, `and`, `or`, and `imp`
+    /// definitions are replaced recursively by their compact rows. Every
+    /// other constructor is retained or rebuilt around compact children. The
+    /// returned fact and equality columns certify the compact root as direct
+    /// syntactic sugar for `raw`; callers may freely discard the scratch
+    /// suffix after proof construction.
+    ///
+    /// The operation is transactional: malformed or unsupported syntax leaves
+    /// the kernel unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `raw` is a resident local object under the init
+    /// prefix and every rebuilt constructor and syntactic fact is accepted.
+    pub fn compact_logical_tree(
+        &mut self,
+        init: &Compiled,
+        raw: Ref,
+    ) -> Result<LogicalAlias, KernelError> {
+        self.category_as::<Infallible>(raw)?;
+        if !self.arena.has_definition_prefix(init.arena()) {
+            return Err(KernelError::InitPrefixMismatch);
+        }
+        let mut staged = Self {
+            arena: self.arena.clone(),
+            init_prefix: self.init_prefix,
+        };
+        let (compact, fact) = staged.compact_logical_visit(init, raw, &mut BTreeMap::new())?;
+        staged.union_syn_fact(fact)?;
+        self.arena = staged.arena;
+        Ok(LogicalAlias { raw, compact, fact })
+    }
+
+    fn compact_logical_visit(
+        &mut self,
+        init: &Compiled,
+        input: Ref,
+        memo: &mut BTreeMap<Ref, (Ref, SynFactId)>,
+    ) -> Result<(Ref, SynFactId), KernelError> {
+        if let Some(&result) = memo.get(&input) {
+            return Ok(result);
+        }
+        let row = self.row::<Infallible>(input)?.clone();
+        let node = *row.expr();
+        if matches!(
+            node,
+            Node::TmRef { .. } | Node::TyRef { .. } | Node::KindRef { .. }
+        ) {
+            return Err(KernelError::WrongForm {
+                reference: input,
+                expected: "local logical syntax",
+                actual: row.tag(),
+            });
+        }
+        let children = node.children();
+        let mut remapped = BTreeMap::new();
+        let mut child_facts = Vec::with_capacity(children.len());
+        for child in children {
+            let (output, fact) = self.compact_logical_visit(init, child, memo)?;
+            remapped.insert(child, output);
+            child_facts.push(fact);
+        }
+        let changed = remapped.iter().any(|(input, output)| input != output);
+        let (generic, generic_fact) =
+            self.rebuild_logical_container(init, input, &row, &remapped, &child_facts, changed)?;
+        let result = if let Some(compact) =
+            self.recognize_logical_application(init, node, &remapped, memo)?
+        {
+            let lowering = self.logical_lower_fact_to(None, init, compact, generic)?;
+            let lowering = self.syn_symm(None, lowering)?;
+            let fact = self.syn_trans(None, generic_fact, lowering)?;
+            (compact, fact)
+        } else {
+            (generic, generic_fact)
+        };
+        memo.insert(input, result);
+        Ok(result)
+    }
+
+    fn rebuild_logical_container(
+        &mut self,
+        init: &Compiled,
+        input: Ref,
+        row: &Row,
+        remapped: &BTreeMap<Ref, Ref>,
+        child_facts: &[SynFactId],
+        changed: bool,
+    ) -> Result<(Ref, SynFactId), KernelError> {
+        if !changed {
+            return Ok((input, self.syn_refl(None, crate::SynRel::Syn, input)?));
+        }
+        let node = *row.expr();
+        let output = self.rebuild_logical_node(input, row, node, remapped)?;
+        let fact = match node {
+            Node::Model { name, .. }
+            | Node::TyExists { name, .. }
+            | Node::TyForall { name, .. } => {
+                let star = init.get("star").ok_or(KernelError::WrongForm {
+                    reference: input,
+                    expected: "named init kind star",
+                    actual: row.tag(),
+                })?;
+                let binder = self.ty_fv(name, star)?;
+                self.syn_implicit_binder_congr(
+                    None,
+                    crate::SynRel::Syn,
+                    None,
+                    None,
+                    input,
+                    output,
+                    binder,
+                    child_facts[0],
+                )?
+            }
+            Node::Lam(..) | Node::TyLam(..) => self.syn_binder_congr(
+                None,
+                crate::SynRel::Syn,
+                None,
+                None,
+                input,
+                output,
+                child_facts[0],
+                child_facts[1],
+            )?,
+            _ => self.syn_congr(
+                None,
+                crate::SynRel::Syn,
+                None,
+                None,
+                input,
+                output,
+                child_facts,
+            )?,
+        };
+        Ok((output, fact))
+    }
+
+    fn rebuild_logical_node(
+        &mut self,
+        input: Ref,
+        row: &Row,
+        node: Node,
+        remapped: &BTreeMap<Ref, Ref>,
+    ) -> Result<Ref, KernelError> {
+        let child = |reference| {
+            remapped
+                .get(&reference)
+                .copied()
+                .ok_or(KernelError::MissingDefinition { reference })
+        };
+        match node {
+            Node::KindArr(left, right) => self.kind_arr(child(left)?, child(right)?),
+            Node::TyArr(left, right) => self.ty_arr(child(left)?, child(right)?),
+            Node::TyApp(function, argument) => self.ty_app(child(function)?, child(argument)?),
+            Node::TyLam(binder, body) => self.ty_lam(child(binder)?, child(body)?),
+            Node::TyFv { name, kind } => self.ty_fv(name, child(kind)?),
+            Node::TyExists { name, predicate } => self.ty_exists(name, child(predicate)?),
+            Node::TyForall { name, predicate } => self.ty_forall(name, child(predicate)?),
+            Node::Model { name, predicate } => self.model(name, child(predicate)?),
+            Node::TmFv { name, ty } => self.tm_fv(name, child(ty)?),
+            Node::App(function, argument) => self.app(child(function)?, child(argument)?),
+            Node::Lam(binder, body) => {
+                self.lam_at(self.classifier(input)?, child(binder)?, child(body)?)
+            }
+            Node::Op1(op, operand) => self.op1(op, child(operand)?),
+            Node::Op2(op, left, right) => self.op2(op, child(left)?, child(right)?),
+            Node::Eq(ty, left, right) => {
+                let bool_ty = self.classifier(input)?;
+                self.eq_at(bool_ty, child(ty)?, child(left)?, child(right)?)
+            }
+            Node::Eps { ty, predicate } => self.eps(child(ty)?, child(predicate)?),
+            Node::KindStar
+            | Node::BoolTy
+            | Node::Bool(_)
+            | Node::TmRef { .. }
+            | Node::TyRef { .. }
+            | Node::KindRef { .. } => Err(KernelError::WrongForm {
+                reference: input,
+                expected: "logical syntax with remapped children",
+                actual: row.tag(),
+            }),
+        }
+    }
+
+    fn recognize_logical_application(
+        &mut self,
+        init: &Compiled,
+        node: Node,
+        remapped: &BTreeMap<Ref, Ref>,
+        memo: &BTreeMap<Ref, (Ref, SynFactId)>,
+    ) -> Result<Option<Ref>, KernelError> {
+        let Node::App(function, right) = node else {
+            return Ok(None);
+        };
+        let right = remapped
+            .get(&right)
+            .copied()
+            .ok_or(KernelError::MissingDefinition { reference: right })?;
+        if init.get(Op1::Not.name()) == Some(function) {
+            return self.op1(Op1::Not, right).map(Some);
+        }
+        let Node::App(definition, left) = *self.row::<Infallible>(function)?.expr() else {
+            return Ok(None);
+        };
+        let op = [Op2::And, Op2::Or, Op2::Imp]
+            .into_iter()
+            .find(|op| init.get(op.name()) == Some(definition));
+        let Some(op) = op else {
+            return Ok(None);
+        };
+        let left = memo
+            .get(&left)
+            .map(|&(output, _)| output)
+            .ok_or(KernelError::MissingDefinition { reference: left })?;
+        self.op2(op, left, right).map(Some)
     }
 
     /// Appends object-language equality.
@@ -2083,6 +2313,60 @@ mod tests {
             kernel.lam_at(bool_ty, variable, variable),
             Err(KernelError::WrongForm { .. })
         ));
+    }
+
+    #[test]
+    fn raw_logical_trees_gain_checked_compact_proof_aliases() {
+        let manifest: init::Manifest = serde_json::from_str(INIT_FIXTURE).unwrap();
+        let init = init::compile(&manifest).unwrap();
+        let mut kernel = Kernel::with_init(&init);
+        let truth = init.get("true").unwrap();
+        let apply1 = |kernel: &mut Kernel, name: &str, argument| {
+            kernel.app(init.get(name).unwrap(), argument).unwrap()
+        };
+        let apply2 = |kernel: &mut Kernel, name: &str, left, right| {
+            let partial = kernel.app(init.get(name).unwrap(), left).unwrap();
+            kernel.app(partial, right).unwrap()
+        };
+        let negated = apply1(&mut kernel, "not", truth);
+        let conjunction = apply2(&mut kernel, "and", negated, truth);
+        let raw = apply2(&mut kernel, "imp", conjunction, truth);
+        let before = kernel.arena.len();
+
+        let alias = kernel.compact_logical_tree(&init, raw).unwrap();
+        assert_eq!(alias.raw, raw);
+        assert_eq!(kernel.arena.op2(alias.compact), Some(Op2::Imp));
+        let [left, right] = kernel
+            .row::<Infallible>(alias.compact)
+            .unwrap()
+            .expr()
+            .children()[..]
+        else {
+            panic!("binary alias")
+        };
+        assert_eq!(right, truth);
+        assert_eq!(kernel.arena.op2(left), Some(Op2::And));
+        let negated = kernel.row::<Infallible>(left).unwrap().expr().children()[0];
+        assert_eq!(kernel.arena.op1(negated), Some(Op1::Not));
+        let fact = kernel.syn_fact(alias.fact).unwrap();
+        assert_eq!(fact.input(), raw);
+        assert_eq!(fact.output(), alias.compact);
+        assert!(kernel.equivalent(raw, alias.compact).unwrap());
+        assert!(
+            kernel.arena.len() > before,
+            "aliases are a disposable suffix"
+        );
+    }
+
+    #[test]
+    fn compact_logical_tree_is_transactional_on_bad_input() {
+        let manifest: init::Manifest = serde_json::from_str(INIT_FIXTURE).unwrap();
+        let init = init::compile(&manifest).unwrap();
+        let mut kernel = Kernel::with_init(&init);
+        let before = kernel.arena.clone();
+        let missing = Ref::new(i32::try_from(kernel.arena.len() + 1).unwrap()).unwrap();
+        assert!(kernel.compact_logical_tree(&init, missing).is_err());
+        assert_eq!(kernel.arena, before);
     }
 
     #[test]
