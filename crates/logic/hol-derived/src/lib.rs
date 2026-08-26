@@ -22,7 +22,9 @@ pub use forall::{ForallError, ProvedTerm, forall_elim};
 pub use infinity::{Infinity, InfinityError, InfinityExt};
 pub use model::{ChosenModel, ModelError, ModelExt, Substitution, eta_expand_at, substitute};
 pub use natural::{NaturalError, NaturalExt, Naturals};
-pub use natural_arithmetic::{NaturalArithmetic, NaturalArithmeticExt};
+pub use natural_arithmetic::{
+    NaturalArithmetic, NaturalArithmeticDecl, NaturalArithmeticExt, NaturalArithmeticProof,
+};
 pub use natural_rec::{NaturalRecExt, NaturalRecGraph, NaturalRecSchemas, NaturalRecursor};
 pub use subtype::{Subtype, SubtypeError, SubtypeExt};
 pub use syntax::{SyntaxError, join_same_syntax};

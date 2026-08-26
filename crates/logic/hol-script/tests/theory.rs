@@ -415,8 +415,14 @@ fn init_library_workspace_assembles_reproducibly_outside_the_kernel() {
     assert_eq!(first.get("star"), init.get("star"));
     assert_eq!(first.get("bool"), init.get("bool"));
     assert_eq!(first.get("nat"), Some(first.naturals().ty));
-    assert_eq!(first.get("nat.add"), Some(first.arithmetic().add));
-    assert_eq!(first.get("nat.mul"), Some(first.arithmetic().mul));
+    assert_eq!(
+        first.get("nat.add"),
+        Some(first.arithmetic().declaration.add)
+    );
+    assert_eq!(
+        first.get("nat.mul"),
+        Some(first.arithmetic().declaration.mul)
+    );
     assert_eq!(
         first.recursion_schemas().graph,
         first.get("NatRecGraph").expect("graph schema")
@@ -428,8 +434,8 @@ fn init_library_workspace_assembles_reproducibly_outside_the_kernel() {
 
     check_exact_theorem(
         first.kernel(),
-        first.arithmetic().one_plus_one,
-        first.arithmetic().one_plus_one_theorem,
+        first.arithmetic().declaration.one_plus_one,
+        first.arithmetic().proof.one_plus_one,
     );
 }
 
@@ -475,6 +481,12 @@ fn projected_init_slice_is_deterministic_complete_and_opcode_free() {
         "the complete projected slice is the fork identity"
     );
     assert_eq!(fork.arena().axioms().collect::<Vec<_>>(), [AX_INF, AX_SUB]);
+    assert_eq!(first.arithmetic().add, first.get("nat.add").unwrap());
+    assert_eq!(first.arithmetic().mul, first.get("nat.mul").unwrap());
+    assert_eq!(
+        first.arithmetic().one_plus_one,
+        first.get("nat.one_plus_one").unwrap()
+    );
 }
 
 fn check_exact_theorem(
@@ -498,12 +510,14 @@ fn check_primitive_arithmetic(
     let arithmetic = kernel
         .natural_arithmetic(naturals, schemas)
         .expect("checked primitive arithmetic");
+    let declaration = arithmetic.declaration;
+    let proof = arithmetic.proof;
     for (proposition, theorem) in [
-        (arithmetic.add_zero, arithmetic.add_zero_theorem),
-        (arithmetic.add_successor, arithmetic.add_successor_theorem),
-        (arithmetic.mul_zero, arithmetic.mul_zero_theorem),
-        (arithmetic.mul_successor, arithmetic.mul_successor_theorem),
-        (arithmetic.one_plus_one, arithmetic.one_plus_one_theorem),
+        (declaration.add_zero, proof.add_zero),
+        (declaration.add_successor, proof.add_successor),
+        (declaration.mul_zero, proof.mul_zero),
+        (declaration.mul_successor, proof.mul_successor),
+        (declaration.one_plus_one, proof.one_plus_one),
     ] {
         let theorem = kernel.thm().get(theorem).expect("arithmetic theorem");
         assert!(theorem.lhs.rows().next().is_none());
@@ -512,8 +526,8 @@ fn check_primitive_arithmetic(
             vec![&[covalence_logic_hol::Lit::positive(proposition.get())][..]]
         );
     }
-    assert_eq!(arithmetic.get("nat.add"), Some(arithmetic.add));
-    assert_eq!(arithmetic.get("nat.mul"), Some(arithmetic.mul));
+    assert_eq!(arithmetic.get("nat.add"), Some(declaration.add));
+    assert_eq!(arithmetic.get("nat.mul"), Some(declaration.mul));
     assert_eq!(arithmetic.symbols().len(), 9);
 }
 
