@@ -91,6 +91,40 @@ def CNatDecl.certify (D : CNatDecl) (proof : CNatProof D) : CNatModel where
   succ_ne_zero := proof.succ_ne_zero
   induction := proof.induction
 
+/-- The Boolean-valued laws emitted by the checked HOL package are sufficient
+to certify the same declaration semantically.  This theorem deliberately
+mentions neither the userspace source language nor its compiler: only the
+denotations of the checked declaration and theorem rows cross the boundary. -/
+theorem CNatDecl.proofOfBoolLaws
+    (D : CNatDecl)
+    (succInjective : ∀ x y, D.succ x = D.succ y → x = y)
+    (zeroNeSucc : ∀ x, D.zero ≠ D.succ x)
+    (inductionBool :
+      ∀ P : D.carrier → Bool,
+        P D.zero = true →
+        (∀ x, P x = true → P (D.succ x) = true) →
+        ∀ x, P x = true) :
+    CNatProof D := by
+  classical
+  refine {
+    succ_injective := succInjective
+    succ_ne_zero := fun x equality => zeroNeSucc x equality.symm
+    induction := ?_
+  }
+  intro P base step
+  let characteristic : D.carrier → Bool := fun x => if P x then true else false
+  have characteristicBase : characteristic D.zero = true := by
+    simp [characteristic, base]
+  have characteristicStep :
+      ∀ x, characteristic x = true → characteristic (D.succ x) = true := by
+    intro x holds
+    have property : P x := by
+      simpa [characteristic] using holds
+    simp [characteristic, step x property]
+  intro x
+  have holds := inductionBool characteristic characteristicBase characteristicStep x
+  simpa [characteristic] using holds
+
 @[simp] theorem CNatModel.certify_declaration (M : CNatModel) :
     M.declaration.certify M.proof = M := by
   cases M
@@ -455,7 +489,34 @@ theorem graphRecursorDecl_proof {C : Type} (base : C)
 
 /-! ## Addition
 
-Defined by recursion on the *second* argument, which is the convention that
+The userspace init package selects addition with the recursive natural as its
+first argument.  Keep that exact declaration/proof split explicit before the
+conventional second-argument presentation below.  It is the semantic image of
+the checked `NaturalArithmeticDecl` fields, independent of how userspace chose
+or named their syntax rows. -/
+
+/-- Addition data using the init package's first-argument recursion order. -/
+structure FirstRecursiveAddDecl (M : CNatModel) where
+  add : M.carrier → M.carrier → M.carrier
+
+/-- Exact defining equations exported for first-recursive addition. -/
+structure FirstRecursiveAddProof {M : CNatModel}
+    (D : FirstRecursiveAddDecl M) : Prop where
+  at_zero : ∀ m, D.add M.zero m = m
+  at_succ : ∀ n m, D.add (M.succ n) m = M.succ (D.add n m)
+
+/-- The first non-definitional arithmetic law derived by the userspace
+induction combinator: zero on the non-recursive side is a right identity. -/
+theorem FirstRecursiveAddProof.rightZero {M : CNatModel}
+    {D : FirstRecursiveAddDecl M} (proof : FirstRecursiveAddProof D) :
+    ∀ n, D.add n M.zero = n := by
+  apply M.induction (fun n => D.add n M.zero = n)
+  · exact proof.at_zero M.zero
+  · intro n hypothesis
+    exact (proof.at_succ n M.zero).trans (congrArg M.succ hypothesis)
+
+/-! The conventional presentation below is defined by recursion on the
+*second* argument, which is the convention that
 makes `add_succ` the definitional equation and `succ_add` the one needing
 induction.  Commutativity then costs two inductions rather than one, and the
 asymmetry is the whole content of the proof. -/

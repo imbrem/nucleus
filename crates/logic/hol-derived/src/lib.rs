@@ -38,7 +38,9 @@ pub use model::{
     ChosenModel, ChosenModelDecl, ChosenModelProof, ModelError, ModelExt, Substitution,
     eta_expand_at, substitute,
 };
-pub use natural::{NaturalError, NaturalExt, Naturals, NaturalsDecl, NaturalsProof};
+pub use natural::{
+    NaturalError, NaturalExt, NaturalInduction, Naturals, NaturalsDecl, NaturalsProof,
+};
 pub use natural_arithmetic::{
     NaturalArithmetic, NaturalArithmeticDecl, NaturalArithmeticExt, NaturalArithmeticProof,
 };
