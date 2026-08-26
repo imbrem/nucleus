@@ -312,6 +312,16 @@ fn every_mediator_with_the_computation_laws_is_extensionally_unique() {
             .is_err()
     );
     assert_eq!(*kernel.arena(), before);
+    let wrong_type = CoproductCandidateLaws {
+        function: left_map,
+        ..candidate
+    };
+    assert!(
+        coproduct
+            .prove_unique_mediator(&mut kernel, eliminator, left_map, right_map, wrong_type)
+            .is_err()
+    );
+    assert_eq!(*kernel.arena(), before);
 
     let unique = coproduct
         .prove_unique_mediator(&mut kernel, eliminator, left_map, right_map, candidate)
