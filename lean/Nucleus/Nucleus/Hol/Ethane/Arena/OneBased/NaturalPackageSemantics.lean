@@ -1,4 +1,4 @@
-import Nucleus.Hol.Ethane.Arena.OneBased.Layout
+import Nucleus.Hol.Ethane.Arena.OneBased.DenseKernelTransport
 import Nucleus.HolE.ClassicalNaturals
 
 /-!
@@ -43,6 +43,51 @@ structure HolEvaluationAgrees (resolve : Resolver) (arena : Arena)
     Resolves (coreResolver resolve) arena.holCore reference
       (.term .boolTy expression) →
     interpretation reference = some (ClosedFormulaHolds expression)
+
+/-- Select the unique closed Boolean expression resolved at a reference, when
+there is one.  Fuel witnesses are erased; determinism of successful resolution
+makes the selected expression canonical. -/
+noncomputable def closedFormulaSyntax? (resolve : Resolver) (arena : Arena)
+    (reference : Ref) : Option EmptyTm := by
+  classical
+  exact if found : ∃ expression,
+      Resolves (coreResolver resolve) arena.holCore reference
+        (.term .boolTy expression) then
+    some (Classical.choose found)
+  else
+    none
+
+theorem closedFormulaSyntax?_eq {resolve : Resolver} {arena : Arena}
+    {reference : Ref} {expression : EmptyTm}
+    (resolves : Resolves (coreResolver resolve) arena.holCore reference
+      (.term .boolTy expression)) :
+    closedFormulaSyntax? resolve arena reference = some expression := by
+  classical
+  unfold closedFormulaSyntax?
+  split
+  · rename_i found
+    have same := Value.Resolves.value_unique (Classical.choose_spec found) resolves
+    have expressionEqual : Classical.choose found = expression := by
+      simpa using same
+    rw [expressionEqual]
+  · rename_i absent
+    exact False.elim (absent ⟨expression, resolves⟩)
+
+/-- Canonical partial interpretation of checked closed Boolean rows.  Unknown,
+ill-sorted, open, or unresolved rows remain indeterminate. -/
+noncomputable def closedEvaluationInterpretation (resolve : Resolver)
+    (arena : Arena) : PartialValuation Ref := fun reference =>
+  (closedFormulaSyntax? resolve arena reference).map ClosedFormulaHolds
+
+/-- The canonical interpretation agrees with closed evaluation by
+construction; uniqueness of resolution is the only non-definitional step. -/
+theorem closedEvaluationInterpretation_agrees (resolve : Resolver) (arena : Arena) :
+    HolEvaluationAgrees resolve arena
+      (closedEvaluationInterpretation resolve arena) := by
+  constructor
+  intro reference expression resolves
+  simp [closedEvaluationInterpretation,
+    closedFormulaSyntax?_eq resolves]
 
 /-- One exact premise-free HOL theorem row, together with the proposition
 assigned to its checked Boolean reference. -/
