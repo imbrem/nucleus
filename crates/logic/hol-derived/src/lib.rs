@@ -18,7 +18,8 @@ mod subtype;
 mod syntax;
 
 pub use coproduct::{
-    Coproduct, CoproductEliminator, CoproductError, CoproductExt, CoproductSchema,
+    Coproduct, CoproductComputation, CoproductEliminator, CoproductError, CoproductExt,
+    CoproductSchema,
 };
 pub use equality::{EqualityError, ProvedEquality, equality_symmetry, equality_transitivity};
 pub use exists::{ExistsError, OpenedExists, OpenedExistsDecl, open_exists, open_exists_at};
