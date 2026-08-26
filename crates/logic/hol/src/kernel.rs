@@ -168,6 +168,48 @@ pub struct CopyMap {
     roots: Vec<Ref>,
 }
 
+/// An immutable arena snapshot known to have been assembled by a kernel.
+///
+/// A prefix carries no source manifest or naming authority. It is simply the
+/// exact checked state from which compatible kernels can be forked while
+/// retaining numerical identity for every resident reference.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckedPrefix {
+    arena: Arena,
+}
+
+impl CheckedPrefix {
+    /// Borrows the exact checked arena snapshot.
+    #[must_use]
+    pub const fn arena(&self) -> &Arena {
+        &self.arena
+    }
+
+    /// Returns the exact content address of the frozen arena.
+    #[must_use]
+    pub fn addr(&self) -> crate::O256 {
+        self.arena.addr()
+    }
+
+    /// Returns the number of resident definition rows in the prefix.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.arena.len()
+    }
+
+    /// Returns whether the prefix contains no definition rows.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.arena.is_empty()
+    }
+
+    /// Creates a kernel whose complete initial state is this prefix.
+    #[must_use]
+    pub fn kernel(&self) -> Kernel {
+        Kernel::with_init_prefix(self.arena.clone())
+    }
+}
+
 impl CopyMap {
     /// Returns the destination reference corresponding to `source`.
     #[must_use]
@@ -270,6 +312,17 @@ impl Kernel {
         self.arena
     }
 
+    /// Freezes this checked state as an exact reusable kernel prefix.
+    ///
+    /// The operation adds no fact and performs no validation bypass: only a
+    /// `Kernel`, whose state was assembled by checked operations, can create
+    /// this handle. Forks retain all definitions, capabilities, contexts, and
+    /// proof rows already present in the snapshot.
+    #[must_use]
+    pub fn into_checked_prefix(self) -> CheckedPrefix {
+        CheckedPrefix { arena: self.arena }
+    }
+
     /// Copies one reachable term DAG from an independent kernel.
     ///
     /// The copy preserves sharing, introduces no import, and retains no
@@ -285,6 +338,42 @@ impl Kernel {
     /// on error.
     pub fn copy_term_from(&mut self, source: &Self, root: Ref) -> Result<CopyMap, KernelError> {
         self.copy_terms_from(source, &[root])
+    }
+
+    /// Copies one reachable term DAG while expanding every logical opcode.
+    ///
+    /// The source and destination must share `init` as their exact compiled
+    /// prefix. Compact logical rows are replaced by checked applications of
+    /// the corresponding opcode-free definitions; all other rows are copied
+    /// as in [`copy_term_from`](Self::copy_term_from).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`copy_terms_lowered_from`](Self::copy_terms_lowered_from).
+    pub fn copy_term_lowered_from(
+        &mut self,
+        init: &Compiled,
+        source: &Self,
+        root: Ref,
+    ) -> Result<CopyMap, KernelError> {
+        self.copy_terms_lowered_from(init, source, &[root])
+    }
+
+    /// Copies one checked object of any syntactic category while recursively
+    /// expanding logical opcodes in its reachable closure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`copy_objects_lowered_from`](Self::copy_objects_lowered_from).
+    pub fn copy_object_lowered_from(
+        &mut self,
+        init: &Compiled,
+        source: &Self,
+        root: Ref,
+    ) -> Result<CopyMap, KernelError> {
+        self.copy_objects_lowered_from(init, source, &[root])
     }
 
     /// Copies the union of several reachable term DAGs from another kernel.
@@ -311,48 +400,7 @@ impl Kernel {
             source.require_category::<Infallible>(root, Sort::Tm)?;
         }
 
-        let mut state = BTreeMap::<Ref, bool>::new();
-        let mut order = Vec::new();
-        let mut nodes = BTreeMap::new();
-        let prefix_len = self.init_prefix.map_or(0, |(_, len)| len);
-        for &root in roots {
-            let mut stack = vec![(root, false)];
-            while let Some((reference, expanded)) = stack.pop() {
-                let reference_index = usize::try_from(reference.get())
-                    .map_err(|_| KernelError::TooManyDefinitions)?;
-                if reference_index <= prefix_len {
-                    state.insert(reference, true);
-                    nodes.insert(reference, reference);
-                    continue;
-                }
-                if expanded {
-                    state.insert(reference, true);
-                    order.push(reference);
-                    continue;
-                }
-                match state.get(&reference) {
-                    Some(true) => continue,
-                    Some(false) => return Err(KernelError::CyclicSyntax { reference }),
-                    None => {}
-                }
-                state.insert(reference, false);
-                let row = source.row::<Infallible>(reference)?;
-                if matches!(
-                    row.expr(),
-                    Node::TmRef { .. } | Node::TyRef { .. } | Node::KindRef { .. }
-                ) {
-                    return Err(KernelError::ImportedProxy { reference });
-                }
-                stack.push((reference, true));
-                let mut dependencies = row.expr().children();
-                if row.tag().sort() != Sort::Kind {
-                    dependencies.push(source.classifier_as::<Infallible>(reference)?);
-                }
-                for dependency in dependencies.into_iter().rev() {
-                    stack.push((dependency, false));
-                }
-            }
-        }
+        let (order, mut nodes) = source.copy_order(roots)?;
 
         let final_len = self
             .arena
@@ -379,6 +427,116 @@ impl Kernel {
                 .arena
                 .push_row(copied, sort)
                 .ok_or(KernelError::TooManyDefinitions)?;
+        }
+        for &destination in nodes.values() {
+            staged.validate_copy_row(destination)?;
+        }
+        let copied_roots = roots.iter().map(|root| nodes[root]).collect();
+        self.arena = staged.arena;
+        Ok(CopyMap {
+            nodes,
+            roots: copied_roots,
+        })
+    }
+
+    /// Copies reachable term DAGs while recursively expanding logical opcodes.
+    ///
+    /// Expansion happens during the checked post-order copy, so opcodes nested
+    /// under lambdas, applications, equality, choice, and type constructors do
+    /// not survive in the destination closure. Shared source rows still map to
+    /// one destination root, although a binary opcode expands to two ordinary
+    /// application rows. The operation is transactional.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `init` is not the exact shared compiled prefix, a
+    /// root or reachable row is invalid or imported, a logical definition is
+    /// absent, an expansion is ill-typed, or the destination reference space
+    /// is exhausted. The destination is unchanged on error.
+    pub fn copy_terms_lowered_from(
+        &mut self,
+        init: &Compiled,
+        source: &Self,
+        roots: &[Ref],
+    ) -> Result<CopyMap, KernelError> {
+        for &root in roots {
+            source.require_category::<Infallible>(root, Sort::Tm)?;
+        }
+        self.copy_objects_lowered_from(init, source, roots)
+    }
+
+    /// Copies checked objects of any syntactic category while recursively
+    /// expanding logical opcodes in their reachable closures.
+    ///
+    /// This is the representation-polymorphic form used by dictionary and
+    /// init-slice projection: roots may be kinds, types, or terms, and retain
+    /// their categories in the destination. Expansion affects only reachable
+    /// term opcode rows. The operation is transactional.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `init` is not the exact shared compiled prefix, a
+    /// root or reachable row is absent, invalid, cyclic, or imported, a
+    /// logical definition is absent, an expansion is ill-typed, or the
+    /// destination reference space is exhausted. The destination is unchanged
+    /// on error.
+    pub fn copy_objects_lowered_from(
+        &mut self,
+        init: &Compiled,
+        source: &Self,
+        roots: &[Ref],
+    ) -> Result<CopyMap, KernelError> {
+        let expected_prefix = Some((init.arena().addr(), init.arena().len()));
+        if self.init_prefix != expected_prefix || source.init_prefix != expected_prefix {
+            return Err(KernelError::InitPrefixMismatch);
+        }
+        for &root in roots {
+            source.category_as::<Infallible>(root)?;
+        }
+
+        let (order, mut nodes) = source.copy_order(roots)?;
+        let mut staged = Self {
+            arena: self.arena.clone(),
+            init_prefix: self.init_prefix,
+        };
+        for &source_ref in &order {
+            let syntax_root = source
+                .find_path_in::<Infallible>(EqColumn::Syn, source_ref)?
+                .0;
+            if syntax_root != source_ref
+                && let Some(&destination) = nodes.get(&syntax_root)
+            {
+                nodes.insert(source_ref, destination);
+                continue;
+            }
+            let row = source.row::<Infallible>(source_ref)?;
+            let destination = match *row.expr() {
+                Node::Op1(op, operand) => {
+                    let definition = init.get(op.name()).ok_or(KernelError::WrongForm {
+                        reference: source_ref,
+                        expected: "named logical init definition",
+                        actual: row.tag(),
+                    })?;
+                    staged.app(definition, nodes[&operand])?
+                }
+                Node::Op2(op, left, right) => {
+                    let definition = init.get(op.name()).ok_or(KernelError::WrongForm {
+                        reference: source_ref,
+                        expected: "named logical init definition",
+                        actual: row.tag(),
+                    })?;
+                    let partial = staged.app(definition, nodes[&left])?;
+                    staged.app(partial, nodes[&right])?
+                }
+                _ => {
+                    let (copied, sort) = remap_row(row, source.sort(source_ref), &nodes);
+                    staged
+                        .arena
+                        .push_row(copied, sort)
+                        .ok_or(KernelError::TooManyDefinitions)?
+                }
+            };
+            nodes.insert(source_ref, destination);
         }
         for &destination in nodes.values() {
             staged.validate_copy_row(destination)?;
@@ -1203,6 +1361,56 @@ impl Kernel {
             };
         }
         Ok(())
+    }
+
+    fn copy_order(&self, roots: &[Ref]) -> Result<(Vec<Ref>, BTreeMap<Ref, Ref>), KernelError> {
+        let mut state = BTreeMap::<Ref, bool>::new();
+        let mut order = Vec::new();
+        let mut nodes = BTreeMap::new();
+        let prefix_len = self.init_prefix.map_or(0, |(_, len)| len);
+        for &root in roots {
+            let mut stack = vec![(root, false)];
+            while let Some((reference, expanded)) = stack.pop() {
+                let reference_index = usize::try_from(reference.get())
+                    .map_err(|_| KernelError::TooManyDefinitions)?;
+                if reference_index <= prefix_len {
+                    state.insert(reference, true);
+                    nodes.insert(reference, reference);
+                    continue;
+                }
+                if expanded {
+                    state.insert(reference, true);
+                    order.push(reference);
+                    continue;
+                }
+                match state.get(&reference) {
+                    Some(true) => continue,
+                    Some(false) => return Err(KernelError::CyclicSyntax { reference }),
+                    None => {}
+                }
+                state.insert(reference, false);
+                let row = self.row::<Infallible>(reference)?;
+                if matches!(
+                    row.expr(),
+                    Node::TmRef { .. } | Node::TyRef { .. } | Node::KindRef { .. }
+                ) {
+                    return Err(KernelError::ImportedProxy { reference });
+                }
+                stack.push((reference, true));
+                let mut dependencies = row.expr().children();
+                if row.tag().sort() != Sort::Kind {
+                    dependencies.push(self.classifier_as::<Infallible>(reference)?);
+                }
+                let syntax_root = self.find_path_in::<Infallible>(EqColumn::Syn, reference)?.0;
+                if syntax_root != reference {
+                    dependencies.push(syntax_root);
+                }
+                for dependency in dependencies.into_iter().rev() {
+                    stack.push((dependency, false));
+                }
+            }
+        }
+        Ok((order, nodes))
     }
 
     fn push<E>(&mut self, row: Row, sort: Option<Ref>) -> Result<Ref, KernelError<E>>
@@ -2189,6 +2397,114 @@ mod tests {
                 .collect::<Vec<_>>(),
             [copied_not_p, copied.get(q).unwrap()]
         );
+    }
+
+    #[test]
+    fn lowered_copy_recursively_removes_logical_opcodes_and_preserves_sharing() {
+        let manifest: init::Manifest = serde_json::from_str(INIT_FIXTURE).unwrap();
+        let init = init::compile(&manifest).unwrap();
+        let bool_ty = init.get("bool").unwrap();
+        let mut source = Kernel::with_init(&init);
+        let p = source.tm_fv(21, bool_ty).unwrap();
+        let not_p = source.op1(Op1::Not, p).unwrap();
+        let repeated = source.op2(Op2::And, not_p, not_p).unwrap();
+        let implication = source.op2(Op2::Imp, repeated, not_p).unwrap();
+        let equation = source.eq(bool_ty, implication, implication).unwrap();
+        let mut destination = Kernel::with_init(&init);
+
+        let copied = destination
+            .copy_term_lowered_from(&init, &source, equation)
+            .unwrap();
+        let copied_not = copied.get(not_p).unwrap();
+        let not_definition = init.get(Op1::Not.name()).unwrap();
+        assert_eq!(
+            destination
+                .children(copied_not)
+                .unwrap()
+                .collect::<Vec<_>>(),
+            [not_definition, copied.get(p).unwrap()]
+        );
+        let copied_repeated = copied.get(repeated).unwrap();
+        let repeated_children = destination
+            .children(copied_repeated)
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(repeated_children[1], copied_not);
+
+        for position in (init.arena().len() + 1)..=destination.len() {
+            let reference = Ref::new(i32::try_from(position).unwrap()).unwrap();
+            assert!(!matches!(
+                destination.tag(reference),
+                Some(Tag::Tm(TmTag::Op1 | TmTag::Op2))
+            ));
+        }
+        assert_eq!(destination.category(copied.roots()[0]).unwrap(), Sort::Tm);
+    }
+
+    #[test]
+    fn lowered_copy_requires_the_exact_shared_prefix_transactionally() {
+        let manifest: init::Manifest = serde_json::from_str(INIT_FIXTURE).unwrap();
+        let init = init::compile(&manifest).unwrap();
+        let truth = init.get("true").unwrap();
+        let mut source = Kernel::with_init(&init);
+        let compact = source.op1(Op1::Not, truth).unwrap();
+        let mut destination = Kernel::new();
+        let existing = destination.star().unwrap();
+        let before = destination.arena().clone();
+
+        assert!(matches!(
+            destination.copy_term_lowered_from(&init, &source, compact),
+            Err(KernelError::InitPrefixMismatch)
+        ));
+        assert_eq!(destination.arena(), &before);
+        assert_eq!(destination.category(existing).unwrap(), Sort::Kind);
+    }
+
+    #[test]
+    fn lowered_object_copy_accepts_kind_type_and_term_roots_together() {
+        let manifest: init::Manifest = serde_json::from_str(INIT_FIXTURE).unwrap();
+        let init = init::compile(&manifest).unwrap();
+        let star = init.get("star").unwrap();
+        let bool_ty = init.get("bool").unwrap();
+        let mut source = Kernel::with_init(&init);
+        let kind = source.kind_arr(star, star).unwrap();
+        let family = source.ty_fv(31, kind).unwrap();
+        let truth = source.bool(bool_ty, true).unwrap();
+        let mut destination = Kernel::with_init(&init);
+
+        let copied = destination
+            .copy_objects_lowered_from(&init, &source, &[kind, family, truth])
+            .unwrap();
+        assert_eq!(
+            copied
+                .roots()
+                .iter()
+                .map(|reference| destination.category(*reference).unwrap())
+                .collect::<Vec<_>>(),
+            [Sort::Kind, Sort::Ty, Sort::Tm]
+        );
+    }
+
+    #[test]
+    fn checked_prefix_forks_preserve_the_complete_snapshot_identity() {
+        let mut original = Kernel::new();
+        let star = original.star().unwrap();
+        let bool_ty = original.bool_ty(star).unwrap();
+        let truth = original.bool(bool_ty, true).unwrap();
+        original.add_axiom(AX_INF).unwrap();
+        original.add_context(truth).unwrap();
+        let prefix = original.into_checked_prefix();
+        let mut left = prefix.kernel();
+        let right = prefix.kernel();
+
+        assert_eq!(left.arena(), prefix.arena());
+        assert_eq!(right.arena(), prefix.arena());
+        assert_eq!(
+            left.init_prefix(),
+            Some((prefix.arena().addr(), prefix.arena().len()))
+        );
+        assert_eq!(left.copy_term_from(&right, truth).unwrap().roots(), [truth]);
+        assert_eq!(left.arena(), prefix.arena());
     }
 
     #[test]

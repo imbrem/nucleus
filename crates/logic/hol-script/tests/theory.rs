@@ -7,7 +7,7 @@ use covalence_logic_hol_derived::{
 };
 use covalence_logic_hol_script::{
     INIT_SOURCE, LogicEncoding, TheoryError, TheoryOptions, compile_init, compile_init_library,
-    compile_theory, compile_theory_with_init,
+    compile_init_slice, compile_theory, compile_theory_with_init,
 };
 
 #[cfg(not(feature = "buck-test-fixtures"))]
@@ -431,6 +431,50 @@ fn init_library_workspace_assembles_reproducibly_outside_the_kernel() {
         first.arithmetic().one_plus_one,
         first.arithmetic().one_plus_one_theorem,
     );
+}
+
+#[test]
+fn projected_init_slice_is_deterministic_complete_and_opcode_free() {
+    let init = logical_init();
+    let first = compile_init_slice(&init).expect("first projected slice");
+    let second = compile_init_slice(&init).expect("second projected slice");
+
+    assert_eq!(first.prefix().arena(), second.prefix().arena());
+    assert_eq!(
+        first.symbols().collect::<Vec<_>>(),
+        second.symbols().collect::<Vec<_>>()
+    );
+    for name in [
+        "star",
+        "bool",
+        "IsCoprod",
+        "NatMember",
+        "nat",
+        "nat.induction",
+        "nat.add",
+        "nat.add.successor",
+        "nat.mul",
+        "nat.mul.successor",
+        "nat.one_plus_one",
+    ] {
+        let reference = first.get(name).unwrap_or_else(|| panic!("missing {name}"));
+        assert!(reference.get() <= i32::try_from(first.prefix().arena().len()).unwrap());
+    }
+    let arena = first.prefix().arena();
+    for position in 1..=arena.len() {
+        let reference = covalence_logic_hol::Ref::new(i32::try_from(position).unwrap()).unwrap();
+        assert!(!matches!(
+            arena.tag(reference),
+            Some(Tag::Tm(TmTag::Op1 | TmTag::Op2))
+        ));
+    }
+    let fork = first.kernel();
+    assert_eq!(
+        fork.init_prefix(),
+        Some((arena.addr(), arena.len())),
+        "the complete projected slice is the fork identity"
+    );
+    assert_eq!(fork.arena().axioms().collect::<Vec<_>>(), [AX_INF, AX_SUB]);
 }
 
 fn check_exact_theorem(

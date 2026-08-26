@@ -22,6 +22,12 @@ def InitPrefixCompatible (source destination : Arena) (length : Nat) : Prop :=
   length ≤ source.dense.defs.length ∧ length ≤ destination.dense.defs.length ∧
     source.dense.defs.take length = destination.dense.defs.take length
 
+/-- Freezing an exact checked snapshot as a new prefix is structurally
+reflexive: every resident row is shared with a fork at the same index. -/
+theorem initPrefixCompatible_self (arena : Arena) :
+    InitPrefixCompatible arena arena arena.dense.defs.length := by
+  simp [InitPrefixCompatible]
+
 /-- A successful, atomic cross-kernel copy.
 
 `map` is defined on the complete reachable closure (roots, syntax children,

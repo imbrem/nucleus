@@ -21,7 +21,9 @@ use covalence_logic_hol::{
 
 mod init_library;
 
-pub use init_library::{InitLibrary, InitLibraryError, compile_init_library};
+pub use init_library::{
+    InitLibrary, InitLibraryError, InitSlice, compile_init_library, compile_init_slice,
+};
 
 /// Source of the first opcode-free init-library schemata.
 ///

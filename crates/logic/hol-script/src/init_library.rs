@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    AX_INF, AX_SUB, Kernel, KernelError, Ref, init::Compiled as LogicalInit,
+    AX_INF, AX_SUB, CheckedPrefix, Kernel, KernelError, Ref, init::Compiled as LogicalInit,
 };
 use covalence_logic_hol_derived::{
     NaturalArithmetic, NaturalArithmeticExt, NaturalError, NaturalExt, NaturalRecSchemas, Naturals,
@@ -27,6 +27,41 @@ pub struct InitLibrary {
     naturals: Naturals,
     recursion_schemas: NaturalRecSchemas,
     arithmetic: NaturalArithmetic,
+}
+
+/// The minimal opcode-free init slice and its external userspace dictionary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitSlice {
+    prefix: CheckedPrefix,
+    symbols: BTreeMap<String, Ref>,
+}
+
+impl InitSlice {
+    /// Borrows the exact opcode-free checked prefix.
+    #[must_use]
+    pub const fn prefix(&self) -> &CheckedPrefix {
+        &self.prefix
+    }
+
+    /// Creates an independent kernel initialized from the complete slice.
+    #[must_use]
+    pub fn kernel(&self) -> Kernel {
+        self.prefix.kernel()
+    }
+
+    /// Resolves one external init-library name.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<Ref> {
+        self.symbols.get(name).copied()
+    }
+
+    /// Iterates all external names in lexical order.
+    #[must_use]
+    pub fn symbols(&self) -> impl ExactSizeIterator<Item = (&str, Ref)> {
+        self.symbols
+            .iter()
+            .map(|(name, reference)| (name.as_str(), *reference))
+    }
 }
 
 impl InitLibrary {
@@ -73,6 +108,46 @@ impl InitLibrary {
     pub fn into_parts(self) -> (Kernel, BTreeMap<String, Ref>) {
         (self.kernel, self.symbols)
     }
+
+    /// Projects public syntax into a fresh opcode-free checked prefix.
+    ///
+    /// Proof rows, caches, and private construction intermediates are omitted.
+    /// Compact logical rows reachable beneath public roots are recursively
+    /// replaced with applications of the caller's authoritative raw logical
+    /// definitions. The external dictionary is remapped to the projected rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `init` is not the construction kernel's exact
+    /// prefix, a public root cannot be copied and lowered, or a dictionary
+    /// reference is not in the resulting reachable closure.
+    pub fn into_slice(self, init: &LogicalInit) -> Result<InitSlice, InitLibraryError> {
+        let roots = self.symbols.values().copied().collect::<Vec<_>>();
+        let mut projected = init.kernel();
+        projected
+            .add_axiom(AX_INF)
+            .map_err(|source| InitLibraryError::Kernel { source })?;
+        projected
+            .add_axiom(AX_SUB)
+            .map_err(|source| InitLibraryError::Kernel { source })?;
+        let copied = projected
+            .copy_objects_lowered_from(init, &self.kernel, &roots)
+            .map_err(|source| InitLibraryError::Kernel { source })?;
+        let symbols = self
+            .symbols
+            .into_iter()
+            .map(|(name, source)| {
+                copied
+                    .get(source)
+                    .map(|destination| (name.clone(), destination))
+                    .ok_or(InitLibraryError::UnmappedSymbol { name })
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(InitSlice {
+            prefix: projected.into_checked_prefix(),
+            symbols,
+        })
+    }
 }
 
 /// Failure to assemble the standard userspace init library.
@@ -95,6 +170,12 @@ pub enum InitLibraryError {
     #[snafu(display("duplicate init-library symbol {name:?}"))]
     DuplicateSymbol {
         /// Colliding external name.
+        name: String,
+    },
+    /// A named row was absent from the completed projection map.
+    #[snafu(display("init-library symbol {name:?} was not projected"))]
+    UnmappedSymbol {
+        /// External name whose reference could not be remapped.
         name: String,
     },
     /// A checked kernel capability could not be installed.
@@ -175,6 +256,20 @@ pub fn compile_init_library(init: &LogicalInit) -> Result<InitLibrary, InitLibra
         recursion_schemas,
         arithmetic,
     })
+}
+
+/// Assembles and projects the canonical opcode-free init slice.
+///
+/// This is a userspace composition of [`compile_init_library`] and
+/// [`InitLibrary::into_slice`]. No parser, name, or projection decision is
+/// trusted by the returned kernel prefix.
+///
+/// # Errors
+///
+/// Returns any source, derivation, collision, or projection error reported by
+/// the two underlying userspace stages.
+pub fn compile_init_slice(init: &LogicalInit) -> Result<InitSlice, InitLibraryError> {
+    compile_init_library(init)?.into_slice(init)
 }
 
 fn required(compiled: &CompiledTheory, name: &'static str) -> Result<Ref, InitLibraryError> {

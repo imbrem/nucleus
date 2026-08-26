@@ -15,8 +15,8 @@ pub mod wire;
 
 pub use arena::Arena;
 pub use kernel::{
-    AX_INF, AX_SUB, ApTerm, ApThm, BINDER_COUNT, Binder, CheckedArena, ChoiceThm, ClassicalArena,
-    ClassicalKernel, ClassicalRules, Cnf, CnfId, CopyMap, Dnf, DnfId, ForallThm,
+    AX_INF, AX_SUB, ApTerm, ApThm, BINDER_COUNT, Binder, CheckedArena, CheckedPrefix, ChoiceThm,
+    ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, CopyMap, Dnf, DnfId, ForallThm,
     INFINITY_BINDER_COUNT, InfinityAxiom, InfinityBinder, Kernel, KernelError, Lit, LitError,
     LitVec, ReflThm, Refutation, SubtypeAxiom, ThmId, ThmRef,
 };
