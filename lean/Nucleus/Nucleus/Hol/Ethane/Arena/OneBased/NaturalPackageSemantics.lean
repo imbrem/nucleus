@@ -23,6 +23,27 @@ open Nucleus.HolE.Infinity.CNatModel
 
 set_option relaxedAutoImplicit true
 
+/-- Truth of one closed, Boolean-valued Ethane expression is evaluation to
+the Boolean value `true` in the empty HolE environments. -/
+def ClosedFormulaHolds (expression : EmptyTm) : Prop :=
+  Nucleus.Hol.Ethane.Eval (.nil : TyScope []) (.nil : TmScope EmptySig 0)
+    emptyTypeEnv (Nucleus.HolE.emptyBound : Nucleus.HolE.BoundCtx EmptySig [] 0)
+    emptyRawBoundEnv expression .boolTy boolPointed true
+
+/-- The partial Boolean interpretation used by theorem-row soundness agrees
+with closed HolE evaluation.  This is the precise semantic bridge missing from
+`HolInterpretationSound`, which intentionally talks only about propositions.
+
+Keeping the bridge separate avoids strengthening the kernel TCB.  A model of
+the checked arena may establish it once; package-specific formula decoders
+then reason solely about `ClosedFormulaHolds`. -/
+structure HolEvaluationAgrees (resolve : Resolver) (arena : Arena)
+    (interpretation : PartialValuation Ref) : Prop where
+  closed : ∀ {reference expression},
+    Resolves (coreResolver resolve) arena.holCore reference
+      (.term .boolTy expression) →
+    interpretation reference = some (ClosedFormulaHolds expression)
+
 /-- One exact premise-free HOL theorem row, together with the proposition
 assigned to its checked Boolean reference. -/
 structure ProvedProposition (arena : Arena)
@@ -58,6 +79,25 @@ def ProvedProposition.congr {arena : Arena} {interpretation : PartialValuation R
   have equal : left = right := propext equivalent
   cases equal
   exact proved
+
+/-- Build evaluator-facing theorem evidence from an exact checked assertion
+row.  Package decoders should normally use this constructor and then
+`ProvedProposition.congr`, rather than postulating an interpretation entry for
+their final high-level law. -/
+def ProvedProposition.ofClosedFormula {resolve : Resolver} {arena : Arena}
+    {interpretation : PartialValuation Ref}
+    (agreement : HolEvaluationAgrees resolve arena interpretation)
+    (reference : Ref) (expression : EmptyTm) (fact : WireSequent)
+    (resolves : Resolves (coreResolver resolve) arena.holCore reference
+      (.term .boolTy expression))
+    (member : fact ∈ arena.hol.thm)
+    (assertion : fact.semantic = Sequent.assert reference) :
+    ProvedProposition arena interpretation (ClosedFormulaHolds expression) where
+  reference := reference
+  fact := fact
+  member := member
+  assertion := assertion
+  interpreted := agreement.closed resolves
 
 /-- Source-independent semantics of the exact declaration rows in a checked
 natural-number package.  `carrier`, `zero`, and `successor` are related to the
