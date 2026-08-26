@@ -85,6 +85,227 @@ pub struct NaturalRecursor {
     pub unique_theorem: ThmId,
 }
 
+/// Stable syntax of a specialized primitive-recursion graph.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NaturalRecGraphDecl {
+    /// Binary predicate `nat → codomain → bool`.
+    pub graph: Ref,
+    /// Base introduction statement.
+    pub base: Ref,
+    /// Successor introduction statement.
+    pub step: Ref,
+    /// Totality statement.
+    pub total: Ref,
+    /// Structural zero/successor shape predicate.
+    pub shape: Ref,
+    /// Graph-shape statement.
+    pub has_shape: Ref,
+    /// Value-at-zero statement.
+    pub zero_value: Ref,
+    /// Value-at-successor statement.
+    pub successor_value: Ref,
+    /// Functionality at zero.
+    pub zero_functional: Ref,
+    /// Pointwise functionality.
+    pub functional: Ref,
+    /// Selected primitive recursor.
+    pub rec: Ref,
+    /// The recursor lies in the graph.
+    pub rec_graph: Ref,
+    /// Recursor base equation.
+    pub rec_zero: Ref,
+    /// Recursor successor equation.
+    pub rec_successor: Ref,
+}
+
+impl NaturalRecGraphDecl {
+    /// Iterates every syntax reference, including private proof statements.
+    #[must_use]
+    pub fn references(&self) -> impl ExactSizeIterator<Item = Ref> {
+        [
+            self.graph,
+            self.base,
+            self.step,
+            self.total,
+            self.shape,
+            self.has_shape,
+            self.zero_value,
+            self.successor_value,
+            self.zero_functional,
+            self.functional,
+            self.rec,
+            self.rec_graph,
+            self.rec_zero,
+            self.rec_successor,
+        ]
+        .into_iter()
+    }
+
+    /// Remaps every syntax reference while preserving the declaration shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error produced by `map`.
+    pub fn try_map<E>(self, mut map: impl FnMut(Ref) -> Result<Ref, E>) -> Result<Self, E> {
+        Ok(Self {
+            graph: map(self.graph)?,
+            base: map(self.base)?,
+            step: map(self.step)?,
+            total: map(self.total)?,
+            shape: map(self.shape)?,
+            has_shape: map(self.has_shape)?,
+            zero_value: map(self.zero_value)?,
+            successor_value: map(self.successor_value)?,
+            zero_functional: map(self.zero_functional)?,
+            functional: map(self.functional)?,
+            rec: map(self.rec)?,
+            rec_graph: map(self.rec_graph)?,
+            rec_zero: map(self.rec_zero)?,
+            rec_successor: map(self.rec_successor)?,
+        })
+    }
+}
+
+/// Kernel-local theorem handles certifying a [`NaturalRecGraphDecl`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NaturalRecGraphProof {
+    /// Exact theorem for `base`.
+    pub base: ThmId,
+    /// Exact theorem for `step`.
+    pub step: ThmId,
+    /// Exact theorem for `total`.
+    pub total: ThmId,
+    /// Exact theorem for `has_shape`.
+    pub has_shape: ThmId,
+    /// Exact theorem for `zero_value`.
+    pub zero_value: ThmId,
+    /// Exact theorem for `successor_value`.
+    pub successor_value: ThmId,
+    /// Exact theorem for `zero_functional`.
+    pub zero_functional: ThmId,
+    /// Exact theorem for `functional`.
+    pub functional: ThmId,
+    /// Exact theorem for `rec_graph`.
+    pub rec_graph: ThmId,
+    /// Exact theorem for `rec_zero`.
+    pub rec_zero: ThmId,
+    /// Exact theorem for `rec_successor`.
+    pub rec_successor: ThmId,
+}
+
+/// Stable syntax of a selected primitive-recursion package.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NaturalRecursorDecl {
+    /// Specialized graph declaration.
+    pub graph: NaturalRecGraphDecl,
+    /// Predicate specialized from `NatRecSpec`.
+    pub specification_predicate: Ref,
+    /// Zero/successor specification of the selected recursor.
+    pub specification: Ref,
+    /// Universal uniqueness statement.
+    pub unique: Ref,
+}
+
+impl NaturalRecursorDecl {
+    /// Iterates every syntax reference, including private graph statements.
+    pub fn references(&self) -> impl Iterator<Item = Ref> + '_ {
+        self.graph.references().chain([
+            self.specification_predicate,
+            self.specification,
+            self.unique,
+        ])
+    }
+
+    /// Remaps every syntax reference while preserving the declaration shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error produced by `map`.
+    pub fn try_map<E>(self, mut map: impl FnMut(Ref) -> Result<Ref, E>) -> Result<Self, E> {
+        Ok(Self {
+            graph: self.graph.try_map(&mut map)?,
+            specification_predicate: map(self.specification_predicate)?,
+            specification: map(self.specification)?,
+            unique: map(self.unique)?,
+        })
+    }
+}
+
+/// Kernel-local theorem handles certifying a [`NaturalRecursorDecl`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NaturalRecursorProof {
+    /// Graph-law theorem handles.
+    pub graph: NaturalRecGraphProof,
+    /// Exact theorem for `specification`.
+    pub specification: ThmId,
+    /// Exact theorem for `unique`.
+    pub unique: ThmId,
+}
+
+impl NaturalRecGraph {
+    /// Forgets theorem identity while retaining exact syntax references.
+    #[must_use]
+    pub const fn declaration(self) -> NaturalRecGraphDecl {
+        NaturalRecGraphDecl {
+            graph: self.graph,
+            base: self.base,
+            step: self.step,
+            total: self.total,
+            shape: self.shape,
+            has_shape: self.has_shape,
+            zero_value: self.zero_value,
+            successor_value: self.successor_value,
+            zero_functional: self.zero_functional,
+            functional: self.functional,
+            rec: self.rec,
+            rec_graph: self.rec_graph,
+            rec_zero: self.rec_zero,
+            rec_successor: self.rec_successor,
+        }
+    }
+
+    /// Projects the exact theorem handles for this graph declaration.
+    #[must_use]
+    pub const fn proof(self) -> NaturalRecGraphProof {
+        NaturalRecGraphProof {
+            base: self.base_theorem,
+            step: self.step_theorem,
+            total: self.total_theorem,
+            has_shape: self.has_shape_theorem,
+            zero_value: self.zero_value_theorem,
+            successor_value: self.successor_value_theorem,
+            zero_functional: self.zero_functional_theorem,
+            functional: self.functional_theorem,
+            rec_graph: self.rec_graph_theorem,
+            rec_zero: self.rec_zero_theorem,
+            rec_successor: self.rec_successor_theorem,
+        }
+    }
+}
+
+impl NaturalRecursor {
+    /// Forgets theorem identity while retaining exact syntax references.
+    #[must_use]
+    pub const fn declaration(self) -> NaturalRecursorDecl {
+        NaturalRecursorDecl {
+            graph: self.graph.declaration(),
+            specification_predicate: self.specification_predicate,
+            specification: self.specification,
+            unique: self.unique,
+        }
+    }
+
+    /// Projects the exact theorem handles for this recursion package.
+    #[must_use]
+    pub const fn proof(self) -> NaturalRecursorProof {
+        NaturalRecursorProof {
+            graph: self.graph.proof(),
+            specification: self.specification_theorem,
+            unique: self.unique_theorem,
+        }
+    }
+}
+
 /// Checked roots of the two open recursion schemata and their independent
 /// type-parameter rows.
 ///
@@ -105,6 +326,24 @@ pub struct NaturalRecSchemas {
     pub specification_natural: Ref,
     /// Codomain parameter occurring in [`specification`](Self::specification).
     pub specification_codomain: Ref,
+}
+
+impl NaturalRecSchemas {
+    /// Remaps every schema reference while preserving its role.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error produced by `map`.
+    pub fn try_map<E>(self, mut map: impl FnMut(Ref) -> Result<Ref, E>) -> Result<Self, E> {
+        Ok(Self {
+            graph: map(self.graph)?,
+            graph_natural: map(self.graph_natural)?,
+            graph_codomain: map(self.graph_codomain)?,
+            specification: map(self.specification)?,
+            specification_natural: map(self.specification_natural)?,
+            specification_codomain: map(self.specification_codomain)?,
+        })
+    }
 }
 
 /// Userspace primitive-recursion construction over a checked kernel.

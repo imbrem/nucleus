@@ -35,6 +35,7 @@ pub struct InitLibrary {
 pub struct InitSlice {
     prefix: CheckedPrefix,
     symbols: BTreeMap<String, Ref>,
+    recursion_schemas: NaturalRecSchemas,
     naturals: NaturalsDecl,
     arithmetic: NaturalArithmeticDecl,
 }
@@ -76,6 +77,12 @@ impl InitSlice {
     #[must_use]
     pub const fn naturals(&self) -> &NaturalsDecl {
         &self.naturals
+    }
+
+    /// Returns the exact open recursion schemata resident in this slice.
+    #[must_use]
+    pub const fn recursion_schemas(&self) -> NaturalRecSchemas {
+        self.recursion_schemas
     }
 }
 
@@ -137,7 +144,8 @@ impl InitLibrary {
     /// prefix, a public root cannot be copied and lowered, or a dictionary
     /// reference is not in the resulting reachable closure.
     pub fn into_slice(self, init: &LogicalInit) -> Result<InitSlice, InitLibraryError> {
-        let roots = self.symbols.values().copied().collect::<Vec<_>>();
+        let mut roots = self.symbols.values().copied().collect::<Vec<_>>();
+        roots.extend(self.arithmetic.declaration.references());
         let mut projected = init.kernel();
         projected
             .add_axiom(AX_INF)
@@ -149,6 +157,11 @@ impl InitLibrary {
             .copy_objects_lowered_from(init, &self.kernel, &roots)
             .map_err(|source| InitLibraryError::Kernel { source })?;
         let naturals = self.naturals.declaration.try_map(|source| {
+            copied
+                .get(source)
+                .ok_or(InitLibraryError::UnmappedReference { reference: source })
+        })?;
+        let recursion_schemas = self.recursion_schemas.try_map(|source| {
             copied
                 .get(source)
                 .ok_or(InitLibraryError::UnmappedReference { reference: source })
@@ -171,6 +184,7 @@ impl InitLibrary {
         Ok(InitSlice {
             prefix: projected.into_checked_prefix(),
             symbols,
+            recursion_schemas,
             naturals,
             arithmetic,
         })

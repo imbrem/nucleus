@@ -7,8 +7,8 @@
 use covalence_logic_hol::{Kernel, Ref, SynFactId, SynRel, Tag, ThmId, TmTag};
 
 use crate::{
-    NaturalError, NaturalRecExt, NaturalRecSchemas, NaturalRecursor, Naturals,
-    equality_transitivity, forall_elim, join_same_syntax,
+    NaturalError, NaturalRecExt, NaturalRecSchemas, NaturalRecursor, NaturalRecursorDecl,
+    NaturalRecursorProof, Naturals, equality_transitivity, forall_elim, join_same_syntax,
 };
 
 /// Stable natural-arithmetic definitions and law statements.
@@ -18,12 +18,16 @@ use crate::{
 /// from the kernel in which the package was first proved.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NaturalArithmeticDecl {
+    /// Private recursion package from which addition is selected.
+    pub add_rec: NaturalRecursorDecl,
     /// Addition, with its recursive argument first.
     pub add: Ref,
     /// `∀m. add zero m = m`.
     pub add_zero: Ref,
     /// `∀n m. add (succ n) m = succ (add n m)`.
     pub add_successor: Ref,
+    /// Private recursion package from which multiplication is selected.
+    pub mul_rec: NaturalRecursorDecl,
     /// Multiplication, with its recursive argument first.
     pub mul: Ref,
     /// `∀m. mul zero m = zero`.
@@ -39,6 +43,14 @@ pub struct NaturalArithmeticDecl {
 }
 
 impl NaturalArithmeticDecl {
+    /// Iterates every public and private syntax reference needed for replay.
+    pub fn references(&self) -> impl Iterator<Item = Ref> + '_ {
+        self.add_rec
+            .references()
+            .chain(self.mul_rec.references())
+            .chain(self.symbols().map(|(_, reference)| reference))
+    }
+
     /// Resolves one stable external name.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Ref> {
@@ -70,9 +82,11 @@ impl NaturalArithmeticDecl {
     /// Returns the first error produced by `map`.
     pub fn try_map<E>(self, mut map: impl FnMut(Ref) -> Result<Ref, E>) -> Result<Self, E> {
         Ok(Self {
+            add_rec: self.add_rec.try_map(&mut map)?,
             add: map(self.add)?,
             add_zero: map(self.add_zero)?,
             add_successor: map(self.add_successor)?,
+            mul_rec: self.mul_rec.try_map(&mut map)?,
             mul: map(self.mul)?,
             mul_zero: map(self.mul_zero)?,
             mul_successor: map(self.mul_successor)?,
@@ -86,10 +100,14 @@ impl NaturalArithmeticDecl {
 /// Exact theorem handles certifying a [`NaturalArithmeticDecl`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NaturalArithmeticProof {
+    /// Exact theorem handles for the addition recursor package.
+    pub add_rec: NaturalRecursorProof,
     /// Exact theorem `⊢ add_zero`.
     pub add_zero: ThmId,
     /// Exact theorem `⊢ add_successor`.
     pub add_successor: ThmId,
+    /// Exact theorem handles for the multiplication recursor package.
+    pub mul_rec: NaturalRecursorProof,
     /// Exact theorem `⊢ mul_zero`.
     pub mul_zero: ThmId,
     /// Exact theorem `⊢ mul_successor`.
@@ -204,9 +222,11 @@ impl NaturalArithmeticExt for Kernel {
 
         Ok(NaturalArithmetic {
             declaration: NaturalArithmeticDecl {
+                add_rec: add_rec.declaration(),
                 add,
                 add_zero,
                 add_successor,
+                mul_rec: mul_rec.declaration(),
                 mul,
                 mul_zero,
                 mul_successor,
@@ -215,8 +235,10 @@ impl NaturalArithmeticExt for Kernel {
                 one_plus_one,
             },
             proof: NaturalArithmeticProof {
+                add_rec: add_rec.proof(),
                 add_zero: add_zero_theorem,
                 add_successor: add_successor_theorem,
+                mul_rec: mul_rec.proof(),
                 mul_zero: mul_zero_theorem,
                 mul_successor: mul_successor_theorem,
                 one_plus_one: one_plus_one_theorem,

@@ -414,6 +414,45 @@ theorem graphRecursor_unique {C : Type} (base : C)
   rw [M.graphRecursor_eq_natrec base step]
   exact M.natrec_unique base step candidate atZero atSucc
 
+/-! The Rust replay package likewise freezes the selected recursor and its
+statements separately from the theorem handles which certify them. -/
+
+/-- The selected function in a primitive-recursion declaration. -/
+structure RecursorDecl (M : CNatModel) (C : Type) where
+  base : C
+  step : M.carrier → C → C
+  selected : M.carrier → C
+
+/-- Semantic evidence certifying one exact primitive-recursion declaration. -/
+structure RecursorProof {M : CNatModel} {C : Type}
+    (D : RecursorDecl M C) : Prop where
+  graph : ∀ n, M.RecGraph D.base D.step n (D.selected n)
+  at_zero : D.selected M.zero = D.base
+  at_succ : ∀ n, D.selected (M.succ n) = D.step n (D.selected n)
+  unique : ∀ candidate : M.carrier → C,
+    candidate M.zero = D.base →
+    (∀ n, candidate (M.succ n) = D.step n (candidate n)) →
+    candidate = D.selected
+
+/-- The canonical graph-selected recursion declaration. -/
+noncomputable def graphRecursorDecl {C : Type} (base : C)
+    (step : M.carrier → C → C) : RecursorDecl M C where
+  base := base
+  step := step
+  selected := M.graphRecursor base step
+
+/-- All evidence is replayable against the exact canonical declaration. -/
+theorem graphRecursorDecl_proof {C : Type} (base : C)
+    (step : M.carrier → C → C) :
+    RecursorProof (M.graphRecursorDecl base step) := by
+  exact {
+    graph := M.graphRecursor_graph base step
+    at_zero := M.graphRecursor_zero base step
+    at_succ := M.graphRecursor_succ base step
+    unique := fun candidate atZero atSucc =>
+      M.graphRecursor_unique base step candidate atZero atSucc
+  }
+
 /-! ## Addition
 
 Defined by recursion on the *second* argument, which is the convention that

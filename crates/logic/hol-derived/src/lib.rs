@@ -25,6 +25,9 @@ pub use natural::{NaturalError, NaturalExt, Naturals, NaturalsDecl, NaturalsProo
 pub use natural_arithmetic::{
     NaturalArithmetic, NaturalArithmeticDecl, NaturalArithmeticExt, NaturalArithmeticProof,
 };
-pub use natural_rec::{NaturalRecExt, NaturalRecGraph, NaturalRecSchemas, NaturalRecursor};
+pub use natural_rec::{
+    NaturalRecExt, NaturalRecGraph, NaturalRecGraphDecl, NaturalRecGraphProof, NaturalRecSchemas,
+    NaturalRecursor, NaturalRecursorDecl, NaturalRecursorProof,
+};
 pub use subtype::{Subtype, SubtypeError, SubtypeExt};
 pub use syntax::{SyntaxError, join_same_syntax};
