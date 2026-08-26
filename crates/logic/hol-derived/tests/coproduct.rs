@@ -1,6 +1,7 @@
 use covalence_logic_hol::{AX_SUB, Kernel, Sort};
 use covalence_logic_hol_derived::{
     CoproductCandidate, CoproductCandidateLaws, CoproductExt, forall_elim, join_same_syntax,
+    open_exists,
 };
 
 #[test]
@@ -408,5 +409,13 @@ fn fixed_codomain_package_quantifies_maps_and_selects_a_unique_mediator() {
     assert_eq!(
         kernel.classifier(fixed.right_map).unwrap(),
         eliminator.right_map_ty
+    );
+    let at_left = forall_elim(&mut kernel, fixed.theorem, fixed.left_map).unwrap();
+    let at_right = forall_elim(&mut kernel, at_left.theorem, fixed.right_map).unwrap();
+    join_same_syntax(&mut kernel, at_right.proposition, fixed.mediator_exists).unwrap();
+    let mediator = open_exists(&mut kernel, fixed.mediator_exists).unwrap();
+    assert_eq!(
+        kernel.arena().op2(mediator.body),
+        Some(covalence_logic_hol::builtin::Op2::And)
     );
 }
