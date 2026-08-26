@@ -7,12 +7,20 @@ license.workspace = true
 description = "Untrusted S-expression front end for checked HOL definitions"
 publish = false
 
+[package.metadata.glu]
+buck-test-features = ["buck-test-fixtures"]
+buck-test-mapped-srcs = { "nucleus//:hol_init_checked_manifest" = "theories/init-boolean.checked.json" }
+
+[features]
+buck-test-fixtures = []
+
 [dependencies]
 covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-parse = { path = "../../lib/parse" }
 covalence-logic-hol = { path = "../hol" }
 
 [dev-dependencies]
+covalence-lib-json = { path = "../../lib/json" }
 covalence-logic-hol-derived = { path = "../hol-derived" }
 
 [lints]

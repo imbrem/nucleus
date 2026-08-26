@@ -13,7 +13,11 @@ use covalence_lib_parse::winnow::{
     combinator::{alt, repeat},
     token::take_while,
 };
-use covalence_logic_hol::{Kernel, KernelError, Ref, builtin::Op2};
+use covalence_logic_hol::{
+    Kernel, KernelError, Ref,
+    builtin::{Op1, Op2},
+    init::Compiled as LogicalInit,
+};
 
 /// Source of the first opcode-free init-library schemata.
 ///
@@ -42,6 +46,7 @@ pub struct TheoryOptions {
 #[derive(Debug)]
 pub struct CompiledTheory {
     kernel: Kernel,
+    logical_init: Option<LogicalInit>,
     star: Ref,
     bool_ty: Ref,
     definitions: BTreeMap<String, Ref>,
@@ -65,6 +70,13 @@ impl CompiledTheory {
     #[must_use]
     pub const fn bool_type(&self) -> Ref {
         self.bool_ty
+    }
+
+    /// Returns the authoritative opcode-free logical prefix, when compilation
+    /// was explicitly anchored to one.
+    #[must_use]
+    pub const fn logical_init(&self) -> Option<&LogicalInit> {
+        self.logical_init.as_ref()
     }
 
     /// Resolves one public symbol.
@@ -214,6 +226,7 @@ pub fn compile_theory_with(
     }
     Ok(CompiledTheory {
         kernel: compiler.kernel,
+        logical_init: compiler.logical_init,
         star: compiler.star,
         bool_ty: compiler.bool_ty,
         definitions: compiler.definitions,
@@ -221,7 +234,39 @@ pub fn compile_theory_with(
     })
 }
 
-/// Compiles the standard init source without compact logical opcodes.
+/// Compiles a module on top of an authoritative opcode-free logical prefix.
+///
+/// In equality-only mode the connective surface becomes checked application
+/// of the prefix's named definitions. In compact mode it becomes opcode rows
+/// that [`Kernel::logical_lower_fact`] can relate to those exact definitions.
+/// Parsing and elaboration remain untrusted in both cases.
+///
+/// # Errors
+///
+/// Returns the same source errors as [`compile_theory_with`], or an error if
+/// the supplied prefix lacks a required logical definition.
+pub fn compile_theory_with_init(
+    source: &str,
+    options: TheoryOptions,
+    init: &LogicalInit,
+) -> Result<CompiledTheory, TheoryError> {
+    let forms = read(source)?;
+    let mut compiler = Compiler::with_init(options, init)?;
+    for form in &forms {
+        compiler.declaration(form)?;
+    }
+    Ok(CompiledTheory {
+        kernel: compiler.kernel,
+        logical_init: compiler.logical_init,
+        star: compiler.star,
+        bool_ty: compiler.bool_ty,
+        definitions: compiler.definitions,
+        symbols: compiler.symbols,
+    })
+}
+
+/// Compiles the standard init source without compact logical opcodes, on top
+/// of the authoritative logical prefix supplied by the caller.
 ///
 /// This is the canonical init-library compilation path. The language, source,
 /// and representation policy remain userspace inputs; the returned arena has
@@ -231,12 +276,13 @@ pub fn compile_theory_with(
 ///
 /// Returns an error if [`INIT_SOURCE`] is malformed or rejected by checked HOL
 /// construction.
-pub fn compile_init() -> Result<CompiledTheory, TheoryError> {
-    compile_theory_with(
+pub fn compile_init(init: &LogicalInit) -> Result<CompiledTheory, TheoryError> {
+    compile_theory_with_init(
         INIT_SOURCE,
         TheoryOptions {
             logic: LogicEncoding::EqualityOnly,
         },
+        init,
     )
 }
 
@@ -328,6 +374,7 @@ struct Schema<'a> {
 
 struct Compiler<'a> {
     kernel: Kernel,
+    logical_init: Option<LogicalInit>,
     star: Ref,
     bool_ty: Ref,
     definitions: BTreeMap<String, Ref>,
@@ -346,6 +393,7 @@ impl<'a> Compiler<'a> {
         let bool_ty = kernel.bool_ty(star)?;
         Ok(Self {
             kernel,
+            logical_init: None,
             star,
             bool_ty,
             definitions: BTreeMap::new(),
@@ -356,6 +404,41 @@ impl<'a> Compiler<'a> {
             next_name: 0,
             options,
         })
+    }
+
+    fn with_init(options: TheoryOptions, init: &LogicalInit) -> Result<Self, TheoryError> {
+        let kernel = init.kernel();
+        let star = init.get("star").ok_or_else(|| TheoryError::Unknown {
+            name: "star".to_owned(),
+        })?;
+        let bool_ty = init.get("bool").ok_or_else(|| TheoryError::Unknown {
+            name: "bool".to_owned(),
+        })?;
+        Ok(Self {
+            kernel,
+            logical_init: Some(init.clone()),
+            star,
+            bool_ty,
+            definitions: BTreeMap::new(),
+            schemata: BTreeMap::new(),
+            instances: BTreeMap::new(),
+            symbols: BTreeMap::new(),
+            arrows: BTreeMap::new(),
+            // The prefix owns names 0..=9. Freshness is semantic row identity,
+            // not a global name allocator, but staying disjoint makes source
+            // inspection and substitution diagnostics much clearer.
+            next_name: 10,
+            options,
+        })
+    }
+
+    fn logical_definition(&self, name: &str) -> Result<Ref, TheoryError> {
+        self.logical_init
+            .as_ref()
+            .and_then(|init| init.get(name))
+            .ok_or_else(|| TheoryError::Unknown {
+                name: name.to_owned(),
+            })
     }
 
     fn declaration(&mut self, form: &'a SExpr<'a>) -> Result<(), TheoryError> {
@@ -752,12 +835,24 @@ impl<'a> Compiler<'a> {
     }
 
     fn not(&mut self, value: Ref) -> Result<Ref, TheoryError> {
+        if self.options.logic == LogicEncoding::Compact {
+            return Ok(self.kernel.op1(Op1::Not, value)?);
+        }
+        if self.logical_init.is_some() {
+            let definition = self.logical_definition("not")?;
+            return Ok(self.kernel.app(definition, value)?);
+        }
         Ok(self.kernel.not_tm(self.bool_ty, value)?)
     }
 
     fn and(&mut self, left: Ref, right: Ref) -> Result<Ref, TheoryError> {
         if self.options.logic == LogicEncoding::Compact {
             return Ok(self.kernel.op2(Op2::And, left, right)?);
+        }
+        if self.logical_init.is_some() {
+            let definition = self.logical_definition("and")?;
+            let partial = self.kernel.app(definition, left)?;
+            return Ok(self.kernel.app(partial, right)?);
         }
         let bool_to_bool = self.arrow(self.bool_ty, self.bool_ty)?;
         let binder_ty = self.arrow(self.bool_ty, bool_to_bool)?;
@@ -770,6 +865,11 @@ impl<'a> Compiler<'a> {
         if self.options.logic == LogicEncoding::Compact {
             return Ok(self.kernel.op2(Op2::Or, left, right)?);
         }
+        if self.logical_init.is_some() {
+            let definition = self.logical_definition("or")?;
+            let partial = self.kernel.app(definition, left)?;
+            return Ok(self.kernel.app(partial, right)?);
+        }
         let bool_to_bool = self.arrow(self.bool_ty, self.bool_ty)?;
         let binder_ty = self.arrow(self.bool_ty, bool_to_bool)?;
         let name = self.name();
@@ -780,6 +880,11 @@ impl<'a> Compiler<'a> {
     fn imp(&mut self, left: Ref, right: Ref) -> Result<Ref, TheoryError> {
         if self.options.logic == LogicEncoding::Compact {
             return Ok(self.kernel.op2(Op2::Imp, left, right)?);
+        }
+        if self.logical_init.is_some() {
+            let definition = self.logical_definition("imp")?;
+            let partial = self.kernel.app(definition, left)?;
+            return Ok(self.kernel.app(partial, right)?);
         }
         let bool_to_bool = self.arrow(self.bool_ty, self.bool_ty)?;
         let binder_ty = self.arrow(self.bool_ty, bool_to_bool)?;

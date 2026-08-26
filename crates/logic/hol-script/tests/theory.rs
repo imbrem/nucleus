@@ -1,8 +1,22 @@
 //! End-to-end coverage for the untrusted theory front end.
 
-use covalence_logic_hol::{AX_INF, AX_SUB, Sort, Tag, TmTag};
-use covalence_logic_hol_derived::{NaturalExt, NaturalRecExt};
-use covalence_logic_hol_script::{INIT_SOURCE, TheoryError, compile_init, compile_theory};
+use covalence_lib_json::serde_json;
+use covalence_logic_hol::{AX_INF, AX_SUB, Sort, Tag, TmTag, init};
+use covalence_logic_hol_derived::{NaturalExt, NaturalRecExt, join_same_syntax};
+use covalence_logic_hol_script::{
+    INIT_SOURCE, LogicEncoding, TheoryError, TheoryOptions, compile_init, compile_theory,
+    compile_theory_with_init,
+};
+
+#[cfg(not(feature = "buck-test-fixtures"))]
+const LOGICAL_INIT: &str = include_str!("../../../../theories/init-boolean.checked.json");
+#[cfg(feature = "buck-test-fixtures")]
+const LOGICAL_INIT: &str = include_str!("../theories/init-boolean.checked.json");
+
+fn logical_init() -> init::Compiled {
+    let manifest: init::Manifest = serde_json::from_str(LOGICAL_INIT).expect("logical manifest");
+    init::compile(&manifest).expect("checked logical prefix")
+}
 
 const COPRODUCT: &str = r"
   ; The universal property, as an open schema rather than an assertion.
@@ -190,7 +204,8 @@ fn checked_init_source_is_a_deterministic_untrusted_compilation_unit() {
 
 #[test]
 fn canonical_init_compilation_is_opcode_free() {
-    let compiled = compile_init().expect("opcode-free init source");
+    let init = logical_init();
+    let compiled = compile_init(&init).expect("opcode-free init source");
     assert!(compiled.get("IsCoprod").is_some());
     assert!(compiled.get("NatMember").is_some());
     assert!(compiled.get("NatRecSpec").is_some());
@@ -208,8 +223,67 @@ fn canonical_init_compilation_is_opcode_free() {
 }
 
 #[test]
+fn equality_only_source_uses_the_authoritative_logical_lowering() {
+    let init = logical_init();
+    let source = "(define sample () bool (and true false))";
+    let raw = compile_theory_with_init(
+        source,
+        TheoryOptions {
+            logic: LogicEncoding::EqualityOnly,
+        },
+        &init,
+    )
+    .expect("raw source");
+    let raw_root = raw.get("sample").expect("raw root");
+    assert_eq!(
+        raw.kernel().arena().tag(raw_root),
+        Some(Tag::Tm(TmTag::App))
+    );
+
+    let compact = compile_theory_with_init(
+        source,
+        TheoryOptions {
+            logic: LogicEncoding::Compact,
+        },
+        &init,
+    )
+    .expect("compact source");
+    let compact_root = compact.get("sample").expect("compact root");
+    let (raw_kernel, _) = raw.into_parts();
+    let (mut compact_kernel, _) = compact.into_parts();
+    let copied = compact_kernel
+        .copy_term_from(&raw_kernel, raw_root)
+        .expect("copy raw expansion into compact kernel");
+    let copied_raw = copied.roots()[0];
+    let expansion = compact_kernel
+        .lower_logical(&init, compact_root)
+        .expect("canonical compact lowering");
+    join_same_syntax(&mut compact_kernel, expansion, copied_raw)
+        .expect("lowering equals direct source elaboration");
+
+    let canonical = compile_init(&init).expect("canonical source over logical prefix");
+    assert_eq!(canonical.logical_init(), Some(&init));
+    let last = i32::try_from(canonical.kernel().arena().len()).expect("arena fits Ref");
+    for index in 1..=last {
+        let reference = covalence_logic_hol::Ref::new(index).expect("positive index");
+        assert!(!matches!(
+            canonical.kernel().arena().tag(reference),
+            Some(Tag::Tm(TmTag::Op1 | TmTag::Op2))
+        ));
+    }
+}
+
+#[test]
 fn compiled_nat_member_drives_the_userspace_natural_package() {
-    let compiled = compile_theory(INIT_SOURCE).expect("init source");
+    let init = logical_init();
+    let compiled = compile_theory_with_init(
+        INIT_SOURCE,
+        TheoryOptions {
+            logic: LogicEncoding::Compact,
+        },
+        &init,
+    )
+    .expect("compact proof view of init source");
     let bool_ty = compiled.bool_type();
     let parameter = compiled
         .get("NatMember/'a")
@@ -238,7 +312,15 @@ fn compiled_nat_member_drives_the_userspace_natural_package() {
 
 #[test]
 fn compiled_recursion_graph_has_a_checked_base_theorem() {
-    let compiled = compile_theory(INIT_SOURCE).expect("init source");
+    let init = logical_init();
+    let compiled = compile_theory_with_init(
+        INIT_SOURCE,
+        TheoryOptions {
+            logic: LogicEncoding::Compact,
+        },
+        &init,
+    )
+    .expect("compact proof view of init source");
     let bool_ty = compiled.bool_type();
     let natural_parameter = compiled.get("NatRecGraph/'a").expect("natural parameter");
     let codomain_parameter = compiled.get("NatRecGraph/'c").expect("codomain parameter");
