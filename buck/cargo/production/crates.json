@@ -1138,7 +1138,7 @@
       "source": "workspace#covalence-logic-hol-script@0.0.0",
       "target": "workspace#covalence-logic-hol-derived@0.0.0",
       "kinds": [
-        "dev"
+        "normal"
       ]
     },
     {

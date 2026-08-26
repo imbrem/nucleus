@@ -19,6 +19,10 @@ use covalence_logic_hol::{
     init::Compiled as LogicalInit,
 };
 
+mod init_library;
+
+pub use init_library::{InitLibrary, InitLibraryError, compile_init_library};
+
 /// Source of the first opcode-free init-library schemata.
 ///
 /// This is ordinary userspace input to [`compile_theory`], not a trusted
