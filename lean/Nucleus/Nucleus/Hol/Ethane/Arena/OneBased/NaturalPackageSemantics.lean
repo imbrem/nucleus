@@ -312,6 +312,32 @@ def DecodedAssertion.ofIntrinsic {resolve : Resolver} {arena : Arena}
   assertion := assertion
   decodes := (closedFormulaHolds_iff_iEval expression term lowered).trans decodes
 
+/-- Exact arena evidence for one closed assertion lowered to a fixed checked
+intrinsic term.  This is reusable across package formats and contains no
+source-language metadata. -/
+structure IntrinsicAssertion (resolve : Resolver) (arena : Arena)
+    (term : InfinityTm ClassicalSig
+      (Nucleus.HolE.emptyBound : BoundCtx ClassicalSig [] 0) .boolTy) where
+  reference : Ref
+  expression : EmptyTm
+  fact : WireSequent
+  resolves : Resolves (coreResolver resolve) arena.holCore reference
+    (.term .boolTy expression)
+  member : fact ∈ arena.hol.thm
+  assertion : fact.semantic = Sequent.assert reference
+  lowered : Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+    (.nil : TmScope ClassicalSig 0) (toClassicalTm expression) = some term.tm
+
+def IntrinsicAssertion.decoded {resolve : Resolver} {arena : Arena}
+    {term : InfinityTm ClassicalSig
+      (Nucleus.HolE.emptyBound : BoundCtx ClassicalSig [] 0) .boolTy}
+    {proposition : Prop} (assertion : IntrinsicAssertion resolve arena term)
+    (decodes : Infinity.IEval term emptyCTypeEnv emptyCBoundEnv cBool true ↔
+      proposition) : DecodedAssertion resolve arena proposition :=
+  DecodedAssertion.ofIntrinsic assertion.reference assertion.expression term
+    assertion.fact assertion.resolves assertion.member assertion.assertion
+    assertion.lowered decodes
+
 /-- Base decoder for an exact checked assertion of the Boolean truth literal. -/
 def DecodedAssertion.truth {resolve : Resolver} {arena : Arena}
     (reference : Ref) (fact : WireSequent)
@@ -383,6 +409,116 @@ structure NaturalPackageCertificate (resolve : Resolver) (arena : Arena)
       (∀ x, P x = true → P (successor x) = true) →
       ∀ x, P x = true)
 
+/-- Representation-complete certificate for the canonical checked Peano
+terms.  A userspace compiler may discover these references, but this evidence
+retains only checked resolution, lowering, evaluation, and theorem rows. -/
+structure IntrinsicNaturalPackageCertificate (resolve : Resolver) (arena : Arena)
+    (interpretation : PartialValuation Ref) where
+  agreement : HolEvaluationAgrees resolve arena interpretation
+  carrierRef : Ref
+  zeroRef : Ref
+  successorRef : Ref
+  carrierSyntax : EmptyTy
+  zeroSyntax : EmptyTm
+  successorSyntax : EmptyTm
+  carrier : Empty.Ty []
+  zero : Empty.Term Empty.Ctx.empty carrier
+  successor : Empty.Term Empty.Ctx.empty (carrier.arr carrier)
+  zeroValue : (carrier.denote emptyCTypeEnv).carrier
+  successorValue : (carrier.denote emptyCTypeEnv).carrier →
+    (carrier.denote emptyCTypeEnv).carrier
+  carrierResolves : Resolves (coreResolver resolve) arena.holCore carrierRef
+    (.family .star carrierSyntax)
+  zeroResolves : Resolves (coreResolver resolve) arena.holCore zeroRef
+    (.term carrierSyntax zeroSyntax)
+  successorResolves : Resolves (coreResolver resolve) arena.holCore successorRef
+    (.term (.arr carrierSyntax carrierSyntax) successorSyntax)
+  carrierLowered : Nucleus.HolE.Named.lowerTy (.nil : TyScope [])
+    (toClassicalTy carrierSyntax) = some carrier.raw
+  zeroLowered : Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+    (.nil : TmScope ClassicalSig 0) (toClassicalTm zeroSyntax) = some zero.raw
+  successorLowered : Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+    (.nil : TmScope ClassicalSig 0) (toClassicalTm successorSyntax) =
+      some successor.raw
+  zeroEval : Empty.Eval zero emptyCTypeEnv emptyCBoundEnv
+    (carrier.denote emptyCTypeEnv) zeroValue
+  successorEval : Empty.Eval successor emptyCTypeEnv emptyCBoundEnv
+    (Empty.cArrow (carrier.denote emptyCTypeEnv)
+      (carrier.denote emptyCTypeEnv)) successorValue
+  successorInjective : IntrinsicAssertion resolve arena
+    (Empty.NaturalLaw.successorInjective carrier successor).toIntrinsic
+  zeroNeSuccessor : IntrinsicAssertion resolve arena
+    (Empty.NaturalLaw.zeroNeSuccessor carrier zero successor).toIntrinsic
+  induction : IntrinsicAssertion resolve arena
+    (Empty.NaturalLaw.induction carrier zero successor).toIntrinsic
+
+namespace IntrinsicNaturalPackageCertificate
+
+/-- Forget the intrinsic presentation after deriving all evaluator-facing
+fields of the generic natural package certificate. -/
+noncomputable def toCertificate
+    (certificate : IntrinsicNaturalPackageCertificate resolve arena interpretation) :
+    NaturalPackageCertificate resolve arena interpretation where
+  agreement := certificate.agreement
+  carrierRef := certificate.carrierRef
+  zeroRef := certificate.zeroRef
+  successorRef := certificate.successorRef
+  carrierSyntax := certificate.carrierSyntax
+  zeroSyntax := certificate.zeroSyntax
+  successorSyntax := certificate.successorSyntax
+  carrier := certificate.carrier.denote emptyCTypeEnv
+  zero := certificate.zeroValue
+  successor := certificate.successorValue
+  carrierResolves := certificate.carrierResolves
+  carrierDenotes := ⟨certificate.carrier.raw,
+    certificate.carrier.kinded.certificate, certificate.carrierLowered, rfl⟩
+  zeroResolves := certificate.zeroResolves
+  zeroEvaluates := ⟨certificate.zero.raw, certificate.carrier.raw,
+    certificate.zeroLowered, certificate.carrierLowered,
+    Infinity.IEval.iff_cRealizes.mp certificate.zeroEval⟩
+  successorResolves := certificate.successorResolves
+  successorEvaluates := ⟨certificate.successor.raw,
+    .arr certificate.carrier.raw certificate.carrier.raw,
+    certificate.successorLowered,
+    by
+      have loweredCarrier := certificate.carrierLowered
+      rw [Nucleus.HolE.Named.lowerTy] at loweredCarrier
+      simp [toClassicalTy, Nucleus.Hol.Ethane.Expr.toHolE,
+        Nucleus.HolE.Named.lowerTy, Nucleus.HolE.Named.lowerFam,
+        loweredCarrier],
+    Infinity.IEval.iff_cRealizes.mp certificate.successorEval⟩
+  successorInjective := certificate.successorInjective.decoded <| by
+    change Empty.Eval
+      (Empty.NaturalLaw.successorInjective certificate.carrier
+        certificate.successor) emptyCTypeEnv emptyCBoundEnv cBool true ↔
+      Function.Injective certificate.successorValue
+    exact Empty.NaturalLaw.successorInjective_true_iff
+      certificate.carrier certificate.successor emptyCTypeEnv
+      certificate.successorValue certificate.successorEval
+  zeroNeSuccessor := certificate.zeroNeSuccessor.decoded <| by
+    change Empty.Eval
+      (Empty.NaturalLaw.zeroNeSuccessor certificate.carrier certificate.zero
+        certificate.successor) emptyCTypeEnv emptyCBoundEnv cBool true ↔
+      ∀ x, certificate.zeroValue ≠ certificate.successorValue x
+    exact Empty.NaturalLaw.zeroNeSuccessor_true_iff
+      certificate.carrier certificate.zero certificate.successor emptyCTypeEnv
+      certificate.zeroValue certificate.successorValue certificate.zeroEval
+      certificate.successorEval
+  induction := certificate.induction.decoded <| by
+    change Empty.Eval
+      (Empty.NaturalLaw.induction certificate.carrier certificate.zero
+        certificate.successor) emptyCTypeEnv emptyCBoundEnv cBool true ↔
+      ∀ P : (certificate.carrier.denote emptyCTypeEnv).carrier → Bool,
+        P certificate.zeroValue = true →
+        (∀ x, P x = true → P (certificate.successorValue x) = true) →
+        ∀ x, P x = true
+    exact Empty.NaturalLaw.induction_true_iff
+      certificate.carrier certificate.zero certificate.successor emptyCTypeEnv
+      certificate.zeroValue certificate.successorValue certificate.zeroEval
+      certificate.successorEval
+
+end IntrinsicNaturalPackageCertificate
+
 namespace NaturalPackageCertificate
 
 /-- The declaration denoted by the three checked declaration references. -/
@@ -424,6 +560,33 @@ def certify {trusted : Arena → Prop} {resolve : Resolver} {arena : Arena}
   rfl
 
 end NaturalPackageCertificate
+
+namespace IntrinsicNaturalPackageCertificate
+
+/-- Exact intrinsic lowering and theorem-row evidence certifies a natural
+model directly; no frontend correctness theorem is a premise. -/
+noncomputable def certify {trusted : Arena → Prop} {resolve : Resolver}
+    {arena : Arena} {interpretation : PartialValuation Ref}
+    (certificate : IntrinsicNaturalPackageCertificate resolve arena interpretation)
+    (valid : arena.KernelValid trusted resolve interpretation)
+    (ambientValuation : Valuation Ref)
+    (admitted : arena.ambientTheory.Admits (arena.ImportOk trusted resolve)
+      (arena.ImportSort resolve) ambientValuation) : CNatModel :=
+  certificate.toCertificate.certify valid ambientValuation admitted
+
+@[simp] theorem certify_declaration {trusted : Arena → Prop}
+    {resolve : Resolver} {arena : Arena}
+    {interpretation : PartialValuation Ref}
+    (certificate : IntrinsicNaturalPackageCertificate resolve arena interpretation)
+    (valid : arena.KernelValid trusted resolve interpretation)
+    (ambientValuation : Valuation Ref)
+    (admitted : arena.ambientTheory.Admits (arena.ImportOk trusted resolve)
+      (arena.ImportSort resolve) ambientValuation) :
+    (certificate.certify valid ambientValuation admitted).declaration =
+      certificate.toCertificate.declaration := by
+  exact NaturalPackageCertificate.certify_declaration _ _ _ _
+
+end IntrinsicNaturalPackageCertificate
 
 /-! ## Primitive recursion -/
 
