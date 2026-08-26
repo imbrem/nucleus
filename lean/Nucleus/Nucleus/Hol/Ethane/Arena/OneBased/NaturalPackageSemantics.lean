@@ -5,6 +5,7 @@ import Nucleus.HolE.ClassicalLambdaRealization
 import Nucleus.HolE.ClassicalApplicationRealization
 import Nucleus.HolE.ClassicalEmptyConnectiveRealization
 import Nucleus.HolE.ClassicalUniversalRealization
+import Nucleus.HolE.ClassicalNaturalLawRealization
 
 /-!
 # Semantic certificates for checked natural-number packages
