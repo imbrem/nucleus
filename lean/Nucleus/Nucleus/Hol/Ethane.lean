@@ -23,6 +23,7 @@ import Nucleus.Hol.Ethane.Arena.OneBased.FusedPathProofs
 import Nucleus.Hol.Ethane.Arena.OneBased.FusedConvUnionProofs
 import Nucleus.Hol.Ethane.Arena.OneBased.FusedUnionProofs
 import Nucleus.Hol.Ethane.Arena.OneBased.Layout
+import Nucleus.Hol.Ethane.Arena.OneBased.NaturalPackageSemantics
 import Nucleus.Hol.Ethane.Arena.OneBased.DenseKernelTransport
 import Nucleus.Hol.Ethane.Arena.OneBased.SynCacheTransport
 import Nucleus.Hol.Ethane.Arena.OneBased.UnionFind
