@@ -7,6 +7,8 @@
 //! the two small kernel capabilities consumed by [`InfinityExt`] and
 //! [`SubtypeExt`].
 
+use std::ops::Deref;
+
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
     AX_INF, AX_SUB, Kernel, KernelError, Lit, Ref, SynRel, Tag, ThmId, TmTag,
@@ -19,52 +21,48 @@ use crate::{
     forall_elim, join_same_syntax, substitute,
 };
 
-/// The first object-language natural-number package.
+/// Stable public syntax of the first object-language natural-number package.
+///
+/// This descriptor contains no theorem or syntax-cache identifiers. It may be
+/// copied into a different checked prefix and remapped independently of the
+/// userspace derivation which originally certified it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Naturals {
-    /// Chosen infinite carrier, successor candidate, and missed point.
-    pub infinity: Infinity,
+pub struct NaturalsDecl {
+    /// Concrete infinite carrier type.
+    pub ind: Ref,
+    /// Injective endomap on [`ind`](Self::ind).
+    pub ind_succ: Ref,
+    /// Point outside the image of [`ind_succ`](Self::ind_succ).
+    pub ind_zero: Ref,
     /// `ind → bool`: membership in every successor-closed predicate containing zero.
     pub member: Ref,
-    /// The guarded subtype carved out by [`member`](Self::member).
-    pub subtype: Subtype,
     /// The object-language natural-number type.
     pub ty: Ref,
+    /// Representation into [`ind`](Self::ind).
+    pub rep: Ref,
+    /// Abstraction from [`ind`](Self::ind).
+    pub abs: Ref,
     /// Zero, obtained by abstracting the missed point.
     pub zero: Ref,
     /// The carrier-level proposition `member ind.zero`.
     pub zero_member: Ref,
-    /// Exact theorem `⊢ member ind.zero`, derived entirely in userspace.
-    pub zero_member_theorem: ThmId,
     /// The existential encoded by the subtype guard: `∃a. member a`.
     pub member_inhabited: Ref,
-    /// Exact theorem of [`member_inhabited`](Self::member_inhabited).
-    pub member_inhabited_theorem: ThmId,
     /// `∀n : nat. member (rep n)`.
     pub rep_member: Ref,
-    /// Exact theorem of [`rep_member`](Self::rep_member).
-    pub rep_member_theorem: ThmId,
     /// `∀a : ind. member a → member (ind.succ a)`.
     pub member_succ: Ref,
-    /// Exact theorem of [`member_succ`](Self::member_succ).
-    pub member_succ_theorem: ThmId,
     /// Successor on the subtype: `λn. abs (ind.succ (rep n))`.
     pub succ: Ref,
     /// The standard induction-principle statement over [`ty`](Self::ty).
     pub induction: Ref,
-    /// Exact theorem `⊢ nat.induction`.
-    pub induction_theorem: ThmId,
     /// `∀m n : nat. nat.succ m = nat.succ n → m = n`.
     pub succ_injective: Ref,
-    /// Exact theorem `⊢ nat.succ.injective`.
-    pub succ_injective_theorem: ThmId,
     /// `∀n : nat. ¬(nat.zero = nat.succ n)`.
     pub zero_ne_succ: Ref,
-    /// Exact theorem `⊢ nat.zero_ne_succ`.
-    pub zero_ne_succ_theorem: ThmId,
 }
 
-impl Naturals {
+impl NaturalsDecl {
     /// Resolves one stable init-library name in this package.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Ref> {
@@ -79,13 +77,13 @@ impl Naturals {
     #[must_use]
     pub fn symbols(&self) -> impl ExactSizeIterator<Item = (&'static str, Ref)> {
         [
-            ("ind", self.infinity.carrier),
-            ("ind.zero", self.infinity.missed),
-            ("ind.succ", self.infinity.map),
+            ("ind", self.ind),
+            ("ind.zero", self.ind_zero),
+            ("ind.succ", self.ind_succ),
             ("nat.member", self.member),
             ("nat", self.ty),
-            ("nat.rep", self.subtype.rep),
-            ("nat.abs", self.subtype.abs),
+            ("nat.rep", self.rep),
+            ("nat.abs", self.abs),
             ("nat.zero", self.zero),
             ("nat.zero_member", self.zero_member),
             ("nat.member_inhabited", self.member_inhabited),
@@ -97,6 +95,86 @@ impl Naturals {
             ("nat.zero_ne_succ", self.zero_ne_succ),
         ]
         .into_iter()
+    }
+
+    /// Remaps every syntax reference while preserving the package shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error produced by `map`.
+    pub fn try_map<E>(self, mut map: impl FnMut(Ref) -> Result<Ref, E>) -> Result<Self, E> {
+        Ok(Self {
+            ind: map(self.ind)?,
+            ind_succ: map(self.ind_succ)?,
+            ind_zero: map(self.ind_zero)?,
+            member: map(self.member)?,
+            ty: map(self.ty)?,
+            rep: map(self.rep)?,
+            abs: map(self.abs)?,
+            zero: map(self.zero)?,
+            zero_member: map(self.zero_member)?,
+            member_inhabited: map(self.member_inhabited)?,
+            rep_member: map(self.rep_member)?,
+            member_succ: map(self.member_succ)?,
+            succ: map(self.succ)?,
+            induction: map(self.induction)?,
+            succ_injective: map(self.succ_injective)?,
+            zero_ne_succ: map(self.zero_ne_succ)?,
+        })
+    }
+}
+
+/// Exact theorem handles certifying a [`NaturalsDecl`] in one kernel.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NaturalsProof {
+    /// Exact theorem `⊢ member ind.zero`.
+    pub zero_member: ThmId,
+    /// Exact theorem of `member_inhabited`.
+    pub member_inhabited: ThmId,
+    /// Exact theorem of `rep_member`.
+    pub rep_member: ThmId,
+    /// Exact theorem of `member_succ`.
+    pub member_succ: ThmId,
+    /// Exact theorem `⊢ nat.induction`.
+    pub induction: ThmId,
+    /// Exact theorem `⊢ nat.succ.injective`.
+    pub succ_injective: ThmId,
+    /// Exact theorem `⊢ nat.zero_ne_succ`.
+    pub zero_ne_succ: ThmId,
+}
+
+/// A natural-number declaration together with its kernel-local derivation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Naturals {
+    /// Stable public syntax.
+    pub declaration: NaturalsDecl,
+    /// Exact theorem handles in the construction kernel.
+    pub proof: NaturalsProof,
+    /// Private chosen infinity package used by further derivations.
+    pub infinity: Infinity,
+    /// Private chosen subtype package used by further derivations.
+    pub subtype: Subtype,
+}
+
+impl Deref for Naturals {
+    type Target = NaturalsDecl;
+
+    fn deref(&self) -> &Self::Target {
+        &self.declaration
+    }
+}
+
+impl Naturals {
+    /// Resolves one stable init-library name in this package.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<Ref> {
+        self.declaration.get(name)
+    }
+
+    /// Iterates the stable external dictionary for the package.
+    #[must_use]
+    pub fn symbols(&self) -> impl ExactSizeIterator<Item = (&'static str, Ref)> {
+        self.declaration.symbols()
     }
 }
 
@@ -344,25 +422,34 @@ fn finish_naturals(
 
     Ok(Naturals {
         infinity,
-        member,
         subtype,
-        ty: subtype.sub,
-        zero,
-        zero_member,
-        zero_member_theorem,
-        member_inhabited,
-        member_inhabited_theorem,
-        rep_member,
-        rep_member_theorem,
-        member_succ,
-        member_succ_theorem,
-        succ,
-        induction,
-        induction_theorem,
-        succ_injective,
-        succ_injective_theorem,
-        zero_ne_succ,
-        zero_ne_succ_theorem,
+        declaration: NaturalsDecl {
+            ind: infinity.carrier,
+            ind_succ: infinity.map,
+            ind_zero: infinity.missed,
+            member,
+            ty: subtype.sub,
+            rep: subtype.rep,
+            abs: subtype.abs,
+            zero,
+            zero_member,
+            member_inhabited,
+            rep_member,
+            member_succ,
+            succ,
+            induction,
+            succ_injective,
+            zero_ne_succ,
+        },
+        proof: NaturalsProof {
+            zero_member: zero_member_theorem,
+            member_inhabited: member_inhabited_theorem,
+            rep_member: rep_member_theorem,
+            member_succ: member_succ_theorem,
+            induction: induction_theorem,
+            succ_injective: succ_injective_theorem,
+            zero_ne_succ: zero_ne_succ_theorem,
+        },
     })
 }
 

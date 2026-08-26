@@ -21,7 +21,7 @@ pub use exists::{ExistsError, OpenedExists, open_exists};
 pub use forall::{ForallError, ProvedTerm, forall_elim};
 pub use infinity::{Infinity, InfinityError, InfinityExt};
 pub use model::{ChosenModel, ModelError, ModelExt, Substitution, eta_expand_at, substitute};
-pub use natural::{NaturalError, NaturalExt, Naturals};
+pub use natural::{NaturalError, NaturalExt, Naturals, NaturalsDecl, NaturalsProof};
 pub use natural_arithmetic::{
     NaturalArithmetic, NaturalArithmeticDecl, NaturalArithmeticExt, NaturalArithmeticProof,
 };

@@ -916,7 +916,7 @@ fn successor_shape_contradiction(
     kernel.convert_theorem(index_theorem, successor_data, successor_case)?;
 
     let separation =
-        forall_elim(kernel, naturals.zero_ne_succ_theorem, predecessor).map_err(|_| {
+        forall_elim(kernel, naturals.proof.zero_ne_succ, predecessor).map_err(|_| {
             NaturalError::WrongForm {
                 expected: "zero-successor separation at the shape predecessor",
             }
@@ -1025,7 +1025,7 @@ fn successor_base_contradiction(
     let successor_equality = project_and_left(kernel, base_case)?;
     let bool_ty = kernel.classifier(successor_is_zero)?;
     let reversed = equality_symmetry(kernel, bool_ty, successor_equality)?;
-    let separation = forall_elim(kernel, naturals.zero_ne_succ_theorem, natural).map_err(|_| {
+    let separation = forall_elim(kernel, naturals.proof.zero_ne_succ, natural).map_err(|_| {
         NaturalError::WrongForm {
             expected: "zero-successor separation at the inverted successor",
         }
@@ -1083,7 +1083,7 @@ fn successor_shape_witness(
     let value_data_theorem =
         kernel.cut(equalities_data, value_data_theorem, positive(equalities))?;
 
-    let injective_at_natural = forall_elim(kernel, naturals.succ_injective_theorem, natural)
+    let injective_at_natural = forall_elim(kernel, naturals.proof.succ_injective, natural)
         .map_err(|_| NaturalError::WrongForm {
             expected: "successor injectivity at the target predecessor",
         })?;
@@ -1269,7 +1269,7 @@ fn prove_graph_functionality(
         kernel.classifier(induction_predicate)?,
         kernel.classifier(predicate)?,
     )?;
-    let induction = forall_elim(kernel, naturals.induction_theorem, predicate).map_err(|_| {
+    let induction = forall_elim(kernel, naturals.proof.induction, predicate).map_err(|_| {
         NaturalError::WrongForm {
             expected: "natural induction at graph functionality",
         }
@@ -1630,10 +1630,10 @@ fn prove_graph_total(
     let expected_predicate_type = kernel.classifier(induction_predicate)?;
     let actual_predicate_type = kernel.classifier(total_predicate)?;
     join_same_syntax(kernel, expected_predicate_type, actual_predicate_type)?;
-    let induction_at_predicate = forall_elim(kernel, naturals.induction_theorem, total_predicate)
+    let induction_at_predicate = forall_elim(kernel, naturals.proof.induction, total_predicate)
         .map_err(|_| NaturalError::WrongForm {
-        expected: "natural induction at graph totality",
-    })?;
+            expected: "natural induction at graph totality",
+        })?;
     let [induction_premises, induction_total] =
         exact_op2(kernel, induction_at_predicate.proposition, Op2::Imp)?;
     let [induction_base, induction_step] = exact_op2(kernel, induction_premises, Op2::And)?;
@@ -1888,7 +1888,7 @@ fn prove_rec_uniqueness(
         kernel.classifier(equality_predicate)?,
     )?;
     let induction =
-        forall_elim(kernel, naturals.induction_theorem, equality_predicate).map_err(|_| {
+        forall_elim(kernel, naturals.proof.induction, equality_predicate).map_err(|_| {
             NaturalError::WrongForm {
                 expected: "natural induction at recursor uniqueness",
             }

@@ -36,7 +36,7 @@ fn naturals_are_carved_from_infinity_with_only_the_two_named_capabilities() {
     assert_eq!(naturals.get("nat.zero_member"), Some(naturals.zero_member));
     let theorem = kernel
         .thm()
-        .get(naturals.zero_member_theorem)
+        .get(naturals.proof.zero_member)
         .expect("zero membership theorem");
     assert!(theorem.lhs.rows().next().is_none());
     let conclusions = theorem.rhs.rows().collect::<Vec<_>>();
@@ -53,12 +53,12 @@ fn naturals_are_carved_from_infinity_with_only_the_two_named_capabilities() {
     );
     assert_eq!(naturals.get("nat.rep_member"), Some(naturals.rep_member));
     for (proposition, theorem) in [
-        (naturals.member_inhabited, naturals.member_inhabited_theorem),
-        (naturals.rep_member, naturals.rep_member_theorem),
-        (naturals.member_succ, naturals.member_succ_theorem),
-        (naturals.induction, naturals.induction_theorem),
-        (naturals.succ_injective, naturals.succ_injective_theorem),
-        (naturals.zero_ne_succ, naturals.zero_ne_succ_theorem),
+        (naturals.member_inhabited, naturals.proof.member_inhabited),
+        (naturals.rep_member, naturals.proof.rep_member),
+        (naturals.member_succ, naturals.proof.member_succ),
+        (naturals.induction, naturals.proof.induction),
+        (naturals.succ_injective, naturals.proof.succ_injective),
+        (naturals.zero_ne_succ, naturals.proof.zero_ne_succ),
     ] {
         let theorem = kernel.thm().get(theorem).expect("derived exact theorem");
         assert!(theorem.lhs.rows().next().is_none());

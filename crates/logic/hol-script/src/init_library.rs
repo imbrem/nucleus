@@ -8,7 +8,7 @@ use covalence_logic_hol::{
 };
 use covalence_logic_hol_derived::{
     NaturalArithmetic, NaturalArithmeticDecl, NaturalArithmeticExt, NaturalError, NaturalExt,
-    NaturalRecSchemas, Naturals,
+    NaturalRecSchemas, Naturals, NaturalsDecl,
 };
 
 use crate::{
@@ -35,6 +35,7 @@ pub struct InitLibrary {
 pub struct InitSlice {
     prefix: CheckedPrefix,
     symbols: BTreeMap<String, Ref>,
+    naturals: NaturalsDecl,
     arithmetic: NaturalArithmeticDecl,
 }
 
@@ -69,6 +70,12 @@ impl InitSlice {
     #[must_use]
     pub const fn arithmetic(&self) -> &NaturalArithmeticDecl {
         &self.arithmetic
+    }
+
+    /// Returns the exact natural-number declaration resident in this slice.
+    #[must_use]
+    pub const fn naturals(&self) -> &NaturalsDecl {
+        &self.naturals
     }
 }
 
@@ -141,6 +148,11 @@ impl InitLibrary {
         let copied = projected
             .copy_objects_lowered_from(init, &self.kernel, &roots)
             .map_err(|source| InitLibraryError::Kernel { source })?;
+        let naturals = self.naturals.declaration.try_map(|source| {
+            copied
+                .get(source)
+                .ok_or(InitLibraryError::UnmappedReference { reference: source })
+        })?;
         let arithmetic = self.arithmetic.declaration.try_map(|source| {
             copied
                 .get(source)
@@ -159,6 +171,7 @@ impl InitLibrary {
         Ok(InitSlice {
             prefix: projected.into_checked_prefix(),
             symbols,
+            naturals,
             arithmetic,
         })
     }
