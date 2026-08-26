@@ -2,7 +2,8 @@
 
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_logic_hol::{
-    Kernel, KernelError, Lit, Ref, Sort, SynFactId, SynRel, Tag, ThmId, TmTag, TyTag, builtin::Op2,
+    ChoiceThm, Kernel, KernelError, Lit, Ref, Sort, SynFactId, SynRel, Tag, ThmId, TmTag, TyTag,
+    builtin::Op2,
 };
 
 use crate::{
@@ -265,6 +266,30 @@ pub struct CoproductUniversal {
     /// Universal proposition `∀candidate. laws → candidate = canonical`.
     pub universal: Ref,
     /// Premise-free theorem of [`universal`](Self::universal).
+    pub theorem: ThmId,
+}
+
+/// Existence and uniqueness of a mediator at one fixed codomain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoproductFixedCodomain {
+    /// Codomain quantified by a later type-universal packaging step.
+    pub codomain: Ref,
+    /// Fresh left map bound by [`maps_universal`](Self::maps_universal).
+    pub left_map: Ref,
+    /// Fresh right map bound by [`maps_universal`](Self::maps_universal).
+    pub right_map: Ref,
+    /// Concrete choice-based mediator and its computation laws.
+    pub laws: CoproductLaws,
+    /// Universal uniqueness implication used in the existential body.
+    pub uniqueness: CoproductUniversal,
+    /// Existential proposition asserting a mediator with laws and uniqueness.
+    pub mediator_exists: Ref,
+    /// Theorem of [`mediator_exists`](Self::mediator_exists), before map
+    /// generalization.
+    pub mediator_exists_theorem: ThmId,
+    /// Proposition `∀f. ∀g. ∃h. laws h ∧ ∀k. laws k → k = h`.
+    pub maps_universal: Ref,
+    /// Premise-free theorem of [`maps_universal`](Self::maps_universal).
     pub theorem: ThmId,
 }
 
@@ -540,54 +565,40 @@ impl Coproduct {
         candidate: CoproductCandidate,
     ) -> Result<CoproductUniversal, CoproductError> {
         let mut staged = kernel.fork();
-        let left_theorem = staged
-            .identity(positive(candidate.left))
-            .context(KernelSnafu)?;
-        let right_theorem = staged
-            .identity(positive(candidate.right))
-            .context(KernelSnafu)?;
-        let candidate_laws = CoproductCandidateLaws {
-            function: candidate.function,
-            left: candidate.left,
-            left_theorem,
-            right: candidate.right,
-            right_theorem,
-        };
-        let uniqueness = prove_unique_mediator_inner(
+        let universal = prove_universal_mediator_inner(
             &mut staged,
             self,
             eliminator,
             left_map,
             right_map,
-            candidate_laws,
+            candidate,
         )?;
-        staged
-            .contract_theorem(uniqueness.theorem)
-            .context(KernelSnafu)?;
-        let laws = staged
-            .op2(Op2::And, candidate.left, candidate.right)
-            .context(KernelSnafu)?;
-        let under_laws = staged
-            .and_left(uniqueness.theorem, positive(laws))
-            .context(KernelSnafu)?;
-        let implication = staged
-            .op2(Op2::Imp, laws, uniqueness.equality)
-            .context(KernelSnafu)?;
-        let implication_theorem = staged
-            .imp_right(under_laws, positive(implication))
-            .context(KernelSnafu)?;
-        let universal = staged
-            .forall_intro(implication_theorem, candidate.function)
-            .context(KernelSnafu)?;
         *kernel = staged;
-        Ok(CoproductUniversal {
-            uniqueness,
-            laws,
-            implication,
-            implication_theorem,
-            universal: universal.universal,
-            theorem: universal.theorem,
-        })
+        Ok(universal)
+    }
+
+    /// Packages mediator existence and uniqueness for one fixed codomain.
+    ///
+    /// Fresh map, mediator, and comparison variables are allocated internally.
+    /// The result has the exact nested shape `∀f. ∀g. ∃h. ...` needed beneath
+    /// the source-level coproduct schema's codomain quantifier. Existential
+    /// introduction uses ordinary Hilbert choice; no frontend construct gains
+    /// proof authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the eliminator belongs to this coproduct and
+    /// every checked computation, uniqueness, beta, choice, conjunction, and
+    /// universal-introduction step succeeds. Rejection is transactional.
+    pub fn prove_fixed_codomain(
+        &self,
+        kernel: &mut Kernel,
+        eliminator: CoproductEliminator,
+    ) -> Result<CoproductFixedCodomain, CoproductError> {
+        let mut staged = kernel.fork();
+        let proof = prove_fixed_codomain_inner(&mut staged, self, eliminator)?;
+        *kernel = staged;
+        Ok(proof)
     }
 }
 
@@ -1160,9 +1171,15 @@ fn prove_unique_mediator_inner(
         .app(eliminator.function, left_map)
         .context(KernelSnafu)?;
     let canonical = kernel.app(canonical_left, right_map).context(KernelSnafu)?;
-    let base = kernel
-        .fresh_name(&coproduct_references(coproduct, eliminator.codomain))
-        .context(KernelSnafu)?;
+    let mut references = coproduct_references(coproduct, eliminator.codomain);
+    references.extend([
+        left_map,
+        right_map,
+        candidate.function,
+        candidate.left,
+        candidate.right,
+    ]);
+    let base = kernel.fresh_name(&references).context(KernelSnafu)?;
     let value = kernel.tm_fv(base, coproduct.ty).context(KernelSnafu)?;
     let candidate_at = kernel.app(candidate.function, value).context(KernelSnafu)?;
     let canonical_at = kernel.app(canonical, value).context(KernelSnafu)?;
@@ -1217,6 +1234,240 @@ fn prove_unique_mediator_inner(
         pointwise_theorem: pointwise.theorem,
         equality: extensional.equality,
         theorem: extensional.theorem,
+    })
+}
+
+fn prove_fixed_codomain_inner(
+    kernel: &mut Kernel,
+    coproduct: &Coproduct,
+    eliminator: CoproductEliminator,
+) -> Result<CoproductFixedCodomain, CoproductError> {
+    let base = kernel
+        .fresh_name(&coproduct_references(coproduct, eliminator.codomain))
+        .context(KernelSnafu)?;
+    let mut offset = 0;
+    let left_map = variable(kernel, base, &mut offset, eliminator.left_map_ty)?;
+    let right_map = variable(kernel, base, &mut offset, eliminator.right_map_ty)?;
+    let mediator = variable(kernel, base, &mut offset, eliminator.value_map_ty)?;
+    let comparison = variable(kernel, base, &mut offset, eliminator.value_map_ty)?;
+    let mediator_candidate = build_candidate_law_terms(
+        kernel,
+        coproduct,
+        left_map,
+        right_map,
+        mediator,
+        base,
+        &mut offset,
+    )?;
+    let comparison_candidate = build_candidate_law_terms(
+        kernel,
+        coproduct,
+        left_map,
+        right_map,
+        comparison,
+        base,
+        &mut offset,
+    )?;
+
+    let laws = prove_case_laws_inner(kernel, coproduct, eliminator, left_map, right_map)?;
+    let uniqueness = prove_universal_mediator_inner(
+        kernel,
+        coproduct,
+        eliminator,
+        left_map,
+        right_map,
+        comparison_candidate,
+    )?;
+
+    let mediator_exists = introduce_mediator_exists(
+        kernel,
+        coproduct,
+        mediator,
+        comparison,
+        mediator_candidate,
+        laws,
+        uniqueness,
+    )?;
+    let over_right = kernel
+        .forall_intro(mediator_exists.theorem, right_map)
+        .context(KernelSnafu)?;
+    let over_maps = kernel
+        .forall_intro(over_right.theorem, left_map)
+        .context(KernelSnafu)?;
+    Ok(CoproductFixedCodomain {
+        codomain: eliminator.codomain,
+        left_map,
+        right_map,
+        laws,
+        uniqueness,
+        mediator_exists: mediator_exists.proposition,
+        mediator_exists_theorem: mediator_exists.theorem,
+        maps_universal: over_maps.universal,
+        theorem: over_maps.theorem,
+    })
+}
+
+fn prove_universal_mediator_inner(
+    kernel: &mut Kernel,
+    coproduct: &Coproduct,
+    eliminator: CoproductEliminator,
+    left_map: Ref,
+    right_map: Ref,
+    candidate: CoproductCandidate,
+) -> Result<CoproductUniversal, CoproductError> {
+    let left_theorem = kernel
+        .identity(positive(candidate.left))
+        .context(KernelSnafu)?;
+    let right_theorem = kernel
+        .identity(positive(candidate.right))
+        .context(KernelSnafu)?;
+    let uniqueness = prove_unique_mediator_inner(
+        kernel,
+        coproduct,
+        eliminator,
+        left_map,
+        right_map,
+        CoproductCandidateLaws {
+            function: candidate.function,
+            left: candidate.left,
+            left_theorem,
+            right: candidate.right,
+            right_theorem,
+        },
+    )?;
+    kernel
+        .contract_theorem(uniqueness.theorem)
+        .context(KernelSnafu)?;
+    let laws = kernel
+        .op2(Op2::And, candidate.left, candidate.right)
+        .context(KernelSnafu)?;
+    let under_laws = kernel
+        .and_left(uniqueness.theorem, positive(laws))
+        .context(KernelSnafu)?;
+    let implication = kernel
+        .op2(Op2::Imp, laws, uniqueness.equality)
+        .context(KernelSnafu)?;
+    let implication_theorem = kernel
+        .imp_right(under_laws, positive(implication))
+        .context(KernelSnafu)?;
+    let universal = kernel
+        .forall_intro(implication_theorem, candidate.function)
+        .context(KernelSnafu)?;
+    Ok(CoproductUniversal {
+        uniqueness,
+        laws,
+        implication,
+        implication_theorem,
+        universal: universal.universal,
+        theorem: universal.theorem,
+    })
+}
+
+fn introduce_mediator_exists(
+    kernel: &mut Kernel,
+    coproduct: &Coproduct,
+    mediator: Ref,
+    comparison: Ref,
+    mediator_candidate: CoproductCandidate,
+    laws: CoproductLaws,
+    uniqueness: CoproductUniversal,
+) -> Result<ChoiceThm, CoproductError> {
+    let mediator_laws = kernel
+        .op2(Op2::And, mediator_candidate.left, mediator_candidate.right)
+        .context(KernelSnafu)?;
+    let comparison_equality = kernel
+        .eq(coproduct.bool_ty, comparison, mediator)
+        .context(KernelSnafu)?;
+    let comparison_implication = kernel
+        .op2(Op2::Imp, uniqueness.laws, comparison_equality)
+        .context(KernelSnafu)?;
+    let comparison_universal = kernel
+        .forall_tm(coproduct.bool_ty, comparison, comparison_implication)
+        .context(KernelSnafu)?;
+    let mediator_property = kernel
+        .op2(Op2::And, mediator_laws, comparison_universal)
+        .context(KernelSnafu)?;
+    let mediator_predicate = kernel
+        .lam(mediator, mediator_property)
+        .context(KernelSnafu)?;
+    let canonical = uniqueness.uniqueness.canonical;
+    let at_canonical = kernel
+        .app(mediator_predicate, canonical)
+        .context(KernelSnafu)?;
+    let (property_application, reduced_property, property_beta) =
+        beta_apply(kernel, mediator_predicate, canonical)?;
+    let canonical_property = kernel
+        .op2(Op2::And, laws.conjunction, uniqueness.universal)
+        .context(KernelSnafu)?;
+    let property_theorem = kernel
+        .and_right(
+            laws.theorem,
+            uniqueness.theorem,
+            positive(canonical_property),
+        )
+        .context(KernelSnafu)?;
+    let same_property =
+        join_alpha_equivalent(kernel, reduced_property, canonical_property).context(SyntaxSnafu)?;
+    let same_property = kernel
+        .syn_refine(None, same_property, SynRel::Conv)
+        .context(KernelSnafu)?;
+    let at_application =
+        join_same_syntax(kernel, at_canonical, property_application).context(SyntaxSnafu)?;
+    let at_application = kernel
+        .syn_refine(None, at_application, SynRel::Conv)
+        .context(KernelSnafu)?;
+    let application_to_reduced = kernel
+        .syn_trans(None, at_application, property_beta)
+        .context(KernelSnafu)?;
+    let application_to_property = kernel
+        .syn_trans(None, application_to_reduced, same_property)
+        .context(KernelSnafu)?;
+    kernel
+        .union_syn_fact(application_to_property)
+        .context(KernelSnafu)?;
+    kernel
+        .convert_conclusions(property_theorem, canonical_property, at_canonical)
+        .context(KernelSnafu)?;
+    kernel.choice_intro(property_theorem).context(KernelSnafu)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_candidate_law_terms(
+    kernel: &mut Kernel,
+    coproduct: &Coproduct,
+    left_map: Ref,
+    right_map: Ref,
+    candidate: Ref,
+    base: u64,
+    offset: &mut u64,
+) -> Result<CoproductCandidate, CoproductError> {
+    let left_value = variable(kernel, base, offset, coproduct.left)?;
+    let injected_left = kernel.app(coproduct.inl, left_value).context(KernelSnafu)?;
+    let candidate_left = kernel.app(candidate, injected_left).context(KernelSnafu)?;
+    let expected_left = kernel.app(left_map, left_value).context(KernelSnafu)?;
+    let left = kernel
+        .eq(coproduct.bool_ty, candidate_left, expected_left)
+        .context(KernelSnafu)?;
+    let left = kernel
+        .forall_tm(coproduct.bool_ty, left_value, left)
+        .context(KernelSnafu)?;
+
+    let right_value = variable(kernel, base, offset, coproduct.right)?;
+    let injected_right = kernel
+        .app(coproduct.inr, right_value)
+        .context(KernelSnafu)?;
+    let candidate_right = kernel.app(candidate, injected_right).context(KernelSnafu)?;
+    let expected_right = kernel.app(right_map, right_value).context(KernelSnafu)?;
+    let right = kernel
+        .eq(coproduct.bool_ty, candidate_right, expected_right)
+        .context(KernelSnafu)?;
+    let right = kernel
+        .forall_tm(coproduct.bool_ty, right_value, right)
+        .context(KernelSnafu)?;
+    Ok(CoproductCandidate {
+        function: candidate,
+        left,
+        right,
     })
 }
 

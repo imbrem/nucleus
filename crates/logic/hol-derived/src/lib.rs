@@ -20,8 +20,8 @@ mod syntax;
 pub use coproduct::{
     Coproduct, CoproductBranch, CoproductCandidate, CoproductCandidateLaws, CoproductCases,
     CoproductComputation, CoproductEliminator, CoproductError, CoproductExhaustiveness,
-    CoproductExt, CoproductLaws, CoproductOpenedCases, CoproductSchema, CoproductUniqueness,
-    CoproductUniversal,
+    CoproductExt, CoproductFixedCodomain, CoproductLaws, CoproductOpenedCases, CoproductSchema,
+    CoproductUniqueness, CoproductUniversal,
 };
 pub use equality::{
     EqualityError, ProvedEquality, equality_symmetry, equality_transitivity,

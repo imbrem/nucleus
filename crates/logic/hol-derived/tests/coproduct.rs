@@ -375,3 +375,38 @@ fn every_mediator_with_the_computation_laws_is_extensionally_unique() {
         ]
     );
 }
+
+#[test]
+fn fixed_codomain_package_quantifies_maps_and_selects_a_unique_mediator() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let right_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+    let codomain = kernel.ty_arr(right_ty, bool_ty).unwrap();
+    kernel.add_axiom(AX_SUB).unwrap();
+    let coproduct = kernel.coproduct(bool_ty, bool_ty, right_ty).unwrap();
+    let eliminator = coproduct.eliminator(&mut kernel, codomain).unwrap();
+
+    let fixed = coproduct
+        .prove_fixed_codomain(&mut kernel, eliminator)
+        .unwrap();
+
+    let theorem = kernel.thm().get(fixed.theorem).unwrap();
+    assert_eq!(theorem.lhs.rows().count(), 0);
+    assert_eq!(
+        theorem.rhs.rows().collect::<Vec<_>>(),
+        vec![
+            &[covalence_logic_hol::Lit::positive(
+                fixed.maps_universal.get()
+            )][..]
+        ]
+    );
+    assert_eq!(
+        kernel.classifier(fixed.left_map).unwrap(),
+        eliminator.left_map_ty
+    );
+    assert_eq!(
+        kernel.classifier(fixed.right_map).unwrap(),
+        eliminator.right_map_ty
+    );
+}
