@@ -18,10 +18,10 @@ buck-test-fixtures = []
 covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-parse = { path = "../../lib/parse" }
 covalence-logic-hol = { path = "../hol" }
+covalence-logic-hol-derived = { path = "../hol-derived" }
 
 [dev-dependencies]
 covalence-lib-json = { path = "../../lib/json" }
-covalence-logic-hol-derived = { path = "../hol-derived" }
 
 [lints]
 workspace = true

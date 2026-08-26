@@ -6,8 +6,8 @@ use covalence_logic_hol_derived::{
     NaturalArithmeticExt, NaturalExt, NaturalRecExt, NaturalRecSchemas, join_same_syntax,
 };
 use covalence_logic_hol_script::{
-    INIT_SOURCE, LogicEncoding, TheoryError, TheoryOptions, compile_init, compile_theory,
-    compile_theory_with_init,
+    INIT_SOURCE, LogicEncoding, TheoryError, TheoryOptions, compile_init, compile_init_library,
+    compile_theory, compile_theory_with_init,
 };
 
 #[cfg(not(feature = "buck-test-fixtures"))]
@@ -399,6 +399,51 @@ fn compiled_recursion_schemata_drive_the_complete_checked_package() {
     }
 
     check_primitive_arithmetic(&mut kernel, &naturals, schemas);
+}
+
+#[test]
+fn init_library_workspace_assembles_reproducibly_outside_the_kernel() {
+    let init = logical_init();
+    let first = compile_init_library(&init).expect("first init library");
+    let second = compile_init_library(&init).expect("second init library");
+
+    assert_eq!(first.kernel().arena(), second.kernel().arena());
+    assert_eq!(
+        first.symbols().collect::<Vec<_>>(),
+        second.symbols().collect::<Vec<_>>()
+    );
+    assert_eq!(first.get("star"), init.get("star"));
+    assert_eq!(first.get("bool"), init.get("bool"));
+    assert_eq!(first.get("nat"), Some(first.naturals().ty));
+    assert_eq!(first.get("nat.add"), Some(first.arithmetic().add));
+    assert_eq!(first.get("nat.mul"), Some(first.arithmetic().mul));
+    assert_eq!(
+        first.recursion_schemas().graph,
+        first.get("NatRecGraph").expect("graph schema")
+    );
+    assert_eq!(
+        first.kernel().arena().axioms().collect::<Vec<_>>(),
+        [AX_INF, AX_SUB]
+    );
+
+    check_exact_theorem(
+        first.kernel(),
+        first.arithmetic().one_plus_one,
+        first.arithmetic().one_plus_one_theorem,
+    );
+}
+
+fn check_exact_theorem(
+    kernel: &Kernel,
+    proposition: covalence_logic_hol::Ref,
+    theorem: covalence_logic_hol::ThmId,
+) {
+    let theorem = kernel.thm().get(theorem).expect("theorem row");
+    assert!(theorem.lhs.rows().next().is_none());
+    assert_eq!(
+        theorem.rhs.rows().collect::<Vec<_>>(),
+        vec![&[covalence_logic_hol::Lit::positive(proposition.get())][..]]
+    );
 }
 
 fn check_primitive_arithmetic(
