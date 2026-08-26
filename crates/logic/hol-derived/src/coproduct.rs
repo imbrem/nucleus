@@ -2,8 +2,8 @@
 
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_logic_hol::{
-    ChoiceThm, Kernel, KernelError, Lit, Ref, Sort, SynFactId, SynRel, Tag, ThmId, TmTag, TyTag,
-    builtin::Op2,
+    ChoiceThm, Kernel, KernelError, Lit, Ref, Sort, SynFactId, SynRel, Tag, ThmId, TmTag,
+    TyForallThm, TyTag, builtin::Op2,
 };
 
 use crate::{
@@ -290,6 +290,21 @@ pub struct CoproductFixedCodomain {
     /// Proposition `∀f. ∀g. ∃h. laws h ∧ ∀k. laws k → k = h`.
     pub maps_universal: Ref,
     /// Premise-free theorem of [`maps_universal`](Self::maps_universal).
+    pub theorem: ThmId,
+}
+
+/// Exact proof of one specialized source-level coproduct schema.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoproductSchemaProof {
+    /// Schema codomain variable generalized by [`codomain`](Self::codomain).
+    pub codomain_variable: Ref,
+    /// Fixed-codomain existence-and-uniqueness package.
+    pub fixed: CoproductFixedCodomain,
+    /// Type-universal closure of the fixed-codomain package.
+    pub codomain: TyForallThm,
+    /// Exact specialized schema proposition.
+    pub proposition: Ref,
+    /// Premise-free theorem of [`proposition`](Self::proposition).
     pub theorem: ThmId,
 }
 
@@ -2393,4 +2408,156 @@ impl CoproductSchema {
         *kernel = staged;
         Ok(predicate)
     }
+
+    /// Proves this schema for one checked userspace coproduct package.
+    ///
+    /// The surface-language schema is treated only as checked syntax. This
+    /// derivation constructs the universal property independently, then uses
+    /// checked substitution and conversion to package the concrete injections
+    /// into the schema's two outer existentials.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the schema specializes to this exact coproduct,
+    /// has the expected two-existential shape, and every userspace derivation
+    /// and checked kernel conversion succeeds. Rejection is transactional.
+    pub fn prove(
+        self,
+        kernel: &mut Kernel,
+        coproduct: &Coproduct,
+    ) -> Result<CoproductSchemaProof, CoproductError> {
+        let mut staged = kernel.fork();
+        let proof = prove_schema_inner(&mut staged, self, coproduct)?;
+        *kernel = staged;
+        Ok(proof)
+    }
+}
+
+fn prove_schema_inner(
+    kernel: &mut Kernel,
+    schema: CoproductSchema,
+    coproduct: &Coproduct,
+) -> Result<CoproductSchemaProof, CoproductError> {
+    let proposition = schema.specialize(kernel, coproduct.left, coproduct.right, coproduct.ty)?;
+    let (left_binder, left_body) = existential_template(kernel, proposition)?;
+    join_same_syntax(
+        kernel,
+        kernel.classifier(left_binder).context(KernelSnafu)?,
+        kernel.classifier(coproduct.inl).context(KernelSnafu)?,
+    )
+    .context(SyntaxSnafu)?;
+    let inner = substitute(kernel, left_binder, coproduct.inl, left_body)
+        .context(SubstitutionSnafu)?
+        .output;
+    let (right_binder, right_body) = existential_template(kernel, inner)?;
+    join_same_syntax(
+        kernel,
+        kernel.classifier(right_binder).context(KernelSnafu)?,
+        kernel.classifier(coproduct.inr).context(KernelSnafu)?,
+    )
+    .context(SyntaxSnafu)?;
+    let codomain_target = substitute(kernel, right_binder, coproduct.inr, right_body)
+        .context(SubstitutionSnafu)?
+        .output;
+    if kernel.arena().tag(codomain_target) != Some(Tag::Tm(TmTag::TyForall)) {
+        return Err(CoproductError::WrongForm {
+            expected: "a type-universal coproduct property",
+        });
+    }
+    let name = kernel
+        .arena()
+        .name(codomain_target)
+        .ok_or(CoproductError::WrongForm {
+            expected: "a named type-universal coproduct property",
+        })?;
+    let [codomain_body] = exact_children(kernel, codomain_target, Tag::Tm(TmTag::TyForall))?;
+    let codomain_variable = find_named_type(kernel, codomain_body, name)?;
+    let eliminator = build_eliminator(kernel, coproduct, codomain_variable)?;
+    let fixed = prove_fixed_codomain_inner(kernel, coproduct, eliminator)?;
+    let codomain = kernel
+        .ty_forall_intro(fixed.theorem, name)
+        .context(KernelSnafu)?;
+    let right = introduce_exists(
+        kernel,
+        codomain.theorem,
+        right_binder,
+        right_body,
+        coproduct.inr,
+    )
+    .context(ExistsSnafu)?;
+    retarget_conclusion(kernel, right.theorem, right.proposition, inner)?;
+    let left = introduce_exists(kernel, right.theorem, left_binder, left_body, coproduct.inl)
+        .context(ExistsSnafu)?;
+    retarget_conclusion(kernel, left.theorem, left.proposition, proposition)?;
+
+    Ok(CoproductSchemaProof {
+        codomain_variable,
+        fixed,
+        codomain,
+        proposition,
+        theorem: left.theorem,
+    })
+}
+
+fn find_named_type(kernel: &Kernel, root: Ref, name: u64) -> Result<Ref, CoproductError> {
+    let mut stack = vec![root];
+    while let Some(reference) = stack.pop() {
+        let tag = kernel.arena().tag(reference);
+        if tag == Some(Tag::Ty(TyTag::Fv)) && kernel.arena().name(reference) == Some(name) {
+            return Ok(reference);
+        }
+        let children = kernel
+            .arena()
+            .children(reference)
+            .ok_or(CoproductError::WrongForm {
+                expected: "resident coproduct schema syntax",
+            })?
+            .collect::<Vec<_>>();
+        if matches!(
+            tag,
+            Some(Tag::Ty(TyTag::Model) | Tag::Tm(TmTag::TyExists | TmTag::TyForall))
+        ) && kernel.arena().name(reference) == Some(name)
+        {
+            continue;
+        }
+        if tag == Some(Tag::Ty(TyTag::Lam))
+            && children.first().is_some_and(|binder| {
+                kernel.arena().tag(*binder) == Some(Tag::Ty(TyTag::Fv))
+                    && kernel.arena().name(*binder) == Some(name)
+            })
+        {
+            continue;
+        }
+        stack.extend(children);
+    }
+    Err(CoproductError::WrongForm {
+        expected: "a used type-universal coproduct binder",
+    })
+}
+
+fn existential_template(kernel: &Kernel, proposition: Ref) -> Result<(Ref, Ref), CoproductError> {
+    let [predicate, witness] = exact_children(kernel, proposition, Tag::Tm(TmTag::App))?;
+    if kernel.arena().tag(witness) != Some(Tag::Tm(TmTag::Eps)) {
+        return Err(CoproductError::WrongForm {
+            expected: "a Hilbert-choice existential proposition",
+        });
+    }
+    let [binder, body] = exact_children(kernel, predicate, Tag::Tm(TmTag::Lam))?;
+    Ok((binder, body))
+}
+
+fn retarget_conclusion(
+    kernel: &mut Kernel,
+    theorem: ThmId,
+    source: Ref,
+    target: Ref,
+) -> Result<(), CoproductError> {
+    let fact = join_alpha_equivalent(kernel, source, target).context(SyntaxSnafu)?;
+    let fact = kernel
+        .syn_refine(None, fact, SynRel::Conv)
+        .context(KernelSnafu)?;
+    kernel.union_syn_fact(fact).context(KernelSnafu)?;
+    kernel
+        .convert_conclusions(theorem, source, target)
+        .context(KernelSnafu)
 }

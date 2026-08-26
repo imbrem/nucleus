@@ -383,6 +383,22 @@ fn derive_implicit_alpha(
         bound_type(kernel, left_body, left_name)?.unwrap_or(kernel.ty_fv(left_name, left_star)?);
     let right_binder = bound_type(kernel, right_body, right_name)?
         .unwrap_or(kernel.ty_fv(right_name, right_star)?);
+    if left_name == right_name {
+        let binder = join_same_syntax(kernel, left_binder, right_binder)?;
+        kernel.union_syn_fact(binder)?;
+        let body = derive_alpha_pair(kernel, left_body, right_body, memo)?;
+        kernel.union_syn_fact(body)?;
+        return Ok(kernel.syn_implicit_binder_congr(
+            None,
+            SynRel::Alpha,
+            None,
+            None,
+            left,
+            right,
+            left_binder,
+            body,
+        )?);
+    }
     let fresh_name = kernel.fresh_name(&[left, right])?;
     let fresh_binder = kernel.ty_fv(fresh_name, left_star)?;
     let left_substitution = substitute(kernel, left_binder, fresh_binder, left_body)

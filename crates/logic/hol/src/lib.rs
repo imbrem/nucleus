@@ -18,7 +18,7 @@ pub use kernel::{
     AX_INF, AX_SUB, AbsThm, ApTerm, ApThm, BINDER_COUNT, Binder, CheckedArena, CheckedPrefix,
     ChoiceThm, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, CopyMap, Dnf, DnfId,
     ForallThm, INFINITY_BINDER_COUNT, InfinityAxiom, InfinityBinder, Kernel, KernelError, Lit,
-    LitError, LitVec, LogicalAlias, ReflThm, Refutation, SubtypeAxiom, ThmId, ThmRef,
+    LitError, LitVec, LogicalAlias, ReflThm, Refutation, SubtypeAxiom, ThmId, ThmRef, TyForallThm,
 };
 pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};

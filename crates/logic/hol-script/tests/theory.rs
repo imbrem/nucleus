@@ -3,8 +3,8 @@
 use covalence_lib_json::serde_json;
 use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Sort, Tag, TmTag, TyTag, init};
 use covalence_logic_hol_derived::{
-    NaturalArithmeticExt, NaturalExt, NaturalRecExt, NaturalRecSchemas, join_alpha_equivalent,
-    join_same_syntax,
+    CoproductExt, NaturalArithmeticExt, NaturalExt, NaturalRecExt, NaturalRecSchemas,
+    join_alpha_equivalent, join_same_syntax,
 };
 use covalence_logic_hol_script::{
     INIT_SOURCE, LogicEncoding, TheoryError, TheoryOptions, compile_init, compile_init_library,
@@ -122,6 +122,46 @@ fn typed_coproduct_schema_specializes_without_language_authority() {
             .specialize(&mut kernel, truth, right, candidate)
             .is_err()
     );
+    assert_eq!(*kernel.arena(), before);
+}
+
+#[test]
+fn userspace_derivation_proves_the_independently_compiled_coproduct_schema() {
+    let compiled = compile_theory(COPRODUCT).expect("coproduct schema");
+    let schema = covalence_logic_hol_derived::CoproductSchema {
+        left: compiled.get("IsCoprod/'a").unwrap(),
+        right: compiled.get("IsCoprod/'b").unwrap(),
+        coproduct: compiled.get("IsCoprod/'t").unwrap(),
+        predicate: compiled.get("IsCoprod").unwrap(),
+    };
+    let bool_ty = compiled.bool_type();
+    let (mut kernel, _) = compiled.into_parts();
+    let right = kernel.ty_arr(bool_ty, bool_ty).expect("right summand");
+    kernel.add_axiom(AX_SUB).expect("subtype capability");
+    let coproduct = kernel
+        .coproduct(bool_ty, bool_ty, right)
+        .expect("checked coproduct package");
+
+    let proof = schema
+        .prove(&mut kernel, &coproduct)
+        .expect("userspace schema proof");
+
+    let theorem = kernel.thm().get(proof.theorem).expect("resident theorem");
+    assert_eq!(theorem.lhs.rows().count(), 0);
+    assert_eq!(
+        theorem.rhs.rows().collect::<Vec<_>>(),
+        [[covalence_logic_hol::Lit::positive(proof.proposition.get())].as_slice()]
+    );
+    assert_eq!(kernel.category(proof.proposition).unwrap(), Sort::Tm);
+    let classifier = kernel.classifier(proof.proposition).unwrap();
+    assert_eq!(kernel.arena().tag(classifier), Some(Tag::Ty(TyTag::Bool)));
+
+    let malformed = covalence_logic_hol_derived::CoproductSchema {
+        predicate: kernel.bool(bool_ty, true).expect("checked Boolean"),
+        ..schema
+    };
+    let before = kernel.arena().clone();
+    assert!(malformed.prove(&mut kernel, &coproduct).is_err());
     assert_eq!(*kernel.arena(), before);
 }
 

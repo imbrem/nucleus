@@ -77,6 +77,15 @@ pub struct ForallThm {
     pub theorem: ThmId,
 }
 
+/// The exact theorem and syntax produced by premise-free type generalization.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TyForallThm {
+    /// Type-universal proposition `∀type name. predicate`.
+    pub universal: Ref,
+    /// Premise-free theorem concluding [`universal`](Self::universal).
+    pub theorem: ThmId,
+}
+
 /// The exact theorem and syntax produced by Hilbert-choice introduction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ChoiceThm {
@@ -711,6 +720,41 @@ impl Kernel {
             premises,
             Dnf::new(vec![unit_row(positive(universal))]),
         ))
+    }
+
+    /// Universally generalizes a premise-free theorem over one named type.
+    ///
+    /// This deliberately narrow rule accepts only `[] ⊢ predicate`. The source
+    /// derivation is therefore uniform in the free type named by `name`, and
+    /// the result is exactly `[] ⊢ ty.forall name predicate`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `theorem` exists and has no premises and exactly
+    /// one positive Boolean conclusion. Rejection is transactional.
+    pub fn ty_forall_intro(
+        &mut self,
+        theorem: ThmId,
+        name: u64,
+    ) -> Result<TyForallThm, KernelError> {
+        let source = self.require_thm(theorem)?;
+        if source.lhs.rows().next().is_some() {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "type universal introduction",
+            });
+        }
+        let predicate = sole_positive_conclusion(source)?;
+        let mut staged = Self {
+            arena: self.arena.clone(),
+            init_prefix: self.init_prefix,
+        };
+        let universal = staged.ty_forall(name, predicate)?;
+        let theorem = staged.push_theorem(Thm::new(
+            Cnf::default(),
+            Dnf::new(vec![unit_row(positive(universal))]),
+        ))?;
+        *self = staged;
+        Ok(TyForallThm { universal, theorem })
     }
 
     /// Moves one indexed CNF row to the right with pointwise-negated literals.
@@ -1912,6 +1956,55 @@ mod tests {
 
         let before = kernel.arena().clone();
         assert!(kernel.forall_intro(exact, bool_ty).is_err());
+        assert_eq!(*kernel.arena(), before);
+    }
+
+    #[test]
+    fn type_forall_intro_accepts_only_one_premise_free_assertion() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let name = 44;
+        let parameter = kernel.ty_fv(name, star).unwrap();
+        let value = kernel.tm_fv(45, parameter).unwrap();
+        let proved = kernel.refl(bool_ty, value).unwrap();
+
+        let generalized = kernel.ty_forall_intro(proved.theorem, name).unwrap();
+        assert_eq!(
+            unit_conclusions(kernel.require_thm(generalized.theorem).unwrap()),
+            [positive(generalized.universal)]
+        );
+        assert!(
+            kernel
+                .require_thm(generalized.theorem)
+                .unwrap()
+                .lhs
+                .rows()
+                .next()
+                .is_none()
+        );
+        assert!(matches!(
+            kernel
+                .row::<std::convert::Infallible>(generalized.universal)
+                .unwrap()
+                .expr(),
+            Node::TyForall {
+                name: 44,
+                predicate
+            } if *predicate == proved.equality
+        ));
+
+        let contextual = kernel.identity(positive(proved.equality)).unwrap();
+        let before = kernel.arena().clone();
+        assert!(kernel.ty_forall_intro(contextual, name).is_err());
+        assert_eq!(*kernel.arena(), before);
+
+        let nonexact = kernel.copy_theorem(proved.theorem).unwrap();
+        kernel
+            .weaken(nonexact, &[], &[positive(generalized.universal)])
+            .unwrap();
+        let before = kernel.arena().clone();
+        assert!(kernel.ty_forall_intro(nonexact, name).is_err());
         assert_eq!(*kernel.arena(), before);
     }
 
