@@ -18,6 +18,15 @@ pub struct OpenedExists {
     pub beta: SynFactId,
 }
 
+/// Exact declaration targets for opening one encoded term existential.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OpenedExistsDecl {
+    /// The predeclared Hilbert-choice witness.
+    pub witness: Ref,
+    /// The predeclared beta-reduced body.
+    pub body: Ref,
+}
+
 /// A failure while opening an encoded term existential.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
@@ -67,6 +76,34 @@ impl From<ModelError> for ExistsError {
 /// `app (lam binder body) witness` shape emitted by `Kernel::exists_tm`, and
 /// unless substitution, beta conversion, and conversion union all succeed.
 pub fn open_exists(kernel: &mut Kernel, source: Ref) -> Result<OpenedExists, ExistsError> {
+    open_exists_impl(kernel, source, None)
+}
+
+/// Opens one encoded existential at exact predeclared witness and body rows.
+///
+/// The declaration has no authority. This userspace helper checks that the
+/// witness is the one physically encoded by `source`, recursively derives the
+/// ordinary substitution certificate, relates its output to the declared
+/// body, and invokes the unchanged kernel beta rule.
+///
+/// # Errors
+///
+/// Returns an error unless `source` has the standard encoding, its witness is
+/// exact, the declared body is alpha-equivalent to checked substitution, and
+/// the kernel accepts every certificate step.
+pub fn open_exists_at(
+    kernel: &mut Kernel,
+    source: Ref,
+    declaration: OpenedExistsDecl,
+) -> Result<OpenedExists, ExistsError> {
+    open_exists_impl(kernel, source, Some(declaration))
+}
+
+fn open_exists_impl(
+    kernel: &mut Kernel,
+    source: Ref,
+    declaration: Option<OpenedExistsDecl>,
+) -> Result<OpenedExists, ExistsError> {
     if kernel.arena().tag(source) != Some(Tag::Tm(TmTag::App)) {
         return Err(ExistsError::WrongForm { reference: source });
     }
@@ -93,14 +130,27 @@ pub fn open_exists(kernel: &mut Kernel, source: Ref) -> Result<OpenedExists, Exi
     let [binder, input_body] = lambda.as_slice() else {
         return Err(ExistsError::WrongForm { reference: source });
     };
+    if declaration.is_some_and(|declaration| declaration.witness != *witness) {
+        return Err(ExistsError::WrongForm { reference: source });
+    }
 
     let substitution = substitute(kernel, *binder, *witness, *input_body)?;
-    let beta = kernel.tm_beta_fact(None, source, substitution.fact)?;
+    let (body, substitution_fact) = if let Some(declaration) = declaration {
+        let target = crate::join_alpha_equivalent(kernel, substitution.output, declaration.body)
+            .map_err(ModelError::from)?;
+        (
+            declaration.body,
+            kernel.syn_trans(None, substitution.fact, target)?,
+        )
+    } else {
+        (substitution.output, substitution.fact)
+    };
+    let beta = kernel.tm_beta_fact(None, source, substitution_fact)?;
     kernel.union_syn_fact(beta)?;
     Ok(OpenedExists {
         witness: *witness,
-        body: substitution.output,
-        substitution: substitution.fact,
+        body,
+        substitution: substitution_fact,
         beta,
     })
 }

@@ -235,8 +235,13 @@ fn bound_type(kernel: &Kernel, root: Ref, name: u64) -> Result<Option<Ref>, Synt
         if kernel.arena().tag(reference) == Some(Tag::Ty(TyTag::Fv))
             && kernel.arena().name(reference) == Some(name)
         {
-            if found.is_some_and(|other| other != reference) {
-                return Err(SyntaxError::Different);
+            if let Some(other) = found
+                && other != reference
+            {
+                // Constructors are not hash-consed. Repeated rows for one
+                // variable syntax are unambiguous; only a genuinely different
+                // variable sharing the name must be rejected.
+                require_same_syntax(kernel, other, reference)?;
             }
             found = Some(reference);
         }
@@ -269,7 +274,7 @@ struct Freshen<'a> {
     binders: Vec<Ref>,
     binder_cursor: usize,
     reuse_binders: bool,
-    named_binders: BTreeMap<(Sort, u64), Ref>,
+    mapped_binders: BTreeMap<Ref, Ref>,
     memo: BTreeMap<Ref, (Ref, SynFactId)>,
 }
 
@@ -281,7 +286,7 @@ impl<'a> Freshen<'a> {
             binders: Vec::new(),
             binder_cursor: 0,
             reuse_binders: false,
-            named_binders: BTreeMap::new(),
+            mapped_binders: BTreeMap::new(),
             memo: BTreeMap::new(),
         }
     }
@@ -293,7 +298,7 @@ impl<'a> Freshen<'a> {
             binders,
             binder_cursor: 0,
             reuse_binders: true,
-            named_binders: BTreeMap::new(),
+            mapped_binders: BTreeMap::new(),
             memo: BTreeMap::new(),
         }
     }
@@ -324,13 +329,12 @@ impl<'a> Freshen<'a> {
         Ok(name)
     }
 
-    fn binder(
-        &mut self,
-        sort: Sort,
-        source_name: u64,
-        classifier: Ref,
-    ) -> Result<Ref, SyntaxError> {
-        if let Some(&binder) = self.named_binders.get(&(sort, source_name)) {
+    fn binder(&mut self, sort: Sort, source: Ref, classifier: Ref) -> Result<Ref, SyntaxError> {
+        // Binder annotations participate in syntax. Normalize them through
+        // this same traversal before allocating or reusing a binder.
+        let (classifier, classifier_fact) = self.derive(classifier)?;
+        self.kernel.union_syn_fact(classifier_fact)?;
+        if let Some(&binder) = self.mapped_binders.get(&source) {
             let fact = join_same_syntax(self.kernel, self.kernel.classifier(binder)?, classifier)?;
             self.kernel.union_syn_fact(fact)?;
             return Ok(binder);
@@ -347,7 +351,7 @@ impl<'a> Freshen<'a> {
             }
             let fact = join_same_syntax(self.kernel, self.kernel.classifier(binder)?, classifier)?;
             self.kernel.union_syn_fact(fact)?;
-            self.named_binders.insert((sort, source_name), binder);
+            self.mapped_binders.insert(source, binder);
             return Ok(binder);
         }
         let name = self.take_name()?;
@@ -358,21 +362,16 @@ impl<'a> Freshen<'a> {
         };
         self.binders.push(binder);
         self.binder_cursor += 1;
-        self.named_binders.insert((sort, source_name), binder);
+        self.mapped_binders.insert(source, binder);
         Ok(binder)
     }
 
     fn explicit(&mut self, input: Ref, tag: Tag) -> Result<(Ref, SynFactId), SyntaxError> {
         let [old_binder, old_body] = pair(self.kernel, input)?;
         let classifier = self.kernel.classifier(old_binder)?;
-        let old_name = self
-            .kernel
-            .arena()
-            .name(old_binder)
-            .ok_or(SyntaxError::Different)?;
         let new_binder = match tag {
-            Tag::Tm(TmTag::Lam) => self.binder(Sort::Tm, old_name, classifier)?,
-            Tag::Ty(TyTag::Lam) => self.binder(Sort::Ty, old_name, classifier)?,
+            Tag::Tm(TmTag::Lam) => self.binder(Sort::Tm, old_binder, classifier)?,
+            Tag::Ty(TyTag::Lam) => self.binder(Sort::Ty, old_binder, classifier)?,
             _ => return Err(SyntaxError::Different),
         };
         let binder_refl = self.kernel.syn_refl(None, SynRel::Syn, new_binder)?;
@@ -383,8 +382,15 @@ impl<'a> Freshen<'a> {
             .kernel
             .syn_refine(None, substitution.fact, SynRel::Alpha)?;
         let intermediate = self.build_explicit(tag, input, new_binder, substitution.output)?;
-        let classifier_fact =
-            join_same_syntax(self.kernel, classifier, self.kernel.classifier(new_binder)?)?;
+        let (normalized_classifier, classifier_fact) = self.derive(classifier)?;
+        let classifier_tail = join_same_syntax(
+            self.kernel,
+            normalized_classifier,
+            self.kernel.classifier(new_binder)?,
+        )?;
+        let classifier_fact = self
+            .kernel
+            .syn_trans(None, classifier_fact, classifier_tail)?;
         let renamed = self.kernel.syn_alpha_binder(
             None,
             input,
@@ -436,7 +442,7 @@ impl<'a> Freshen<'a> {
         let star = self.kernel.classifier(self.kernel.classifier(old_body)?)?;
         let old_binder = bound_type(self.kernel, old_body, old_name)?
             .unwrap_or(self.kernel.ty_fv(old_name, star)?);
-        let new_binder = self.binder(Sort::Ty, old_name, star)?;
+        let new_binder = self.binder(Sort::Ty, old_binder, star)?;
         let new_name = self
             .kernel
             .arena()

@@ -555,6 +555,52 @@ fn frozen_member_schema_replays_through_a_checked_compact_alias() {
     );
 }
 
+#[test]
+fn frozen_infinity_binder_plan_materializes_one_coherent_checked_package() {
+    let init = logical_init();
+    let slice = compile_init_slice(&init).expect("projected slice");
+    let declaration = slice.naturals().infinity;
+    let mut certificate = slice.kernel();
+    let bool_ty = slice.get("bool").expect("Boolean type");
+    for name in 10_000..10_016 {
+        certificate
+            .tm_fv(name, bool_ty)
+            .expect("unrelated ambient suffix");
+    }
+    let package = slice
+        .prove_infinity(&init, &mut certificate)
+        .expect("exact userspace infinity replay");
+    assert_eq!(package.declaration(), declaration);
+    for (theorem, proposition) in [
+        (package.axiom.theorem, declaration.axiom.exists_type),
+        (package.model.theorem, declaration.model.specification),
+        (package.theorem, declaration.property),
+        (
+            package.reflects_equality_theorem,
+            declaration.reflects_equality,
+        ),
+        (package.avoids_missed_theorem, declaration.avoids_missed),
+    ] {
+        check_exact_theorem(&certificate, proposition, theorem);
+    }
+}
+
+#[test]
+fn frozen_infinity_replay_rejects_the_wrong_prefix_transactionally() {
+    let init = logical_init();
+    let slice = compile_init_slice(&init).expect("projected slice");
+    let mut wrong = Kernel::new();
+    wrong.star().expect("unrelated kernel");
+    let before = wrong.fork();
+
+    assert!(slice.prove_infinity(&init, &mut wrong).is_err());
+    assert_eq!(wrong.arena(), before.arena());
+    assert_eq!(
+        wrong.thm().live_theorems().count(),
+        before.thm().live_theorems().count()
+    );
+}
+
 fn check_exact_theorem(
     kernel: &Kernel,
     proposition: covalence_logic_hol::Ref,

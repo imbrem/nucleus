@@ -20,6 +20,8 @@ pub struct Infinity {
     pub carrier: Ref,
     /// Injective endomap on [`carrier`](Self::carrier).
     pub map: Ref,
+    /// Existential selecting [`missed`](Self::missed).
+    pub missed_exists: Ref,
     /// Point outside the image of [`map`](Self::map).
     pub missed: Ref,
     /// Equality-reflection and missed-point property for the chosen structure.
@@ -64,6 +66,8 @@ pub struct InfinityDecl {
     pub carrier: Ref,
     /// Injective endomap.
     pub map: Ref,
+    /// Existential selecting a point outside the endomap image.
+    pub missed_exists: Ref,
     /// Point outside the endomap image.
     pub missed: Ref,
     /// Conjunction of the two structure laws.
@@ -83,6 +87,7 @@ impl InfinityDecl {
             .chain([
                 self.carrier,
                 self.map,
+                self.missed_exists,
                 self.missed,
                 self.property,
                 self.reflects_equality,
@@ -106,6 +111,7 @@ impl InfinityDecl {
             model: self.model.try_map(&mut map)?,
             carrier: map(self.carrier)?,
             map: map(self.map)?,
+            missed_exists: map(self.missed_exists)?,
             missed: map(self.missed)?,
             property: map(self.property)?,
             reflects_equality: map(self.reflects_equality)?,
@@ -147,6 +153,7 @@ impl Infinity {
             model: self.model.declaration(),
             carrier: self.carrier,
             map: self.map,
+            missed_exists: self.missed_exists,
             missed: self.missed,
             property: self.property,
             reflects_equality: self.reflects_equality,
@@ -309,6 +316,7 @@ fn project_infinity(
         model,
         carrier: model.ty,
         map: map.witness,
+        missed_exists: map.body,
         missed: missed.witness,
         property: missed.body,
         reflects_equality: *reflects_equality,

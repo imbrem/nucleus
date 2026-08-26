@@ -166,6 +166,23 @@ pub trait ModelExt {
     /// reachable predicate row is local traversable syntax, and each checked
     /// constructor and substitution rule accepts the derived evidence.
     fn choose_model(&mut self, theorem: ThmId) -> Result<ChosenModel, ModelError>;
+
+    /// Opens a type existential at an exact predeclared model and result row.
+    ///
+    /// This is the declaration-replay form. The model and specification are
+    /// ordinary resident syntax supplied by userspace; the existing checked
+    /// substitution and `model_spec` rules remain the only source of proof
+    /// authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the theorem, model, and specification have the
+    /// exact declared structure and checked substitution succeeds.
+    fn choose_model_at(
+        &mut self,
+        theorem: ThmId,
+        declaration: ChosenModelDecl,
+    ) -> Result<ChosenModel, ModelError>;
 }
 
 impl ModelExt for Kernel {
@@ -209,6 +226,42 @@ impl ModelExt for Kernel {
             theorem: specification_theorem,
             substitution: fact,
             name,
+        })
+    }
+
+    fn choose_model_at(
+        &mut self,
+        theorem: ThmId,
+        declaration: ChosenModelDecl,
+    ) -> Result<ChosenModel, ModelError> {
+        let conclusion = sole_positive_conclusion(self, theorem)?;
+        if self.arena().tag(conclusion) != Some(Tag::Tm(TmTag::TyExists))
+            || self.arena().name(conclusion) != Some(declaration.name)
+            || only_child(self, conclusion)? != declaration.predicate
+            || self.arena().tag(declaration.ty) != Some(Tag::Ty(TyTag::Model))
+            || self.arena().name(declaration.ty) != Some(declaration.name)
+            || only_child(self, declaration.ty)? != declaration.predicate
+        {
+            return Err(ModelError::WrongTheorem { theorem });
+        }
+        let star = self.classifier(declaration.ty)?;
+        let variable = match find_free_type_variable(self, declaration.predicate, declaration.name)?
+        {
+            Some(variable) => variable,
+            None => self.ty_fv(declaration.name, star)?,
+        };
+        let substitution = substitute(self, variable, declaration.ty, declaration.predicate)?;
+        let target =
+            crate::join_alpha_equivalent(self, substitution.output, declaration.specification)?;
+        let fact = self.syn_trans(None, substitution.fact, target)?;
+        let theorem = self.model_spec(theorem, fact)?;
+        Ok(ChosenModel {
+            ty: declaration.ty,
+            predicate: declaration.predicate,
+            specification: declaration.specification,
+            theorem,
+            substitution: fact,
+            name: declaration.name,
         })
     }
 }

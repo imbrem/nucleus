@@ -2,7 +2,8 @@
 
 use covalence_logic_hol::{AX_INF, Kernel, Lit, Ref, Sort, Tag, TmTag, TyTag};
 use covalence_logic_hol_derived::{
-    InfinityError, InfinityExt, forall_elim, open_exists, substitute,
+    ExistsError, InfinityError, InfinityExt, OpenedExistsDecl, forall_elim, open_exists,
+    open_exists_at, substitute,
 };
 
 fn prelude() -> (Kernel, Ref) {
@@ -90,6 +91,51 @@ fn projection_requires_exactly_the_infinity_capability() {
         Err(InfinityError::Kernel { .. })
     ));
     assert_eq!(kernel.arena().len(), before);
+}
+
+#[test]
+fn exact_existential_opening_rejects_a_foreign_witness_before_mutation() {
+    let (mut kernel, bool_ty) = prelude();
+    kernel.add_axiom(AX_INF).expect("infinity capability");
+    let package = kernel.choose_infinity(bool_ty).expect("infinity package");
+    let foreign = kernel.bool(bool_ty, true).expect("foreign witness");
+    let before = kernel.arena().len();
+
+    assert!(matches!(
+        open_exists_at(
+            &mut kernel,
+            package.model.specification,
+            OpenedExistsDecl {
+                witness: foreign,
+                body: package.missed_exists,
+            },
+        ),
+        Err(ExistsError::WrongForm { reference })
+            if reference == package.model.specification
+    ));
+    assert_eq!(kernel.arena().len(), before);
+}
+
+#[test]
+fn an_invalid_exact_body_never_allocates_a_theorem() {
+    let (mut kernel, bool_ty) = prelude();
+    kernel.add_axiom(AX_INF).expect("infinity capability");
+    let package = kernel.choose_infinity(bool_ty).expect("infinity package");
+    let foreign = kernel.bool(bool_ty, true).expect("foreign body");
+    let theorem_count = kernel.thm().live_theorems().count();
+
+    assert!(
+        open_exists_at(
+            &mut kernel,
+            package.model.specification,
+            OpenedExistsDecl {
+                witness: package.map,
+                body: foreign,
+            },
+        )
+        .is_err()
+    );
+    assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
 }
 
 #[test]
