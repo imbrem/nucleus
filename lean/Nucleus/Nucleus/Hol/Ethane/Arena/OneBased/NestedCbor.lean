@@ -1,4 +1,5 @@
 import Nucleus.Cbor.Containers
+import Nucleus.Cbor.Wire
 import Nucleus.Hol.Ethane.Arena.OneBased.Cbor
 import Nucleus.Hol.Ethane.Arena.OneBased.Layout
 
@@ -785,6 +786,21 @@ theorem decodeArenaByte?_encode (arena : Layout.Arena)
     (supported : arena.ByteWireCanonical) :
     decodeArenaByte? (encodeArena arena) = some arena := by
   simp [decodeArenaByte?, decodeArena?_encode arena supported.1, supported.2]
+
+/-- Byte-level deterministic CBOR parsing composes with the checked nested
+arena decoder whenever the structural encoding is already in deterministic
+map order.  This theorem is deliberately conditional: `encodeArena` currently
+models Serde's field encounter order, while deterministic CBOR sorts maps, so
+the general arena contract must first relate that encoding to its recursively
+sorted form. -/
+theorem decodeArenaByte?_parse_deterministic_wireNormal (arena : Layout.Arena)
+    (supported : arena.ByteWireCanonical)
+    (normal : CborWire.WireNormal (encodeArena arena)) :
+    (CborWire.parse?
+      (CborWire.deterministic ⟨encodeArena arena, normal.reasonable⟩)).bind
+        decodeArenaByte? = some arena := by
+  rw [CborWire.parse?_deterministic_wireNormal (encodeArena arena) normal]
+  exact decodeArenaByte?_encode arena supported
 
 theorem decodeArenaByte?_encode_reject_depth (arena : Layout.Arena)
     (canonical : arena.WireCanonical)
