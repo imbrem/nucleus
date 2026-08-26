@@ -1,5 +1,5 @@
 use covalence_logic_hol::{AX_SUB, Kernel, Sort};
-use covalence_logic_hol_derived::{CoproductExt, join_same_syntax};
+use covalence_logic_hol_derived::{CoproductExt, forall_elim, join_same_syntax};
 
 #[test]
 fn guarded_coproduct_has_checked_carrier_type_and_injections() {
@@ -149,4 +149,49 @@ fn computation_rejection_is_transactional() {
             .is_err()
     );
     assert_eq!(*kernel.arena(), before);
+}
+
+#[test]
+fn mediator_laws_are_universal_and_premise_free() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let right_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+    kernel.add_axiom(AX_SUB).unwrap();
+    let coproduct = kernel.coproduct(bool_ty, bool_ty, right_ty).unwrap();
+    let codomain = right_ty;
+    let eliminator = coproduct.eliminator(&mut kernel, codomain).unwrap();
+    let left_map = kernel.tm_fv(500, eliminator.left_map_ty).unwrap();
+    let right_map = kernel.tm_fv(501, eliminator.right_map_ty).unwrap();
+
+    let laws = coproduct
+        .prove_case_laws(&mut kernel, eliminator, left_map, right_map)
+        .unwrap();
+
+    let theorem = kernel.thm().get(laws.theorem).unwrap();
+    assert_eq!(theorem.lhs.rows().count(), 0);
+    assert_eq!(
+        theorem.rhs.rows().collect::<Vec<_>>(),
+        vec![&[covalence_logic_hol::Lit::positive(laws.conjunction.get())][..]]
+    );
+
+    let left_value = kernel.tm_fv(502, coproduct.left).unwrap();
+    let specialized = forall_elim(&mut kernel, laws.left_theorem, left_value).unwrap();
+    let injected = kernel.app(coproduct.inl, left_value).unwrap();
+    let direct = kernel.app(laws.eliminator.function, left_map).unwrap();
+    let direct = kernel.app(direct, right_map).unwrap();
+    let direct = kernel.app(direct, injected).unwrap();
+    let expected = kernel.app(left_map, left_value).unwrap();
+    let expected = kernel.eq(bool_ty, direct, expected).unwrap();
+    join_same_syntax(&mut kernel, specialized.proposition, expected).unwrap();
+
+    let right_value = kernel.tm_fv(503, coproduct.right).unwrap();
+    let specialized = forall_elim(&mut kernel, laws.right_theorem, right_value).unwrap();
+    let injected = kernel.app(coproduct.inr, right_value).unwrap();
+    let direct = kernel.app(laws.eliminator.function, left_map).unwrap();
+    let direct = kernel.app(direct, right_map).unwrap();
+    let direct = kernel.app(direct, injected).unwrap();
+    let expected = kernel.app(right_map, right_value).unwrap();
+    let expected = kernel.eq(bool_ty, direct, expected).unwrap();
+    join_same_syntax(&mut kernel, specialized.proposition, expected).unwrap();
 }

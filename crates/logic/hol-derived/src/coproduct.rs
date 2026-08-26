@@ -127,6 +127,25 @@ pub struct CoproductComputation {
     pub theorem: ThmId,
 }
 
+/// The two universally quantified computation laws for one mediator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoproductLaws {
+    /// Choice-based mediator whose laws were proved.
+    pub eliminator: CoproductEliminator,
+    /// Universal left-injection computation proposition.
+    pub left: Ref,
+    /// Premise-free theorem of [`left`](Self::left).
+    pub left_theorem: ThmId,
+    /// Universal right-injection computation proposition.
+    pub right: Ref,
+    /// Premise-free theorem of [`right`](Self::right).
+    pub right_theorem: ThmId,
+    /// Conjunction of [`left`](Self::left) and [`right`](Self::right).
+    pub conjunction: Ref,
+    /// Premise-free theorem of [`conjunction`](Self::conjunction).
+    pub theorem: ThmId,
+}
+
 impl Coproduct {
     /// Constructs the choice-based eliminator at one checked result type.
     ///
@@ -211,6 +230,33 @@ impl Coproduct {
             value,
             false,
         )?;
+        *kernel = staged;
+        Ok(proof)
+    }
+
+    /// Constructs a mediator and proves both of its universal computation laws.
+    ///
+    /// Given checked `f : left → C` and `g : right → C`, this derives the
+    /// premise-free conjunction
+    /// `(∀a. case f g (inl a) = f a) ∧ (∀b. case f g (inr b) = g b)`.
+    /// The temporary quantified variables are allocated independently of the
+    /// caller's existing free-variable names, and the operation is
+    /// transactional.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the supplied eliminator belongs to this package,
+    /// both maps have its required checked types, the subtype representation
+    /// law is available, and every ordinary HOL derivation step succeeds.
+    pub fn prove_case_laws(
+        &self,
+        kernel: &mut Kernel,
+        eliminator: CoproductEliminator,
+        left_map: Ref,
+        right_map: Ref,
+    ) -> Result<CoproductLaws, CoproductError> {
+        let mut staged = kernel.fork();
+        let proof = prove_case_laws_inner(&mut staged, self, eliminator, left_map, right_map)?;
         *kernel = staged;
         Ok(proof)
     }
@@ -481,6 +527,55 @@ fn build_eliminator(
         value_map_ty,
         function_ty,
         function,
+    })
+}
+
+fn prove_case_laws_inner(
+    kernel: &mut Kernel,
+    coproduct: &Coproduct,
+    eliminator: CoproductEliminator,
+    left_map: Ref,
+    right_map: Ref,
+) -> Result<CoproductLaws, CoproductError> {
+    let mut references = coproduct_references(coproduct, eliminator.codomain);
+    references.extend([left_map, right_map, eliminator.function]);
+    let base = kernel.fresh_name(&references).context(KernelSnafu)?;
+    let mut offset = 0;
+    let left_value = variable(kernel, base, &mut offset, coproduct.left)?;
+    let right_value = variable(kernel, base, &mut offset, coproduct.right)?;
+
+    let left_instance = prove_case_inner(
+        kernel, coproduct, eliminator, left_map, right_map, left_value, true,
+    )?;
+    let left = kernel
+        .forall_intro(left_instance.theorem, left_value)
+        .context(KernelSnafu)?;
+    let right_instance = prove_case_inner(
+        kernel,
+        coproduct,
+        eliminator,
+        left_map,
+        right_map,
+        right_value,
+        false,
+    )?;
+    let right = kernel
+        .forall_intro(right_instance.theorem, right_value)
+        .context(KernelSnafu)?;
+    let conjunction = kernel
+        .op2(Op2::And, left.universal, right.universal)
+        .context(KernelSnafu)?;
+    let theorem = kernel
+        .and_right(left.theorem, right.theorem, positive(conjunction))
+        .context(KernelSnafu)?;
+    Ok(CoproductLaws {
+        eliminator,
+        left: left.universal,
+        left_theorem: left.theorem,
+        right: right.universal,
+        right_theorem: right.theorem,
+        conjunction,
+        theorem,
     })
 }
 
