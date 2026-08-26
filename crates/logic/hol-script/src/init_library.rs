@@ -599,6 +599,20 @@ fn retarget_arithmetic_proof(
             generated.add_right_zero,
             exact.add_right_zero,
         )?,
+        add_right_successor: retarget_exact_theorem(
+            init,
+            kernel,
+            proof.add_right_successor,
+            generated.add_right_successor,
+            exact.add_right_successor,
+        )?,
+        add_commutative: retarget_exact_theorem(
+            init,
+            kernel,
+            proof.add_commutative,
+            generated.add_commutative,
+            exact.add_commutative,
+        )?,
         mul_rec: retarget_recursor_proof(
             init,
             kernel,
