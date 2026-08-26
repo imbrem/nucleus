@@ -1,5 +1,6 @@
 import Nucleus.Hol.Ethane.Arena.OneBased.DenseKernelTransport
 import Nucleus.HolE.ClassicalNaturals
+import Nucleus.HolE.ClassicalSoundness
 
 /-!
 # Semantic certificates for checked natural-number packages
@@ -23,44 +24,67 @@ open Nucleus.HolE.Infinity.CNatModel
 
 set_option relaxedAutoImplicit true
 
-/-- Truth of one closed, Boolean-valued Ethane expression is evaluation to
-the Boolean value `true` in the empty HolE environments. -/
+abbrev toClassicalTy (family : EmptyTy) : Nucleus.HolE.Named.Ty ClassicalSig :=
+  family.toHolE
+
+abbrev toClassicalTm (term : EmptyTm) : Nucleus.HolE.Named.Tm ClassicalSig :=
+  term.toHolE
+
+/-- A closed named family denotes one value in the deterministic classical
+HolE semantics.  The checking certificate is existential but its denotation
+is coherent under the classical conversion model. -/
+def ClassicallyDenotesFamily (family : EmptyTy) (semantic : CPointed) : Prop :=
+  ∃ lowered, ∃ checking : CChecks
+      (Nucleus.HolE.emptyBound : Nucleus.HolE.BoundCtx ClassicalSig [] 0)
+      lowered .kind,
+    Nucleus.HolE.Named.lowerTy (.nil : TyScope []) (toClassicalTy family) =
+      some lowered ∧
+    semantic = cSem checking emptyCTypeEnv
+
+/-- A closed named term realizes one value in the deterministic classical
+HolE semantics. -/
+def ClassicallyEvaluates (term : EmptyTm) (type : EmptyTy) (semantic : CPointed)
+    (value : semantic.carrier) : Prop :=
+  ∃ loweredTerm loweredType,
+    Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+      (.nil : TmScope ClassicalSig 0) (toClassicalTm term) = some loweredTerm ∧
+    Nucleus.HolE.Named.lowerTy (.nil : TyScope []) (toClassicalTy type) =
+      some loweredType ∧
+    CRealizes
+      (Γ := (Nucleus.HolE.emptyBound : Nucleus.HolE.BoundCtx ClassicalSig [] 0))
+      emptyCTypeEnv emptyCBoundEnv loweredTerm loweredType semantic value
+
+/-- Truth of one closed, Boolean-valued Ethane expression in the deterministic
+classical HolE semantics. -/
 def ClosedFormulaHolds (expression : EmptyTm) : Prop :=
-  Nucleus.Hol.Ethane.Eval (.nil : TyScope []) (.nil : TmScope EmptySig 0)
-    emptyTypeEnv (Nucleus.HolE.emptyBound : Nucleus.HolE.BoundCtx EmptySig [] 0)
-    emptyRawBoundEnv expression .boolTy boolPointed true
+  ClassicallyEvaluates expression .boolTy cBool true
 
 @[simp] theorem closedFormulaHolds_true :
     ClosedFormulaHolds (.bool true : EmptyTm) := by
-  unfold ClosedFormulaHolds Nucleus.Hol.Ethane.Eval Nucleus.HolE.Named.Eval
-  refine ⟨?_, ?_⟩
-  · refine Nucleus.Hol.Ethane.Checks.complete
-      (loweredExpression := .bool true)
-      (loweredClassification := .tm .boolTy) ?_ ?_ (.bool true)
-    · change Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
-        (.nil : TmScope EmptySig 0) (.bool true) = some (.bool true)
-      rw [Nucleus.HolE.Named.lowerTm]
-    · simp [Nucleus.Hol.Ethane.Classification.lower,
-        Nucleus.Hol.Ethane.Expr.lowerTy, Nucleus.Hol.Ethane.Expr.lowerFam,
-        Nucleus.Hol.Ethane.Expr.toHolE, Nucleus.HolE.Named.lowerFam]
-  · refine ⟨.bool true, .boolTy, ?_, ?_, ?_⟩
-    · simp [Nucleus.Hol.Ethane.Expr.toHolE, Nucleus.HolE.Named.lowerTm]
-    · simp [Nucleus.Hol.Ethane.Expr.toHolE, Nucleus.HolE.Named.lowerTy,
-        Nucleus.HolE.Named.lowerFam]
-    · exact Nucleus.HolE.Eval.boolean true
+  unfold ClosedFormulaHolds ClassicallyEvaluates
+  exact ⟨.bool true, .boolTy,
+    by simp [toClassicalTm, Nucleus.Hol.Ethane.Expr.toHolE,
+      Nucleus.HolE.Named.lowerTm],
+    by simp [toClassicalTy, Nucleus.Hol.Ethane.Expr.toHolE,
+      Nucleus.HolE.Named.lowerTy, Nucleus.HolE.Named.lowerFam],
+    CRealizes.boolean true _ _⟩
 
 @[simp] theorem not_closedFormulaHolds_false :
     ¬ClosedFormulaHolds (.bool false : EmptyTm) := by
   intro evaluation
-  unfold ClosedFormulaHolds Nucleus.Hol.Ethane.Eval Nucleus.HolE.Named.Eval at evaluation
-  obtain ⟨_, ⟨loweredTerm, loweredType, termLowered, typeLowered, evaluated⟩⟩ :=
-    evaluation
-  simp [Nucleus.Hol.Ethane.Expr.toHolE, Nucleus.HolE.Named.lowerTm] at termLowered
-  simp [Nucleus.Hol.Ethane.Expr.toHolE, Nucleus.HolE.Named.lowerTy,
-    Nucleus.HolE.Named.lowerFam] at typeLowered
+  unfold ClosedFormulaHolds ClassicallyEvaluates at evaluation
+  obtain ⟨loweredTerm, loweredType, termLowered, typeLowered, evaluated⟩ := evaluation
+  simp only [toClassicalTm, Nucleus.Hol.Ethane.Expr.toHolE] at termLowered
+  rw [Nucleus.HolE.Named.lowerTm.eq_def] at termLowered
+  change some (.bool false) = some loweredTerm at termLowered
+  simp only [toClassicalTy, Nucleus.Hol.Ethane.Expr.toHolE] at typeLowered
+  rw [Nucleus.HolE.Named.lowerTy, Nucleus.HolE.Named.lowerFam.eq_def] at typeLowered
+  change some .boolTy = some loweredType at typeLowered
+  injection termLowered with termEqual
+  injection typeLowered with typeEqual
   subst loweredTerm
   subst loweredType
-  cases evaluated
+  exact Nucleus.HolE.not_realizes_false_as_true _ _ evaluated
 
 /-- The partial Boolean interpretation used by theorem-row soundness agrees
 with closed HolE evaluation.  This is the precise semantic bridge missing from
@@ -233,7 +257,8 @@ def DecodedAssertion.proved {resolve : Resolver} {arena : Arena}
 
 /-- Source-independent semantics of the exact declaration rows in a checked
 natural-number package.  `carrier`, `zero`, and `successor` are related to the
-ordinary HolE evaluator, rather than being arbitrary data attached to names.
+deterministic classical HolE semantics, rather than being arbitrary data
+attached to names.
 
 The law fields deliberately use their decoded semantic propositions.  A
 separate, syntax-directed decoder can establish those fields for a concrete
@@ -247,31 +272,22 @@ structure NaturalPackageCertificate (resolve : Resolver) (arena : Arena)
   carrierSyntax : EmptyTy
   zeroSyntax : EmptyTm
   successorSyntax : EmptyTm
-  carrier : Pointed
+  carrier : CPointed
   zero : carrier.carrier
   successor : carrier.carrier → carrier.carrier
   carrierResolves :
     Resolves (coreResolver resolve) arena.holCore carrierRef
       (.family .star carrierSyntax)
-  carrierDenotes :
-    Nucleus.Hol.Ethane.DenotesFam (.nil : TyScope []) emptyTypeEnv
-      carrierSyntax carrier
+  carrierDenotes : ClassicallyDenotesFamily carrierSyntax carrier
   zeroResolves :
     Resolves (coreResolver resolve) arena.holCore zeroRef
       (.term carrierSyntax zeroSyntax)
-  zeroEvaluates :
-    Nucleus.Hol.Ethane.Eval (.nil : TyScope []) (.nil : TmScope EmptySig 0)
-      emptyTypeEnv (Nucleus.HolE.emptyBound : Nucleus.HolE.BoundCtx EmptySig [] 0)
-      emptyRawBoundEnv
-      zeroSyntax carrierSyntax carrier zero
+  zeroEvaluates : ClassicallyEvaluates zeroSyntax carrierSyntax carrier zero
   successorResolves :
     Resolves (coreResolver resolve) arena.holCore successorRef
       (.term (.arr carrierSyntax carrierSyntax) successorSyntax)
   successorEvaluates :
-    Nucleus.Hol.Ethane.Eval (.nil : TyScope []) (.nil : TmScope EmptySig 0)
-      emptyTypeEnv (Nucleus.HolE.emptyBound : Nucleus.HolE.BoundCtx EmptySig [] 0)
-      emptyRawBoundEnv
-      successorSyntax (.arr carrierSyntax carrierSyntax)
+    ClassicallyEvaluates successorSyntax (.arr carrierSyntax carrierSyntax)
       ⟨carrier.carrier → carrier.carrier, fun _ => carrier.point⟩ successor
   successorInjective : DecodedAssertion resolve arena
     (∀ x y, successor x = successor y → x = y)
@@ -341,31 +357,24 @@ structure RecursorPackageCertificate (resolve : Resolver) (arena : Arena)
   baseSyntax : EmptyTm
   stepSyntax : EmptyTm
   selectedSyntax : EmptyTm
-  codomain : Pointed
+  codomain : CPointed
   base : codomain.carrier
   step : naturals.carrier.carrier → codomain.carrier → codomain.carrier
   selected : naturals.carrier.carrier → codomain.carrier
   codomainResolves :
     Resolves (coreResolver resolve) arena.holCore codomainRef
       (.family .star codomainSyntax)
-  codomainDenotes :
-    Nucleus.Hol.Ethane.DenotesFam (.nil : TyScope []) emptyTypeEnv
-      codomainSyntax codomain
+  codomainDenotes : ClassicallyDenotesFamily codomainSyntax codomain
   baseResolves :
     Resolves (coreResolver resolve) arena.holCore baseRef
       (.term codomainSyntax baseSyntax)
-  baseEvaluates :
-    Nucleus.Hol.Ethane.Eval (.nil : TyScope []) (.nil : TmScope EmptySig 0)
-      emptyTypeEnv (Nucleus.HolE.emptyBound : Nucleus.HolE.BoundCtx EmptySig [] 0)
-      emptyRawBoundEnv baseSyntax codomainSyntax codomain base
+  baseEvaluates : ClassicallyEvaluates baseSyntax codomainSyntax codomain base
   stepResolves :
     Resolves (coreResolver resolve) arena.holCore stepRef
       (.term (.arr naturals.carrierSyntax (.arr codomainSyntax codomainSyntax))
         stepSyntax)
   stepEvaluates :
-    Nucleus.Hol.Ethane.Eval (.nil : TyScope []) (.nil : TmScope EmptySig 0)
-      emptyTypeEnv (Nucleus.HolE.emptyBound : Nucleus.HolE.BoundCtx EmptySig [] 0)
-      emptyRawBoundEnv stepSyntax
+    ClassicallyEvaluates stepSyntax
       (.arr naturals.carrierSyntax (.arr codomainSyntax codomainSyntax))
       ⟨naturals.carrier.carrier → codomain.carrier → codomain.carrier,
         fun _ _ => codomain.point⟩ step
@@ -373,9 +382,7 @@ structure RecursorPackageCertificate (resolve : Resolver) (arena : Arena)
     Resolves (coreResolver resolve) arena.holCore selectedRef
       (.term (.arr naturals.carrierSyntax codomainSyntax) selectedSyntax)
   selectedEvaluates :
-    Nucleus.Hol.Ethane.Eval (.nil : TyScope []) (.nil : TmScope EmptySig 0)
-      emptyTypeEnv (Nucleus.HolE.emptyBound : Nucleus.HolE.BoundCtx EmptySig [] 0)
-      emptyRawBoundEnv selectedSyntax (.arr naturals.carrierSyntax codomainSyntax)
+    ClassicallyEvaluates selectedSyntax (.arr naturals.carrierSyntax codomainSyntax)
       ⟨naturals.carrier.carrier → codomain.carrier, fun _ => codomain.point⟩
       selected
   graph : DecodedAssertion resolve arena
@@ -454,9 +461,7 @@ structure FirstRecursiveAddPackageCertificate (resolve : Resolver) (arena : Aren
       (.term (.arr naturals.carrierSyntax
         (.arr naturals.carrierSyntax naturals.carrierSyntax)) addSyntax)
   addEvaluates :
-    Nucleus.Hol.Ethane.Eval (.nil : TyScope []) (.nil : TmScope EmptySig 0)
-      emptyTypeEnv (Nucleus.HolE.emptyBound : Nucleus.HolE.BoundCtx EmptySig [] 0)
-      emptyRawBoundEnv addSyntax
+    ClassicallyEvaluates addSyntax
       (.arr naturals.carrierSyntax
         (.arr naturals.carrierSyntax naturals.carrierSyntax))
       ⟨naturals.carrier.carrier → naturals.carrier.carrier →
