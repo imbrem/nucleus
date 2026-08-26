@@ -98,10 +98,43 @@ columns are valid and mean null for the omitted suffix. -/
 def Resident (dense : Dense) (column : Column Ref) : Prop :=
   ∀ position value, column[position]? = some (some value) → position < dense.defs.length
 
+/-- Column residency is executable: only the finitely many stored cells need
+inspection, since every position beyond the list is definitionally null. -/
+instance Resident.instDecidable (dense : Dense) (column : Column Ref) :
+    Decidable (dense.Resident column) := by
+  let finite := (∀ position : Fin column.length,
+      column[position] = none ∨ position.1 < dense.defs.length)
+  let finiteDecidable : Decidable finite := inferInstance
+  exact @decidable_of_iff (dense.Resident column) finite
+    (by
+      constructor
+      · intro finite position value found
+        obtain ⟨inside, cell⟩ := List.getElem?_eq_some_iff.mp found
+        rcases finite ⟨position, inside⟩ with absent | resident
+        · simp [cell] at absent
+        · exact resident
+      · intro resident position
+        cases cell : column[position.1] with
+        | none => exact Or.inl rfl
+        | some value =>
+            exact Or.inr <| resident position value <| by
+              rw [List.getElem?_eq_getElem position.2, cell])
+    finiteDecidable
+
 structure WellFormed (dense : Dense) : Prop where
   eq : dense.Resident dense.eq
   synEq : dense.Resident dense.synEq
   conv : dense.Resident dense.conv
+
+instance WellFormed.instDecidable (dense : Dense) : Decidable dense.WellFormed :=
+  decidable_of_iff
+    (dense.Resident dense.eq ∧ dense.Resident dense.synEq ∧
+      dense.Resident dense.conv) <| by
+    constructor
+    · rintro ⟨eq, synEq, conv⟩
+      exact ⟨eq, synEq, conv⟩
+    · intro wellFormed
+      exact ⟨wellFormed.eq, wellFormed.synEq, wellFormed.conv⟩
 
 /-- Checked kernels additionally require every equality target to be a local
 definition. Raw arena decoding checks only source-column residency; dangling

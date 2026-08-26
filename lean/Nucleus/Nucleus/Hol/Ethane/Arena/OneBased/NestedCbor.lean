@@ -557,7 +557,7 @@ private def decodeViewUsing? (decodeImport : Nucleus.Cbor → Option Layout.Impo
 
 mutual
 
-noncomputable def decodeImportWithFuel? : Nat → Nucleus.Cbor → Option Layout.Import
+def decodeImportWithFuel? : Nat → Nucleus.Cbor → Option Layout.Import
   | 0, _ => none
   | fuel + 1, value => do
       if value = null then some .null
@@ -567,17 +567,17 @@ noncomputable def decodeImportWithFuel? : Nat → Nucleus.Cbor → Option Layout
         | some (.primitive (.text "link")) => return .link (← decodeLink? value)
         | _ => none
 
-noncomputable def decodeViewWithFuel? (fuel : Nat) (value : Nucleus.Cbor) : Option Layout.View :=
+def decodeViewWithFuel? (fuel : Nat) (value : Nucleus.Cbor) : Option Layout.View :=
   decodeViewUsing? (decodeImportWithFuel? fuel) value
 
 end
 
 /-- Decode a structural view with CBOR size as a conservative nesting bound. -/
-noncomputable def decodeView? (value : Nucleus.Cbor) : Option Layout.View :=
+def decodeView? (value : Nucleus.Cbor) : Option Layout.View :=
   decodeViewWithFuel? value.size value
 
 /-- Decode and apply the exact Rust normalization/residency gate. -/
-noncomputable def decodeArena? (value : Nucleus.Cbor) :
+def decodeArena? (value : Nucleus.Cbor) :
     Option Layout.Arena := do
   (← decodeView? value).normalize?
 
@@ -777,7 +777,7 @@ theorem decodeArena?_encode_byteWire (arena : Layout.Arena)
 The actual byte parser enforces the same bound through its container recursion
 limit; keeping this check explicit separates that resource policy from the
 unbounded semantic decoder above. -/
-noncomputable def decodeArenaByte? (value : Nucleus.Cbor) : Option Layout.Arena := do
+def decodeArenaByte? (value : Nucleus.Cbor) : Option Layout.Arena := do
   let arena ← decodeArena? value
   if arena.literalDepth ≤ Layout.maxLiteralImportDepth then some arena else none
 

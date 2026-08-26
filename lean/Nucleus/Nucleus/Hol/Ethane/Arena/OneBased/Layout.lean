@@ -75,6 +75,9 @@ be accepted by Rust's `ClassicalArena::from_rows`. -/
 def ClassicalArena.WireValid (arena : ClassicalArena) : Prop :=
   arena.length ≤ 2_147_483_647
 
+instance ClassicalArena.WireValid.instDecidable (arena : ClassicalArena) :
+    Decidable arena.WireValid := Nat.decLe _ _
+
 /-- Exactly the two ambient atoms implemented by Rust. -/
 abbrev Pred := Amb.Pred ImportId Ref
 
@@ -204,11 +207,24 @@ def View.columnsResident (view : View) : Prop :=
 def View.classicalResident (view : View) : Prop :=
   view.amb.thm.WireValid ∧ view.pred.syl.WireValid ∧ view.hol.thm.WireValid
 
+instance View.columnsResident.instDecidable (view : View) :
+    Decidable view.columnsResident := by
+  unfold View.columnsResident
+  exact inferInstance
+
+instance View.classicalResident.instDecidable (view : View) :
+    Decidable view.classicalResident := by
+  unfold View.classicalResident
+  exact @instDecidableAnd _ _
+    (Nat.decLe view.amb.thm.length 2_147_483_647)
+    (@instDecidableAnd _ _
+      (Nat.decLe view.pred.syl.length 2_147_483_647)
+      (Nat.decLe view.hol.thm.length 2_147_483_647))
+
 /-- Rust rejects a non-null column member beyond `defs`, then strips trailing
 nulls and normalizes the two string/reference sets. -/
-noncomputable def View.normalize? (view : View) : Option Arena := by
-  classical
-  exact if view.columnsResident ∧ view.classicalResident then
+def View.normalize? (view : View) : Option Arena :=
+  if view.columnsResident ∧ view.classicalResident then
     some (.mk view.«import» {
         pred := view.amb.pred
         ax := view.amb.ax.toFinset
@@ -227,7 +243,7 @@ noncomputable def View.normalize? (view : View) : Option Arena := by
           conv := view.hol.syn.conv.normalize
         }
       })
-    else none
+  else none
 
 def Arena.toView (arena : Arena) : View := {
   tag := .arena
