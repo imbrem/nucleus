@@ -32,3 +32,27 @@ fn coproduct_terms_need_no_capability_and_failure_is_transactional() {
     assert!(kernel.coproduct(bool_ty, truth, bool_ty).is_err());
     assert_eq!(*kernel.arena(), before);
 }
+
+#[test]
+fn eliminator_is_checked_at_each_requested_codomain() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    kernel.add_axiom(AX_SUB).unwrap();
+    let coproduct = kernel.coproduct(bool_ty, bool_ty, bool_ty).unwrap();
+    let codomain = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+
+    let eliminator = coproduct.eliminator(&mut kernel, codomain).unwrap();
+
+    assert_eq!(
+        kernel.classifier(eliminator.function).unwrap(),
+        eliminator.function_ty
+    );
+    let left = kernel.tm_fv(100, eliminator.left_map_ty).unwrap();
+    let right = kernel.tm_fv(101, eliminator.right_map_ty).unwrap();
+    let value = kernel.tm_fv(102, coproduct.ty).unwrap();
+    let applied = kernel.app(eliminator.function, left).unwrap();
+    let applied = kernel.app(applied, right).unwrap();
+    let applied = kernel.app(applied, value).unwrap();
+    assert_eq!(kernel.classifier(applied).unwrap(), codomain);
+}
