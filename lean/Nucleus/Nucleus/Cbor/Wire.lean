@@ -1,5 +1,6 @@
 import Nucleus.Cbor.Reasonable
 import Nucleus.Cbor.Containers
+import Std.Tactic.BVDecide
 
 /-!
 # RFC 8949 binary CBOR
@@ -25,7 +26,7 @@ private def readNat : Nat → List UInt8 → Option (UInt64 × List UInt8)
   | 0, input => some (0, input)
   | n + 1, b :: rest => do
       let (tail, remaining) ← readNat n rest
-      some ((UInt64.ofNat b.toNat <<< UInt64.ofNat (8 * n)) ||| tail, remaining)
+      some ((b.toUInt64 <<< UInt64.ofNat (8 * n)) ||| tail, remaining)
   | _, [] => none
 
 private def argument? (info : Nat) (input : List UInt8) :
@@ -181,7 +182,62 @@ def parse? (bytes : Bytes) : Option Cbor := do
 
 private def beBytes (count : Nat) (n : UInt64) : List UInt8 :=
   (List.range count).map fun i =>
-    UInt8.ofNat ((n >>> UInt64.ofNat (8 * (count - 1 - i))).toNat)
+    (n >>> UInt64.ofNat (8 * (count - 1 - i))).toUInt8
+
+set_option linter.flexible false in
+private theorem readNat_beBytes_eight (value : UInt64) (suffix : List UInt8) :
+    readNat 8 (beBytes 8 value ++ suffix) = some (value, suffix) := by
+  change readNat 8 ([(value >>> 56).toUInt8, (value >>> 48).toUInt8,
+    (value >>> 40).toUInt8, (value >>> 32).toUInt8,
+    (value >>> 24).toUInt8, (value >>> 16).toUInt8,
+    (value >>> 8).toUInt8, value.toUInt8] ++ suffix) = some (value, suffix)
+  simp [readNat]
+  bv_decide
+
+set_option linter.flexible false in
+private theorem readNat_beBytes_four (value : UInt64) (suffix : List UInt8)
+    (fits : value ≤ 0xffff_ffff) :
+    readNat 4 (beBytes 4 value ++ suffix) = some (value, suffix) := by
+  change readNat 4 ([(value >>> 24).toUInt8, (value >>> 16).toUInt8,
+    (value >>> 8).toUInt8, value.toUInt8] ++ suffix) = some (value, suffix)
+  simp [readNat]
+  bv_decide
+
+set_option linter.flexible false in
+private theorem readNat_beBytes_two (value : UInt64) (suffix : List UInt8)
+    (fits : value ≤ 0xffff) :
+    readNat 2 (beBytes 2 value ++ suffix) = some (value, suffix) := by
+  change readNat 2 ([(value >>> 8).toUInt8, value.toUInt8] ++ suffix) =
+    some (value, suffix)
+  simp [readNat]
+  bv_decide
+
+set_option linter.flexible false in
+private theorem readNat_beBytes_one (value : UInt64) (suffix : List UInt8)
+    (fits : value ≤ 0xff) :
+    readNat 1 (beBytes 1 value ++ suffix) = some (value, suffix) := by
+  change readNat 1 ([value.toUInt8] ++ suffix) = some (value, suffix)
+  simp [readNat]
+  bv_decide
+
+private theorem argument?_beBytes_one (value : UInt64) (suffix : List UInt8)
+    (fits : value ≤ 0xff) :
+    argument? 24 (beBytes 1 value ++ suffix) = some (some value, suffix) := by
+  simp [argument?, readNat_beBytes_one value suffix fits]
+
+private theorem argument?_beBytes_two (value : UInt64) (suffix : List UInt8)
+    (fits : value ≤ 0xffff) :
+    argument? 25 (beBytes 2 value ++ suffix) = some (some value, suffix) := by
+  simp [argument?, readNat_beBytes_two value suffix fits]
+
+private theorem argument?_beBytes_four (value : UInt64) (suffix : List UInt8)
+    (fits : value ≤ 0xffff_ffff) :
+    argument? 26 (beBytes 4 value ++ suffix) = some (some value, suffix) := by
+  simp [argument?, readNat_beBytes_four value suffix fits]
+
+private theorem argument?_beBytes_eight (value : UInt64) (suffix : List UInt8) :
+    argument? 27 (beBytes 8 value ++ suffix) = some (some value, suffix) := by
+  simp [argument?, readNat_beBytes_eight]
 
 private def head (major : Nat) (n : UInt64) : List UInt8 :=
   if n < 24 then [UInt8.ofNat (32 * major + n.toNat)]
