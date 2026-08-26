@@ -50,6 +50,15 @@ theorem ProvedProposition.holds {trusted : Arena → Prop} {resolve : Resolver}
   rw [proved.assertion, Sequent.assert_holds] at factHolds
   exact (completion proved.reference proposition proved.interpreted).mp factHolds
 
+/-- Formula-shape decoding may replace an evaluator-facing proposition by an
+equivalent package-facing law without changing the checked theorem row. -/
+def ProvedProposition.congr {arena : Arena} {interpretation : PartialValuation Ref}
+    {left right : Prop} (proved : ProvedProposition arena interpretation left)
+    (equivalent : left ↔ right) : ProvedProposition arena interpretation right := by
+  have equal : left = right := propext equivalent
+  cases equal
+  exact proved
+
 /-- Source-independent semantics of the exact declaration rows in a checked
 natural-number package.  `carrier`, `zero`, and `successor` are related to the
 ordinary HolE evaluator, rather than being arbitrary data attached to names.
