@@ -8,12 +8,12 @@ use covalence_logic_hol::{
     ThmId, init::Compiled as LogicalInit,
 };
 use covalence_logic_hol_derived::{
-    ChosenModel, Infinity, InfinityDecl, InfinityError, ModelExt, NaturalArithmetic,
-    NaturalArithmeticDecl, NaturalArithmeticExt, NaturalArithmeticProof, NaturalError, NaturalExt,
-    NaturalRecGraphDecl, NaturalRecGraphProof, NaturalRecSchemas, NaturalRecursorDecl,
-    NaturalRecursorProof, Naturals, NaturalsDecl, NaturalsProof, OpenedExists, OpenedExistsDecl,
-    Subtype, SubtypeDecl, SubtypeError, SyntaxError, join_alpha_equivalent, join_alpha_equivalents,
-    open_exists_at,
+    ChosenModel, CoproductSchema, Infinity, InfinityDecl, InfinityError, ModelExt,
+    NaturalArithmetic, NaturalArithmeticDecl, NaturalArithmeticExt, NaturalArithmeticProof,
+    NaturalError, NaturalExt, NaturalRecGraphDecl, NaturalRecGraphProof, NaturalRecSchemas,
+    NaturalRecursorDecl, NaturalRecursorProof, Naturals, NaturalsDecl, NaturalsProof, OpenedExists,
+    OpenedExistsDecl, Subtype, SubtypeDecl, SubtypeError, SyntaxError, join_alpha_equivalent,
+    join_alpha_equivalents, open_exists_at,
 };
 
 use crate::{
@@ -30,6 +30,7 @@ use crate::{
 pub struct InitLibrary {
     kernel: Kernel,
     symbols: BTreeMap<String, Ref>,
+    coproduct_schema: CoproductSchema,
     naturals: Naturals,
     recursion_schemas: NaturalRecSchemas,
     arithmetic: NaturalArithmetic,
@@ -40,6 +41,7 @@ pub struct InitLibrary {
 pub struct InitSlice {
     prefix: CheckedPrefix,
     symbols: BTreeMap<String, Ref>,
+    coproduct_schema: CoproductSchema,
     recursion_schemas: NaturalRecSchemas,
     naturals: NaturalsDecl,
     arithmetic: NaturalArithmeticDecl,
@@ -70,6 +72,12 @@ impl InitSlice {
         self.symbols
             .iter()
             .map(|(name, reference)| (name.as_str(), *reference))
+    }
+
+    /// Returns the open, source-defined coproduct universal property.
+    #[must_use]
+    pub const fn coproduct_schema(&self) -> CoproductSchema {
+        self.coproduct_schema
     }
 
     /// Returns the exact arithmetic declaration resident in this slice.
@@ -915,6 +923,12 @@ impl InitLibrary {
         &self.naturals
     }
 
+    /// Returns the open, source-defined coproduct universal property.
+    #[must_use]
+    pub const fn coproduct_schema(&self) -> CoproductSchema {
+        self.coproduct_schema
+    }
+
     /// Returns the checked open schemata used for primitive recursion.
     #[must_use]
     pub const fn recursion_schemas(&self) -> NaturalRecSchemas {
@@ -974,6 +988,11 @@ impl InitLibrary {
                 .get(source)
                 .ok_or(InitLibraryError::UnmappedReference { reference: source })
         })?;
+        let coproduct_schema = self.coproduct_schema.try_map(|source| {
+            copied
+                .get(source)
+                .ok_or(InitLibraryError::UnmappedReference { reference: source })
+        })?;
         let symbols = self
             .symbols
             .into_iter()
@@ -987,6 +1006,7 @@ impl InitLibrary {
         Ok(InitSlice {
             prefix: projected.into_checked_prefix(),
             symbols,
+            coproduct_schema,
             recursion_schemas,
             naturals,
             arithmetic,
@@ -1098,6 +1118,12 @@ pub fn compile_init_library(init: &LogicalInit) -> Result<InitLibrary, InitLibra
     )
     .map_err(|source| InitLibraryError::Theory { source })?;
     let bool_ty = compiled.bool_type();
+    let coproduct_schema = CoproductSchema {
+        left: required(&compiled, "IsCoprod/'a")?,
+        right: required(&compiled, "IsCoprod/'b")?,
+        coproduct: required(&compiled, "IsCoprod/'t")?,
+        predicate: required(&compiled, "IsCoprod")?,
+    };
     let member_parameter = required(&compiled, "NatMember/'a")?;
     let member_schema = required(&compiled, "NatMember")?;
     let recursion_schemas = NaturalRecSchemas {
@@ -1132,6 +1158,7 @@ pub fn compile_init_library(init: &LogicalInit) -> Result<InitLibrary, InitLibra
     Ok(InitLibrary {
         kernel,
         symbols,
+        coproduct_schema,
         naturals,
         recursion_schemas,
         arithmetic,

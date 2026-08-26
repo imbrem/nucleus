@@ -21,6 +21,7 @@ use covalence_logic_hol::{
 
 mod init_library;
 
+pub use covalence_logic_hol_derived::CoproductSchema;
 pub use init_library::{
     InitLibrary, InitLibraryError, InitSlice, compile_init_library, compile_init_slice,
 };

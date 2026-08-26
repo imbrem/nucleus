@@ -1,7 +1,7 @@
 //! End-to-end coverage for the untrusted theory front end.
 
 use covalence_lib_json::serde_json;
-use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Sort, Tag, TmTag, init};
+use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Sort, Tag, TmTag, TyTag, init};
 use covalence_logic_hol_derived::{
     NaturalArithmeticExt, NaturalExt, NaturalRecExt, NaturalRecSchemas, join_alpha_equivalent,
     join_same_syntax,
@@ -92,6 +92,37 @@ fn coproduct_schema_compiles_to_a_checked_boolean_root() {
             compiled.kernel().arena().tag(reference) == Some(Tag::Tm(TmTag::TyForall))
         })
     }));
+}
+
+#[test]
+fn typed_coproduct_schema_specializes_without_language_authority() {
+    let compiled = compile_theory(COPRODUCT).expect("coproduct schema");
+    let schema = covalence_logic_hol_derived::CoproductSchema {
+        left: compiled.get("IsCoprod/'a").unwrap(),
+        right: compiled.get("IsCoprod/'b").unwrap(),
+        coproduct: compiled.get("IsCoprod/'t").unwrap(),
+        predicate: compiled.get("IsCoprod").unwrap(),
+    };
+    let left = compiled.bool_type();
+    let (mut kernel, _) = compiled.into_parts();
+    let right = kernel.ty_arr(left, left).expect("right type");
+    let candidate = kernel.ty_arr(right, left).expect("candidate type");
+    let specialized = schema
+        .specialize(&mut kernel, left, right, candidate)
+        .expect("checked specialization");
+
+    assert_eq!(kernel.category(specialized).unwrap(), Sort::Tm);
+    let classifier = kernel.classifier(specialized).unwrap();
+    assert_eq!(kernel.arena().tag(classifier), Some(Tag::Ty(TyTag::Bool)));
+
+    let truth = kernel.bool(left, true).expect("term, not a type");
+    let before = kernel.arena().clone();
+    assert!(
+        schema
+            .specialize(&mut kernel, truth, right, candidate)
+            .is_err()
+    );
+    assert_eq!(*kernel.arena(), before);
 }
 
 #[test]
@@ -415,6 +446,11 @@ fn init_library_workspace_assembles_reproducibly_outside_the_kernel() {
     );
     assert_eq!(first.get("star"), init.get("star"));
     assert_eq!(first.get("bool"), init.get("bool"));
+    let coproduct = first.coproduct_schema();
+    assert_eq!(first.get("IsCoprod/'a"), Some(coproduct.left));
+    assert_eq!(first.get("IsCoprod/'b"), Some(coproduct.right));
+    assert_eq!(first.get("IsCoprod/'t"), Some(coproduct.coproduct));
+    assert_eq!(first.get("IsCoprod"), Some(coproduct.predicate));
     assert_eq!(first.get("nat"), Some(first.naturals().ty));
     assert_eq!(
         first.get("nat.add"),
@@ -482,6 +518,15 @@ fn projected_init_slice_is_deterministic_complete_and_opcode_free() {
         "the complete projected slice is the fork identity"
     );
     assert_eq!(fork.arena().axioms().collect::<Vec<_>>(), [AX_INF, AX_SUB]);
+    let coproduct = first.coproduct_schema();
+    for (name, reference) in [
+        ("IsCoprod/'a", coproduct.left),
+        ("IsCoprod/'b", coproduct.right),
+        ("IsCoprod/'t", coproduct.coproduct),
+        ("IsCoprod", coproduct.predicate),
+    ] {
+        assert_eq!(Some(reference), first.get(name), "typed schema {name}");
+    }
     for (name, reference) in first
         .naturals()
         .symbols()
@@ -490,8 +535,9 @@ fn projected_init_slice_is_deterministic_complete_and_opcode_free() {
         assert_eq!(Some(reference), first.get(name), "typed root {name}");
     }
     for reference in first
-        .naturals()
+        .coproduct_schema()
         .references()
+        .chain(first.naturals().references())
         .chain(first.arithmetic().references())
     {
         assert!(
