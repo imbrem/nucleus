@@ -32,6 +32,10 @@ pub struct NaturalRecGraph {
     pub has_shape: Ref,
     /// Exact premise-free theorem `⊢ has_shape`.
     pub has_shape_theorem: ThmId,
+    /// `∀y. graph zero y → y = base`.
+    pub zero_value: Ref,
+    /// Exact premise-free theorem `⊢ zero_value`.
+    pub zero_value_theorem: ThmId,
 }
 
 /// Userspace primitive-recursion construction over a checked kernel.
@@ -102,6 +106,8 @@ impl NaturalRecExt for Kernel {
             step_theorem,
             codomain,
         )?;
+        let (zero_value, zero_value_theorem) =
+            prove_graph_zero_value(self, naturals, graph, shape, has_shape_theorem, codomain)?;
         Ok(NaturalRecGraph {
             graph,
             base: base_proposition,
@@ -113,6 +119,8 @@ impl NaturalRecExt for Kernel {
             shape,
             has_shape,
             has_shape_theorem,
+            zero_value,
+            zero_value_theorem,
         })
     }
 }
@@ -644,6 +652,105 @@ fn specialize_graph_to_guarded_shape(
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn prove_graph_zero_value(
+    kernel: &mut Kernel,
+    naturals: &Naturals,
+    graph: Ref,
+    shape: Ref,
+    has_shape_theorem: ThmId,
+    codomain: Ref,
+) -> Result<(Ref, ThmId), NaturalError> {
+    let value = kernel.tm_fv(kernel.fresh_name(&[graph, shape])?, codomain)?;
+    let graph_at_zero = apply2(kernel, graph, naturals.zero, value)?;
+    let shape_at_zero = apply2(kernel, shape, naturals.zero, value)?;
+    let assumed = kernel.identity(positive(graph_at_zero))?;
+    let shape_at_index = forall_elim(kernel, has_shape_theorem, naturals.zero).map_err(|_| {
+        NaturalError::WrongForm {
+            expected: "graph shape inversion at zero",
+        }
+    })?;
+    let shape_at_value = forall_elim(kernel, shape_at_index.theorem, value).map_err(|_| {
+        NaturalError::WrongForm {
+            expected: "graph shape inversion at the zero value",
+        }
+    })?;
+    let [shape_source, shape_target] = exact_op2(kernel, shape_at_value.proposition, Op2::Imp)?;
+    join_same_syntax(kernel, graph_at_zero, shape_source)?;
+    join_same_syntax(kernel, shape_at_zero, shape_target)?;
+    kernel.convert_conclusions(assumed, graph_at_zero, shape_source)?;
+    let shape_theorem = modus_ponens(
+        kernel,
+        shape_at_value.theorem,
+        assumed,
+        shape_at_value.proposition,
+    )?;
+    kernel.convert_conclusions(shape_theorem, shape_target, shape_at_zero)?;
+    let (shape_application, shape_body) =
+        expand_graph_application(kernel, shape, naturals.zero, value)?;
+    join_same_syntax(kernel, shape_at_zero, shape_application)?;
+    kernel.convert_conclusions(shape_theorem, shape_at_zero, shape_body)?;
+    let [base_case, successor_case] = exact_op2(kernel, shape_body, Op2::Or)?;
+    let [_zero_equality, value_equality] = exact_op2(kernel, base_case, Op2::And)?;
+    let base_branch = project_and_right(kernel, base_case)?;
+
+    let successor_branch =
+        successor_shape_contradiction(kernel, naturals, successor_case, positive(value_equality))?;
+    let cases = kernel.or_left(base_branch, successor_branch, positive(shape_body))?;
+    let value_theorem = kernel.cut(shape_theorem, cases, positive(shape_body))?;
+    kernel.contract_theorem(value_theorem)?;
+    let implication = kernel.op2(Op2::Imp, graph_at_zero, value_equality)?;
+    let implication_theorem = kernel.imp_right(value_theorem, positive(implication))?;
+    let generalized = kernel.forall_intro(implication_theorem, value)?;
+    Ok((generalized.universal, generalized.theorem))
+}
+
+fn successor_shape_contradiction(
+    kernel: &mut Kernel,
+    naturals: &Naturals,
+    successor_case: Ref,
+    conclusion: covalence_logic_hol::Lit,
+) -> Result<ThmId, NaturalError> {
+    let [predecessor_predicate, predecessor] =
+        exact_children(kernel, successor_case, Tag::Tm(TmTag::App))?;
+    let (outer_application, inner_exists, outer_beta) =
+        beta_apply(kernel, predecessor_predicate, predecessor)?;
+    join_same_syntax(kernel, successor_case, outer_application)?;
+    kernel.union_syn_fact(outer_beta)?;
+    let [value_predicate, predecessor_value] =
+        exact_children(kernel, inner_exists, Tag::Tm(TmTag::App))?;
+    let (inner_application, successor_data, inner_beta) =
+        beta_apply(kernel, value_predicate, predecessor_value)?;
+    join_same_syntax(kernel, inner_exists, inner_application)?;
+    kernel.union_syn_fact(inner_beta)?;
+    let [_predecessor_graph, equalities] = exact_op2(kernel, successor_data, Op2::And)?;
+    let [zero_is_successor, _value_equality] = exact_op2(kernel, equalities, Op2::And)?;
+
+    let equalities_theorem = project_and_right(kernel, successor_data)?;
+    let index_theorem = project_and_left(kernel, equalities)?;
+    let index_theorem = kernel.cut(equalities_theorem, index_theorem, positive(equalities))?;
+    kernel.convert_theorem(index_theorem, successor_data, successor_case)?;
+
+    let separation =
+        forall_elim(kernel, naturals.zero_ne_succ_theorem, predecessor).map_err(|_| {
+            NaturalError::WrongForm {
+                expected: "zero-successor separation at the shape predecessor",
+            }
+        })?;
+    let [separated_equality] = exact_op1(
+        kernel,
+        separation.proposition,
+        covalence_logic_hol::builtin::Op1::Not,
+    )?;
+    join_same_syntax(kernel, zero_is_successor, separated_equality)?;
+    kernel.convert_conclusions(index_theorem, zero_is_successor, separated_equality)?;
+    let negative =
+        kernel.expand_conclusion(separation.theorem, positive(separation.proposition), None)?;
+    let contradiction = kernel.resolve(index_theorem, negative, positive(separated_equality))?;
+    kernel.weaken(contradiction, &[], &[conclusion])?;
+    Ok(contradiction)
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn prove_graph_total(
     kernel: &mut Kernel,
     naturals: &Naturals,
@@ -873,6 +980,19 @@ fn exact_op2(kernel: &Kernel, reference: Ref, op: Op2) -> Result<[Ref; 2], Natur
         });
     }
     exact_children(kernel, reference, Tag::Tm(TmTag::Op2))
+}
+
+fn exact_op1(
+    kernel: &Kernel,
+    reference: Ref,
+    op: covalence_logic_hol::builtin::Op1,
+) -> Result<[Ref; 1], NaturalError> {
+    if kernel.arena().op1(reference) != Some(op) {
+        return Err(NaturalError::WrongForm {
+            expected: "a compact unary logical opcode",
+        });
+    }
+    exact_children(kernel, reference, Tag::Tm(TmTag::Op1))
 }
 
 fn exact_children<const N: usize>(

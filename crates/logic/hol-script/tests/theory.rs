@@ -277,6 +277,7 @@ fn compiled_recursion_graph_has_a_checked_base_theorem() {
         (graph.step, graph.step_theorem),
         (graph.total, graph.total_theorem),
         (graph.has_shape, graph.has_shape_theorem),
+        (graph.zero_value, graph.zero_value_theorem),
     ] {
         let theorem = kernel.thm().get(theorem).expect("graph theorem");
         assert!(theorem.lhs.rows().next().is_none());
