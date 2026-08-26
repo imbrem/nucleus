@@ -1,4 +1,5 @@
 import Nucleus.Cbor.Containers
+import Nucleus.Cbor.Wire
 import Nucleus.Hol.Ethane.Arena.OneBased.Cbor
 import Nucleus.Hol.Ethane.Arena.OneBased.Layout
 
@@ -337,10 +338,10 @@ private def decodeSequent? (value : Nucleus.Cbor) : Option Layout.WireSequent :=
 
 private def encodeAmbPred : Layout.Pred → Nucleus.Cbor
   | .arenaOk source => object [
-      ("tag", text "arena.ok"), ("src", encodeImportId source)]
+      ("src", encodeImportId source), ("tag", text "arena.ok")]
   | .holSort source ix sort => object [
-      ("tag", text "hol.sort"), ("src", encodeImportId source),
-      ("ix", encodeRef ix), ("sort", encodeRef sort)]
+      ("ix", encodeRef ix), ("src", encodeImportId source),
+      ("tag", text "hol.sort"), ("sort", encodeRef sort)]
 
 private def decodeAmbPred? (value : Nucleus.Cbor) : Option Layout.Pred := do
   let fields ← fields? ["tag", "src", "ix", "sort"] value
@@ -363,10 +364,10 @@ private def decodeAmbPred? (value : Nucleus.Cbor) : Option Layout.Pred := do
       asText?]
 
 private def encodeAmb (amb : AmbView) : Nucleus.Cbor := object [
-  ("pred", array (amb.pred.map encodeAmbPred)),
   ("ax", array (amb.ax.map text)),
   ("ctx", encodeCnf amb.ctx),
-  ("thm", array (amb.thm.map encodeSequent))]
+  ("thm", array (amb.thm.map encodeSequent)),
+  ("pred", array (amb.pred.map encodeAmbPred))]
 
 private def decodeAmb? (value : Nucleus.Cbor) : Option AmbView := do
   let fields ← fields? ["pred", "ax", "ctx", "thm"] value
@@ -385,11 +386,11 @@ private def decodePred? (value : Nucleus.Cbor) : Option PredSection := do
   return { syl := ← decodeList decodeSequent? (← required? "syl" fields) }
 
 private def encodeSyn (syn : SynView) : Nucleus.Cbor := object <|
+  optional "eq" (if syn.eq.isEmpty then none else some (encodeColumn syn.eq)) ++
+  optional "conv" (if syn.conv.isEmpty then none else some (encodeColumn syn.conv)) ++
   optional "subst1" (if syn.subst1.isEmpty then none
     else some (array (syn.subst1.map OneBased.Cbor.encodeSynSlot))) ++
-  optional "subst1_free" (syn.subst1Free.map encodeSynFactId) ++
-  optional "eq" (if syn.eq.isEmpty then none else some (encodeColumn syn.eq)) ++
-  optional "conv" (if syn.conv.isEmpty then none else some (encodeColumn syn.conv))
+  optional "subst1_free" (syn.subst1Free.map encodeSynFactId)
 
 private def decodeSyn? (value : Nucleus.Cbor) : Option SynView := do
   let fields ← fields? ["subst1", "subst1_free", "eq", "conv"] value
@@ -419,12 +420,12 @@ private def decodeSyn? (value : Nucleus.Cbor) : Option SynView := do
   simpa using decodeList_synSlots (head :: tail)
 
 private def encodeHol (hol : HolView) : Nucleus.Cbor := object <|
-  [("defs", array (hol.defs.map encodeExpr)),
-   ("ax", array (hol.ax.map text)),
-   ("ctx", array (hol.ctx.map encodeRef)),
-   ("thm", array (hol.thm.map encodeSequent))] ++
+  [("ax", array (hol.ax.map text))] ++
   optional "eq" (if hol.eq.isEmpty then none else some (encodeColumn hol.eq)) ++
-  [("syn", encodeSyn hol.syn)]
+  [("ctx", array (hol.ctx.map encodeRef)),
+   ("syn", encodeSyn hol.syn),
+   ("thm", array (hol.thm.map encodeSequent)),
+   ("defs", array (hol.defs.map encodeExpr))]
 
 private def decodeHol? (value : Nucleus.Cbor) : Option HolView := do
   let fields ← fields? ["defs", "ax", "ctx", "thm", "eq", "syn"] value
@@ -442,8 +443,9 @@ private def o256OfBytes? (value : Bytes) : Option O256 :=
   O256.ofList? value.data.data.toList
 
 private def encodeLink (link : OneBased.Link) : Nucleus.Cbor := object [
-  ("tag", text "link"), ("format", text "cbor"),
-  ("blake3", .primitive (.bytes (bytesOfO256 link.blake3)))]
+  ("tag", text "link"),
+  ("blake3", .primitive (.bytes (bytesOfO256 link.blake3))),
+  ("format", text "cbor")]
 
 private def decodeLink? (value : Nucleus.Cbor) : Option OneBased.Link := do
   let fields ← fields? ["tag", "format", "blake3"] value
@@ -469,11 +471,11 @@ private def decodeLink? (value : Nucleus.Cbor) : Option OneBased.Link := do
 
 private def encodeViewWithImports (view : Layout.View)
     (imports : List Nucleus.Cbor) : Nucleus.Cbor := object [
-  ("tag", text "arena"),
-  ("import", array imports),
   ("amb", encodeAmb view.amb),
+  ("hol", encodeHol view.hol),
+  ("tag", text "arena"),
   ("pred", encodePred view.pred),
-  ("hol", encodeHol view.hol)]
+  ("import", array imports)]
 
 mutual
 
@@ -662,13 +664,15 @@ theorem decodeImportWithFuel?_encode (entry : Layout.Import)
           simp only [decodeImportWithFuel?]
           simp only [if_neg (encodeLink_ne_null link)]
           rw [show (encodeLink link).asTextMap? = some
-            [("tag", text "link"), ("format", text "cbor"),
-              ("blake3", .primitive (.bytes (bytesOfO256 link.blake3)))] by
+            [("tag", text "link"),
+              ("blake3", .primitive (.bytes (bytesOfO256 link.blake3))),
+              ("format", text "cbor")] by
             simp [encodeLink, object]]
           rw [optionDoSome]
           rw [show field? "tag"
-            [("tag", text "link"), ("format", text "cbor"),
-              ("blake3", .primitive (.bytes (bytesOfO256 link.blake3)))] =
+            [("tag", text "link"),
+              ("blake3", .primitive (.bytes (bytesOfO256 link.blake3))),
+              ("format", text "cbor")] =
               some (text "link") by rfl]
           rw [decodeLink?_encode]
           rfl
@@ -691,10 +695,11 @@ theorem decodeImportWithFuel?_encode (entry : Layout.Import)
             simp only [decodeImportWithFuel?]
             simp only [if_neg (encodeArena_ne_null _)]
             let fields :=
-              [("tag", text "arena"), ("import", array (encodeImports imports)),
-                ("amb", encodeAmb (Layout.Arena.mk imports amb pred hol).toView.amb),
+              [("amb", encodeAmb (Layout.Arena.mk imports amb pred hol).toView.amb),
+                ("hol", encodeHol (Layout.Arena.mk imports amb pred hol).toView.hol),
+                ("tag", text "arena"),
                 ("pred", encodePred (Layout.Arena.mk imports amb pred hol).toView.pred),
-                ("hol", encodeHol (Layout.Arena.mk imports amb pred hol).toView.hol)]
+                ("import", array (encodeImports imports))]
             rw [show (encodeArena (Layout.Arena.mk imports amb pred hol)).asTextMap? =
               some fields by simp [fields, encodeArena, encodeViewWithImports, object]]
             rw [optionDoSome]
@@ -785,6 +790,47 @@ theorem decodeArenaByte?_encode (arena : Layout.Arena)
     (supported : arena.ByteWireCanonical) :
     decodeArenaByte? (encodeArena arena) = some arena := by
   simp [decodeArenaByte?, decodeArena?_encode arena supported.1, supported.2]
+
+/-- Complete profile for an arena admitted at the deterministic byte boundary.
+
+`ByteWireCanonical` records the logical normalization and literal-import depth
+policy. `CborWire.WireNormal` independently records every finite CBOR length
+bound (including user-provided strings and lists) and deterministic map order.
+Keeping the latter explicit is essential: arbitrary Lean containers cannot be
+proved to fit CBOR's `UInt64` definite-length field. -/
+def DeterministicByteWireProfile (arena : Layout.Arena) : Prop :=
+  arena.ByteWireCanonical ∧ CborWire.WireNormal (encodeArena arena)
+
+/-- The combined byte profile exposes the structural wire-normal evidence
+needed by the verified deterministic parser. -/
+theorem DeterministicByteWireProfile.wireNormal
+    {arena : Layout.Arena} (profile : DeterministicByteWireProfile arena) :
+    CborWire.WireNormal (encodeArena arena) :=
+  profile.2
+
+/-- Byte-level deterministic CBOR parsing composes with the checked nested
+arena decoder whenever the structural encoding fits the definite-length wire
+domain. `encodeArena` emits every fixed field map in deterministic key order;
+the explicit evidence remains necessary because semantic arenas contain
+mathematically unbounded lists and strings. -/
+theorem decodeArenaByte?_parse_deterministic_wireNormal (arena : Layout.Arena)
+    (supported : arena.ByteWireCanonical)
+    (normal : CborWire.WireNormal (encodeArena arena)) :
+    (CborWire.parse?
+      (CborWire.deterministic ⟨encodeArena arena, normal.reasonable⟩)).bind
+        decodeArenaByte? = some arena := by
+  rw [CborWire.parse?_deterministic_wireNormal (encodeArena arena) normal]
+  exact decodeArenaByte?_encode arena supported
+
+/-- Direct checked wire contract: deterministic encoding is parsed as exactly
+one CBOR item and then decoded to the original normalized arena. -/
+theorem decodeArenaByte?_parse_deterministic (arena : Layout.Arena)
+    (profile : DeterministicByteWireProfile arena) :
+    (CborWire.parse? (CborWire.deterministic
+      ⟨encodeArena arena, profile.wireNormal.reasonable⟩)).bind
+        decodeArenaByte? = some arena :=
+  decodeArenaByte?_parse_deterministic_wireNormal arena profile.1
+    profile.wireNormal
 
 theorem decodeArenaByte?_encode_reject_depth (arena : Layout.Arena)
     (canonical : arena.WireCanonical)

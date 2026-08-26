@@ -220,10 +220,10 @@ private def decodeSynRel? (value : Nucleus.Cbor) : Option SynRel := do
   cases relation <;> rfl
 
 private def encodeSynFact (fact : SynFact) : Nucleus.Cbor := object <|
-  [("rel", encodeSynRel fact.rel)] ++
-    optional "var" (fact.var.map encodeRef) ++
+  [("in", encodeRef fact.input), ("out", encodeRef fact.output),
+    ("rel", encodeSynRel fact.rel)] ++
     optional "val" (fact.val.map encodeRef) ++
-    [("in", encodeRef fact.input), ("out", encodeRef fact.output)]
+    optional "var" (fact.var.map encodeRef)
 
 private def decodeSynFact? (value : Nucleus.Cbor) : Option SynFact := do
   let fields ← fields? ["rel", "var", "val", "in", "out"] value
@@ -364,11 +364,11 @@ private def decodeTag? (value : Nucleus.Cbor) : Option Tag := do
   | tm tag => cases tag <;> rfl
 
 private def rowFields (view : detail.RowView) : List (String × Nucleus.Cbor) :=
-  [("tag", encodeTag view.tag)] ++
+  optional "ix" (view.ix.map encodeRef) ++
     optional "ixs" (view.ixs.map fun values => array (values.map encodeRef)) ++
-    optional "val" (view.val.map encodeValue) ++
     optional "src" (view.src.map encodeImportId) ++
-    optional "ix" (view.ix.map encodeRef)
+    [("tag", encodeTag view.tag)] ++
+    optional "val" (view.val.map encodeValue)
 
 def encodeRow (row : detail.Row) : Nucleus.Cbor := object (rowFields row.toView)
 
