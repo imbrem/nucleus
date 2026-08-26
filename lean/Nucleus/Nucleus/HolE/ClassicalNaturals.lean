@@ -47,6 +47,55 @@ structure CNatModel where
   succ_ne_zero : ∀ x, succ x ≠ zero
   induction : ∀ P : carrier → Prop, P zero → (∀ x, P x → P (succ x)) → ∀ x, P x
 
+/-! ## Declaration/proof phase separation
+
+The userspace init builder freezes public syntax before replaying proofs.  The
+following semantic factorization records the corresponding trust boundary:
+the declaration is data, while `CNatProof` is the evidence required to turn
+that data into a model.  Neither structure says anything about the untrusted
+source language which happened to construct the declaration. -/
+
+/-- The data of a natural-number candidate, without any laws. -/
+structure CNatDecl where
+  carrier : Type
+  zero : carrier
+  succ : carrier → carrier
+
+/-- The Peano evidence certifying one fixed natural-number declaration. -/
+structure CNatProof (D : CNatDecl) : Prop where
+  succ_injective : ∀ x y, D.succ x = D.succ y → x = y
+  succ_ne_zero : ∀ x, D.succ x ≠ D.zero
+  induction : ∀ P : D.carrier → Prop,
+    P D.zero → (∀ x, P x → P (D.succ x)) → ∀ x, P x
+
+/-- Forget the proofs while retaining exactly the declared data. -/
+def CNatModel.declaration (M : CNatModel) : CNatDecl where
+  carrier := M.carrier
+  zero := M.zero
+  succ := M.succ
+
+/-- Project a model's evidence as a proof of its exact declaration. -/
+theorem CNatModel.proof (M : CNatModel) : CNatProof M.declaration := by
+  exact {
+    succ_injective := M.succ_injective
+    succ_ne_zero := M.succ_ne_zero
+    induction := M.induction
+  }
+
+/-- Checked evidence reconstructs a model; declaration data alone does not. -/
+def CNatDecl.certify (D : CNatDecl) (proof : CNatProof D) : CNatModel where
+  carrier := D.carrier
+  zero := D.zero
+  succ := D.succ
+  succ_injective := proof.succ_injective
+  succ_ne_zero := proof.succ_ne_zero
+  induction := proof.induction
+
+@[simp] theorem CNatModel.certify_declaration (M : CNatModel) :
+    M.declaration.certify M.proof = M := by
+  cases M
+  rfl
+
 namespace CInfinityStructure
 
 variable {A : CPointed}
@@ -313,7 +362,7 @@ theorem recGraph_iff {C : Type} (base : C) (step : M.carrier → C → C)
   constructor
   · intro holds
     exact holds (fun k z => z = M.natrec base step k) (by simp)
-      (by intro k z equality; simpa [equality])
+      (by intro k z equality; simp [equality])
   · rintro rfl
     exact M.recGraph_natrec base step n
 

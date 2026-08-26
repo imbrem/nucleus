@@ -481,12 +481,13 @@ fn projected_init_slice_is_deterministic_complete_and_opcode_free() {
         "the complete projected slice is the fork identity"
     );
     assert_eq!(fork.arena().axioms().collect::<Vec<_>>(), [AX_INF, AX_SUB]);
-    assert_eq!(first.arithmetic().add, first.get("nat.add").unwrap());
-    assert_eq!(first.arithmetic().mul, first.get("nat.mul").unwrap());
-    assert_eq!(
-        first.arithmetic().one_plus_one,
-        first.get("nat.one_plus_one").unwrap()
-    );
+    for (name, reference) in first
+        .naturals()
+        .symbols()
+        .chain(first.arithmetic().symbols())
+    {
+        assert_eq!(Some(reference), first.get(name), "typed root {name}");
+    }
 }
 
 fn check_exact_theorem(
