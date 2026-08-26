@@ -311,7 +311,7 @@ fn compiled_nat_member_drives_the_userspace_natural_package() {
 }
 
 #[test]
-fn compiled_recursion_graph_has_a_checked_base_theorem() {
+fn compiled_recursion_schemata_drive_the_complete_checked_package() {
     let init = logical_init();
     let compiled = compile_theory_with_init(
         INIT_SOURCE,
@@ -362,7 +362,7 @@ fn compiled_recursion_graph_has_a_checked_base_theorem() {
             base,
             step,
         )
-        .expect("checked graph base");
+        .expect("checked recursion package");
     let graph = recursor.graph;
 
     for (proposition, theorem) in [

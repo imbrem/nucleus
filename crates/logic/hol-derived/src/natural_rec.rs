@@ -87,7 +87,8 @@ pub struct NaturalRecursor {
 
 /// Userspace primitive-recursion construction over a checked kernel.
 pub trait NaturalRecExt {
-    /// Specializes the open `NatRecGraph` schema and proves its base law.
+    /// Specializes the open `NatRecGraph` schema and derives its complete
+    /// total, functional graph package plus the selected recursor laws.
     ///
     /// The schema is supplied as checked syntax rather than imported from the
     /// S-expression crate. Consequently this derived layer and the kernel are
