@@ -83,6 +83,38 @@ classical HolE semantics. -/
 def ClosedFormulaHolds (expression : EmptyTm) : Prop :=
   ClassicallyEvaluates expression .boolTy cBool true
 
+/-- Once a closed Ethane formula lowers to an intrinsically checked HOL term,
+its evaluator-facing truth is exactly intrinsic deterministic evaluation.
+This is the generic boundary used by package decoders: frontend syntax and
+names disappear in the checked lowering equation. -/
+theorem closedFormulaHolds_iff_iEval (expression : EmptyTm)
+    (term : InfinityTm ClassicalSig
+      (Nucleus.HolE.emptyBound : BoundCtx ClassicalSig [] 0) .boolTy)
+    (lowered : Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+      (.nil : TmScope ClassicalSig 0) (toClassicalTm expression) =
+        some term.tm) :
+    ClosedFormulaHolds expression ↔
+      Infinity.IEval term emptyCTypeEnv emptyCBoundEnv cBool true := by
+  constructor
+  · intro holds
+    obtain ⟨loweredTerm, loweredType, termLowered, typeLowered, realizes⟩ := holds
+    have termEqual : loweredTerm = term.tm :=
+      Option.some.inj (termLowered.symm.trans lowered)
+    simp only [toClassicalTy, Nucleus.Hol.Ethane.Expr.toHolE] at typeLowered
+    rw [Nucleus.HolE.Named.lowerTy,
+      Nucleus.HolE.Named.lowerFam.eq_def] at typeLowered
+    change some (.boolTy : Nucleus.HolE.Ty ClassicalSig []) =
+      some loweredType at typeLowered
+    injection typeLowered with typeEqual
+    subst loweredTerm
+    subst loweredType
+    exact Infinity.IEval.iff_cRealizes.mpr realizes
+  · intro evaluation
+    exact ⟨term.tm, .boolTy, lowered,
+      by simp [toClassicalTy, Nucleus.Hol.Ethane.Expr.toHolE,
+        Nucleus.HolE.Named.lowerTy, Nucleus.HolE.Named.lowerFam],
+      Infinity.IEval.iff_cRealizes.mp evaluation⟩
+
 @[simp] theorem closedFormulaHolds_true :
     ClosedFormulaHolds (.bool true : EmptyTm) := by
   unfold ClosedFormulaHolds ClassicallyEvaluates
@@ -251,6 +283,33 @@ structure DecodedAssertion (resolve : Resolver) (arena : Arena)
   member : fact ∈ arena.hol.thm
   assertion : fact.semantic = Sequent.assert reference
   decodes : ClosedFormulaHolds expression ↔ proposition
+
+/-- Construct a decoded assertion by lowering its exact resolved expression to
+an intrinsically checked closed HOL term and proving the semantic law there.
+The lowering equation is the sole representation bridge; parsers, source
+names, and compiler dictionaries cannot occur in the resulting evidence. -/
+def DecodedAssertion.ofIntrinsic {resolve : Resolver} {arena : Arena}
+    {proposition : Prop} (reference : Ref) (expression : EmptyTm)
+    (term : InfinityTm ClassicalSig
+      (Nucleus.HolE.emptyBound : BoundCtx ClassicalSig [] 0) .boolTy)
+    (fact : WireSequent)
+    (resolves : Resolves (coreResolver resolve) arena.holCore reference
+      (.term .boolTy expression))
+    (member : fact ∈ arena.hol.thm)
+    (assertion : fact.semantic = Sequent.assert reference)
+    (lowered : Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+      (.nil : TmScope ClassicalSig 0) (toClassicalTm expression) =
+        some term.tm)
+    (decodes : Infinity.IEval term emptyCTypeEnv emptyCBoundEnv cBool true ↔
+      proposition) :
+    DecodedAssertion resolve arena proposition where
+  reference := reference
+  expression := expression
+  fact := fact
+  resolves := resolves
+  member := member
+  assertion := assertion
+  decodes := (closedFormulaHolds_iff_iEval expression term lowered).trans decodes
 
 /-- Base decoder for an exact checked assertion of the Boolean truth literal. -/
 def DecodedAssertion.truth {resolve : Resolver} {arena : Arena}
