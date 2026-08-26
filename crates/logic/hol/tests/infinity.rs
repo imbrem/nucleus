@@ -2,7 +2,7 @@
 
 mod support;
 
-use covalence_logic_hol::{AX_INF, AX_SUB, InfinityBinder, KernelError, Lit, Sort};
+use covalence_logic_hol::{AX_INF, AX_SUB, InfinityBinder, Kernel, KernelError, Lit, Sort};
 use support::Fix;
 
 #[test]
@@ -68,4 +68,28 @@ fn the_body_and_carrier_name_determine_the_chosen_model_syntax() {
         .model(axiom.carrier_name, axiom.body)
         .expect("chosen carrier syntax");
     assert_eq!(fix.kernel.category(chosen).expect("model"), Sort::Ty);
+}
+
+#[test]
+fn an_explicit_name_block_is_replayable_and_overflow_checked() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().expect("star");
+    let bool_ty = kernel.bool_ty(star).expect("bool");
+    kernel.add_axiom(AX_INF).expect("infinity capability");
+
+    let first = kernel
+        .inf_exists_at(bool_ty, 40)
+        .expect("explicit infinity sentence");
+    let second = kernel
+        .inf_exists_at(bool_ty, 40)
+        .expect("replayed infinity sentence");
+    assert_eq!(first.base_name, 40);
+    assert_eq!(first.carrier_name, 40);
+    assert_eq!(kernel.arena().name(first.exists_type), Some(40));
+    assert_eq!(kernel.arena().name(second.exists_type), Some(40));
+
+    assert!(matches!(
+        kernel.inf_exists_at(bool_ty, u64::MAX),
+        Err(KernelError::TooManyNames)
+    ));
 }
