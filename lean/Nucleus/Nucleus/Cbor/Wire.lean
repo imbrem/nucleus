@@ -22,6 +22,15 @@ namespace CborWire
 private def bytesOfList (xs : List UInt8) : Bytes := ⟨xs.toByteArray⟩
 private def listOfBytes (xs : Bytes) : List UInt8 := xs.data.data.toList
 
+@[simp] private theorem bytesOfList_listOfBytes (value : Bytes) :
+    bytesOfList (listOfBytes value) = value := by
+  rcases value with ⟨⟨data⟩⟩
+  simp only [bytesOfList, listOfBytes]
+  apply congrArg Bytes.mk
+  apply ByteArray.ext
+  apply Array.toList_inj.mp
+  exact List.toList_data_toByteArray
+
 private def readNat : Nat → List UInt8 → Option (UInt64 × List UInt8)
   | 0, input => some (0, input)
   | n + 1, b :: rest => do
@@ -340,6 +349,104 @@ mutual
     | .mapNil => []
     | .mapCons key value tail => (encodeSyn key, encodeSyn value) :: encodeEntries tail
 end
+
+/-! ## Primitive cursor roundtrips -/
+
+private theorem parseItem_encode_unsigned (value : UInt64)
+    (suffix : List UInt8) :
+    parseItem 1 (encodeSyn (.primitive (.integer (.unsigned value))) ++ suffix) =
+      some (.primitive (.integer (.unsigned value)), suffix) := by
+  rw [encodeSyn]
+  simp only [parseItem]
+  rw [parseHead?_head 0 value suffix (by decide)]
+  rfl
+
+private theorem parseItem_encode_negative (value : UInt64)
+    (suffix : List UInt8) :
+    parseItem 1 (encodeSyn (.primitive (.integer (.negative value))) ++ suffix) =
+      some (.primitive (.integer (.negative value)), suffix) := by
+  rw [encodeSyn]
+  simp only [parseItem]
+  rw [parseHead?_head 1 value suffix (by decide)]
+  rfl
+
+private theorem takeBytes_length (payload suffix : List UInt8)
+    (fits : payload.length ≤ Bytes.maxDefiniteLength) :
+    takeBytes (UInt64.ofNat payload.length) (payload ++ suffix) =
+      some (payload, suffix) := by
+  have lengthFits : payload.length < 2 ^ 64 := by
+    unfold Bytes.maxDefiniteLength at fits
+    omega
+  have lengthFits' : payload.length < 18446744073709551616 := by
+    simpa using lengthFits
+  have roundtrip : (UInt64.ofNat payload.length).toNat = payload.length := by
+    rw [UInt64.toNat_ofNat', Nat.mod_eq_of_lt lengthFits']
+  simp [takeBytes, roundtrip]
+
+set_option linter.flexible false in
+private theorem parseItem_encode_bytes (value : Bytes) (suffix : List UInt8)
+    (fits : value.length ≤ Bytes.maxDefiniteLength) :
+    parseItem 1 (encodeSyn (.primitive (.bytes value)) ++ suffix) =
+      some (.primitive (.bytes value), suffix) := by
+  let payload := listOfBytes value
+  have payloadLength : payload.length = value.length := by
+    simp [payload, listOfBytes, Bytes.length]
+  have payloadFits : payload.length ≤ Bytes.maxDefiniteLength := by
+    simpa [payloadLength] using fits
+  rw [encodeSyn]
+  change parseItem 1 (head 2 (UInt64.ofNat value.length) ++ payload ++ suffix) = _
+  rw [List.append_assoc]
+  simp only [parseItem]
+  rw [parseHead?_head 2 (UInt64.ofNat value.length) (payload ++ suffix) (by decide)]
+  rw [← payloadLength]
+  change (do
+    let (chunk, rest) ← takeBytes (UInt64.ofNat payload.length) (payload ++ suffix)
+    some (CborSyn.primitive (.bytes (bytesOfList chunk)), rest)) = _
+  rw [takeBytes_length payload suffix payloadFits]
+  change some (CborSyn.primitive (.bytes (bytesOfList payload)), suffix) = _
+  have payloadRoundtrip : bytesOfList payload = value := by
+    simp [payload]
+  rw [payloadRoundtrip]
+
+private theorem fromUTF8?_toUTF8 (value : String) :
+    String.fromUTF8? value.toUTF8 = some value := by
+  rw [String.fromUTF8?]
+  simp only [String.toUTF8_eq_toByteArray]
+  split
+  next valid =>
+    congr 1
+  next invalid =>
+    exact (invalid value.isValidUTF8).elim
+
+set_option linter.flexible false in
+private theorem parseItem_encode_text (value : String) (suffix : List UInt8)
+    (fits : value.toUTF8.size ≤ Bytes.maxDefiniteLength) :
+    parseItem 1 (encodeSyn (.primitive (.text value)) ++ suffix) =
+      some (.primitive (.text value), suffix) := by
+  let payload := value.toUTF8.data.toList
+  have payloadLength : payload.length = value.toUTF8.size := by
+    simp [payload]
+  have payloadFits : payload.length ≤ Bytes.maxDefiniteLength := by
+    simpa [payloadLength] using fits
+  rw [encodeSyn]
+  change parseItem 1
+    (head 3 (UInt64.ofNat value.toUTF8.size) ++ payload ++ suffix) = _
+  rw [List.append_assoc]
+  simp only [parseItem]
+  rw [parseHead?_head 3 (UInt64.ofNat value.toUTF8.size)
+    (payload ++ suffix) (by decide)]
+  rw [← payloadLength]
+  change (do
+    let (chunk, rest) ← takeBytes (UInt64.ofNat payload.length) (payload ++ suffix)
+    let text ← String.fromUTF8? chunk.toByteArray
+    some (CborSyn.primitive (.text text), rest)) = _
+  rw [takeBytes_length payload suffix payloadFits]
+  have payloadRoundtrip : payload.toByteArray = value.toUTF8 := by
+    apply ByteArray.ext
+    simp [payload]
+  have decoded : String.fromUTF8? value.toByteArray = some value := by
+    simpa using fromUTF8?_toUTF8 value
+  simp [payloadRoundtrip, decoded]
 
 /-! ## Deterministic parsed normal form
 
