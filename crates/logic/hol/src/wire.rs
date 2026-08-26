@@ -2,6 +2,8 @@
 
 use std::io::{Read, Write};
 
+use covalence_lib_cbor::Value;
+
 use crate::Arena;
 
 /// Maximum literal-import nesting accepted by the current CBOR decoder.
@@ -49,7 +51,53 @@ fn reader_is_exhausted(reader: &mut impl Read) -> Result<bool, DecodeError> {
 ///
 /// Returns an error if the writer rejects the encoded bytes.
 pub fn serialize(arena: &Arena, writer: impl Write) -> Result<(), EncodeError> {
-    covalence_lib_cbor::into_writer(arena, writer).map_err(|error| EncodeError(error.to_string()))
+    let mut value = Value::serialized(arena).map_err(|error| EncodeError(error.to_string()))?;
+    canonicalize(&mut value)?;
+    covalence_lib_cbor::into_writer(&value, writer).map_err(|error| EncodeError(error.to_string()))
+}
+
+fn canonicalize(value: &mut Value) -> Result<(), EncodeError> {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                canonicalize(value)?;
+            }
+        }
+        Value::Map(fields) => {
+            let mut keyed = Vec::with_capacity(fields.len());
+            for (mut key, mut value) in std::mem::take(fields) {
+                canonicalize(&mut key)?;
+                canonicalize(&mut value)?;
+                let encoded = encoded_key(&key)?;
+                keyed.push((encoded, key, value));
+            }
+            keyed.sort_by(|left, right| {
+                left.0
+                    .len()
+                    .cmp(&right.0.len())
+                    .then_with(|| left.0.cmp(&right.0))
+            });
+            if keyed.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+                return Err(EncodeError(
+                    "canonical CBOR map contains duplicate encoded keys".to_owned(),
+                ));
+            }
+            *fields = keyed
+                .into_iter()
+                .map(|(_, key, value)| (key, value))
+                .collect();
+        }
+        Value::Tag(_, content) => canonicalize(content)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+fn encoded_key(value: &Value) -> Result<Vec<u8>, EncodeError> {
+    let mut bytes = Vec::new();
+    covalence_lib_cbor::into_writer(value, &mut bytes)
+        .map_err(|error| EncodeError(error.to_string()))?;
+    Ok(bytes)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -170,6 +218,55 @@ mod tests {
         assert!(!fields.iter().any(|(key, _)| {
             matches!(key, Value::Text(name) if ["imports", "defs", "eq", "sort", "syn_facts"].contains(&name.as_str()))
         }));
+        assert_eq!(
+            fields
+                .iter()
+                .map(|(key, _)| key.as_text().unwrap())
+                .collect::<Vec<_>>(),
+            ["amb", "hol", "tag", "pred", "import"]
+        );
+    }
+
+    #[test]
+    fn canonicalization_recurses_and_rejects_duplicate_encoded_keys() {
+        let mut value = Value::Map(vec![
+            (
+                Value::Text("longer".into()),
+                Value::Map(vec![
+                    (Value::Text("z".into()), Value::Null),
+                    (Value::Text("a".into()), Value::Null),
+                ]),
+            ),
+            (Value::Text("b".into()), Value::Null),
+            (Value::Text("a".into()), Value::Null),
+        ]);
+        canonicalize(&mut value).unwrap();
+        let Value::Map(fields) = value else {
+            unreachable!()
+        };
+        assert_eq!(
+            fields
+                .iter()
+                .map(|(key, _)| key.as_text().unwrap())
+                .collect::<Vec<_>>(),
+            ["a", "b", "longer"]
+        );
+        let Value::Map(nested) = &fields[2].1 else {
+            unreachable!()
+        };
+        assert_eq!(
+            nested
+                .iter()
+                .map(|(key, _)| key.as_text().unwrap())
+                .collect::<Vec<_>>(),
+            ["a", "z"]
+        );
+
+        let mut duplicate = Value::Map(vec![
+            (Value::Text("same".into()), Value::Bool(false)),
+            (Value::Text("same".into()), Value::Bool(true)),
+        ]);
+        assert!(canonicalize(&mut duplicate).is_err());
     }
 
     #[test]

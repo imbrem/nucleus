@@ -385,7 +385,7 @@ mod tests {
         assert_eq!(wire::deserialize(bytes.as_slice()).unwrap(), *first.arena());
         assert_eq!(
             first.arena().addr(),
-            O256::from_hex("4b1cb9877b3148128255757dd542a21c6ea9591cb8e188f4f41f828f3c2a95f5")
+            O256::from_hex("f8c65ffe8817adda472f44bfa039738351b88524abaf9f9d798c6cef714ac964")
                 .unwrap()
         );
         assert_eq!(
