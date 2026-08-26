@@ -1386,4 +1386,28 @@ def bytes : Bytes := ⟨ByteArray.mk #[
 def arena? : Option Layout.Arena :=
   (CborWire.parse? bytes).bind NestedCbor.decodeArenaByte?
 
+/-! ## Frozen natural-package roots
+
+These positions are semantic input to the source-independent certificate, not
+names recovered from the userspace dictionary.  The Rust projection test pins
+the same six positions together with the arena address above. -/
+
+/-- The closed natural-number carrier. -/
+def naturalCarrier : Ref := ⟨433, by decide⟩
+
+/-- The selected natural zero. -/
+def naturalZero : Ref := ⟨502, by decide⟩
+
+/-- The selected natural successor. -/
+def naturalSuccessor : Ref := ⟨517, by decide⟩
+
+/-- The Boolean induction assertion. -/
+def naturalInduction : Ref := ⟨654, by decide⟩
+
+/-- The Boolean successor-injectivity assertion. -/
+def naturalSuccessorInjective : Ref := ⟨783, by decide⟩
+
+/-- The Boolean zero/successor-separation assertion. -/
+def naturalZeroNeSuccessor : Ref := ⟨793, by decide⟩
+
 end Nucleus.Hol.Ethane.OneBased.FrozenInit
