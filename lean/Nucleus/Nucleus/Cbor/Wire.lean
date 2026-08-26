@@ -448,6 +448,66 @@ private theorem parseItem_encode_text (value : String) (suffix : List UInt8)
     simpa using fromUTF8?_toUTF8 value
   simp [payloadRoundtrip, decoded]
 
+private theorem encodeSyn_simple_eq_head (value : UInt8) :
+    encodeSyn (.primitive (.simple value)) = head 7 value.toUInt64 := by
+  unfold encodeSyn head
+  split <;> rename_i small
+  · have small' : value.toUInt64 < 24 := by
+      exact UInt64.lt_iff_toNat_lt.mpr (by simpa using small)
+    rw [if_pos small']
+    congr 2
+  · have notSmall : ¬ value.toUInt64 < 24 := by
+      intro less
+      exact small (by simpa using UInt64.lt_iff_toNat_lt.mp less)
+    rw [if_neg notSmall]
+    have oneByte : value.toUInt64 ≤ 0xff := by
+      bv_decide
+    rw [if_pos oneByte]
+    simp [beBytes]
+
+private theorem parseItem_encode_simple (value : UInt8) (suffix : List UInt8) :
+    parseItem 1 (encodeSyn (.primitive (.simple value)) ++ suffix) =
+      some (.primitive (.simple value), suffix) := by
+  rw [encodeSyn_simple_eq_head]
+  simp only [parseItem]
+  rw [parseHead?_head 7 value.toUInt64 suffix (by decide)]
+  have oneByte : value.toUInt64 ≤ 0xff := by
+    bv_decide
+  have valueFits : value.toNat ≤ 255 := by
+    have := value.toNat_lt
+    omega
+  simp only [headInfo, oneByte, if_pos]
+  dsimp
+  simp only [valueFits, if_pos]
+  generalize infoDef : (if value.toUInt64 < 24 then value.toNat else 24) = info at ⊢
+  have infoLe : info ≤ 24 := by
+    rw [← infoDef]
+    split
+    · have : value.toNat < 24 := by
+        simpa only [UInt8.toNat_toUInt64, UInt64.toNat_ofNat] using
+          UInt64.lt_iff_toNat_lt.mp ‹value.toUInt64 < 24›
+      omega
+    · omega
+  have ne25 : info ≠ 25 := by omega
+  have ne26 : info ≠ 26 := by omega
+  have ne27 : info ≠ 27 := by omega
+  have ne31 : info ≠ 31 := by omega
+  simp
+
+private theorem parseItem_encode_tag (fuel : Nat) (number : UInt64)
+    (content parsed : Cbor) (suffix : List UInt8)
+    (contentRoundtrip :
+      parseItem fuel (encodeSyn content ++ suffix) = some (parsed, suffix)) :
+    parseItem (fuel + 1) (encodeSyn (.tag number content) ++ suffix) =
+      some (.tag number parsed, suffix) := by
+  rw [encodeSyn]
+  rw [List.append_assoc]
+  simp only [parseItem]
+  rw [parseHead?_head 6 number (encodeSyn content ++ suffix) (by decide)]
+  dsimp
+  rw [contentRoundtrip]
+  simp
+
 /-! ## Deterministic parsed normal form
 
 Encoding and parsing is not literally an identity on `Cbor`: map syntax keeps
