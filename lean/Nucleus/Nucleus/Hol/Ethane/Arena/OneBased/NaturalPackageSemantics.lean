@@ -1,6 +1,6 @@
 import Nucleus.Hol.Ethane.Arena.OneBased.DenseKernelTransport
 import Nucleus.HolE.ClassicalNaturals
-import Nucleus.HolE.ClassicalRealization
+import Nucleus.HolE.ClassicalEqualityRealization
 
 /-!
 # Semantic certificates for checked natural-number packages
