@@ -19,7 +19,7 @@ mod syntax;
 
 pub use coproduct::{
     Coproduct, CoproductComputation, CoproductEliminator, CoproductError, CoproductExt,
-    CoproductSchema,
+    CoproductLaws, CoproductSchema,
 };
 pub use equality::{EqualityError, ProvedEquality, equality_symmetry, equality_transitivity};
 pub use exists::{ExistsError, OpenedExists, OpenedExistsDecl, open_exists, open_exists_at};
