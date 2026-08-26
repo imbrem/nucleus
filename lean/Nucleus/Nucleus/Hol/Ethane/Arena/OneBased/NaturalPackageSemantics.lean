@@ -99,6 +99,45 @@ def ProvedProposition.ofClosedFormula {resolve : Resolver} {arena : Arena}
   assertion := assertion
   interpreted := agreement.closed resolves
 
+/-- Complete the standard construction after a package-specific decoder has
+identified the exact closed formula's high-level meaning. -/
+def ProvedProposition.ofDecodedClosedFormula {resolve : Resolver} {arena : Arena}
+    {interpretation : PartialValuation Ref} {proposition : Prop}
+    (agreement : HolEvaluationAgrees resolve arena interpretation)
+    (reference : Ref) (expression : EmptyTm) (fact : WireSequent)
+    (resolves : Resolves (coreResolver resolve) arena.holCore reference
+      (.term .boolTy expression))
+    (member : fact ∈ arena.hol.thm)
+    (assertion : fact.semantic = Sequent.assert reference)
+    (decodes : ClosedFormulaHolds expression ↔ proposition) :
+    ProvedProposition arena interpretation proposition :=
+  (ProvedProposition.ofClosedFormula agreement reference expression fact
+    resolves member assertion).congr decodes
+
+/-- All representation-level evidence needed to decode one exact checked HOL
+assertion as a high-level semantic proposition. -/
+structure DecodedAssertion (resolve : Resolver) (arena : Arena)
+    (proposition : Prop) where
+  reference : Ref
+  expression : EmptyTm
+  fact : WireSequent
+  resolves : Resolves (coreResolver resolve) arena.holCore reference
+    (.term .boolTy expression)
+  member : fact ∈ arena.hol.thm
+  assertion : fact.semantic = Sequent.assert reference
+  decodes : ClosedFormulaHolds expression ↔ proposition
+
+/-- A decoded assertion becomes theorem evidence once the arena's Boolean
+interpretation is known to agree with closed HolE evaluation. -/
+def DecodedAssertion.proved {resolve : Resolver} {arena : Arena}
+    {interpretation : PartialValuation Ref} {proposition : Prop}
+    (decoded : DecodedAssertion resolve arena proposition)
+    (agreement : HolEvaluationAgrees resolve arena interpretation) :
+    ProvedProposition arena interpretation proposition :=
+  ProvedProposition.ofDecodedClosedFormula agreement decoded.reference
+    decoded.expression decoded.fact decoded.resolves decoded.member
+    decoded.assertion decoded.decodes
+
 /-- Source-independent semantics of the exact declaration rows in a checked
 natural-number package.  `carrier`, `zero`, and `successor` are related to the
 ordinary HolE evaluator, rather than being arbitrary data attached to names.
@@ -108,6 +147,7 @@ separate, syntax-directed decoder can establish those fields for a concrete
 arena without becoming part of the trusted kernel API. -/
 structure NaturalPackageCertificate (resolve : Resolver) (arena : Arena)
     (interpretation : PartialValuation Ref) where
+  agreement : HolEvaluationAgrees resolve arena interpretation
   carrierRef : Ref
   zeroRef : Ref
   successorRef : Ref
@@ -140,11 +180,11 @@ structure NaturalPackageCertificate (resolve : Resolver) (arena : Arena)
       emptyRawBoundEnv
       successorSyntax (.arr carrierSyntax carrierSyntax)
       ⟨carrier.carrier → carrier.carrier, fun _ => carrier.point⟩ successor
-  successorInjective : ProvedProposition arena interpretation
+  successorInjective : DecodedAssertion resolve arena
     (∀ x y, successor x = successor y → x = y)
-  zeroNeSuccessor : ProvedProposition arena interpretation
+  zeroNeSuccessor : DecodedAssertion resolve arena
     (∀ x, zero ≠ successor x)
-  induction : ProvedProposition arena interpretation
+  induction : DecodedAssertion resolve arena
     (∀ P : carrier.carrier → Bool,
       P zero = true →
       (∀ x, P x = true → P (successor x) = true) →
@@ -172,9 +212,12 @@ def certify {trusted : Arena → Prop} {resolve : Resolver} {arena : Arena}
     CNatModel :=
   certificate.declaration.certify <| CNatDecl.proofOfBoolLaws
     certificate.declaration
-    (certificate.successorInjective.holds valid ambientValuation admitted)
-    (certificate.zeroNeSuccessor.holds valid ambientValuation admitted)
-    (certificate.induction.holds valid ambientValuation admitted)
+    ((certificate.successorInjective.proved certificate.agreement).holds
+      valid ambientValuation admitted)
+    ((certificate.zeroNeSuccessor.proved certificate.agreement).holds
+      valid ambientValuation admitted)
+    ((certificate.induction.proved certificate.agreement).holds
+      valid ambientValuation admitted)
 
 @[simp] theorem certify_declaration {trusted : Arena → Prop} {resolve : Resolver}
     {arena : Arena} {interpretation : PartialValuation Ref}
@@ -242,17 +285,17 @@ structure RecursorPackageCertificate (resolve : Resolver) (arena : Arena)
       emptyRawBoundEnv selectedSyntax (.arr naturals.carrierSyntax codomainSyntax)
       ⟨naturals.carrier.carrier → codomain.carrier, fun _ => codomain.point⟩
       selected
-  graph : ProvedProposition arena interpretation
+  graph : DecodedAssertion resolve arena
     (∀ n, ∀ relation : naturals.carrier.carrier → codomain.carrier → Prop,
       relation naturals.zero base →
       (∀ k z, relation k z →
         relation (naturals.successor k) (step k z)) →
       relation n (selected n))
-  atZero : ProvedProposition arena interpretation
+  atZero : DecodedAssertion resolve arena
     (selected naturals.zero = base)
-  atSuccessor : ProvedProposition arena interpretation
+  atSuccessor : DecodedAssertion resolve arena
     (∀ n, selected (naturals.successor n) = step n (selected n))
-  unique : ProvedProposition arena interpretation
+  unique : DecodedAssertion resolve arena
     (∀ candidate : naturals.carrier.carrier → codomain.carrier,
       candidate naturals.zero = base →
       (∀ n, candidate (naturals.successor n) = step n (candidate n)) →
@@ -286,10 +329,14 @@ theorem proof {trusted : Arena → Prop} {resolve : Resolver} {arena : Arena}
       (arena.ImportSort resolve) ambientValuation) :
     RecursorProof (certificate.declaration valid ambientValuation admitted) := by
   exact {
-    graph := certificate.graph.holds valid ambientValuation admitted
-    at_zero := certificate.atZero.holds valid ambientValuation admitted
-    at_succ := certificate.atSuccessor.holds valid ambientValuation admitted
-    unique := certificate.unique.holds valid ambientValuation admitted
+    graph := (certificate.graph.proved certificate.naturals.agreement).holds
+      valid ambientValuation admitted
+    at_zero := (certificate.atZero.proved certificate.naturals.agreement).holds
+      valid ambientValuation admitted
+    at_succ := (certificate.atSuccessor.proved certificate.naturals.agreement).holds
+      valid ambientValuation admitted
+    unique := (certificate.unique.proved certificate.naturals.agreement).holds
+      valid ambientValuation admitted
   }
 
 end RecursorPackageCertificate
@@ -322,9 +369,9 @@ structure FirstRecursiveAddPackageCertificate (resolve : Resolver) (arena : Aren
       ⟨naturals.carrier.carrier → naturals.carrier.carrier →
         naturals.carrier.carrier,
         fun _ _ => naturals.carrier.point⟩ add
-  atZero : ProvedProposition arena interpretation
+  atZero : DecodedAssertion resolve arena
     (∀ m, add naturals.zero m = m)
-  atSuccessor : ProvedProposition arena interpretation
+  atSuccessor : DecodedAssertion resolve arena
     (∀ n m, add (naturals.successor n) m =
       naturals.successor (add n m))
 
@@ -355,8 +402,10 @@ theorem proof {trusted : Arena → Prop} {resolve : Resolver} {arena : Arena}
     FirstRecursiveAddProof
       (certificate.declaration valid ambientValuation admitted) := by
   exact {
-    at_zero := certificate.atZero.holds valid ambientValuation admitted
-    at_succ := certificate.atSuccessor.holds valid ambientValuation admitted
+    at_zero := (certificate.atZero.proved certificate.naturals.agreement).holds
+      valid ambientValuation admitted
+    at_succ := (certificate.atSuccessor.proved certificate.naturals.agreement).holds
+      valid ambientValuation admitted
   }
 
 /-- Commutativity is then inherited from the source-independent semantic
