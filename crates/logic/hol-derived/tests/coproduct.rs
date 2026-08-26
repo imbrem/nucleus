@@ -1,6 +1,6 @@
 use covalence_logic_hol::{AX_SUB, Kernel, Sort};
 use covalence_logic_hol_derived::{
-    CoproductCandidateLaws, CoproductExt, forall_elim, join_same_syntax,
+    CoproductCandidate, CoproductCandidateLaws, CoproductExt, forall_elim, join_same_syntax,
 };
 
 #[test]
@@ -327,4 +327,41 @@ fn every_mediator_with_the_computation_laws_is_extensionally_unique() {
         .eq(bool_ty, candidate_function, unique.canonical)
         .unwrap();
     join_same_syntax(&mut kernel, unique.equality, expected).unwrap();
+
+    let arbitrary = kernel.tm_fv(702, eliminator.value_map_ty).unwrap();
+    let left_value = kernel.tm_fv(703, coproduct.left).unwrap();
+    let left_injected = kernel.app(coproduct.inl, left_value).unwrap();
+    let arbitrary_left = kernel.app(arbitrary, left_injected).unwrap();
+    let expected_left = kernel.app(left_map, left_value).unwrap();
+    let left_law = kernel.eq(bool_ty, arbitrary_left, expected_left).unwrap();
+    let left_law = kernel.forall_tm(bool_ty, left_value, left_law).unwrap();
+    let right_value = kernel.tm_fv(704, coproduct.right).unwrap();
+    let right_injected = kernel.app(coproduct.inr, right_value).unwrap();
+    let arbitrary_right = kernel.app(arbitrary, right_injected).unwrap();
+    let expected_right = kernel.app(right_map, right_value).unwrap();
+    let right_law = kernel.eq(bool_ty, arbitrary_right, expected_right).unwrap();
+    let right_law = kernel.forall_tm(bool_ty, right_value, right_law).unwrap();
+    let universal = coproduct
+        .prove_universal_mediator(
+            &mut kernel,
+            eliminator,
+            left_map,
+            right_map,
+            CoproductCandidate {
+                function: arbitrary,
+                left: left_law,
+                right: right_law,
+            },
+        )
+        .unwrap();
+    let theorem = kernel.thm().get(universal.theorem).unwrap();
+    assert_eq!(theorem.lhs.rows().count(), 0);
+    assert_eq!(
+        theorem.rhs.rows().collect::<Vec<_>>(),
+        vec![
+            &[covalence_logic_hol::Lit::positive(
+                universal.universal.get()
+            )][..]
+        ]
+    );
 }

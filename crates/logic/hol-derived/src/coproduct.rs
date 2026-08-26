@@ -210,6 +210,17 @@ pub struct CoproductOpenedCases {
 
 /// Proof that a candidate mediator obeys both coproduct computation laws.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoproductCandidate {
+    /// Candidate function `coproduct → codomain`.
+    pub function: Ref,
+    /// Universal law `∀a. function (inl a) = left_map a`.
+    pub left: Ref,
+    /// Universal law `∀b. function (inr b) = right_map b`.
+    pub right: Ref,
+}
+
+/// Proof that a candidate mediator obeys both coproduct computation laws.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CoproductCandidateLaws {
     /// Candidate function `coproduct → codomain`.
     pub function: Ref,
@@ -237,6 +248,23 @@ pub struct CoproductUniqueness {
     /// Function equality `candidate = canonical`.
     pub equality: Ref,
     /// Premise-free theorem of [`equality`](Self::equality).
+    pub theorem: ThmId,
+}
+
+/// The universally quantified uniqueness implication for one mediator symbol.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoproductUniversal {
+    /// Underlying uniqueness derivation with the two laws as assumptions.
+    pub uniqueness: CoproductUniqueness,
+    /// Conjunction of the candidate's two universal computation laws.
+    pub laws: Ref,
+    /// Implication `laws → candidate = canonical`.
+    pub implication: Ref,
+    /// Premise-free theorem of [`implication`](Self::implication).
+    pub implication_theorem: ThmId,
+    /// Universal proposition `∀candidate. laws → candidate = canonical`.
+    pub universal: Ref,
+    /// Premise-free theorem of [`universal`](Self::universal).
     pub theorem: ThmId,
 }
 
@@ -487,6 +515,79 @@ impl Coproduct {
         )?;
         *kernel = staged;
         Ok(proof)
+    }
+
+    /// Proves the candidate-law implication and quantifies the candidate.
+    ///
+    /// Unlike [`prove_unique_mediator`](Self::prove_unique_mediator), this
+    /// operation does not accept proofs of the candidate laws. It assumes the
+    /// two supplied universal propositions through identity sequents, derives
+    /// uniqueness under those assumptions, folds them into a conjunction,
+    /// introduces implication, and universally generalizes `candidate`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `candidate` is a checked free variable of the
+    /// mediator type, `left` and `right` are the exact usable computation-law
+    /// propositions for it, and the complete userspace uniqueness derivation
+    /// succeeds transactionally.
+    pub fn prove_universal_mediator(
+        &self,
+        kernel: &mut Kernel,
+        eliminator: CoproductEliminator,
+        left_map: Ref,
+        right_map: Ref,
+        candidate: CoproductCandidate,
+    ) -> Result<CoproductUniversal, CoproductError> {
+        let mut staged = kernel.fork();
+        let left_theorem = staged
+            .identity(positive(candidate.left))
+            .context(KernelSnafu)?;
+        let right_theorem = staged
+            .identity(positive(candidate.right))
+            .context(KernelSnafu)?;
+        let candidate_laws = CoproductCandidateLaws {
+            function: candidate.function,
+            left: candidate.left,
+            left_theorem,
+            right: candidate.right,
+            right_theorem,
+        };
+        let uniqueness = prove_unique_mediator_inner(
+            &mut staged,
+            self,
+            eliminator,
+            left_map,
+            right_map,
+            candidate_laws,
+        )?;
+        staged
+            .contract_theorem(uniqueness.theorem)
+            .context(KernelSnafu)?;
+        let laws = staged
+            .op2(Op2::And, candidate.left, candidate.right)
+            .context(KernelSnafu)?;
+        let under_laws = staged
+            .and_left(uniqueness.theorem, positive(laws))
+            .context(KernelSnafu)?;
+        let implication = staged
+            .op2(Op2::Imp, laws, uniqueness.equality)
+            .context(KernelSnafu)?;
+        let implication_theorem = staged
+            .imp_right(under_laws, positive(implication))
+            .context(KernelSnafu)?;
+        let universal = staged
+            .forall_intro(implication_theorem, candidate.function)
+            .context(KernelSnafu)?;
+        *kernel = staged;
+        Ok(CoproductUniversal {
+            uniqueness,
+            laws,
+            implication,
+            implication_theorem,
+            universal: universal.universal,
+            theorem: universal.theorem,
+        })
     }
 }
 
