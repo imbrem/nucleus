@@ -511,6 +511,30 @@ fn projected_init_slice_is_deterministic_complete_and_opcode_free() {
     }
 }
 
+#[test]
+fn frozen_member_schema_replays_through_a_checked_compact_alias() {
+    let init = logical_init();
+    let slice = compile_init_slice(&init).expect("projected slice");
+    let mut certificate = slice.kernel();
+    let member = certificate
+        .compact_logical_tree(&init, slice.get("NatMember").unwrap())
+        .expect("checked compact schema alias");
+    let replayed = certificate
+        .choose_naturals_from_member_schema(
+            slice.get("bool").unwrap(),
+            slice.get("NatMember/'a").unwrap(),
+            member.compact,
+        )
+        .expect("replayed natural derivation");
+
+    assert_eq!(replayed.symbols().len(), slice.naturals().symbols().len());
+    assert!(certificate.arena().len() > slice.prefix().len());
+    assert_eq!(
+        certificate.init_prefix(),
+        Some((slice.prefix().addr(), slice.prefix().len()))
+    );
+}
+
 fn check_exact_theorem(
     kernel: &Kernel,
     proposition: covalence_logic_hol::Ref,

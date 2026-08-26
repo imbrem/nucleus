@@ -32,10 +32,72 @@ impl Kernel {
         source: Ref,
     ) -> Result<SynFactId, KernelError> {
         let expansion = self.lower_logical(init, source)?;
-        self.require_compatible_endpoints::<Infallible>(source, expansion, false)?;
+        self.logical_lower_fact_to(target, init, source, expansion)
+    }
+
+    /// Records that a compact logical opcode equals one already-resident raw
+    /// application of its canonical init definition.
+    ///
+    /// Unlike [`logical_lower_fact`](Self::logical_lower_fact), this rule does
+    /// not allocate the expansion. It checks the exact application spine at
+    /// `output`, making it suitable for userspace proof adapters which first
+    /// rebuild a larger raw term with compact operands.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `source` is a logical opcode, `output` is its
+    /// exact one- or two-argument init expansion, and the init prefix matches.
+    pub fn logical_lower_fact_to(
+        &mut self,
+        target: Option<SynFactId>,
+        init: &Compiled,
+        source: Ref,
+        output: Ref,
+    ) -> Result<SynFactId, KernelError> {
+        if !self.arena.has_definition_prefix(init.arena()) {
+            return Err(KernelError::InitPrefixMismatch);
+        }
+        let source_node = *self.row::<Infallible>(source)?.expr();
+        let valid = match source_node {
+            Node::Op1(op, operand) => {
+                let definition = init.get(op.name()).ok_or(KernelError::WrongForm {
+                    reference: source,
+                    expected: "named logical init definition",
+                    actual: source_node.tag(),
+                })?;
+                matches!(*self.row::<Infallible>(output)?.expr(), Node::App(function, argument)
+                    if function == definition && argument == operand)
+            }
+            Node::Op2(op, left, right) => {
+                let definition = init.get(op.name()).ok_or(KernelError::WrongForm {
+                    reference: source,
+                    expected: "named logical init definition",
+                    actual: source_node.tag(),
+                })?;
+                match *self.row::<Infallible>(output)?.expr() {
+                    Node::App(partial, argument) if argument == right => {
+                        matches!(*self.row::<Infallible>(partial)?.expr(),
+                            Node::App(function, argument)
+                                if function == definition && argument == left)
+                    }
+                    _ => false,
+                }
+            }
+            _ => {
+                return Err(KernelError::WrongForm {
+                    reference: source,
+                    expected: "tm.op1.v1 or tm.op2.v1",
+                    actual: source_node.tag(),
+                });
+            }
+        };
+        if !valid {
+            return Err(Self::invalid_fact("logical lowering"));
+        }
+        self.require_compatible_endpoints::<Infallible>(source, output, false)?;
         self.put_fact(
             target,
-            SynFact::new(SynRel::Syn, None, None, source, expansion),
+            SynFact::new(SynRel::Syn, None, None, source, output),
         )
     }
 
