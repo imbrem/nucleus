@@ -516,6 +516,12 @@
       "category": "tcb",
       "targets": [
         {
+          "name": "coproduct",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "covalence_logic_hol_derived",
           "kinds": [
             "lib"

@@ -18,8 +18,8 @@ mod subtype;
 mod syntax;
 
 pub use coproduct::{
-    Coproduct, CoproductComputation, CoproductEliminator, CoproductError, CoproductExt,
-    CoproductLaws, CoproductSchema,
+    Coproduct, CoproductCases, CoproductComputation, CoproductEliminator, CoproductError,
+    CoproductExhaustiveness, CoproductExt, CoproductLaws, CoproductSchema,
 };
 pub use equality::{
     EqualityError, ProvedEquality, equality_symmetry, equality_transitivity,

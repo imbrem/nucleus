@@ -7,7 +7,7 @@ use covalence_logic_hol::{
 
 use crate::{
     EqualityError, ForallError, ModelError, Subtype, SubtypeError, SubtypeExt, SyntaxError,
-    equality_symmetry, forall_elim, join_same_syntax, substitute,
+    equality_symmetry, forall_elim, join_alpha_equivalent, join_same_syntax, substitute,
 };
 
 /// Failure to specialize or derive a userspace coproduct package.
@@ -146,6 +146,35 @@ pub struct CoproductLaws {
     pub theorem: ThmId,
 }
 
+/// Premise-free evidence that every coproduct representation lies in an
+/// injection image.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoproductExhaustiveness {
+    /// Existential proposition `∃x : carrier. predicate x`.
+    pub inhabited: Ref,
+    /// Premise-free theorem of [`inhabited`](Self::inhabited).
+    pub inhabited_theorem: ThmId,
+    /// Universal proposition `∀t : coproduct. predicate (rep t)`.
+    pub image_of_rep: Ref,
+    /// Premise-free theorem of [`image_of_rep`](Self::image_of_rep).
+    pub theorem: ThmId,
+}
+
+/// One specialized coproduct image split.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoproductCases {
+    /// Specialized coproduct value.
+    pub value: Ref,
+    /// Left image existential.
+    pub left: Ref,
+    /// Right image existential.
+    pub right: Ref,
+    /// Disjunction of [`left`](Self::left) and [`right`](Self::right).
+    pub disjunction: Ref,
+    /// Premise-free theorem of [`disjunction`](Self::disjunction).
+    pub theorem: ThmId,
+}
+
 impl Coproduct {
     /// Constructs the choice-based eliminator at one checked result type.
     ///
@@ -259,6 +288,48 @@ impl Coproduct {
         let proof = prove_case_laws_inner(&mut staged, self, eliminator, left_map, right_map)?;
         *kernel = staged;
         Ok(proof)
+    }
+
+    /// Proves that every represented coproduct value is in one injection image.
+    ///
+    /// This first proves the image predicate inhabited, then eliminates the
+    /// guarded subtype's empty-predicate fallback and universally generalizes
+    /// the resulting `predicate (rep t)` theorem. The operation is
+    /// transactional and uses only ordinary userspace HOL rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the guarded subtype representation theorem is
+    /// available and each checked equality, existential, Gentzen, beta, and
+    /// universal-introduction step succeeds.
+    pub fn prove_exhaustiveness(
+        &self,
+        kernel: &mut Kernel,
+    ) -> Result<CoproductExhaustiveness, CoproductError> {
+        let mut staged = kernel.fork();
+        let proof = prove_exhaustiveness_inner(&mut staged, self)?;
+        *kernel = staged;
+        Ok(proof)
+    }
+
+    /// Specializes exhaustiveness at one value and exposes its image cases.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `exhaustiveness` belongs to this package,
+    /// `value` has the coproduct type, and universal elimination plus checked
+    /// beta conversion yield the expected binary image disjunction. Rejection
+    /// is transactional.
+    pub fn cases(
+        &self,
+        kernel: &mut Kernel,
+        exhaustiveness: CoproductExhaustiveness,
+        value: Ref,
+    ) -> Result<CoproductCases, CoproductError> {
+        let mut staged = kernel.fork();
+        let cases = specialize_exhaustiveness(&mut staged, exhaustiveness, value)?;
+        *kernel = staged;
+        Ok(cases)
     }
 }
 
@@ -527,6 +598,179 @@ fn build_eliminator(
         value_map_ty,
         function_ty,
         function,
+    })
+}
+
+fn prove_exhaustiveness_inner(
+    kernel: &mut Kernel,
+    coproduct: &Coproduct,
+) -> Result<CoproductExhaustiveness, CoproductError> {
+    let inhabited = prove_image_inhabited(kernel, coproduct)?;
+    let rep_guarded_theorem =
+        coproduct
+            .subtype
+            .rep_guarded_theorem
+            .ok_or(CoproductError::WrongForm {
+                expected: "a proved guarded-subtype representation guard",
+            })?;
+    let mut references = coproduct_references(coproduct, coproduct.ty);
+    references.extend([inhabited.proposition, coproduct.subtype.rep_guarded]);
+    let base = kernel.fresh_name(&references).context(KernelSnafu)?;
+    let value = kernel.tm_fv(base, coproduct.ty).context(KernelSnafu)?;
+    let guarded = forall_elim(kernel, rep_guarded_theorem, value).context(ForallSnafu)?;
+    let [holds_representation, empty_fallback] = exact_op2(kernel, guarded.proposition, Op2::Or)?;
+
+    let image_branch = kernel
+        .identity(positive(holds_representation))
+        .context(KernelSnafu)?;
+    let empty_branch = kernel
+        .copy_theorem(inhabited.theorem)
+        .context(KernelSnafu)?;
+    kernel
+        .not_left(empty_branch, positive(inhabited.proposition))
+        .context(KernelSnafu)?;
+    let [fallback_inhabited] = exact_children(kernel, empty_fallback, Tag::Tm(TmTag::Op1))?;
+    let inhabited_same = join_alpha_equivalent(kernel, inhabited.proposition, fallback_inhabited)
+        .context(SyntaxSnafu)?;
+    let inhabited_same = kernel
+        .syn_refine(None, inhabited_same, SynRel::Conv)
+        .context(KernelSnafu)?;
+    kernel.union_syn_fact(inhabited_same).context(KernelSnafu)?;
+    kernel
+        .convert_theorem(empty_branch, inhabited.proposition, fallback_inhabited)
+        .context(KernelSnafu)?;
+    let empty_branch = kernel
+        .fold_premise(empty_branch, positive(empty_fallback))
+        .context(KernelSnafu)?;
+    kernel
+        .weaken(empty_branch, &[], &[positive(holds_representation)])
+        .context(KernelSnafu)?;
+    let guarded_elimination = kernel
+        .or_left(image_branch, empty_branch, positive(guarded.proposition))
+        .context(KernelSnafu)?;
+    kernel
+        .contract_theorem(guarded_elimination)
+        .context(KernelSnafu)?;
+    let represented_image = kernel
+        .cut(
+            guarded.theorem,
+            guarded_elimination,
+            positive(guarded.proposition),
+        )
+        .context(KernelSnafu)?;
+
+    let universal = kernel
+        .forall_intro(represented_image, value)
+        .context(KernelSnafu)?;
+    Ok(CoproductExhaustiveness {
+        inhabited: inhabited.proposition,
+        inhabited_theorem: inhabited.theorem,
+        image_of_rep: universal.universal,
+        theorem: universal.theorem,
+    })
+}
+
+fn prove_image_inhabited(
+    kernel: &mut Kernel,
+    coproduct: &Coproduct,
+) -> Result<CoproductComputation, CoproductError> {
+    let references = coproduct_references(coproduct, coproduct.carrier);
+    let base = kernel.fresh_name(&references).context(KernelSnafu)?;
+    let left_value = kernel.tm_fv(base, coproduct.left).context(KernelSnafu)?;
+    let truth = kernel.bool(coproduct.bool_ty, true).context(KernelSnafu)?;
+    let left_choice_predicate = kernel.lam(left_value, truth).context(KernelSnafu)?;
+    let chosen_left = kernel
+        .eps(coproduct.left, left_choice_predicate)
+        .context(KernelSnafu)?;
+    let church_value = kernel
+        .app(coproduct.left_church, chosen_left)
+        .context(KernelSnafu)?;
+    let holds = kernel
+        .app(coproduct.predicate, church_value)
+        .context(KernelSnafu)?;
+    let (predicate_application, image, predicate_beta) =
+        beta_apply(kernel, coproduct.predicate, church_value)?;
+    let holds_same = join_same_syntax(kernel, holds, predicate_application).context(SyntaxSnafu)?;
+    let holds_same = kernel
+        .syn_refine(None, holds_same, SynRel::Conv)
+        .context(KernelSnafu)?;
+    let holds_reduction = kernel
+        .syn_trans(None, holds_same, predicate_beta)
+        .context(KernelSnafu)?;
+    kernel
+        .union_syn_fact(holds_reduction)
+        .context(KernelSnafu)?;
+    let image_proof = prove_injection_image(kernel, coproduct, image, chosen_left, true)?;
+    kernel
+        .convert_conclusions(image_proof.theorem, image, holds)
+        .context(KernelSnafu)?;
+
+    let carrier_name = base.checked_add(1).ok_or(CoproductError::NameExhausted)?;
+    let carrier_value = kernel
+        .tm_fv(carrier_name, coproduct.carrier)
+        .context(KernelSnafu)?;
+    let carrier_holds = kernel
+        .app(coproduct.predicate, carrier_value)
+        .context(KernelSnafu)?;
+    let inhabited = kernel
+        .exists_tm(carrier_value, carrier_holds)
+        .context(KernelSnafu)?;
+    let [existential_predicate, _existential_witness] =
+        exact_children(kernel, inhabited, Tag::Tm(TmTag::App))?;
+    let (witness_application, witness_holds, witness_beta) =
+        beta_apply(kernel, existential_predicate, church_value)?;
+    kernel.union_syn_fact(witness_beta).context(KernelSnafu)?;
+    let holds_conversion = join_same_syntax(kernel, witness_holds, holds).context(SyntaxSnafu)?;
+    let holds_conversion = kernel
+        .syn_refine(None, holds_conversion, SynRel::Conv)
+        .context(KernelSnafu)?;
+    let witness_reduction = kernel
+        .syn_trans(None, witness_beta, holds_conversion)
+        .context(KernelSnafu)?;
+    kernel
+        .union_syn_fact(witness_reduction)
+        .context(KernelSnafu)?;
+    kernel
+        .convert_conclusions(image_proof.theorem, holds, witness_application)
+        .context(KernelSnafu)?;
+    let theorem = kernel
+        .choice_intro_at(image_proof.theorem, inhabited)
+        .context(KernelSnafu)?;
+    Ok(CoproductComputation {
+        proposition: inhabited,
+        theorem,
+    })
+}
+
+fn specialize_exhaustiveness(
+    kernel: &mut Kernel,
+    exhaustiveness: CoproductExhaustiveness,
+    value: Ref,
+) -> Result<CoproductCases, CoproductError> {
+    let specialized = forall_elim(kernel, exhaustiveness.theorem, value).context(ForallSnafu)?;
+    let [predicate, represented] =
+        exact_children(kernel, specialized.proposition, Tag::Tm(TmTag::App))?;
+    let (predicate_application, disjunction, predicate_beta) =
+        beta_apply(kernel, predicate, represented)?;
+    let same_application = join_same_syntax(kernel, specialized.proposition, predicate_application)
+        .context(SyntaxSnafu)?;
+    let same_application = kernel
+        .syn_refine(None, same_application, SynRel::Conv)
+        .context(KernelSnafu)?;
+    let reduction = kernel
+        .syn_trans(None, same_application, predicate_beta)
+        .context(KernelSnafu)?;
+    kernel.union_syn_fact(reduction).context(KernelSnafu)?;
+    kernel
+        .convert_conclusions(specialized.theorem, specialized.proposition, disjunction)
+        .context(KernelSnafu)?;
+    let [left, right] = exact_op2(kernel, disjunction, Op2::Or)?;
+    Ok(CoproductCases {
+        value,
+        left,
+        right,
+        disjunction,
+        theorem: specialized.theorem,
     })
 }
 
@@ -1079,6 +1323,29 @@ fn prove_injection_guard(
         .context(KernelSnafu)?;
     kernel.union_syn_fact(predicate_beta).context(KernelSnafu)?;
     kernel.union_syn_fact(holds_beta).context(KernelSnafu)?;
+    let image_proof = prove_injection_image(kernel, coproduct, image, value, is_left)?;
+    kernel
+        .convert_conclusions(image_proof.theorem, image, holds_value)
+        .context(KernelSnafu)?;
+    kernel
+        .weaken(image_proof.theorem, &[], &[positive(empty_fallback)])
+        .context(KernelSnafu)?;
+    let guard_theorem = kernel
+        .or_right(image_proof.theorem, positive(expanded))
+        .context(KernelSnafu)?;
+    Ok(CoproductComputation {
+        proposition: expanded,
+        theorem: guard_theorem,
+    })
+}
+
+fn prove_injection_image(
+    kernel: &mut Kernel,
+    coproduct: &Coproduct,
+    image: Ref,
+    value: Ref,
+    is_left: bool,
+) -> Result<CoproductComputation, CoproductError> {
     let [left_exists, right_exists] = exact_op2(kernel, image, Op2::Or)?;
     let selected_exists = if is_left { left_exists } else { right_exists };
     let other_exists = if is_left { right_exists } else { left_exists };
@@ -1122,18 +1389,9 @@ fn prove_injection_guard(
     let image_theorem = kernel
         .or_right(selected, positive(image))
         .context(KernelSnafu)?;
-    kernel
-        .convert_conclusions(image_theorem, image, holds_value)
-        .context(KernelSnafu)?;
-    kernel
-        .weaken(image_theorem, &[], &[positive(empty_fallback)])
-        .context(KernelSnafu)?;
-    let guard_theorem = kernel
-        .or_right(image_theorem, positive(expanded))
-        .context(KernelSnafu)?;
     Ok(CoproductComputation {
-        proposition: expanded,
-        theorem: guard_theorem,
+        proposition: image,
+        theorem: image_theorem,
     })
 }
 
