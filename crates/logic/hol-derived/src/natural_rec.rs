@@ -67,6 +67,24 @@ pub struct NaturalRecGraph {
     pub rec_successor_theorem: ThmId,
 }
 
+/// A selected primitive recursor together with its specification and universal
+/// property, all derived from caller-supplied open syntax.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NaturalRecursor {
+    /// The total, functional graph from which the recursor was selected.
+    pub graph: NaturalRecGraph,
+    /// Specialized predicate `(nat → codomain) → bool` from `NatRecSpec`.
+    pub specification_predicate: Ref,
+    /// The zero/successor specification specialized to [`NaturalRecGraph::rec`].
+    pub specification: Ref,
+    /// Exact premise-free theorem `⊢ specification`.
+    pub specification_theorem: ThmId,
+    /// Every function satisfying the specification agrees pointwise with `rec`.
+    pub unique: Ref,
+    /// Exact premise-free theorem `⊢ unique`.
+    pub unique_theorem: ThmId,
+}
+
 /// Userspace primitive-recursion construction over a checked kernel.
 pub trait NaturalRecExt {
     /// Specializes the open `NatRecGraph` schema and proves its base law.
@@ -92,6 +110,28 @@ pub trait NaturalRecExt {
         base: Ref,
         step: Ref,
     ) -> Result<NaturalRecGraph, NaturalError>;
+
+    /// Builds the full primitive-recursion package from the independent open
+    /// `NatRecGraph` and `NatRecSpec` schemata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either schema has the wrong checked shape or any
+    /// userspace-derived proof step is rejected by the kernel.
+    #[allow(clippy::too_many_arguments)]
+    fn natural_rec_from_schemata(
+        &mut self,
+        naturals: &Naturals,
+        graph_natural_parameter: Ref,
+        graph_codomain_parameter: Ref,
+        graph_schema: Ref,
+        specification_natural_parameter: Ref,
+        specification_codomain_parameter: Ref,
+        specification_schema: Ref,
+        codomain: Ref,
+        base: Ref,
+        step: Ref,
+    ) -> Result<NaturalRecursor, NaturalError>;
 }
 
 impl NaturalRecExt for Kernel {
@@ -196,6 +236,63 @@ impl NaturalRecExt for Kernel {
             rec_zero_theorem,
             rec_successor,
             rec_successor_theorem,
+        })
+    }
+
+    fn natural_rec_from_schemata(
+        &mut self,
+        naturals: &Naturals,
+        graph_natural_parameter: Ref,
+        graph_codomain_parameter: Ref,
+        graph_schema: Ref,
+        specification_natural_parameter: Ref,
+        specification_codomain_parameter: Ref,
+        specification_schema: Ref,
+        codomain: Ref,
+        base: Ref,
+        step: Ref,
+    ) -> Result<NaturalRecursor, NaturalError> {
+        let graph = self.natural_rec_graph_from_schema(
+            naturals,
+            graph_natural_parameter,
+            graph_codomain_parameter,
+            graph_schema,
+            codomain,
+            base,
+            step,
+        )?;
+        let natural = substitute(
+            self,
+            specification_natural_parameter,
+            naturals.ty,
+            specification_schema,
+        )?
+        .output;
+        let specialized =
+            substitute(self, specification_codomain_parameter, codomain, natural)?.output;
+        let specification_predicate = instantiate_lambdas(
+            self,
+            specialized,
+            &[naturals.zero, naturals.succ, base, step],
+        )?;
+        let (specification, specification_theorem) =
+            prove_rec_specification(self, specification_predicate, &graph)?;
+        let (unique, unique_theorem) = prove_rec_uniqueness(
+            self,
+            naturals,
+            specification_predicate,
+            &graph,
+            base,
+            step,
+            codomain,
+        )?;
+        Ok(NaturalRecursor {
+            graph,
+            specification_predicate,
+            specification,
+            specification_theorem,
+            unique,
+            unique_theorem,
         })
     }
 }
@@ -1706,6 +1803,233 @@ fn select_graph_function(
     let rec_graph = kernel.forall_tm(bool_ty, natural, rec_graph_at_natural)?;
     let rec_graph_theorem = kernel.forall_intro_at(selected_exists.theorem, natural, rec_graph)?;
     Ok((rec, rec_graph, rec_graph_theorem))
+}
+
+fn prove_rec_specification(
+    kernel: &mut Kernel,
+    specification_predicate: Ref,
+    graph: &NaturalRecGraph,
+) -> Result<(Ref, ThmId), NaturalError> {
+    let predicate_ty = kernel.classifier(specification_predicate)?;
+    let [candidate_ty, _bool_ty] = exact_children(
+        kernel,
+        predicate_ty,
+        Tag::Ty(covalence_logic_hol::TyTag::Arr),
+    )?;
+    join_same_syntax(kernel, candidate_ty, kernel.classifier(graph.rec)?)?;
+    let (_application, specification, beta) =
+        beta_apply(kernel, specification_predicate, graph.rec)?;
+    kernel.union_syn_fact(beta)?;
+    let [zero_law, successor_law] = exact_op2(kernel, specification, Op2::And)?;
+    let zero_theorem = kernel.copy_theorem(graph.rec_zero_theorem)?;
+    let zero_conclusion = sole_conclusion(kernel, zero_theorem)?;
+    join_same_syntax(kernel, zero_conclusion, zero_law)?;
+    kernel.convert_conclusions(zero_theorem, zero_conclusion, zero_law)?;
+    let [_successor_bool, successor_function, _successor_truth] =
+        exact_children(kernel, successor_law, Tag::Tm(TmTag::Eq))?;
+    let [successor_binder, successor_body] =
+        exact_children(kernel, successor_function, Tag::Tm(TmTag::Lam))?;
+    let specialized_successor = forall_elim(kernel, graph.rec_successor_theorem, successor_binder)
+        .map_err(|_| NaturalError::WrongForm {
+            expected: "the selected successor law at the specification binder",
+        })?;
+    join_same_syntax(kernel, specialized_successor.proposition, successor_body)?;
+    kernel.convert_conclusions(
+        specialized_successor.theorem,
+        specialized_successor.proposition,
+        successor_body,
+    )?;
+    let successor_theorem = kernel.forall_intro_at(
+        specialized_successor.theorem,
+        successor_binder,
+        successor_law,
+    )?;
+    let theorem = kernel.and_right(zero_theorem, successor_theorem, positive(specification))?;
+    Ok((specification, theorem))
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn prove_rec_uniqueness(
+    kernel: &mut Kernel,
+    naturals: &Naturals,
+    specification_predicate: Ref,
+    graph: &NaturalRecGraph,
+    _base: Ref,
+    step: Ref,
+    codomain: Ref,
+) -> Result<(Ref, ThmId), NaturalError> {
+    let function_ty = kernel.classifier(graph.rec)?;
+    let candidate = kernel.tm_fv(
+        kernel.fresh_name(&[specification_predicate, graph.rec])?,
+        function_ty,
+    )?;
+    let (_specification_application, candidate_specification, specification_beta) =
+        beta_apply(kernel, specification_predicate, candidate)?;
+    kernel.union_syn_fact(specification_beta)?;
+    let [_candidate_zero_law, candidate_successor_law] =
+        exact_op2(kernel, candidate_specification, Op2::And)?;
+    let candidate_zero_theorem = project_and_left(kernel, candidate_specification)?;
+    let candidate_successor_theorem = project_and_right(kernel, candidate_specification)?;
+
+    let index = kernel.tm_fv(kernel.fresh_name(&[candidate])?, naturals.ty)?;
+    let candidate_at_index = kernel.app(candidate, index)?;
+    let rec_at_index = kernel.app(graph.rec, index)?;
+    let bool_ty = kernel.classifier(candidate_successor_law)?;
+    let equality_at_index = kernel.eq(bool_ty, candidate_at_index, rec_at_index)?;
+    let equality_predicate = kernel.lam(index, equality_at_index)?;
+
+    let [_induction_bool, induction_function, _induction_truth] =
+        exact_children(kernel, naturals.induction, Tag::Tm(TmTag::Eq))?;
+    let [induction_predicate, _induction_body] =
+        exact_children(kernel, induction_function, Tag::Tm(TmTag::Lam))?;
+    join_same_syntax(
+        kernel,
+        kernel.classifier(induction_predicate)?,
+        kernel.classifier(equality_predicate)?,
+    )?;
+    let induction =
+        forall_elim(kernel, naturals.induction_theorem, equality_predicate).map_err(|_| {
+            NaturalError::WrongForm {
+                expected: "natural induction at recursor uniqueness",
+            }
+        })?;
+    let [induction_premises, induction_conclusion] =
+        exact_op2(kernel, induction.proposition, Op2::Imp)?;
+    let [induction_base, induction_step] = exact_op2(kernel, induction_premises, Op2::And)?;
+
+    // candidate zero = base = rec zero
+    let rec_zero_reversed = equality_symmetry(kernel, bool_ty, graph.rec_zero_theorem)?;
+    let base_equality = equality_transitivity(
+        kernel,
+        bool_ty,
+        candidate_zero_theorem,
+        rec_zero_reversed.theorem,
+    )?;
+    let (base_application, base_body, base_beta) =
+        beta_apply(kernel, equality_predicate, naturals.zero)?;
+    kernel.union_syn_fact(base_beta)?;
+    join_same_syntax(kernel, base_equality.equality, base_body)?;
+    kernel.convert_conclusions(
+        base_equality.theorem,
+        base_equality.equality,
+        base_application,
+    )?;
+    join_same_syntax(kernel, base_application, induction_base)?;
+    kernel.convert_conclusions(base_equality.theorem, base_application, induction_base)?;
+
+    // The successor case transports the induction equality through `step n`,
+    // then chains the candidate and selected computation equations.
+    let [_step_bool, step_function, step_truth] =
+        exact_children(kernel, induction_step, Tag::Tm(TmTag::Eq))?;
+    let [step_index, step_implication] =
+        exact_children(kernel, step_function, Tag::Tm(TmTag::Lam))?;
+    let [truth_index, truth_body] = exact_children(kernel, step_truth, Tag::Tm(TmTag::Lam))?;
+    if truth_index != step_index || kernel.arena().bool_value(truth_body) != Some(true) {
+        return Err(NaturalError::WrongForm {
+            expected: "the recursor uniqueness induction step universal",
+        });
+    }
+    let [step_hypothesis, step_conclusion] = exact_op2(kernel, step_implication, Op2::Imp)?;
+    let hypothesis = kernel.identity(positive(step_hypothesis))?;
+    let (hypothesis_application, hypothesis_equality, hypothesis_beta) =
+        beta_apply(kernel, equality_predicate, step_index)?;
+    join_same_syntax(kernel, hypothesis_application, step_hypothesis)?;
+    kernel.union_syn_fact(hypothesis_beta)?;
+    kernel.convert_conclusions(hypothesis, step_hypothesis, hypothesis_equality)?;
+
+    let step_at_index = kernel.app(step, step_index)?;
+    let lifted_hypothesis = kernel.ap_term(hypothesis, step_at_index)?;
+    let candidate_step =
+        forall_elim(kernel, candidate_successor_theorem, step_index).map_err(|_| {
+            NaturalError::WrongForm {
+                expected: "the candidate recursion successor law",
+            }
+        })?;
+    let rec_step = forall_elim(kernel, graph.rec_successor_theorem, step_index).map_err(|_| {
+        NaturalError::WrongForm {
+            expected: "the selected recursion successor law",
+        }
+    })?;
+    let reversed_rec_step = equality_symmetry(kernel, bool_ty, rec_step.theorem)?;
+    let next_index = kernel.app(naturals.succ, step_index)?;
+    let candidate_next = kernel.app(candidate, next_index)?;
+    let candidate_current = kernel.app(candidate, step_index)?;
+    let rec_current = kernel.app(graph.rec, step_index)?;
+    let stepped_candidate = kernel.app(step_at_index, candidate_current)?;
+    let stepped_rec = kernel.app(step_at_index, rec_current)?;
+    let rec_next = kernel.app(graph.rec, next_index)?;
+    let candidate_step = retarget_equality(
+        kernel,
+        bool_ty,
+        candidate_step.theorem,
+        candidate_next,
+        stepped_candidate,
+    )?;
+    let lifted_hypothesis = retarget_equality(
+        kernel,
+        bool_ty,
+        lifted_hypothesis.theorem,
+        stepped_candidate,
+        stepped_rec,
+    )?;
+    let reversed_rec_step = retarget_equality(
+        kernel,
+        bool_ty,
+        reversed_rec_step.theorem,
+        stepped_rec,
+        rec_next,
+    )?;
+    let through_candidate = equality_transitivity(
+        kernel,
+        bool_ty,
+        candidate_step.theorem,
+        lifted_hypothesis.theorem,
+    )?;
+    let successor_equality = equality_transitivity(
+        kernel,
+        bool_ty,
+        through_candidate.theorem,
+        reversed_rec_step.theorem,
+    )?;
+    let (conclusion_application, conclusion_equality, conclusion_beta) =
+        beta_apply(kernel, equality_predicate, next_index)?;
+    kernel.union_syn_fact(conclusion_beta)?;
+    join_same_syntax(kernel, successor_equality.equality, conclusion_equality)?;
+    kernel.convert_conclusions(
+        successor_equality.theorem,
+        successor_equality.equality,
+        conclusion_application,
+    )?;
+    join_same_syntax(kernel, conclusion_application, step_conclusion)?;
+    kernel.convert_conclusions(
+        successor_equality.theorem,
+        conclusion_application,
+        step_conclusion,
+    )?;
+    let successor_implication =
+        kernel.imp_right(successor_equality.theorem, positive(step_implication))?;
+    let successor_universal =
+        kernel.forall_intro_at(successor_implication, step_index, induction_step)?;
+
+    let induction_inputs = kernel.and_right(
+        base_equality.theorem,
+        successor_universal,
+        positive(induction_premises),
+    )?;
+    kernel.contract_theorem(induction_inputs)?;
+    let pointwise = modus_ponens(
+        kernel,
+        induction.theorem,
+        induction_inputs,
+        induction.proposition,
+    )?;
+    let uniqueness_body = kernel.op2(Op2::Imp, candidate_specification, induction_conclusion)?;
+    let uniqueness_at_candidate = kernel.imp_right(pointwise, positive(uniqueness_body))?;
+    let unique = kernel.forall_tm(bool_ty, candidate, uniqueness_body)?;
+    let unique_theorem = kernel.forall_intro_at(uniqueness_at_candidate, candidate, unique)?;
+    // Keep the codomain check explicit at this API boundary.
+    join_same_syntax(kernel, kernel.classifier(candidate_at_index)?, codomain)?;
+    Ok((unique, unique_theorem))
 }
 
 fn prove_rec_zero(

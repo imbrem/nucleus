@@ -243,6 +243,13 @@ fn compiled_recursion_graph_has_a_checked_base_theorem() {
     let natural_parameter = compiled.get("NatRecGraph/'a").expect("natural parameter");
     let codomain_parameter = compiled.get("NatRecGraph/'c").expect("codomain parameter");
     let schema = compiled.get("NatRecGraph").expect("graph schema");
+    let specification_natural_parameter = compiled
+        .get("NatRecSpec/'a")
+        .expect("specification natural parameter");
+    let specification_codomain_parameter = compiled
+        .get("NatRecSpec/'c")
+        .expect("specification codomain parameter");
+    let specification_schema = compiled.get("NatRecSpec").expect("specification schema");
     let (mut kernel, _) = compiled.into_parts();
     kernel.add_axiom(AX_INF).expect("infinity capability");
     kernel.add_axiom(AX_SUB).expect("subtype capability");
@@ -260,17 +267,21 @@ fn compiled_recursion_graph_has_a_checked_base_theorem() {
         .expect("accumulator binder");
     let inner = kernel.lam(accumulator, accumulator).expect("inner step");
     let step = kernel.lam(n, inner).expect("step");
-    let graph = kernel
-        .natural_rec_graph_from_schema(
+    let recursor = kernel
+        .natural_rec_from_schemata(
             &naturals,
             natural_parameter,
             codomain_parameter,
             schema,
+            specification_natural_parameter,
+            specification_codomain_parameter,
+            specification_schema,
             bool_ty,
             base,
             step,
         )
         .expect("checked graph base");
+    let graph = recursor.graph;
 
     for (proposition, theorem) in [
         (graph.base, graph.base_theorem),
@@ -292,6 +303,17 @@ fn compiled_recursion_graph_has_a_checked_base_theorem() {
         assert_eq!(
             conclusions[0],
             [covalence_logic_hol::Lit::positive(proposition.get())]
+        );
+    }
+    for (proposition, theorem) in [
+        (recursor.specification, recursor.specification_theorem),
+        (recursor.unique, recursor.unique_theorem),
+    ] {
+        let theorem = kernel.thm().get(theorem).expect("recursor theorem");
+        assert!(theorem.lhs.rows().next().is_none());
+        assert_eq!(
+            theorem.rhs.rows().collect::<Vec<_>>(),
+            vec![&[covalence_logic_hol::Lit::positive(proposition.get())][..]]
         );
     }
 }
