@@ -18,14 +18,18 @@ mod subtype;
 mod syntax;
 
 pub use coproduct::{
-    Coproduct, CoproductCases, CoproductComputation, CoproductEliminator, CoproductError,
-    CoproductExhaustiveness, CoproductExt, CoproductLaws, CoproductSchema,
+    Coproduct, CoproductBranch, CoproductCandidate, CoproductCandidateLaws, CoproductCases,
+    CoproductComputation, CoproductEliminator, CoproductError, CoproductExhaustiveness,
+    CoproductExt, CoproductFixedCodomain, CoproductLaws, CoproductOpenedCases, CoproductSchema,
+    CoproductUniqueness, CoproductUniversal,
 };
 pub use equality::{
     EqualityError, ProvedEquality, equality_symmetry, equality_transitivity,
     function_extensionality,
 };
-pub use exists::{ExistsError, OpenedExists, OpenedExistsDecl, open_exists, open_exists_at};
+pub use exists::{
+    ExistsError, OpenedExists, OpenedExistsDecl, introduce_exists, open_exists, open_exists_at,
+};
 pub use forall::{ForallError, ProvedTerm, forall_elim};
 pub use infinity::{
     Infinity, InfinityAxiomDecl, InfinityDecl, InfinityError, InfinityExt, InfinityProof,

@@ -1,7 +1,7 @@
 //! Userspace opening of the Hilbert-choice encoding of term existentials.
 
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref, SynFactId, Tag, TmTag};
+use covalence_logic_hol::{ChoiceThm, Kernel, KernelError, Ref, SynFactId, Tag, ThmId, TmTag};
 
 use crate::{ModelError, substitute};
 
@@ -48,6 +48,13 @@ pub enum ExistsError {
     WrongForm {
         /// Rejected source row.
         reference: Ref,
+    },
+    /// A theorem does not have the single positive conclusion required for
+    /// existential introduction.
+    #[snafu(display("theorem {theorem:?} cannot introduce an existential"))]
+    WrongTheorem {
+        /// Rejected theorem slot.
+        theorem: ThmId,
     },
 }
 
@@ -97,6 +104,74 @@ pub fn open_exists_at(
     declaration: OpenedExistsDecl,
 ) -> Result<OpenedExists, ExistsError> {
     open_exists_impl(kernel, source, Some(declaration))
+}
+
+/// Introduces an encoded existential from one arbitrary proved witness.
+///
+/// Given a theorem of `body[binder := witness]`, this constructs the checked
+/// predicate `λbinder. body`, beta-certifies its application to `witness`, and
+/// invokes ordinary Hilbert-choice introduction. The input theorem is copied;
+/// only the copy is rewritten. This is userspace proof orchestration, not a new
+/// trusted existential rule.
+///
+/// # Errors
+///
+/// Returns an error unless `theorem` has exactly one positive conclusion,
+/// `binder` is a checked variable, `witness` has its type, capture-avoiding
+/// substitution agrees with that conclusion up to alpha-equivalence, and all
+/// checked beta, conversion, and choice steps succeed. Rejection is
+/// transactional.
+pub fn introduce_exists(
+    kernel: &mut Kernel,
+    theorem: ThmId,
+    binder: Ref,
+    body: Ref,
+    witness: Ref,
+) -> Result<ChoiceThm, ExistsError> {
+    let mut staged = kernel.fork();
+    let introduced = introduce_exists_inner(&mut staged, theorem, binder, body, witness)?;
+    *kernel = staged;
+    Ok(introduced)
+}
+
+fn introduce_exists_inner(
+    kernel: &mut Kernel,
+    theorem: ThmId,
+    binder: Ref,
+    body: Ref,
+    witness: Ref,
+) -> Result<ChoiceThm, ExistsError> {
+    let source = sole_positive_conclusion(kernel, theorem)?;
+    let predicate = kernel.lam(binder, body)?;
+    let application = kernel.app(predicate, witness)?;
+    let substitution = substitute(kernel, binder, witness, body)?;
+    let beta = kernel.tm_beta_fact(None, application, substitution.fact)?;
+    let same = crate::join_alpha_equivalent(kernel, substitution.output, source)
+        .map_err(ModelError::from)?;
+    let conversion = kernel.syn_trans(None, beta, same)?;
+    kernel.union_syn_fact(conversion)?;
+    let copied = kernel.copy_theorem(theorem)?;
+    kernel.convert_conclusions(copied, source, application)?;
+    kernel.choice_intro(copied).map_err(ExistsError::from)
+}
+
+fn sole_positive_conclusion(kernel: &Kernel, theorem: ThmId) -> Result<Ref, ExistsError> {
+    let theorem_row = kernel
+        .thm()
+        .get(theorem)
+        .ok_or(ExistsError::WrongTheorem { theorem })?;
+    let mut conclusions = theorem_row.rhs.rows();
+    let Some(row) = conclusions.next() else {
+        return Err(ExistsError::WrongTheorem { theorem });
+    };
+    if conclusions.next().is_some() || row.len() != 1 || !row[0].is_positive() {
+        return Err(ExistsError::WrongTheorem { theorem });
+    }
+    let reference = i32::try_from(row[0].magnitude())
+        .ok()
+        .and_then(Ref::new)
+        .ok_or(ExistsError::WrongTheorem { theorem })?;
+    Ok(reference)
 }
 
 fn open_exists_impl(
