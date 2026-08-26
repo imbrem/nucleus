@@ -30,6 +30,38 @@ def ClosedFormulaHolds (expression : EmptyTm) : Prop :=
     emptyTypeEnv (Nucleus.HolE.emptyBound : Nucleus.HolE.BoundCtx EmptySig [] 0)
     emptyRawBoundEnv expression .boolTy boolPointed true
 
+@[simp] theorem closedFormulaHolds_true :
+    ClosedFormulaHolds (.bool true : EmptyTm) := by
+  unfold ClosedFormulaHolds Nucleus.Hol.Ethane.Eval Nucleus.HolE.Named.Eval
+  refine ⟨?_, ?_⟩
+  · refine Nucleus.Hol.Ethane.Checks.complete
+      (loweredExpression := .bool true)
+      (loweredClassification := .tm .boolTy) ?_ ?_ (.bool true)
+    · change Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+        (.nil : TmScope EmptySig 0) (.bool true) = some (.bool true)
+      rw [Nucleus.HolE.Named.lowerTm]
+    · simp [Nucleus.Hol.Ethane.Classification.lower,
+        Nucleus.Hol.Ethane.Expr.lowerTy, Nucleus.Hol.Ethane.Expr.lowerFam,
+        Nucleus.Hol.Ethane.Expr.toHolE, Nucleus.HolE.Named.lowerFam]
+  · refine ⟨.bool true, .boolTy, ?_, ?_, ?_⟩
+    · simp [Nucleus.Hol.Ethane.Expr.toHolE, Nucleus.HolE.Named.lowerTm]
+    · simp [Nucleus.Hol.Ethane.Expr.toHolE, Nucleus.HolE.Named.lowerTy,
+        Nucleus.HolE.Named.lowerFam]
+    · exact Nucleus.HolE.Eval.boolean true
+
+@[simp] theorem not_closedFormulaHolds_false :
+    ¬ClosedFormulaHolds (.bool false : EmptyTm) := by
+  intro evaluation
+  unfold ClosedFormulaHolds Nucleus.Hol.Ethane.Eval Nucleus.HolE.Named.Eval at evaluation
+  obtain ⟨_, ⟨loweredTerm, loweredType, termLowered, typeLowered, evaluated⟩⟩ :=
+    evaluation
+  simp [Nucleus.Hol.Ethane.Expr.toHolE, Nucleus.HolE.Named.lowerTm] at termLowered
+  simp [Nucleus.Hol.Ethane.Expr.toHolE, Nucleus.HolE.Named.lowerTy,
+    Nucleus.HolE.Named.lowerFam] at typeLowered
+  subst loweredTerm
+  subst loweredType
+  cases evaluated
+
 /-- The partial Boolean interpretation used by theorem-row soundness agrees
 with closed HolE evaluation.  This is the precise semantic bridge missing from
 `HolInterpretationSound`, which intentionally talks only about propositions.
@@ -171,6 +203,22 @@ structure DecodedAssertion (resolve : Resolver) (arena : Arena)
   member : fact ∈ arena.hol.thm
   assertion : fact.semantic = Sequent.assert reference
   decodes : ClosedFormulaHolds expression ↔ proposition
+
+/-- Base decoder for an exact checked assertion of the Boolean truth literal. -/
+def DecodedAssertion.truth {resolve : Resolver} {arena : Arena}
+    (reference : Ref) (fact : WireSequent)
+    (resolves : Resolves (coreResolver resolve) arena.holCore reference
+      (.term .boolTy (.bool true)))
+    (member : fact ∈ arena.hol.thm)
+    (assertion : fact.semantic = Sequent.assert reference) :
+    DecodedAssertion resolve arena True where
+  reference := reference
+  expression := .bool true
+  fact := fact
+  resolves := resolves
+  member := member
+  assertion := assertion
+  decodes := by simp
 
 /-- A decoded assertion becomes theorem evidence once the arena's Boolean
 interpretation is known to agree with closed HolE evaluation. -/
