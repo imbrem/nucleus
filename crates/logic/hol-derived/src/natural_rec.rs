@@ -85,6 +85,28 @@ pub struct NaturalRecursor {
     pub unique_theorem: ThmId,
 }
 
+/// Checked roots of the two open recursion schemata and their independent
+/// type-parameter rows.
+///
+/// Names remain userspace metadata: an S-expression compiler can assemble
+/// this descriptor from its dictionary, while another frontend can supply the
+/// same six checked rows without depending on that language.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NaturalRecSchemas {
+    /// Open `NatRecGraph` definition.
+    pub graph: Ref,
+    /// Natural-carrier parameter occurring in [`graph`](Self::graph).
+    pub graph_natural: Ref,
+    /// Codomain parameter occurring in [`graph`](Self::graph).
+    pub graph_codomain: Ref,
+    /// Open `NatRecSpec` definition.
+    pub specification: Ref,
+    /// Natural-carrier parameter occurring in [`specification`](Self::specification).
+    pub specification_natural: Ref,
+    /// Codomain parameter occurring in [`specification`](Self::specification).
+    pub specification_codomain: Ref,
+}
+
 /// Userspace primitive-recursion construction over a checked kernel.
 pub trait NaturalRecExt {
     /// Specializes the open `NatRecGraph` schema and derives its complete
@@ -123,12 +145,7 @@ pub trait NaturalRecExt {
     fn natural_rec_from_schemata(
         &mut self,
         naturals: &Naturals,
-        graph_natural_parameter: Ref,
-        graph_codomain_parameter: Ref,
-        graph_schema: Ref,
-        specification_natural_parameter: Ref,
-        specification_codomain_parameter: Ref,
-        specification_schema: Ref,
+        schemas: NaturalRecSchemas,
         codomain: Ref,
         base: Ref,
         step: Ref,
@@ -243,34 +260,29 @@ impl NaturalRecExt for Kernel {
     fn natural_rec_from_schemata(
         &mut self,
         naturals: &Naturals,
-        graph_natural_parameter: Ref,
-        graph_codomain_parameter: Ref,
-        graph_schema: Ref,
-        specification_natural_parameter: Ref,
-        specification_codomain_parameter: Ref,
-        specification_schema: Ref,
+        schemas: NaturalRecSchemas,
         codomain: Ref,
         base: Ref,
         step: Ref,
     ) -> Result<NaturalRecursor, NaturalError> {
         let graph = self.natural_rec_graph_from_schema(
             naturals,
-            graph_natural_parameter,
-            graph_codomain_parameter,
-            graph_schema,
+            schemas.graph_natural,
+            schemas.graph_codomain,
+            schemas.graph,
             codomain,
             base,
             step,
         )?;
         let natural = substitute(
             self,
-            specification_natural_parameter,
+            schemas.specification_natural,
             naturals.ty,
-            specification_schema,
+            schemas.specification,
         )?
         .output;
         let specialized =
-            substitute(self, specification_codomain_parameter, codomain, natural)?.output;
+            substitute(self, schemas.specification_codomain, codomain, natural)?.output;
         let specification_predicate = instantiate_lambdas(
             self,
             specialized,

@@ -2,7 +2,7 @@
 
 use covalence_lib_json::serde_json;
 use covalence_logic_hol::{AX_INF, AX_SUB, Sort, Tag, TmTag, init};
-use covalence_logic_hol_derived::{NaturalExt, NaturalRecExt, join_same_syntax};
+use covalence_logic_hol_derived::{NaturalExt, NaturalRecExt, NaturalRecSchemas, join_same_syntax};
 use covalence_logic_hol_script::{
     INIT_SOURCE, LogicEncoding, TheoryError, TheoryOptions, compile_init, compile_theory,
     compile_theory_with_init,
@@ -349,19 +349,16 @@ fn compiled_recursion_schemata_drive_the_complete_checked_package() {
         .expect("accumulator binder");
     let inner = kernel.lam(accumulator, accumulator).expect("inner step");
     let step = kernel.lam(n, inner).expect("step");
+    let schemas = NaturalRecSchemas {
+        graph: schema,
+        graph_natural: natural_parameter,
+        graph_codomain: codomain_parameter,
+        specification: specification_schema,
+        specification_natural: specification_natural_parameter,
+        specification_codomain: specification_codomain_parameter,
+    };
     let recursor = kernel
-        .natural_rec_from_schemata(
-            &naturals,
-            natural_parameter,
-            codomain_parameter,
-            schema,
-            specification_natural_parameter,
-            specification_codomain_parameter,
-            specification_schema,
-            bool_ty,
-            base,
-            step,
-        )
+        .natural_rec_from_schemata(&naturals, schemas, bool_ty, base, step)
         .expect("checked recursion package");
     let graph = recursor.graph;
 
