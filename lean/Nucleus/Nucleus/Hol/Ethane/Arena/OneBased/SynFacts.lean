@@ -566,6 +566,18 @@ theorem Substitutes.varCase {subVar replacement : Value}
   .syntax variableIsSyntax replacementIsSyntax variableIsSyntax
     replacementIsSyntax sameCategory .hit
 
+/-- The same variable case at a distinct arena row with identical resolved
+named syntax. This is the semantic rule checked by Rust `syn_sub_var_at`. -/
+theorem Substitutes.varCaseAt {subVar replacement input : Value}
+    {variableSyntax replacementSyntax : EmptySyn}
+    (variableIsSyntax : subVar.syntax? = some variableSyntax)
+    (replacementIsSyntax : replacement.syntax? = some replacementSyntax)
+    (inputIsSyntax : input.syntax? = some variableSyntax)
+    (sameCategory : input.tagSort = replacement.tagSort) :
+    Substitutes subVar replacement input replacement :=
+  .syntax variableIsSyntax replacementIsSyntax inputIsSyntax
+    replacementIsSyntax sameCategory .hit
+
 /-- Denotation of one local direct or active-substitution judgment. -/
 def LocalSynMeaning (relation : SynRel) (subVar replacement : Option Value)
     (input output : Value) : Prop :=
@@ -824,6 +836,21 @@ theorem substitutionVariable
     SynInference .syn (some subVar) (some replacement) subVar replacement :=
   .substitution
     (Value.Substitutes.varCase variableIsSyntax replacementIsSyntax sameCategory)
+    replacementWellFormed (Value.compatible_refl replacementWellFormed)
+    (Value.syntaxEqual_refl replacement)
+
+/-- Proof-relevant form of Rust `Kernel::syn_sub_var_at`. Physical row
+identity is irrelevant once both rows resolve to the same named variable. -/
+theorem substitutionVariableAt
+    (variableIsSyntax : subVar.syntax? = some variableSyntax)
+    (replacementIsSyntax : replacement.syntax? = some replacementSyntax)
+    (inputIsSyntax : input.syntax? = some variableSyntax)
+    (replacementWellFormed : replacement.WellFormed)
+    (sameCategory : input.tagSort = replacement.tagSort) :
+    SynInference .syn (some subVar) (some replacement) input replacement :=
+  .substitution
+    (Value.Substitutes.varCaseAt variableIsSyntax replacementIsSyntax
+      inputIsSyntax sameCategory)
     replacementWellFormed (Value.compatible_refl replacementWellFormed)
     (Value.syntaxEqual_refl replacement)
 

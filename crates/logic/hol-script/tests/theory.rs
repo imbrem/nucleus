@@ -585,6 +585,36 @@ fn frozen_infinity_binder_plan_materializes_one_coherent_checked_package() {
     }
 }
 
+fn check_recursor_exact(
+    kernel: &Kernel,
+    declaration: covalence_logic_hol_derived::NaturalRecursorDecl,
+    proof: covalence_logic_hol_derived::NaturalRecursorProof,
+) {
+    for (theorem, proposition) in [
+        (proof.graph.base, declaration.graph.base),
+        (proof.graph.step, declaration.graph.step),
+        (proof.graph.total, declaration.graph.total),
+        (proof.graph.has_shape, declaration.graph.has_shape),
+        (proof.graph.zero_value, declaration.graph.zero_value),
+        (
+            proof.graph.successor_value,
+            declaration.graph.successor_value,
+        ),
+        (
+            proof.graph.zero_functional,
+            declaration.graph.zero_functional,
+        ),
+        (proof.graph.functional, declaration.graph.functional),
+        (proof.graph.rec_graph, declaration.graph.rec_graph),
+        (proof.graph.rec_zero, declaration.graph.rec_zero),
+        (proof.graph.rec_successor, declaration.graph.rec_successor),
+        (proof.specification, declaration.specification),
+        (proof.unique, declaration.unique),
+    ] {
+        check_exact_theorem(kernel, proposition, theorem);
+    }
+}
+
 #[test]
 fn frozen_infinity_replay_rejects_the_wrong_prefix_transactionally() {
     let init = logical_init();
@@ -697,6 +727,52 @@ fn frozen_natural_replay_rejects_the_wrong_prefix_transactionally() {
     );
 }
 
+#[test]
+fn frozen_arithmetic_package_replays_to_exact_statement_rows() {
+    let init = logical_init();
+    let slice = compile_init_slice(&init).expect("projected slice");
+    let declaration = *slice.arithmetic();
+    let mut certificate = slice.kernel();
+    let bool_ty = slice.get("bool").expect("Boolean type");
+    for name in 40_000..40_016 {
+        certificate
+            .tm_fv(name, bool_ty)
+            .expect("unrelated ambient suffix");
+    }
+    let arithmetic = slice
+        .prove_arithmetic(&init, &mut certificate)
+        .expect("exact userspace arithmetic replay");
+
+    assert_eq!(arithmetic.declaration, declaration);
+    for (theorem, proposition) in [
+        (arithmetic.proof.add_zero, declaration.add_zero),
+        (arithmetic.proof.add_successor, declaration.add_successor),
+        (arithmetic.proof.mul_zero, declaration.mul_zero),
+        (arithmetic.proof.mul_successor, declaration.mul_successor),
+        (arithmetic.proof.one_plus_one, declaration.one_plus_one),
+    ] {
+        check_exact_theorem(&certificate, proposition, theorem);
+    }
+    check_recursor_exact(&certificate, declaration.add_rec, arithmetic.proof.add_rec);
+    check_recursor_exact(&certificate, declaration.mul_rec, arithmetic.proof.mul_rec);
+}
+
+#[test]
+fn frozen_arithmetic_replay_rejects_the_wrong_prefix_transactionally() {
+    let init = logical_init();
+    let slice = compile_init_slice(&init).expect("projected slice");
+    let mut wrong = Kernel::new();
+    wrong.star().expect("unrelated kernel");
+    let before = wrong.fork();
+
+    assert!(slice.prove_arithmetic(&init, &mut wrong).is_err());
+    assert_eq!(wrong.arena(), before.arena());
+    assert_eq!(
+        wrong.thm().live_theorems().count(),
+        before.thm().live_theorems().count()
+    );
+}
+
 fn check_exact_theorem(
     kernel: &Kernel,
     proposition: covalence_logic_hol::Ref,
@@ -715,6 +791,9 @@ fn check_primitive_arithmetic(
     naturals: &covalence_logic_hol_derived::Naturals,
     schemas: NaturalRecSchemas,
 ) {
+    let before = kernel.fork();
+    assert!(kernel.natural_arithmetic_at(naturals, schemas, 0).is_err());
+    assert_eq!(kernel.arena(), before.arena());
     let arithmetic = kernel
         .natural_arithmetic(naturals, schemas)
         .expect("checked primitive arithmetic");

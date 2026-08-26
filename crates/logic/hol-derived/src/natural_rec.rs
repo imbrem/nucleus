@@ -328,7 +328,52 @@ pub struct NaturalRecSchemas {
     pub specification_codomain: Ref,
 }
 
+/// Deterministic hygienic name cursor shared by natural-number derivations.
+///
+/// It is userspace allocation metadata, not logical evidence. Checked binder
+/// and substitution rules still validate every use of an allocated name.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NaturalNameSupply {
+    next: u64,
+}
+
+impl NaturalNameSupply {
+    /// Starts a supply at an externally validated name.
+    #[must_use]
+    pub const fn new(next: u64) -> Self {
+        Self { next }
+    }
+
+    /// Returns the next name which would be allocated.
+    #[must_use]
+    pub const fn next(self) -> u64 {
+        self.next
+    }
+
+    pub(crate) fn variable(&mut self, kernel: &mut Kernel, ty: Ref) -> Result<Ref, NaturalError> {
+        let name = self.next;
+        self.next = name.checked_add(1).ok_or(NaturalError::WrongForm {
+            expected: "an available natural-number binder name",
+        })?;
+        Ok(kernel.tm_fv(name, ty)?)
+    }
+}
+
 impl NaturalRecSchemas {
+    /// Iterates the six open schema roots in parameter order.
+    #[must_use]
+    pub fn references(&self) -> impl ExactSizeIterator<Item = Ref> {
+        [
+            self.graph,
+            self.graph_natural,
+            self.graph_codomain,
+            self.specification,
+            self.specification_natural,
+            self.specification_codomain,
+        ]
+        .into_iter()
+    }
+
     /// Remaps every schema reference while preserving its role.
     ///
     /// # Errors
@@ -373,6 +418,25 @@ pub trait NaturalRecExt {
         step: Ref,
     ) -> Result<NaturalRecGraph, NaturalError>;
 
+    /// Specializes a recursion graph with a shared deterministic name supply.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`natural_rec_graph_from_schema`](Self::natural_rec_graph_from_schema).
+    #[allow(clippy::too_many_arguments)]
+    fn natural_rec_graph_from_schema_with_names(
+        &mut self,
+        names: &mut NaturalNameSupply,
+        naturals: &Naturals,
+        natural_parameter: Ref,
+        codomain_parameter: Ref,
+        graph_schema: Ref,
+        codomain: Ref,
+        base: Ref,
+        step: Ref,
+    ) -> Result<NaturalRecGraph, NaturalError>;
+
     /// Builds the full primitive-recursion package from the independent open
     /// `NatRecGraph` and `NatRecSpec` schemata.
     ///
@@ -383,6 +447,23 @@ pub trait NaturalRecExt {
     #[allow(clippy::too_many_arguments)]
     fn natural_rec_from_schemata(
         &mut self,
+        naturals: &Naturals,
+        schemas: NaturalRecSchemas,
+        codomain: Ref,
+        base: Ref,
+        step: Ref,
+    ) -> Result<NaturalRecursor, NaturalError>;
+
+    /// Builds recursion while consuming a caller-owned deterministic name supply.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`natural_rec_from_schemata`](Self::natural_rec_from_schemata).
+    #[allow(clippy::too_many_arguments)]
+    fn natural_rec_from_schemata_with_names(
+        &mut self,
+        names: &mut NaturalNameSupply,
         naturals: &Naturals,
         schemas: NaturalRecSchemas,
         codomain: Ref,
@@ -402,18 +483,39 @@ impl NaturalRecExt for Kernel {
         base: Ref,
         step: Ref,
     ) -> Result<NaturalRecGraph, NaturalError> {
-        let natural = substitute(self, natural_parameter, naturals.ty, graph_schema)?.output;
-        let specialized = substitute(self, codomain_parameter, codomain, natural)?.output;
-        let graph = instantiate_lambdas(
-            self,
-            specialized,
-            &[naturals.zero, naturals.succ, base, step],
-        )?;
+        let mut names = NaturalNameSupply::new(fresh_global_name(self)?);
+        self.natural_rec_graph_from_schema_with_names(
+            &mut names,
+            naturals,
+            natural_parameter,
+            codomain_parameter,
+            graph_schema,
+            codomain,
+            base,
+            step,
+        )
+    }
+
+    fn natural_rec_graph_from_schema_with_names(
+        &mut self,
+        names: &mut NaturalNameSupply,
+        naturals: &Naturals,
+        natural_parameter: Ref,
+        codomain_parameter: Ref,
+        graph_schema: Ref,
+        codomain: Ref,
+        base: Ref,
+        step: Ref,
+    ) -> Result<NaturalRecGraph, NaturalError> {
+        let parameters = [natural_parameter, codomain_parameter, graph_schema];
+        let specialization = [codomain, base, step];
+        let graph = specialize_graph_schema(self, naturals, parameters, specialization)?;
         let (base_proposition, base_theorem) = prove_graph_base(self, graph, naturals.zero, base)?;
         let (step_proposition, step_theorem) =
-            prove_graph_step(self, graph, naturals.succ, step, codomain)?;
+            prove_graph_step(self, names, graph, naturals.succ, step, codomain)?;
         let (total, total_theorem) = prove_graph_total(
             self,
+            names,
             naturals,
             graph,
             base,
@@ -424,6 +526,7 @@ impl NaturalRecExt for Kernel {
         )?;
         let (shape, has_shape, has_shape_theorem) = prove_graph_has_shape(
             self,
+            names,
             naturals,
             graph,
             base,
@@ -432,10 +535,18 @@ impl NaturalRecExt for Kernel {
             step_theorem,
             codomain,
         )?;
-        let (zero_value, zero_value_theorem) =
-            prove_graph_zero_value(self, naturals, graph, shape, has_shape_theorem, codomain)?;
+        let (zero_value, zero_value_theorem) = prove_graph_zero_value(
+            self,
+            names,
+            naturals,
+            graph,
+            shape,
+            has_shape_theorem,
+            codomain,
+        )?;
         let (successor_value, successor_value_theorem) = prove_graph_successor_value(
             self,
+            names,
             naturals,
             graph,
             shape,
@@ -444,9 +555,10 @@ impl NaturalRecExt for Kernel {
             codomain,
         )?;
         let (zero_functional, zero_functional_theorem) =
-            prove_zero_functionality(self, naturals, graph, zero_value_theorem, codomain)?;
+            prove_zero_functionality(self, names, naturals, graph, zero_value_theorem, codomain)?;
         let (functional, functional_theorem) = prove_graph_functionality(
             self,
+            names,
             naturals,
             graph,
             step,
@@ -460,6 +572,7 @@ impl NaturalRecExt for Kernel {
             prove_rec_zero(self, naturals, rec, rec_graph_theorem, zero_value_theorem)?;
         let (rec_successor, rec_successor_theorem) = prove_rec_successor(
             self,
+            names,
             naturals,
             rec,
             step,
@@ -504,7 +617,23 @@ impl NaturalRecExt for Kernel {
         base: Ref,
         step: Ref,
     ) -> Result<NaturalRecursor, NaturalError> {
-        let graph = self.natural_rec_graph_from_schema(
+        let mut names = NaturalNameSupply::new(fresh_global_name(self)?);
+        self.natural_rec_from_schemata_with_names(
+            &mut names, naturals, schemas, codomain, base, step,
+        )
+    }
+
+    fn natural_rec_from_schemata_with_names(
+        &mut self,
+        names: &mut NaturalNameSupply,
+        naturals: &Naturals,
+        schemas: NaturalRecSchemas,
+        codomain: Ref,
+        base: Ref,
+        step: Ref,
+    ) -> Result<NaturalRecursor, NaturalError> {
+        let graph = self.natural_rec_graph_from_schema_with_names(
+            names,
             naturals,
             schemas.graph_natural,
             schemas.graph_codomain,
@@ -531,6 +660,7 @@ impl NaturalRecExt for Kernel {
             prove_rec_specification(self, specification_predicate, &graph)?;
         let (unique, unique_theorem) = prove_rec_uniqueness(
             self,
+            names,
             naturals,
             specification_predicate,
             &graph,
@@ -547,6 +677,23 @@ impl NaturalRecExt for Kernel {
             unique_theorem,
         })
     }
+}
+
+fn specialize_graph_schema(
+    kernel: &mut Kernel,
+    naturals: &Naturals,
+    parameters: [Ref; 3],
+    specialization: [Ref; 3],
+) -> Result<Ref, NaturalError> {
+    let [natural_parameter, codomain_parameter, graph_schema] = parameters;
+    let [codomain, base, step] = specialization;
+    let natural = substitute(kernel, natural_parameter, naturals.ty, graph_schema)?.output;
+    let specialized = substitute(kernel, codomain_parameter, codomain, natural)?.output;
+    instantiate_lambdas(
+        kernel,
+        specialized,
+        &[naturals.zero, naturals.succ, base, step],
+    )
 }
 
 fn instantiate_lambdas(
@@ -597,6 +744,7 @@ fn prove_graph_base(
 #[allow(clippy::too_many_lines)]
 fn prove_graph_step(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     graph: Ref,
     successor: Ref,
     recursion_step: Ref,
@@ -609,8 +757,8 @@ fn prove_graph_step(
         .ok_or(NaturalError::WrongForm {
             expected: "the natural successor type",
         })?;
-    let natural = kernel.tm_fv(fresh_global_name(kernel)?, natural_type)?;
-    let value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
+    let natural = names.variable(kernel, natural_type)?;
+    let value = names.variable(kernel, codomain)?;
     let graph_at_value = apply2(kernel, graph, natural, value)?;
     let next_natural = kernel.app(successor, natural)?;
     let step_at_natural = kernel.app(recursion_step, natural)?;
@@ -711,6 +859,7 @@ struct GuardedGraphUse {
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn prove_graph_has_shape(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     graph: Ref,
     base: Ref,
@@ -719,10 +868,23 @@ fn prove_graph_has_shape(
     graph_step_theorem: ThmId,
     codomain: Ref,
 ) -> Result<(Ref, Ref, ThmId), NaturalError> {
-    let predicates =
-        build_shape_predicates(kernel, naturals, graph, base, recursion_step, codomain)?;
-    let graph_use =
-        guarded_graph_targets(kernel, graph, predicates.guarded, naturals.ty, codomain)?;
+    let predicates = build_shape_predicates(
+        kernel,
+        names,
+        naturals,
+        graph,
+        base,
+        recursion_step,
+        codomain,
+    )?;
+    let graph_use = guarded_graph_targets(
+        kernel,
+        names,
+        graph,
+        predicates.guarded,
+        naturals.ty,
+        codomain,
+    )?;
     let (guarded_base, guarded_base_theorem) =
         prove_guarded_shape_base(kernel, predicates, naturals.zero, base, graph_base_theorem)?;
     join_same_syntax(kernel, guarded_base, graph_use.base)?;
@@ -748,13 +910,14 @@ fn prove_graph_has_shape(
 
 fn guarded_graph_targets(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     graph: Ref,
     guarded: Ref,
     natural_type: Ref,
     codomain: Ref,
 ) -> Result<GuardedGraphUse, NaturalError> {
-    let natural = kernel.tm_fv(fresh_global_name(kernel)?, natural_type)?;
-    let value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
+    let natural = names.variable(kernel, natural_type)?;
+    let value = names.variable(kernel, codomain)?;
     let graph_at = apply2(kernel, graph, natural, value)?;
     let theorem = kernel.identity(positive(graph_at))?;
     let (application, expanded) = expand_graph_application(kernel, graph, natural, value)?;
@@ -787,22 +950,23 @@ fn guarded_graph_targets(
 
 fn build_shape_predicates(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     graph: Ref,
     base: Ref,
     recursion_step: Ref,
     codomain: Ref,
 ) -> Result<ShapePredicates, NaturalError> {
-    let natural = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
-    let value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
+    let natural = names.variable(kernel, naturals.ty)?;
+    let value = names.variable(kernel, codomain)?;
     let graph_at_value = apply2(kernel, graph, natural, value)?;
     let bool_ty = kernel.classifier(graph_at_value)?;
     let at_zero = kernel.eq(bool_ty, natural, naturals.zero)?;
     let at_base = kernel.eq(bool_ty, value, base)?;
     let base_case = kernel.op2(Op2::And, at_zero, at_base)?;
 
-    let predecessor = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
-    let predecessor_value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
+    let predecessor = names.variable(kernel, naturals.ty)?;
+    let predecessor_value = names.variable(kernel, codomain)?;
     let predecessor_graph = apply2(kernel, graph, predecessor, predecessor_value)?;
     let successor_predecessor = kernel.app(naturals.succ, predecessor)?;
     let successor_index = kernel.eq(bool_ty, natural, successor_predecessor)?;
@@ -817,8 +981,8 @@ fn build_shape_predicates(
     let at_value = kernel.lam(value, shape_body)?;
     let shape = kernel.lam(natural, at_value)?;
 
-    let probe_natural = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
-    let probe_value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
+    let probe_natural = names.variable(kernel, naturals.ty)?;
+    let probe_value = names.variable(kernel, codomain)?;
     let (_probe, expanded_graph) =
         expand_graph_application(kernel, graph, probe_natural, probe_value)?;
     let [_graph_bool, graph_function, _graph_truth] =
@@ -838,8 +1002,8 @@ fn build_shape_predicates(
     )?;
     join_same_syntax(kernel, guarded_natural_type, naturals.ty)?;
     join_same_syntax(kernel, guarded_codomain, codomain)?;
-    let guarded_natural = kernel.tm_fv(fresh_global_name(kernel)?, guarded_natural_type)?;
-    let guarded_value = kernel.tm_fv(fresh_global_name(kernel)?, guarded_codomain)?;
+    let guarded_natural = names.variable(kernel, guarded_natural_type)?;
+    let guarded_value = names.variable(kernel, guarded_codomain)?;
     let graph_at = apply2(kernel, graph, guarded_natural, guarded_value)?;
     let shape_at = apply2(kernel, shape, guarded_natural, guarded_value)?;
     let guarded_body = kernel.op2(Op2::And, graph_at, shape_at)?;
@@ -1078,13 +1242,14 @@ fn specialize_graph_to_guarded_shape(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn prove_graph_zero_value(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     graph: Ref,
     shape: Ref,
     has_shape_theorem: ThmId,
     codomain: Ref,
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
+    let value = names.variable(kernel, codomain)?;
     let graph_at_zero = apply2(kernel, graph, naturals.zero, value)?;
     let shape_at_zero = apply2(kernel, shape, naturals.zero, value)?;
     let assumed = kernel.identity(positive(graph_at_zero))?;
@@ -1177,6 +1342,7 @@ fn successor_shape_contradiction(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn prove_graph_successor_value(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     graph: Ref,
     shape: Ref,
@@ -1184,9 +1350,9 @@ fn prove_graph_successor_value(
     recursion_step: Ref,
     codomain: Ref,
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let natural = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
-    let value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
-    let witness = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
+    let natural = names.variable(kernel, naturals.ty)?;
+    let value = names.variable(kernel, codomain)?;
+    let witness = names.variable(kernel, codomain)?;
     let successor = kernel.app(naturals.succ, natural)?;
     let graph_at_successor = apply2(kernel, graph, successor, value)?;
     let graph_at_witness = apply2(kernel, graph, natural, witness)?;
@@ -1235,6 +1401,7 @@ fn prove_graph_successor_value(
     )?;
     let successor_branch = successor_shape_witness(
         kernel,
+        names,
         naturals,
         graph,
         recursion_step,
@@ -1286,6 +1453,7 @@ fn successor_base_contradiction(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn successor_shape_witness(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     graph: Ref,
     recursion_step: Ref,
@@ -1341,7 +1509,7 @@ fn successor_shape_witness(
         injective_at_predecessor.proposition,
     )?;
 
-    let graph_binder = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
+    let graph_binder = names.variable(kernel, naturals.ty)?;
     let graph_body = apply2(kernel, graph, graph_binder, predecessor_value)?;
     let graph_predicate = kernel.lam(graph_binder, graph_body)?;
     let target_graph = apply2(kernel, graph, natural, predecessor_value)?;
@@ -1355,7 +1523,7 @@ fn successor_shape_witness(
         graph_data,
     )?;
 
-    let value_binder = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
+    let value_binder = names.variable(kernel, naturals.ty)?;
     let step_at_binder = kernel.app(recursion_step, value_binder)?;
     let stepped_value = kernel.app(step_at_binder, predecessor_value)?;
     let equality_body = kernel.eq(bool_ty, value, stepped_value)?;
@@ -1423,13 +1591,14 @@ fn transport_right_to_left(
 
 fn prove_zero_functionality(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     graph: Ref,
     zero_value_theorem: ThmId,
     codomain: Ref,
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let left = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
-    let right = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
+    let left = names.variable(kernel, codomain)?;
+    let right = names.variable(kernel, codomain)?;
     let graph_left = apply2(kernel, graph, naturals.zero, left)?;
     let graph_right = apply2(kernel, graph, naturals.zero, right)?;
     let bool_ty = kernel.classifier(graph_left)?;
@@ -1479,6 +1648,7 @@ fn prove_zero_functionality(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn prove_graph_functionality(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     graph: Ref,
     recursion_step: Ref,
@@ -1486,9 +1656,9 @@ fn prove_graph_functionality(
     zero_functional_theorem: ThmId,
     codomain: Ref,
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let index = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
-    let left = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
-    let right = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
+    let index = names.variable(kernel, naturals.ty)?;
+    let left = names.variable(kernel, codomain)?;
+    let right = names.variable(kernel, codomain)?;
     let graph_left = apply2(kernel, graph, index, left)?;
     let graph_right = apply2(kernel, graph, index, right)?;
     let bool_ty = kernel.classifier(graph_left)?;
@@ -1848,6 +2018,7 @@ fn retarget_equality(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn prove_graph_total(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     graph: Ref,
     base: Ref,
@@ -1856,8 +2027,8 @@ fn prove_graph_total(
     graph_step_theorem: ThmId,
     codomain: Ref,
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let predicate_natural = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
-    let value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
+    let predicate_natural = names.variable(kernel, naturals.ty)?;
+    let value = names.variable(kernel, codomain)?;
     let graph_at_value = apply2(kernel, graph, predicate_natural, value)?;
     let exists_value = kernel.exists_tm(value, graph_at_value)?;
     let total_predicate = kernel.lam(predicate_natural, exists_value)?;
@@ -2093,6 +2264,7 @@ fn prove_rec_specification(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn prove_rec_uniqueness(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     specification_predicate: Ref,
     graph: &NaturalRecGraph,
@@ -2101,7 +2273,7 @@ fn prove_rec_uniqueness(
     codomain: Ref,
 ) -> Result<(Ref, ThmId), NaturalError> {
     let function_ty = kernel.classifier(graph.rec)?;
-    let candidate = kernel.tm_fv(fresh_global_name(kernel)?, function_ty)?;
+    let candidate = names.variable(kernel, function_ty)?;
     let (_specification_application, candidate_specification, specification_beta) =
         beta_apply(kernel, specification_predicate, candidate)?;
     kernel.union_syn_fact(specification_beta)?;
@@ -2110,7 +2282,7 @@ fn prove_rec_uniqueness(
     let candidate_zero_theorem = project_and_left(kernel, candidate_specification)?;
     let candidate_successor_theorem = project_and_right(kernel, candidate_specification)?;
 
-    let index = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
+    let index = names.variable(kernel, naturals.ty)?;
     let candidate_at_index = kernel.app(candidate, index)?;
     let rec_at_index = kernel.app(graph.rec, index)?;
     let bool_ty = kernel.classifier(candidate_successor_law)?;
@@ -2308,6 +2480,7 @@ fn prove_rec_zero(
 #[allow(clippy::too_many_arguments)]
 fn prove_rec_successor(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     rec: Ref,
     recursion_step: Ref,
@@ -2315,7 +2488,7 @@ fn prove_rec_successor(
     graph_step_theorem: ThmId,
     functional_theorem: ThmId,
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let natural = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
+    let natural = names.variable(kernel, naturals.ty)?;
     let rec_at_natural = kernel.app(rec, natural)?;
     let successor = kernel.app(naturals.succ, natural)?;
     let rec_at_successor = kernel.app(rec, successor)?;

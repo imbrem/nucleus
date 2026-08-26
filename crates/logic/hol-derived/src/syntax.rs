@@ -206,10 +206,29 @@ pub fn join_alpha_equivalent(
     left: Ref,
     right: Ref,
 ) -> Result<SynFactId, SyntaxError> {
-    let fact = derive_alpha_pair(kernel, left, right, &mut BTreeMap::new())
-        .or_else(|_| join_via_fresh_normal_form(kernel, left, right))?;
-    kernel.union_syn_fact(fact)?;
-    Ok(fact)
+    join_alpha_equivalents(kernel, &[(left, right)]).map(|facts| facts[0])
+}
+
+/// Certifies several alpha-equivalent pairs with shared traversal evidence.
+///
+/// # Errors
+///
+/// Returns an error under the same conditions as
+/// [`join_alpha_equivalent`]. Pairs proved before a later failure may leave
+/// checked cache evidence resident; no unproved equality can be introduced.
+pub fn join_alpha_equivalents(
+    kernel: &mut Kernel,
+    pairs: &[(Ref, Ref)],
+) -> Result<Vec<SynFactId>, SyntaxError> {
+    let mut memo = BTreeMap::new();
+    let mut facts = Vec::with_capacity(pairs.len());
+    for &(left, right) in pairs {
+        let fact = derive_alpha_pair(kernel, left, right, &mut memo)
+            .or_else(|_| join_via_fresh_normal_form(kernel, left, right))?;
+        kernel.union_syn_fact(fact)?;
+        facts.push(fact);
+    }
+    Ok(facts)
 }
 
 fn derive_alpha_pair(
@@ -223,6 +242,16 @@ fn derive_alpha_pair(
     }
     if left == right {
         let fact = kernel.syn_refl(None, SynRel::Alpha, left)?;
+        memo.insert((left, right), fact);
+        return Ok(fact);
+    }
+    if let Ok(fact) = kernel.syn_cached(None, left, right) {
+        let fact = kernel.syn_refine(None, fact, SynRel::Alpha)?;
+        memo.insert((left, right), fact);
+        return Ok(fact);
+    }
+    if let Ok(fact) = join_same_syntax(kernel, left, right) {
+        let fact = kernel.syn_refine(None, fact, SynRel::Alpha)?;
         memo.insert((left, right), fact);
         return Ok(fact);
     }
@@ -439,10 +468,20 @@ fn derive_alpha_congruence(
     if left_children.len() != right_children.len() {
         return Err(SyntaxError::Different);
     }
+    let variable = matches!(
+        kernel.arena().tag(left),
+        Some(Tag::Tm(TmTag::Fv) | Tag::Ty(TyTag::Fv))
+    );
     let facts = left_children
         .into_iter()
         .zip(right_children)
-        .map(|(left, right)| derive_alpha_pair(kernel, left, right, memo))
+        .map(|(child_left, child_right)| {
+            if variable {
+                join_same_syntax(kernel, child_left, child_right)
+            } else {
+                derive_alpha_pair(kernel, child_left, child_right, memo)
+            }
+        })
         .collect::<Result<Vec<_>, _>>()?;
     for &fact in &facts {
         kernel.union_syn_fact(fact)?;

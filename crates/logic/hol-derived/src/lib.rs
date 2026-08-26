@@ -31,8 +31,8 @@ pub use natural_arithmetic::{
     NaturalArithmetic, NaturalArithmeticDecl, NaturalArithmeticExt, NaturalArithmeticProof,
 };
 pub use natural_rec::{
-    NaturalRecExt, NaturalRecGraph, NaturalRecGraphDecl, NaturalRecGraphProof, NaturalRecSchemas,
-    NaturalRecursor, NaturalRecursorDecl, NaturalRecursorProof,
+    NaturalNameSupply, NaturalRecExt, NaturalRecGraph, NaturalRecGraphDecl, NaturalRecGraphProof,
+    NaturalRecSchemas, NaturalRecursor, NaturalRecursorDecl, NaturalRecursorProof,
 };
 pub use subtype::{Subtype, SubtypeAxiomDecl, SubtypeDecl, SubtypeError, SubtypeExt, SubtypeProof};
-pub use syntax::{SyntaxError, join_alpha_equivalent, join_same_syntax};
+pub use syntax::{SyntaxError, join_alpha_equivalent, join_alpha_equivalents, join_same_syntax};

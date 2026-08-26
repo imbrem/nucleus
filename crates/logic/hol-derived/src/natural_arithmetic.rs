@@ -7,8 +7,9 @@
 use covalence_logic_hol::{Kernel, Ref, SynFactId, SynRel, Tag, ThmId, TmTag};
 
 use crate::{
-    NaturalError, NaturalRecExt, NaturalRecSchemas, NaturalRecursor, NaturalRecursorDecl,
-    NaturalRecursorProof, Naturals, equality_transitivity, forall_elim, join_same_syntax,
+    NaturalError, NaturalNameSupply, NaturalRecExt, NaturalRecSchemas, NaturalRecursor,
+    NaturalRecursorDecl, NaturalRecursorProof, Naturals, equality_transitivity, forall_elim,
+    join_same_syntax,
 };
 
 /// Stable natural-arithmetic definitions and law statements.
@@ -18,6 +19,8 @@ use crate::{
 /// from the kernel in which the package was first proved.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NaturalArithmeticDecl {
+    /// First name reserved for arithmetic's temporary binders.
+    pub base_name: u64,
     /// Private recursion package from which addition is selected.
     pub add_rec: NaturalRecursorDecl,
     /// Addition, with its recursive argument first.
@@ -82,6 +85,7 @@ impl NaturalArithmeticDecl {
     /// Returns the first error produced by `map`.
     pub fn try_map<E>(self, mut map: impl FnMut(Ref) -> Result<Ref, E>) -> Result<Self, E> {
         Ok(Self {
+            base_name: self.base_name,
             add_rec: self.add_rec.try_map(&mut map)?,
             add: map(self.add)?,
             add_zero: map(self.add_zero)?,
@@ -125,6 +129,24 @@ pub struct NaturalArithmetic {
     pub proof: NaturalArithmeticProof,
 }
 
+struct Addition {
+    recursor: NaturalRecursor,
+    function: Ref,
+    zero: Ref,
+    zero_theorem: ThmId,
+    successor: Ref,
+    successor_theorem: ThmId,
+}
+
+struct Multiplication {
+    recursor: NaturalRecursor,
+    function: Ref,
+    zero: Ref,
+    zero_theorem: ThmId,
+    successor: Ref,
+    successor_theorem: ThmId,
+}
+
 impl NaturalArithmetic {
     /// Resolves one stable external name in the declaration.
     #[must_use]
@@ -153,6 +175,19 @@ pub trait NaturalArithmeticExt {
         naturals: &Naturals,
         schemas: NaturalRecSchemas,
     ) -> Result<NaturalArithmetic, NaturalError>;
+
+    /// Constructs arithmetic using an explicit hygienic temporary-name block.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as [`natural_arithmetic`](Self::natural_arithmetic),
+    /// or when `base_name` is not above every name reachable from the inputs.
+    fn natural_arithmetic_at(
+        &mut self,
+        naturals: &Naturals,
+        schemas: NaturalRecSchemas,
+        base_name: u64,
+    ) -> Result<NaturalArithmetic, NaturalError>;
 }
 
 impl NaturalArithmeticExt for Kernel {
@@ -161,90 +196,176 @@ impl NaturalArithmeticExt for Kernel {
         naturals: &Naturals,
         schemas: NaturalRecSchemas,
     ) -> Result<NaturalArithmetic, NaturalError> {
+        let base_name = next_global_name(self)?;
+        self.natural_arithmetic_at(naturals, schemas, base_name)
+    }
+
+    fn natural_arithmetic_at(
+        &mut self,
+        naturals: &Naturals,
+        schemas: NaturalRecSchemas,
+        base_name: u64,
+    ) -> Result<NaturalArithmetic, NaturalError> {
+        let minimum = self.fresh_name(
+            &naturals
+                .declaration
+                .references()
+                .chain(schemas.references())
+                .collect::<Vec<_>>(),
+        )?;
+        if base_name < minimum {
+            return Err(NaturalError::WrongForm {
+                expected: "a hygienic arithmetic binder-name block",
+            });
+        }
+        let mut names = NaturalNameSupply::new(base_name);
         let bool_ty = self.classifier(naturals.zero_ne_succ)?;
         let function_ty = self.classifier(naturals.succ)?;
-
-        let base_argument = fresh_global(self, naturals.ty)?;
-        let add_base = self.lam(base_argument, base_argument)?;
-        let add_step = successor_step(self, naturals)?;
-        let add_rec =
-            self.natural_rec_from_schemata(naturals, schemas, function_ty, add_base, add_step)?;
-        let add = add_rec.graph.rec;
-        let (add_zero, add_zero_theorem) =
-            pointwise_zero(self, naturals, &add_rec, |_, value| Ok(value))?;
-        let (add_successor, add_successor_theorem) = pointwise_successor(
+        let add = derive_addition(self, &mut names, naturals, schemas, function_ty)?;
+        let mul = derive_multiplication(
             self,
+            &mut names,
             naturals,
-            &add_rec,
-            |kernel, recursive, value| {
-                let previous = kernel.app(recursive, value)?;
-                Ok(kernel.app(naturals.succ, previous)?)
-            },
-            &[naturals.succ],
+            schemas,
+            function_ty,
+            add.function,
         )?;
-        let add_type = self.classifier(add)?;
-        let add_parameter = fresh_global(self, add_type)?;
-        let mul_argument = fresh_global(self, naturals.ty)?;
-        let mul_base = self.lam(mul_argument, naturals.zero)?;
-        let mul_step = multiplication_step(self, naturals, add_parameter)?;
-        let mul_rec =
-            self.natural_rec_from_schemata(naturals, schemas, function_ty, mul_base, mul_step)?;
-        let (raw_mul_zero, raw_mul_zero_theorem) =
-            pointwise_zero(self, naturals, &mul_rec, |_, _| Ok(naturals.zero))?;
-        let (raw_mul_successor, raw_mul_successor_theorem) = pointwise_successor(
-            self,
-            naturals,
-            &mul_rec,
-            |kernel, recursive, value| {
-                let previous = kernel.app(recursive, value)?;
-                apply2(kernel, add_parameter, previous, value)
-            },
-            &[add_parameter],
-        )?;
-        let _ = (raw_mul_zero, raw_mul_successor);
-        let generalized_zero = self.forall_intro(raw_mul_zero_theorem, add_parameter)?;
-        let specialized_zero = forall_elim(self, generalized_zero.theorem, add)?;
-        let (mul, mul_zero, mul_zero_theorem) =
-            specialize_mul_zero(self, naturals, specialized_zero.theorem)?;
-        let generalized_successor = self.forall_intro(raw_mul_successor_theorem, add_parameter)?;
-        let specialized_successor = forall_elim(self, generalized_successor.theorem, add)?;
-        let (mul_successor, mul_successor_theorem) =
-            specialize_mul_successor(self, naturals, specialized_successor.theorem, mul, add)?;
 
         let (one, two, one_plus_one, one_plus_one_theorem) = prove_one_plus_one(
             self,
             naturals,
             bool_ty,
-            add,
-            add_zero_theorem,
-            add_successor_theorem,
+            add.function,
+            add.zero_theorem,
+            add.successor_theorem,
         )?;
 
         Ok(NaturalArithmetic {
             declaration: NaturalArithmeticDecl {
-                add_rec: add_rec.declaration(),
-                add,
-                add_zero,
-                add_successor,
-                mul_rec: mul_rec.declaration(),
-                mul,
-                mul_zero,
-                mul_successor,
+                base_name,
+                add_rec: add.recursor.declaration(),
+                add: add.function,
+                add_zero: add.zero,
+                add_successor: add.successor,
+                mul_rec: mul.recursor.declaration(),
+                mul: mul.function,
+                mul_zero: mul.zero,
+                mul_successor: mul.successor,
                 one,
                 two,
                 one_plus_one,
             },
             proof: NaturalArithmeticProof {
-                add_rec: add_rec.proof(),
-                add_zero: add_zero_theorem,
-                add_successor: add_successor_theorem,
-                mul_rec: mul_rec.proof(),
-                mul_zero: mul_zero_theorem,
-                mul_successor: mul_successor_theorem,
+                add_rec: add.recursor.proof(),
+                add_zero: add.zero_theorem,
+                add_successor: add.successor_theorem,
+                mul_rec: mul.recursor.proof(),
+                mul_zero: mul.zero_theorem,
+                mul_successor: mul.successor_theorem,
                 one_plus_one: one_plus_one_theorem,
             },
         })
     }
+}
+
+fn derive_addition(
+    kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
+    naturals: &Naturals,
+    schemas: NaturalRecSchemas,
+    function_ty: Ref,
+) -> Result<Addition, NaturalError> {
+    let argument = names.variable(kernel, naturals.ty)?;
+    let base = kernel.lam(argument, argument)?;
+    let step = successor_step(kernel, names, naturals)?;
+    let recursor = kernel.natural_rec_from_schemata_with_names(
+        names,
+        naturals,
+        schemas,
+        function_ty,
+        base,
+        step,
+    )?;
+    let function = recursor.graph.rec;
+    let (zero, zero_theorem) =
+        pointwise_zero(kernel, names, naturals, &recursor, |_, value| Ok(value))?;
+    let (successor, successor_theorem) = pointwise_successor(
+        kernel,
+        names,
+        naturals,
+        &recursor,
+        |kernel, recursive, value| {
+            let previous = kernel.app(recursive, value)?;
+            Ok(kernel.app(naturals.succ, previous)?)
+        },
+        &[naturals.succ],
+    )?;
+    Ok(Addition {
+        recursor,
+        function,
+        zero,
+        zero_theorem,
+        successor,
+        successor_theorem,
+    })
+}
+
+fn derive_multiplication(
+    kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
+    naturals: &Naturals,
+    schemas: NaturalRecSchemas,
+    function_ty: Ref,
+    add: Ref,
+) -> Result<Multiplication, NaturalError> {
+    let add_type = kernel.classifier(add)?;
+    let add_parameter = names.variable(kernel, add_type)?;
+    let argument = names.variable(kernel, naturals.ty)?;
+    let base = kernel.lam(argument, naturals.zero)?;
+    let step = multiplication_step(kernel, names, naturals, add_parameter)?;
+    let recursor = kernel.natural_rec_from_schemata_with_names(
+        names,
+        naturals,
+        schemas,
+        function_ty,
+        base,
+        step,
+    )?;
+    let (_, raw_zero_theorem) =
+        pointwise_zero(kernel, names, naturals, &recursor, |_, _| Ok(naturals.zero))?;
+    let (_, raw_successor_theorem) = pointwise_successor(
+        kernel,
+        names,
+        naturals,
+        &recursor,
+        |kernel, recursive, value| {
+            let previous = kernel.app(recursive, value)?;
+            apply2(kernel, add_parameter, previous, value)
+        },
+        &[add_parameter],
+    )?;
+    let generalized_zero = kernel.forall_intro(raw_zero_theorem, add_parameter)?;
+    let specialized_zero = forall_elim(kernel, generalized_zero.theorem, add)?;
+    let (function, zero, zero_theorem) =
+        specialize_mul_zero(kernel, names, naturals, specialized_zero.theorem)?;
+    let generalized_successor = kernel.forall_intro(raw_successor_theorem, add_parameter)?;
+    let specialized_successor = forall_elim(kernel, generalized_successor.theorem, add)?;
+    let (successor, successor_theorem) = specialize_mul_successor(
+        kernel,
+        names,
+        naturals,
+        specialized_successor.theorem,
+        function,
+        add,
+    )?;
+    Ok(Multiplication {
+        recursor,
+        function,
+        zero,
+        zero_theorem,
+        successor,
+        successor_theorem,
+    })
 }
 
 fn prove_one_plus_one(
@@ -291,11 +412,15 @@ fn prove_one_plus_one(
     Ok((one, two, proposition, proof.theorem))
 }
 
-fn successor_step(kernel: &mut Kernel, naturals: &Naturals) -> Result<Ref, NaturalError> {
+fn successor_step(
+    kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
+    naturals: &Naturals,
+) -> Result<Ref, NaturalError> {
     let function_ty = kernel.classifier(naturals.succ)?;
-    let index = fresh_global(kernel, naturals.ty)?;
-    let previous = fresh_global(kernel, function_ty)?;
-    let value = fresh_global(kernel, naturals.ty)?;
+    let index = names.variable(kernel, naturals.ty)?;
+    let previous = names.variable(kernel, function_ty)?;
+    let value = names.variable(kernel, naturals.ty)?;
     let previous_value = kernel.app(previous, value)?;
     let next = kernel.app(naturals.succ, previous_value)?;
     let at_value = kernel.lam(value, next)?;
@@ -305,13 +430,14 @@ fn successor_step(kernel: &mut Kernel, naturals: &Naturals) -> Result<Ref, Natur
 
 fn multiplication_step(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     add: Ref,
 ) -> Result<Ref, NaturalError> {
     let function_ty = kernel.classifier(naturals.succ)?;
-    let index = fresh_global(kernel, naturals.ty)?;
-    let previous = fresh_global(kernel, function_ty)?;
-    let value = fresh_global(kernel, naturals.ty)?;
+    let index = names.variable(kernel, naturals.ty)?;
+    let previous = names.variable(kernel, function_ty)?;
+    let value = names.variable(kernel, naturals.ty)?;
     let previous_value = kernel.app(previous, value)?;
     let product = apply2(kernel, add, previous_value, value)?;
     let at_value = kernel.lam(value, product)?;
@@ -321,10 +447,11 @@ fn multiplication_step(
 
 fn specialize_mul_zero(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     theorem: ThmId,
 ) -> Result<(Ref, Ref, ThmId), NaturalError> {
-    let value = fresh_global(kernel, naturals.ty)?;
+    let value = names.variable(kernel, naturals.ty)?;
     let specialized = forall_elim(kernel, theorem, value)?;
     let equality = sole_conclusion(kernel, specialized.theorem)?;
     let [_domain, left, right] = exact_equality(kernel, equality)?;
@@ -339,13 +466,14 @@ fn specialize_mul_zero(
 
 fn specialize_mul_successor(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     theorem: ThmId,
     mul: Ref,
     add: Ref,
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let index = fresh_global(kernel, naturals.ty)?;
-    let value = fresh_global(kernel, naturals.ty)?;
+    let index = names.variable(kernel, naturals.ty)?;
+    let value = names.variable(kernel, naturals.ty)?;
     let at_index = forall_elim(kernel, theorem, index)?;
     let at_value = forall_elim(kernel, at_index.theorem, value)?;
     let source = sole_conclusion(kernel, at_value.theorem)?;
@@ -372,11 +500,12 @@ fn specialize_mul_successor(
 
 fn pointwise_zero(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     recursor: &NaturalRecursor,
     target: impl FnOnce(&mut Kernel, Ref) -> Result<Ref, NaturalError>,
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let value = fresh_global(kernel, naturals.ty)?;
+    let value = names.variable(kernel, naturals.ty)?;
     let applied = kernel.ap_thm(recursor.graph.rec_zero_theorem, value)?;
     let (right, right_fact) = normalize_application(kernel, applied.right, &[])?;
     let target_right = target(kernel, value)?;
@@ -397,13 +526,14 @@ fn pointwise_zero(
 
 fn pointwise_successor(
     kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
     naturals: &Naturals,
     recursor: &NaturalRecursor,
     target: impl FnOnce(&mut Kernel, Ref, Ref) -> Result<Ref, NaturalError>,
     opaque: &[Ref],
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let index = fresh_global(kernel, naturals.ty)?;
-    let value = fresh_global(kernel, naturals.ty)?;
+    let index = names.variable(kernel, naturals.ty)?;
+    let value = names.variable(kernel, naturals.ty)?;
     let specialized = forall_elim(kernel, recursor.graph.rec_successor_theorem, index)?;
     let applied = kernel.ap_thm(specialized.theorem, value)?;
     let (right, right_fact) = normalize_application(kernel, applied.right, opaque)?;
@@ -573,7 +703,7 @@ fn exact_children<const N: usize>(
         })
 }
 
-fn fresh_global(kernel: &mut Kernel, ty: Ref) -> Result<Ref, NaturalError> {
+fn next_global_name(kernel: &Kernel) -> Result<u64, NaturalError> {
     let mut greatest = None;
     for raw in 1..=kernel.arena().len() {
         let reference = Ref::new(i32::try_from(raw).map_err(|_| NaturalError::WrongForm {
@@ -586,13 +716,12 @@ fn fresh_global(kernel: &mut Kernel, ty: Ref) -> Result<Ref, NaturalError> {
             greatest = Some(greatest.map_or(name, |current: u64| current.max(name)));
         }
     }
-    let name = greatest
+    greatest
         .unwrap_or(0)
         .checked_add(1)
         .ok_or(NaturalError::WrongForm {
             expected: "an available arithmetic binder name",
-        })?;
-    Ok(kernel.tm_fv(name, ty)?)
+        })
 }
 
 fn apply2(kernel: &mut Kernel, function: Ref, left: Ref, right: Ref) -> Result<Ref, NaturalError> {
