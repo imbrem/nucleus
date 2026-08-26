@@ -127,6 +127,13 @@ buildscript_run(
     crate_root = {{ target.crate_root|tojson }},
     edition = {{ target.edition|tojson }},
     srcs = _RUST_SOURCES,
+{%- if target.mapped_srcs %}
+    mapped_srcs = {
+{%- for source, destination in target.mapped_srcs %}
+        {{ source|tojson }}: {{ destination|tojson }},
+{%- endfor %}
+    },
+{%- endif %}
 {%- if target.features %}
     features = [
 {%- for feature in target.features %}
@@ -236,6 +243,8 @@ struct RustTarget {
     crate_root: String,
     edition: String,
     features: Vec<String>,
+    /// Additional sources needed by this target itself.
+    mapped_srcs: Vec<(String, String)>,
     named_deps: Vec<(String, String)>,
     /// What the test rule links: the same plus `[dev-dependencies]`.
     ///
@@ -780,20 +789,12 @@ impl<'a> Graph<'a> {
                 ),
             ));
         }
-        let mut test_env = env.clone();
-        if !target.kind.contains(&TargetKind::Bin) {
-            for binary in package
-                .targets
-                .iter()
-                .filter(|candidate| candidate.kind.contains(&TargetKind::Bin))
-            {
-                test_env.push((
-                    format!("CARGO_BIN_EXE_{}", binary.name),
-                    format!("$(location :{})", binary.name),
-                ));
-            }
-        }
+        let test_env = Self::test_environment(package, target, &env);
         let (features, test_features) = buck_features(package, self.features(&package.id))?;
+        let is_test = target.kind.contains(&TargetKind::Test);
+        let test_mapped_srcs = buck_test_mapped_srcs(package)?;
+        let (features, mapped_srcs) =
+            Self::test_inputs(is_test, features, &test_features, &test_mapped_srcs);
         Ok(Some(RustTarget {
             rule,
             name: target.name.clone(),
@@ -801,6 +802,7 @@ impl<'a> Graph<'a> {
             crate_root,
             edition: package.edition.to_string(),
             features,
+            mapped_srcs,
             named_deps,
             test_named_deps,
             test_features,
@@ -813,9 +815,43 @@ impl<'a> Graph<'a> {
                 env
             },
             test_env,
-            test_mapped_srcs: buck_test_mapped_srcs(package)?,
+            test_mapped_srcs,
             unit_test: is_library(target) || target.kind.contains(&TargetKind::Bin),
         }))
+    }
+
+    fn test_inputs(
+        is_test: bool,
+        features: Vec<String>,
+        test_features: &[String],
+        test_mapped_srcs: &[(String, String)],
+    ) -> (Vec<String>, Vec<(String, String)>) {
+        if is_test {
+            (test_features.to_vec(), test_mapped_srcs.to_vec())
+        } else {
+            (features, Vec::new())
+        }
+    }
+
+    fn test_environment(
+        package: &Package,
+        target: &Target,
+        env: &[(String, String)],
+    ) -> Vec<(String, String)> {
+        let mut test_env = env.to_vec();
+        if !target.kind.contains(&TargetKind::Bin) {
+            for binary in package
+                .targets
+                .iter()
+                .filter(|candidate| candidate.kind.contains(&TargetKind::Bin))
+            {
+                test_env.push((
+                    format!("CARGO_BIN_EXE_{}", binary.name),
+                    format!("$(location :{})", binary.name),
+                ));
+            }
+        }
+        test_env
     }
 
     fn external_packages(

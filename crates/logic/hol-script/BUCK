@@ -97,6 +97,12 @@ rust_test(
     crate_root = "tests/theory.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
+    mapped_srcs = {
+        "nucleus//:hol_init_checked_manifest": "theories/init-boolean.checked.json",
+    },
+    features = [
+        "buck-test-fixtures",
+    ],
     named_deps = {
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_json": "nucleus//crates/lib/json:covalence_lib_json",
