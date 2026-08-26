@@ -1,7 +1,7 @@
 //! End-to-end userspace opening of type-existential model packages.
 
 use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Lit, Ref, Sort, SynRel, Tag};
-use covalence_logic_hol_derived::{ModelError, ModelExt};
+use covalence_logic_hol_derived::{ModelError, ModelExt, join_same_syntax, substitute};
 
 fn prelude() -> (Kernel, Ref, Ref) {
     let mut kernel = Kernel::new();
@@ -82,4 +82,24 @@ fn a_non_existential_theorem_is_rejected_before_model_construction() {
         before,
         "shape rejection is non-mutating"
     );
+}
+
+#[test]
+fn substitution_certifies_rebuilt_duplicate_classifier_rows_on_demand() {
+    let (mut kernel, star, bool_ty) = prelude();
+    let parameter = kernel.ty_fv(1, star).expect("type parameter");
+    let left_arrow = kernel.ty_arr(parameter, parameter).expect("left arrow");
+    let right_arrow = kernel.ty_arr(parameter, parameter).expect("right arrow");
+    join_same_syntax(&mut kernel, left_arrow, right_arrow).expect("source classifier equality");
+    let function_ty = kernel
+        .ty_arr(left_arrow, bool_ty)
+        .expect("higher-order function type");
+    let function = kernel.tm_fv(2, function_ty).expect("function");
+    let argument = kernel.tm_fv(3, right_arrow).expect("argument");
+    let application = kernel.app(function, argument).expect("source application");
+
+    let rebuilt = substitute(&mut kernel, parameter, bool_ty, application)
+        .expect("checked classifier retry")
+        .output;
+    assert_eq!(kernel.classifier(rebuilt).expect("Boolean result"), bool_ty);
 }

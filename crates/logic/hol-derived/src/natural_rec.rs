@@ -370,8 +370,8 @@ fn prove_graph_step(
         .ok_or(NaturalError::WrongForm {
             expected: "the natural successor type",
         })?;
-    let natural = kernel.tm_fv(kernel.fresh_name(&[graph, successor])?, natural_type)?;
-    let value = kernel.tm_fv(kernel.fresh_name(&[natural])?, codomain)?;
+    let natural = kernel.tm_fv(fresh_global_name(kernel)?, natural_type)?;
+    let value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
     let graph_at_value = apply2(kernel, graph, natural, value)?;
     let next_natural = kernel.app(successor, natural)?;
     let step_at_natural = kernel.app(recursion_step, natural)?;
@@ -514,8 +514,8 @@ fn guarded_graph_targets(
     natural_type: Ref,
     codomain: Ref,
 ) -> Result<GuardedGraphUse, NaturalError> {
-    let natural = kernel.tm_fv(kernel.fresh_name(&[graph, guarded])?, natural_type)?;
-    let value = kernel.tm_fv(kernel.fresh_name(&[natural])?, codomain)?;
+    let natural = kernel.tm_fv(fresh_global_name(kernel)?, natural_type)?;
+    let value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
     let graph_at = apply2(kernel, graph, natural, value)?;
     let theorem = kernel.identity(positive(graph_at))?;
     let (application, expanded) = expand_graph_application(kernel, graph, natural, value)?;
@@ -554,16 +554,16 @@ fn build_shape_predicates(
     recursion_step: Ref,
     codomain: Ref,
 ) -> Result<ShapePredicates, NaturalError> {
-    let natural = kernel.tm_fv(kernel.fresh_name(&[graph, base])?, naturals.ty)?;
-    let value = kernel.tm_fv(kernel.fresh_name(&[natural])?, codomain)?;
+    let natural = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
+    let value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
     let graph_at_value = apply2(kernel, graph, natural, value)?;
     let bool_ty = kernel.classifier(graph_at_value)?;
     let at_zero = kernel.eq(bool_ty, natural, naturals.zero)?;
     let at_base = kernel.eq(bool_ty, value, base)?;
     let base_case = kernel.op2(Op2::And, at_zero, at_base)?;
 
-    let predecessor = kernel.tm_fv(kernel.fresh_name(&[value])?, naturals.ty)?;
-    let predecessor_value = kernel.tm_fv(kernel.fresh_name(&[predecessor])?, codomain)?;
+    let predecessor = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
+    let predecessor_value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
     let predecessor_graph = apply2(kernel, graph, predecessor, predecessor_value)?;
     let successor_predecessor = kernel.app(naturals.succ, predecessor)?;
     let successor_index = kernel.eq(bool_ty, natural, successor_predecessor)?;
@@ -578,8 +578,8 @@ fn build_shape_predicates(
     let at_value = kernel.lam(value, shape_body)?;
     let shape = kernel.lam(natural, at_value)?;
 
-    let probe_natural = kernel.tm_fv(kernel.fresh_name(&[shape])?, naturals.ty)?;
-    let probe_value = kernel.tm_fv(kernel.fresh_name(&[probe_natural])?, codomain)?;
+    let probe_natural = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
+    let probe_value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
     let (_probe, expanded_graph) =
         expand_graph_application(kernel, graph, probe_natural, probe_value)?;
     let [_graph_bool, graph_function, _graph_truth] =
@@ -599,8 +599,8 @@ fn build_shape_predicates(
     )?;
     join_same_syntax(kernel, guarded_natural_type, naturals.ty)?;
     join_same_syntax(kernel, guarded_codomain, codomain)?;
-    let guarded_natural = kernel.tm_fv(kernel.fresh_name(&[shape])?, guarded_natural_type)?;
-    let guarded_value = kernel.tm_fv(kernel.fresh_name(&[guarded_natural])?, guarded_codomain)?;
+    let guarded_natural = kernel.tm_fv(fresh_global_name(kernel)?, guarded_natural_type)?;
+    let guarded_value = kernel.tm_fv(fresh_global_name(kernel)?, guarded_codomain)?;
     let graph_at = apply2(kernel, graph, guarded_natural, guarded_value)?;
     let shape_at = apply2(kernel, shape, guarded_natural, guarded_value)?;
     let guarded_body = kernel.op2(Op2::And, graph_at, shape_at)?;
@@ -845,7 +845,7 @@ fn prove_graph_zero_value(
     has_shape_theorem: ThmId,
     codomain: Ref,
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let value = kernel.tm_fv(kernel.fresh_name(&[graph, shape])?, codomain)?;
+    let value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
     let graph_at_zero = apply2(kernel, graph, naturals.zero, value)?;
     let shape_at_zero = apply2(kernel, shape, naturals.zero, value)?;
     let assumed = kernel.identity(positive(graph_at_zero))?;
@@ -945,9 +945,9 @@ fn prove_graph_successor_value(
     recursion_step: Ref,
     codomain: Ref,
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let natural = kernel.tm_fv(kernel.fresh_name(&[graph, shape])?, naturals.ty)?;
-    let value = kernel.tm_fv(kernel.fresh_name(&[natural])?, codomain)?;
-    let witness = kernel.tm_fv(kernel.fresh_name(&[value])?, codomain)?;
+    let natural = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
+    let value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
+    let witness = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
     let successor = kernel.app(naturals.succ, natural)?;
     let graph_at_successor = apply2(kernel, graph, successor, value)?;
     let graph_at_witness = apply2(kernel, graph, natural, witness)?;
@@ -1102,8 +1102,7 @@ fn successor_shape_witness(
         injective_at_predecessor.proposition,
     )?;
 
-    let graph_binder =
-        kernel.tm_fv(kernel.fresh_name(&[graph, predecessor_value])?, naturals.ty)?;
+    let graph_binder = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
     let graph_body = apply2(kernel, graph, graph_binder, predecessor_value)?;
     let graph_predicate = kernel.lam(graph_binder, graph_body)?;
     let target_graph = apply2(kernel, graph, natural, predecessor_value)?;
@@ -1117,10 +1116,7 @@ fn successor_shape_witness(
         graph_data,
     )?;
 
-    let value_binder = kernel.tm_fv(
-        kernel.fresh_name(&[recursion_step, predecessor_value])?,
-        naturals.ty,
-    )?;
+    let value_binder = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
     let step_at_binder = kernel.app(recursion_step, value_binder)?;
     let stepped_value = kernel.app(step_at_binder, predecessor_value)?;
     let equality_body = kernel.eq(bool_ty, value, stepped_value)?;
@@ -1193,8 +1189,8 @@ fn prove_zero_functionality(
     zero_value_theorem: ThmId,
     codomain: Ref,
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let left = kernel.tm_fv(kernel.fresh_name(&[graph, naturals.zero])?, codomain)?;
-    let right = kernel.tm_fv(kernel.fresh_name(&[left])?, codomain)?;
+    let left = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
+    let right = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
     let graph_left = apply2(kernel, graph, naturals.zero, left)?;
     let graph_right = apply2(kernel, graph, naturals.zero, right)?;
     let bool_ty = kernel.classifier(graph_left)?;
@@ -1251,14 +1247,9 @@ fn prove_graph_functionality(
     zero_functional_theorem: ThmId,
     codomain: Ref,
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let zero_functional = sole_conclusion(kernel, zero_functional_theorem)?;
-    let successor_value = sole_conclusion(kernel, successor_value_theorem)?;
-    let index = kernel.tm_fv(
-        kernel.fresh_name(&[graph, recursion_step, zero_functional, successor_value])?,
-        naturals.ty,
-    )?;
-    let left = kernel.tm_fv(kernel.fresh_name(&[index, zero_functional])?, codomain)?;
-    let right = kernel.tm_fv(kernel.fresh_name(&[left, successor_value])?, codomain)?;
+    let index = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
+    let left = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
+    let right = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
     let graph_left = apply2(kernel, graph, index, left)?;
     let graph_right = apply2(kernel, graph, index, right)?;
     let bool_ty = kernel.classifier(graph_left)?;
@@ -1626,9 +1617,8 @@ fn prove_graph_total(
     graph_step_theorem: ThmId,
     codomain: Ref,
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let predicate_natural =
-        kernel.tm_fv(kernel.fresh_name(&[graph, recursion_step])?, naturals.ty)?;
-    let value = kernel.tm_fv(kernel.fresh_name(&[predicate_natural])?, codomain)?;
+    let predicate_natural = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
+    let value = kernel.tm_fv(fresh_global_name(kernel)?, codomain)?;
     let graph_at_value = apply2(kernel, graph, predicate_natural, value)?;
     let exists_value = kernel.exists_tm(value, graph_at_value)?;
     let total_predicate = kernel.lam(predicate_natural, exists_value)?;
@@ -1872,10 +1862,7 @@ fn prove_rec_uniqueness(
     codomain: Ref,
 ) -> Result<(Ref, ThmId), NaturalError> {
     let function_ty = kernel.classifier(graph.rec)?;
-    let candidate = kernel.tm_fv(
-        kernel.fresh_name(&[specification_predicate, graph.rec])?,
-        function_ty,
-    )?;
+    let candidate = kernel.tm_fv(fresh_global_name(kernel)?, function_ty)?;
     let (_specification_application, candidate_specification, specification_beta) =
         beta_apply(kernel, specification_predicate, candidate)?;
     kernel.union_syn_fact(specification_beta)?;
@@ -1884,7 +1871,7 @@ fn prove_rec_uniqueness(
     let candidate_zero_theorem = project_and_left(kernel, candidate_specification)?;
     let candidate_successor_theorem = project_and_right(kernel, candidate_specification)?;
 
-    let index = kernel.tm_fv(kernel.fresh_name(&[candidate])?, naturals.ty)?;
+    let index = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
     let candidate_at_index = kernel.app(candidate, index)?;
     let rec_at_index = kernel.app(graph.rec, index)?;
     let bool_ty = kernel.classifier(candidate_successor_law)?;
@@ -2089,7 +2076,7 @@ fn prove_rec_successor(
     graph_step_theorem: ThmId,
     functional_theorem: ThmId,
 ) -> Result<(Ref, ThmId), NaturalError> {
-    let natural = kernel.tm_fv(kernel.fresh_name(&[rec, recursion_step])?, naturals.ty)?;
+    let natural = kernel.tm_fv(fresh_global_name(kernel)?, naturals.ty)?;
     let rec_at_natural = kernel.app(rec, natural)?;
     let successor = kernel.app(naturals.succ, natural)?;
     let rec_at_successor = kernel.app(rec, successor)?;
@@ -2333,4 +2320,18 @@ fn exact_children<const N: usize>(
         .map_err(|_| NaturalError::WrongForm {
             expected: "the recursion graph schema arity",
         })
+}
+
+fn fresh_global_name(kernel: &Kernel) -> Result<u64, NaturalError> {
+    let roots = (1..=kernel.arena().len())
+        .map(|raw| {
+            Ref::new(i32::try_from(raw).map_err(|_| NaturalError::WrongForm {
+                expected: "an i32-sized recursion arena",
+            })?)
+            .ok_or(NaturalError::WrongForm {
+                expected: "a nonzero recursion row",
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(kernel.fresh_name(&roots)?)
 }

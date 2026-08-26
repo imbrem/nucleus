@@ -26,6 +26,52 @@ impl From<KernelError> for SyntaxError {
     }
 }
 
+pub(crate) fn require_same_syntax(
+    kernel: &Kernel,
+    left: Ref,
+    right: Ref,
+) -> Result<(), SyntaxError> {
+    fn visit(
+        kernel: &Kernel,
+        left: Ref,
+        right: Ref,
+        seen: &mut BTreeMap<(Ref, Ref), bool>,
+    ) -> Result<(), SyntaxError> {
+        if left == right || seen.insert((left, right), true).is_some() {
+            return Ok(());
+        }
+        let tag = kernel.arena().tag(left);
+        if tag.is_none()
+            || tag != kernel.arena().tag(right)
+            || kernel.arena().name(left) != kernel.arena().name(right)
+            || kernel.arena().bool_value(left) != kernel.arena().bool_value(right)
+            || kernel.arena().op1(left) != kernel.arena().op1(right)
+            || kernel.arena().op2(left) != kernel.arena().op2(right)
+        {
+            return Err(SyntaxError::Different);
+        }
+        let left_children = kernel
+            .arena()
+            .children(left)
+            .ok_or(SyntaxError::Different)?
+            .collect::<Vec<_>>();
+        let right_children = kernel
+            .arena()
+            .children(right)
+            .ok_or(SyntaxError::Different)?
+            .collect::<Vec<_>>();
+        if left_children.len() != right_children.len() {
+            return Err(SyntaxError::Different);
+        }
+        for (&left, &right) in left_children.iter().zip(&right_children) {
+            visit(kernel, left, right, seen)?;
+        }
+        Ok(())
+    }
+
+    visit(kernel, left, right, &mut BTreeMap::new())
+}
+
 /// Certifies and joins two structurally identical checked syntax trees.
 ///
 /// This is untrusted traversal: every congruence edge is checked by the
