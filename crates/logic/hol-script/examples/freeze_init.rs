@@ -4,7 +4,7 @@ use std::{fmt::Write as _, fs, path::PathBuf};
 
 use covalence_lib_json::serde_json;
 use covalence_logic_hol::{init, wire};
-use covalence_logic_hol_script::compile_init_slice;
+use covalence_logic_hol_script::{InitSlice, compile_init_slice};
 
 const LOGICAL_INIT: &str = include_str!("../../../../theories/init-boolean.checked.json");
 
@@ -17,8 +17,6 @@ fn main() {
         serde_json::from_str(LOGICAL_INIT).expect("logical init manifest must parse");
     let logical = init::compile(&manifest).expect("logical init manifest must check");
     let slice = compile_init_slice(&logical).expect("standard init slice must compile");
-    let naturals = slice.naturals();
-
     let mut bytes = Vec::new();
     wire::serialize(slice.prefix().arena(), &mut bytes)
         .expect("standard init slice must serialize canonically");
@@ -33,6 +31,17 @@ fn main() {
                 output
             });
 
+    let output = render(&slice, &bytes, &address);
+    fs::write(&destination, output).expect("fixture destination must be writable");
+    eprintln!(
+        "wrote {} bytes at {address} to {}",
+        bytes.len(),
+        destination.display()
+    );
+}
+
+fn render(slice: &InitSlice, bytes: &[u8], address: &str) -> String {
+    let naturals = slice.naturals();
     let mut output = String::new();
     output.push_str(
         "import Nucleus.Hol.Ethane.Arena.OneBased.NestedCbor\n\n\
@@ -112,10 +121,5 @@ names recovered from the userspace dictionary. -/\n\n",
         .unwrap();
     }
     output.push_str("end Nucleus.Hol.Ethane.OneBased.FrozenInit\n");
-    fs::write(&destination, output).expect("fixture destination must be writable");
-    eprintln!(
-        "wrote {} bytes at {address} to {}",
-        bytes.len(),
-        destination.display()
-    );
+    output
 }

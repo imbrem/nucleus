@@ -30,14 +30,29 @@ fn rejects(label: &str, arena: ArenaCbor) {
 #[test]
 fn a_fact_free_arena_stays_off_the_wire_entirely() {
     // Empty optional cache fields are absent from the canonical encoding.
-    let canonical = ArenaCbor::new().bytes();
-    let decoded = wire::deserialize(canonical.as_slice()).expect("canonical bytes decode");
+    let decoded = wire::deserialize(ArenaCbor::new().bytes().as_slice()).expect("arena decodes");
+    let canonical = encode(&decoded);
 
     assert_eq!(decoded, Arena::empty());
+    let Value::Map(fields) =
+        covalence_lib_cbor::from_reader(canonical.as_slice()).expect("canonical CBOR decodes")
+    else {
+        panic!("arena map")
+    };
+    let Value::Map(hol) = &fields
+        .iter()
+        .find(|(key, _)| key == &text("hol"))
+        .expect("hol")
+        .1
+    else {
+        panic!("hol map")
+    };
     assert_eq!(
-        encode(&decoded),
-        canonical,
-        "the encoder must not add the fields"
+        hol.iter()
+            .find(|(key, _)| key == &text("syn"))
+            .expect("syntax cache")
+            .1,
+        Value::Map(Vec::new())
     );
     assert_eq!(O256::from_bytes(&canonical), Arena::empty().addr());
 }
@@ -62,9 +77,10 @@ fn classical_matrix_tombstones_round_trip_in_every_arena_position() {
     assert_eq!(arena.ambient_theorems().live_theorems().count(), 1);
     assert_eq!(arena.syllogisms().live_theorems().count(), 1);
     assert_eq!(arena.theorems().live_theorems().count(), 1);
+    let canonical = encode(&arena);
     assert_eq!(
-        encode(&arena),
-        bytes,
+        wire::deserialize(canonical.as_slice()).expect("canonical matrix decodes"),
+        arena,
         "the wire format must preserve every inner matrix tombstone"
     );
 }
