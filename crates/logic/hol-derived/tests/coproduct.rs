@@ -195,3 +195,45 @@ fn mediator_laws_are_universal_and_premise_free() {
     let expected = kernel.eq(bool_ty, direct, expected).unwrap();
     join_same_syntax(&mut kernel, specialized.proposition, expected).unwrap();
 }
+
+#[test]
+fn every_coproduct_representation_is_in_an_injection_image() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let right_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+    kernel.add_axiom(AX_SUB).unwrap();
+    let coproduct = kernel.coproduct(bool_ty, bool_ty, right_ty).unwrap();
+
+    let exhaustive = coproduct.prove_exhaustiveness(&mut kernel).unwrap();
+
+    for (theorem, proposition) in [
+        (exhaustive.inhabited_theorem, exhaustive.inhabited),
+        (exhaustive.theorem, exhaustive.image_of_rep),
+    ] {
+        let theorem = kernel.thm().get(theorem).unwrap();
+        assert_eq!(theorem.lhs.rows().count(), 0);
+        assert_eq!(
+            theorem.rhs.rows().collect::<Vec<_>>(),
+            vec![&[covalence_logic_hol::Lit::positive(proposition.get())][..]]
+        );
+    }
+
+    let value = kernel.tm_fv(600, coproduct.ty).unwrap();
+    let specialized = forall_elim(&mut kernel, exhaustive.theorem, value).unwrap();
+    let represented = kernel.app(coproduct.subtype.rep, value).unwrap();
+    let expected = kernel.app(coproduct.predicate, represented).unwrap();
+    join_same_syntax(&mut kernel, specialized.proposition, expected).unwrap();
+
+    let cases = coproduct.cases(&mut kernel, exhaustive, value).unwrap();
+    let theorem = kernel.thm().get(cases.theorem).unwrap();
+    assert_eq!(theorem.lhs.rows().count(), 0);
+    assert_eq!(
+        theorem.rhs.rows().collect::<Vec<_>>(),
+        vec![&[covalence_logic_hol::Lit::positive(cases.disjunction.get())][..]]
+    );
+    assert_eq!(
+        kernel.arena().op2(cases.disjunction),
+        Some(covalence_logic_hol::builtin::Op2::Or)
+    );
+}
