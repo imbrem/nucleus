@@ -147,6 +147,32 @@ impl Kernel {
         self.put_fact::<Infallible>(target, SynFact::new(rel, None, None, input, input))
     }
 
+    /// Materializes a direct fact from the checked syntactic-equivalence cache.
+    ///
+    /// The cache contains only classes joined by
+    /// [`union_syn_fact`](Self::union_syn_fact), so this is elimination of
+    /// already checked evidence rather than a new equality rule. It lets
+    /// userspace discard temporary fact slots without losing the ability to
+    /// compose through the persistent equality columns.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless both resident rows belong to the same cached
+    /// syntactic-equivalence class, or the requested target slot is absent.
+    pub fn syn_cached(
+        &mut self,
+        target: Option<SynFactId>,
+        input: Ref,
+        output: Ref,
+    ) -> Result<SynFactId, KernelError> {
+        let input_root = self.find_path_in::<Infallible>(EqColumn::Syn, input)?.0;
+        let output_root = self.find_path_in::<Infallible>(EqColumn::Syn, output)?.0;
+        if input_root != output_root {
+            return Err(Self::invalid_fact("syntax cache"));
+        }
+        self.put_fact(target, SynFact::new(SynRel::Syn, None, None, input, output))
+    }
+
     /// Weakens a fact along `syn ≤ alpha ≤ conv`.
     ///
     /// # Errors
@@ -1963,5 +1989,25 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+
+    #[test]
+    fn checked_syntax_cache_can_rematerialize_discarded_direct_evidence() {
+        let (mut kernel, _, bool_ty) = bool_kernel();
+        let left = kernel.bool(bool_ty, true).unwrap();
+        let right = kernel.bool(bool_ty, true).unwrap();
+        let joined = kernel
+            .syn_congr(None, SynRel::Syn, None, None, left, right, &[])
+            .unwrap();
+        kernel.union_syn_fact(joined).unwrap();
+        kernel.truncate_syn_facts(0);
+
+        let restored = kernel.syn_cached(None, left, right).unwrap();
+        let fact = kernel.syn_fact(restored).unwrap();
+        assert_eq!(fact.rel(), SynRel::Syn);
+        assert_eq!((fact.input(), fact.output()), (left, right));
+
+        let unrelated = kernel.bool(bool_ty, false).unwrap();
+        assert!(kernel.syn_cached(None, left, unrelated).is_err());
     }
 }

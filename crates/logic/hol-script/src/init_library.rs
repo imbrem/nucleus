@@ -10,8 +10,8 @@ use covalence_logic_hol::{
 use covalence_logic_hol_derived::{
     ChosenModel, Infinity, InfinityDecl, InfinityError, ModelExt, NaturalArithmetic,
     NaturalArithmeticDecl, NaturalArithmeticExt, NaturalError, NaturalExt, NaturalRecSchemas,
-    Naturals, NaturalsDecl, OpenedExists, OpenedExistsDecl, Subtype, SubtypeDecl, SubtypeError,
-    SyntaxError, join_alpha_equivalent, open_exists_at,
+    Naturals, NaturalsDecl, NaturalsProof, OpenedExists, OpenedExistsDecl, Subtype, SubtypeDecl,
+    SubtypeError, SyntaxError, join_alpha_equivalent, open_exists_at,
 };
 
 use crate::{
@@ -330,6 +330,183 @@ impl InitSlice {
             base_name: declaration.base_name,
         })
     }
+
+    /// Replays the complete frozen natural-number package.
+    ///
+    /// The source schema, package selection, and theorem transport are all
+    /// userspace proof search. Returned handles conclude the exact opcode-free
+    /// rows stored by this slice, independently of unrelated ambient syntax.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a mismatched prefix, missing source schema, or any
+    /// rejected infinity, subtype, natural-number, lowering, or conversion
+    /// certificate. The supplied kernel is unchanged on failure.
+    pub fn prove_naturals(
+        &self,
+        init: &LogicalInit,
+        kernel: &mut Kernel,
+    ) -> Result<Naturals, InitLibraryError> {
+        let mut staged = kernel.fork();
+        let package = self.prove_naturals_inner(init, &mut staged)?;
+        *kernel = staged;
+        Ok(package)
+    }
+
+    fn prove_naturals_inner(
+        &self,
+        init: &LogicalInit,
+        kernel: &mut Kernel,
+    ) -> Result<Naturals, InitLibraryError> {
+        let declaration = self.naturals;
+        let infinity = self.prove_infinity_inner(init, kernel)?;
+        let subtype = self.prove_subtype_inner(init, kernel)?;
+        let member = kernel
+            .compact_logical_tree(init, declaration.member)
+            .map_err(|source| InitLibraryError::Kernel { source })?;
+        let mut working_subtype = subtype;
+        let (working_subtype_abs_rep, working_abs_rep_theorem) = compact_theorem(
+            init,
+            kernel,
+            subtype.abs_rep,
+            subtype
+                .abs_rep_theorem
+                .ok_or(InitLibraryError::MissingSubtypeProof { law: "abs_rep" })?,
+        )?;
+        working_subtype.abs_rep = working_subtype_abs_rep;
+        working_subtype.abs_rep_theorem = Some(working_abs_rep_theorem);
+        let (working_subtype_rep_abs, working_rep_abs_theorem) = compact_theorem(
+            init,
+            kernel,
+            subtype.rep_abs,
+            subtype
+                .rep_abs_theorem
+                .ok_or(InitLibraryError::MissingSubtypeProof { law: "rep_abs" })?,
+        )?;
+        working_subtype.rep_abs = working_subtype_rep_abs;
+        working_subtype.rep_abs_theorem = Some(working_rep_abs_theorem);
+        let (working_subtype_rep_guarded, working_rep_guarded_theorem) = compact_theorem(
+            init,
+            kernel,
+            subtype.rep_guarded,
+            subtype
+                .rep_guarded_theorem
+                .ok_or(InitLibraryError::MissingSubtypeProof { law: "rep_guarded" })?,
+        )?;
+        working_subtype.rep_guarded = working_subtype_rep_guarded;
+        working_subtype.rep_guarded_theorem = Some(working_rep_guarded_theorem);
+        let generated = kernel
+            .finish_naturals_from_packages(
+                self.get("bool")
+                    .ok_or(InitLibraryError::MissingSymbol { name: "bool" })?,
+                infinity,
+                working_subtype,
+                member.compact,
+            )
+            .map_err(|source| InitLibraryError::Natural { source })?;
+
+        for ((name, generated), (exact_name, exact)) in
+            generated.symbols().zip(declaration.symbols())
+        {
+            debug_assert_eq!(name, exact_name);
+            retarget_exact_syntax(init, kernel, generated, exact)?;
+        }
+
+        let mut retarget = |theorem, generated, exact| {
+            retarget_exact_theorem(init, kernel, theorem, generated, exact)
+        };
+        let proof = NaturalsProof {
+            infinity: infinity.proof(),
+            subtype: subtype.proof(),
+            zero_member: retarget(
+                generated.proof.zero_member,
+                generated.zero_member,
+                declaration.zero_member,
+            )?,
+            member_inhabited: retarget(
+                generated.proof.member_inhabited,
+                generated.member_inhabited,
+                declaration.member_inhabited,
+            )?,
+            rep_member: retarget(
+                generated.proof.rep_member,
+                generated.rep_member,
+                declaration.rep_member,
+            )?,
+            member_succ: retarget(
+                generated.proof.member_succ,
+                generated.member_succ,
+                declaration.member_succ,
+            )?,
+            induction: retarget(
+                generated.proof.induction,
+                generated.induction,
+                declaration.induction,
+            )?,
+            succ_injective: retarget(
+                generated.proof.succ_injective,
+                generated.succ_injective,
+                declaration.succ_injective,
+            )?,
+            zero_ne_succ: retarget(
+                generated.proof.zero_ne_succ,
+                generated.zero_ne_succ,
+                declaration.zero_ne_succ,
+            )?,
+        };
+        Ok(Naturals {
+            declaration,
+            proof,
+            infinity,
+            subtype,
+        })
+    }
+}
+
+fn retarget_exact_theorem(
+    init: &LogicalInit,
+    kernel: &mut Kernel,
+    theorem: ThmId,
+    generated: Ref,
+    exact: Ref,
+) -> Result<ThmId, InitLibraryError> {
+    retarget_exact_syntax(init, kernel, generated, exact)?;
+    kernel
+        .convert_theorem(theorem, generated, exact)
+        .map_err(|source| InitLibraryError::Kernel { source })?;
+    Ok(theorem)
+}
+
+fn compact_theorem(
+    init: &LogicalInit,
+    kernel: &mut Kernel,
+    proposition: Ref,
+    theorem: ThmId,
+) -> Result<(Ref, ThmId), InitLibraryError> {
+    let alias = kernel
+        .compact_logical_tree(init, proposition)
+        .map_err(|source| InitLibraryError::Kernel { source })?;
+    let theorem = kernel
+        .copy_theorem(theorem)
+        .map_err(|source| InitLibraryError::Kernel { source })?;
+    kernel
+        .convert_theorem(theorem, proposition, alias.compact)
+        .map_err(|source| InitLibraryError::Kernel { source })?;
+    Ok((alias.compact, theorem))
+}
+
+fn retarget_exact_syntax(
+    init: &LogicalInit,
+    kernel: &mut Kernel,
+    generated: Ref,
+    exact: Ref,
+) -> Result<(), InitLibraryError> {
+    let raw = kernel
+        .lower_logical_tree(init, generated)
+        .map_err(|source| InitLibraryError::Kernel { source })?;
+    join_alpha_equivalent(kernel, raw.raw, exact)
+        .map_err(|source| InitLibraryError::Syntax { source })?;
+    Ok(())
 }
 
 fn open_infinity_structure(
@@ -669,6 +846,12 @@ pub enum InitLibraryError {
     /// The frozen natural package omitted its chosen subtype model descriptor.
     #[snafu(display("init-library subtype declaration has no chosen model"))]
     MissingSubtypeModel,
+    /// A frozen subtype package omitted a theorem needed downstream.
+    #[snafu(display("init-library subtype has no proved {law} law"))]
+    MissingSubtypeProof {
+        /// Missing law name.
+        law: &'static str,
+    },
     /// Exact guarded-subtype replay was rejected.
     #[snafu(display("could not replay init-library subtype: {source}"))]
     Subtype {

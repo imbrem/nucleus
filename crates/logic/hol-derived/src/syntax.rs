@@ -103,6 +103,10 @@ pub fn join_same_syntax(
             memo.insert((left, right), fact);
             return Ok(fact);
         }
+        if let Ok(fact) = kernel.syn_cached(None, left, right) {
+            memo.insert((left, right), fact);
+            return Ok(fact);
+        }
         if kernel.category(left)? != Sort::Kind {
             let classifiers = derive(
                 kernel,

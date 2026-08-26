@@ -115,14 +115,24 @@ pub fn equality_transitivity(
     left_theorem: ThmId,
     right_theorem: ThmId,
 ) -> Result<ProvedEquality, EqualityError> {
+    let mut staged = kernel.fork();
+    let result = equality_transitivity_inner(&mut staged, bool_ty, left_theorem, right_theorem)?;
+    *kernel = staged;
+    Ok(result)
+}
+
+fn equality_transitivity_inner(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    left_theorem: ThmId,
+    right_theorem: ThmId,
+) -> Result<ProvedEquality, EqualityError> {
     let (left_equality, domain, left, middle) = equality_conclusion(kernel, left_theorem)?;
     let (right_equality, right_domain, right_middle, right) =
         equality_conclusion(kernel, right_theorem)?;
     let right_theorem = if domain == right_domain && middle == right_middle {
         right_theorem
     } else {
-        crate::syntax::require_same_syntax(kernel, right_domain, domain)?;
-        crate::syntax::require_same_syntax(kernel, right_middle, middle)?;
         let target = kernel.eq_at(bool_ty, domain, middle, right)?;
         let domain_fact = join_same_syntax(kernel, right_domain, domain)?;
         let middle_fact = join_same_syntax(kernel, right_middle, middle)?;
