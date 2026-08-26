@@ -985,7 +985,30 @@ impl Kernel {
         init: &Compiled,
         raw: Ref,
     ) -> Result<LogicalAlias, KernelError> {
-        self.category_as::<Infallible>(raw)?;
+        self.compact_logical_trees(init, &[raw])
+            .map(|aliases| aliases[0])
+    }
+
+    /// Rebuilds several raw syntax DAGs with shared compact logical aliases.
+    ///
+    /// All roots are constructed before any resulting equality is installed,
+    /// so overlapping declaration packages cannot perturb later constructor
+    /// checks. The complete operation is transactional and shares rebuilt
+    /// descendants across roots.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`compact_logical_tree`](Self::compact_logical_tree). An empty root
+    /// slice is a no-op.
+    pub fn compact_logical_trees(
+        &mut self,
+        init: &Compiled,
+        roots: &[Ref],
+    ) -> Result<Vec<LogicalAlias>, KernelError> {
+        for &raw in roots {
+            self.category_as::<Infallible>(raw)?;
+        }
         if !self.arena.has_definition_prefix(init.arena()) {
             return Err(KernelError::InitPrefixMismatch);
         }
@@ -993,10 +1016,17 @@ impl Kernel {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
         };
-        let (compact, fact) = staged.compact_logical_visit(init, raw, &mut BTreeMap::new())?;
-        staged.union_syn_fact(fact)?;
+        let mut memo = BTreeMap::new();
+        let mut aliases = Vec::with_capacity(roots.len());
+        for &raw in roots {
+            let (compact, fact) = staged.compact_logical_visit(init, raw, &mut memo)?;
+            aliases.push(LogicalAlias { raw, compact, fact });
+        }
+        for alias in &aliases {
+            staged.union_syn_fact(alias.fact)?;
+        }
         self.arena = staged.arena;
-        Ok(LogicalAlias { raw, compact, fact })
+        Ok(aliases)
     }
 
     fn compact_logical_visit(
@@ -1020,6 +1050,15 @@ impl Kernel {
                 actual: row.tag(),
             });
         }
+        // A named variable's annotation is part of its identity. Keep that
+        // row exact; equality of a rebuilt surrounding classifier is enough
+        // for checked applications, while manufacturing a parallel variable
+        // would turn ordinary congruence into alpha-renaming.
+        if matches!(node, Node::TmFv { .. } | Node::TyFv { .. }) {
+            let fact = self.syn_refl(None, crate::SynRel::Syn, input)?;
+            memo.insert(input, (input, fact));
+            return Ok((input, fact));
+        }
         let children = node.children();
         let mut remapped = BTreeMap::new();
         let mut child_facts = Vec::with_capacity(children.len());
@@ -1027,6 +1066,9 @@ impl Kernel {
             let (output, fact) = self.compact_logical_visit(init, child, memo)?;
             remapped.insert(child, output);
             child_facts.push(fact);
+        }
+        for &fact in &child_facts {
+            self.union_syn_fact(fact)?;
         }
         let changed = remapped.iter().any(|(input, output)| input != output);
         let (generic, generic_fact) =
