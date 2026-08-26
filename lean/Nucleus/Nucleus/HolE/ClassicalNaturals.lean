@@ -515,6 +515,32 @@ theorem FirstRecursiveAddProof.rightZero {M : CNatModel}
   · intro n hypothesis
     exact (proof.at_succ n M.zero).trans (congrArg M.succ hypothesis)
 
+/-- Successor on the non-recursive argument commutes through first-recursive
+addition.  This is the second induction lemma needed for commutativity. -/
+theorem FirstRecursiveAddProof.rightSucc {M : CNatModel}
+    {D : FirstRecursiveAddDecl M} (proof : FirstRecursiveAddProof D) :
+    ∀ m n, D.add n (M.succ m) = M.succ (D.add n m) := by
+  intro m
+  apply M.induction (fun n => D.add n (M.succ m) = M.succ (D.add n m))
+  · exact (proof.at_zero (M.succ m)).trans (congrArg M.succ (proof.at_zero m).symm)
+  · intro n hypothesis
+    exact (proof.at_succ n (M.succ m)).trans <|
+      (congrArg M.succ hypothesis).trans <|
+        congrArg M.succ (proof.at_succ n m).symm
+
+/-- The two recursion lemmas imply commutativity without strengthening the
+trusted arithmetic interface. -/
+theorem FirstRecursiveAddProof.commutative {M : CNatModel}
+    {D : FirstRecursiveAddDecl M} (proof : FirstRecursiveAddProof D) :
+    ∀ m n, D.add n m = D.add m n := by
+  intro m
+  apply M.induction (fun n => D.add n m = D.add m n)
+  · exact (proof.at_zero m).trans (proof.rightZero m).symm
+  · intro n hypothesis
+    exact (proof.at_succ n m).trans <|
+      (congrArg M.succ hypothesis).trans <|
+        (proof.rightSucc n m).symm
+
 /-! The conventional presentation below is defined by recursion on the
 *second* argument, which is the convention that
 makes `add_succ` the definitional equation and `succ_add` the one needing

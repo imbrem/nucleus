@@ -8,8 +8,8 @@ use covalence_logic_hol::{Kernel, Lit, Ref, SynFactId, SynRel, Tag, ThmId, TmTag
 
 use crate::{
     NaturalError, NaturalNameSupply, NaturalRecExt, NaturalRecSchemas, NaturalRecursor,
-    NaturalRecursorDecl, NaturalRecursorProof, Naturals, equality_transitivity, forall_elim,
-    join_same_syntax, substitute,
+    NaturalRecursorDecl, NaturalRecursorProof, Naturals, equality_symmetry, equality_transitivity,
+    forall_elim, join_same_syntax, substitute,
 };
 
 /// Stable natural-arithmetic definitions and law statements.
@@ -31,6 +31,10 @@ pub struct NaturalArithmeticDecl {
     pub add_successor: Ref,
     /// `∀n. add n zero = n`.
     pub add_right_zero: Ref,
+    /// `∀m n. add n (succ m) = succ (add n m)`.
+    pub add_right_successor: Ref,
+    /// `∀m n. add n m = add m n`.
+    pub add_commutative: Ref,
     /// Private recursion package from which multiplication is selected.
     pub mul_rec: NaturalRecursorDecl,
     /// Multiplication, with its recursive argument first.
@@ -71,6 +75,8 @@ impl NaturalArithmeticDecl {
             ("nat.add.zero", self.add_zero),
             ("nat.add.successor", self.add_successor),
             ("nat.add.right_zero", self.add_right_zero),
+            ("nat.add.right_successor", self.add_right_successor),
+            ("nat.add.commutative", self.add_commutative),
             ("nat.mul", self.mul),
             ("nat.mul.zero", self.mul_zero),
             ("nat.mul.successor", self.mul_successor),
@@ -94,6 +100,8 @@ impl NaturalArithmeticDecl {
             add_zero: map(self.add_zero)?,
             add_successor: map(self.add_successor)?,
             add_right_zero: map(self.add_right_zero)?,
+            add_right_successor: map(self.add_right_successor)?,
+            add_commutative: map(self.add_commutative)?,
             mul_rec: self.mul_rec.try_map(&mut map)?,
             mul: map(self.mul)?,
             mul_zero: map(self.mul_zero)?,
@@ -116,6 +124,10 @@ pub struct NaturalArithmeticProof {
     pub add_successor: ThmId,
     /// Exact theorem `⊢ add_right_zero`.
     pub add_right_zero: ThmId,
+    /// Exact theorem `⊢ add_right_successor`.
+    pub add_right_successor: ThmId,
+    /// Exact theorem `⊢ add_commutative`.
+    pub add_commutative: ThmId,
     /// Exact theorem handles for the multiplication recursor package.
     pub mul_rec: NaturalRecursorProof,
     /// Exact theorem `⊢ mul_zero`.
@@ -254,6 +266,24 @@ impl NaturalArithmeticExt for Kernel {
             add.zero_theorem,
             add.successor_theorem,
         )?;
+        let (add_right_successor, add_right_successor_theorem) = prove_add_right_successor(
+            self,
+            &mut names,
+            naturals,
+            bool_ty,
+            add.function,
+            add.zero_theorem,
+            add.successor_theorem,
+        )?;
+        let (add_commutative, add_commutative_theorem) = prove_add_commutative(
+            self,
+            &mut names,
+            naturals,
+            bool_ty,
+            &add,
+            add_right_zero_theorem,
+            add_right_successor_theorem,
+        )?;
 
         Ok(NaturalArithmetic {
             declaration: NaturalArithmeticDecl {
@@ -263,6 +293,8 @@ impl NaturalArithmeticExt for Kernel {
                 add_zero: add.zero,
                 add_successor: add.successor,
                 add_right_zero,
+                add_right_successor,
+                add_commutative,
                 mul_rec: mul.recursor.declaration(),
                 mul: mul.function,
                 mul_zero: mul.zero,
@@ -276,6 +308,8 @@ impl NaturalArithmeticExt for Kernel {
                 add_zero: add.zero_theorem,
                 add_successor: add.successor_theorem,
                 add_right_zero: add_right_zero_theorem,
+                add_right_successor: add_right_successor_theorem,
+                add_commutative: add_commutative_theorem,
                 mul_rec: mul.recursor.proof(),
                 mul_zero: mul.zero_theorem,
                 mul_successor: mul.successor_theorem,
@@ -474,6 +508,163 @@ fn prove_add_right_zero(
     let step = kernel.forall_intro(step, natural)?;
     let induction = naturals.induct(kernel, predicate, zero_at_zero.theorem, step.theorem)?;
     Ok((induction.universal, induction.theorem))
+}
+
+fn prove_add_right_successor(
+    kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
+    naturals: &Naturals,
+    bool_ty: Ref,
+    add: Ref,
+    add_zero_theorem: ThmId,
+    add_successor_theorem: ThmId,
+) -> Result<(Ref, ThmId), NaturalError> {
+    let parameter = names.variable(kernel, naturals.ty)?;
+    let natural = names.variable(kernel, naturals.ty)?;
+    let next_parameter = kernel.app(naturals.succ, parameter)?;
+    let left = apply2(kernel, add, natural, next_parameter)?;
+    let at_parameter = apply2(kernel, add, natural, parameter)?;
+    let right = kernel.app(naturals.succ, at_parameter)?;
+    let body = kernel.eq(bool_ty, left, right)?;
+    let predicate = kernel.lam_at(naturals.predicate_ty(kernel)?, natural, body)?;
+
+    let base_left = apply2(kernel, add, naturals.zero, next_parameter)?;
+    let zero_at_parameter = apply2(kernel, add, naturals.zero, parameter)?;
+    let base_right = kernel.app(naturals.succ, zero_at_parameter)?;
+    let base_body = kernel.eq(bool_ty, base_left, base_right)?;
+    let base = predicate_application(kernel, natural, predicate, body, naturals.zero, base_body)?;
+    let zero_at_next = forall_elim(kernel, add_zero_theorem, next_parameter)?;
+    let zero_at_parameter_theorem = forall_elim(kernel, add_zero_theorem, parameter)?;
+    let lifted_zero = kernel.ap_term(zero_at_parameter_theorem.theorem, naturals.succ)?;
+    let reversed_lifted = equality_symmetry(kernel, bool_ty, lifted_zero.theorem)?;
+    let base_proof = equality_transitivity(
+        kernel,
+        bool_ty,
+        zero_at_next.theorem,
+        reversed_lifted.theorem,
+    )?;
+    join_same_syntax(kernel, base_proof.equality, base_body)?;
+    kernel.convert_conclusions(base_proof.theorem, base_proof.equality, base_body)?;
+    kernel.convert_conclusions(base_proof.theorem, base_body, base)?;
+
+    let successor = kernel.app(naturals.succ, natural)?;
+    let successor_left = apply2(kernel, add, successor, next_parameter)?;
+    let successor_at_parameter = apply2(kernel, add, successor, parameter)?;
+    let successor_right = kernel.app(naturals.succ, successor_at_parameter)?;
+    let successor_body = kernel.eq(bool_ty, successor_left, successor_right)?;
+    let at_successor =
+        predicate_application(kernel, natural, predicate, body, successor, successor_body)?;
+
+    let hypothesis = kernel.identity(positive(body))?;
+    let lifted_hypothesis = kernel.ap_term(hypothesis, naturals.succ)?;
+    let successor_at_n = forall_elim(kernel, add_successor_theorem, natural)?;
+    let successor_at_next = forall_elim(kernel, successor_at_n.theorem, next_parameter)?;
+    let first = equality_transitivity(
+        kernel,
+        bool_ty,
+        successor_at_next.theorem,
+        lifted_hypothesis.theorem,
+    )?;
+    let successor_at_parameter_law = forall_elim(kernel, successor_at_n.theorem, parameter)?;
+    let lifted_successor = kernel.ap_term(successor_at_parameter_law.theorem, naturals.succ)?;
+    let reversed_successor = equality_symmetry(kernel, bool_ty, lifted_successor.theorem)?;
+    let step_proof =
+        equality_transitivity(kernel, bool_ty, first.theorem, reversed_successor.theorem)?;
+    join_same_syntax(kernel, step_proof.equality, successor_body)?;
+    kernel.convert_conclusions(step_proof.theorem, step_proof.equality, successor_body)?;
+    kernel.convert_conclusions(step_proof.theorem, successor_body, at_successor)?;
+
+    let at_natural = predicate_application(kernel, natural, predicate, body, natural, body)?;
+    kernel.convert_theorem(step_proof.theorem, body, at_natural)?;
+    let step_implication = kernel.op2(Op2::Imp, at_natural, at_successor)?;
+    let step = kernel.imp_right(step_proof.theorem, positive(step_implication))?;
+    let step = kernel.forall_intro(step, natural)?;
+    let induction = naturals.induct(kernel, predicate, base_proof.theorem, step.theorem)?;
+    let generalized = kernel.forall_intro(induction.theorem, parameter)?;
+    Ok((generalized.universal, generalized.theorem))
+}
+
+fn prove_add_commutative(
+    kernel: &mut Kernel,
+    names: &mut NaturalNameSupply,
+    naturals: &Naturals,
+    bool_ty: Ref,
+    add: &Addition,
+    add_right_zero_theorem: ThmId,
+    add_right_successor_theorem: ThmId,
+) -> Result<(Ref, ThmId), NaturalError> {
+    let parameter = names.variable(kernel, naturals.ty)?;
+    let natural = names.variable(kernel, naturals.ty)?;
+    let left = apply2(kernel, add.function, natural, parameter)?;
+    let right = apply2(kernel, add.function, parameter, natural)?;
+    let body = kernel.eq(bool_ty, left, right)?;
+    let predicate = kernel.lam_at(naturals.predicate_ty(kernel)?, natural, body)?;
+
+    let base_left = apply2(kernel, add.function, naturals.zero, parameter)?;
+    let base_right = apply2(kernel, add.function, parameter, naturals.zero)?;
+    let base_body = kernel.eq(bool_ty, base_left, base_right)?;
+    let base = predicate_application(kernel, natural, predicate, body, naturals.zero, base_body)?;
+    let zero_at_parameter = forall_elim(kernel, add.zero_theorem, parameter)?;
+    let (_, right_zero_at_parameter) = forall_elim_normalized(
+        kernel,
+        add_right_zero_theorem,
+        parameter,
+        &[add.function, naturals.succ],
+    )?;
+    let reversed_right_zero = equality_symmetry(kernel, bool_ty, right_zero_at_parameter)?;
+    let base_proof = equality_transitivity(
+        kernel,
+        bool_ty,
+        zero_at_parameter.theorem,
+        reversed_right_zero.theorem,
+    )?;
+    join_same_syntax(kernel, base_proof.equality, base_body)?;
+    kernel.convert_conclusions(base_proof.theorem, base_proof.equality, base_body)?;
+    kernel.convert_conclusions(base_proof.theorem, base_body, base)?;
+
+    let successor = kernel.app(naturals.succ, natural)?;
+    let successor_left = apply2(kernel, add.function, successor, parameter)?;
+    let successor_right = apply2(kernel, add.function, parameter, successor)?;
+    let successor_body = kernel.eq(bool_ty, successor_left, successor_right)?;
+    let at_successor =
+        predicate_application(kernel, natural, predicate, body, successor, successor_body)?;
+    let hypothesis = kernel.identity(positive(body))?;
+    let lifted_hypothesis = kernel.ap_term(hypothesis, naturals.succ)?;
+    let successor_at_n = forall_elim(kernel, add.successor_theorem, natural)?;
+    let successor_at_parameter = forall_elim(kernel, successor_at_n.theorem, parameter)?;
+    let first = equality_transitivity(
+        kernel,
+        bool_ty,
+        successor_at_parameter.theorem,
+        lifted_hypothesis.theorem,
+    )?;
+    let right_successor_at_n = forall_elim(kernel, add_right_successor_theorem, natural)?;
+    let (_, right_successor_at_parameter) = forall_elim_normalized(
+        kernel,
+        right_successor_at_n.theorem,
+        parameter,
+        &[add.function, naturals.succ],
+    )?;
+    let reversed_right_successor =
+        equality_symmetry(kernel, bool_ty, right_successor_at_parameter)?;
+    let step_proof = equality_transitivity(
+        kernel,
+        bool_ty,
+        first.theorem,
+        reversed_right_successor.theorem,
+    )?;
+    join_same_syntax(kernel, step_proof.equality, successor_body)?;
+    kernel.convert_conclusions(step_proof.theorem, step_proof.equality, successor_body)?;
+    kernel.convert_conclusions(step_proof.theorem, successor_body, at_successor)?;
+
+    let at_natural = predicate_application(kernel, natural, predicate, body, natural, body)?;
+    kernel.convert_theorem(step_proof.theorem, body, at_natural)?;
+    let step_implication = kernel.op2(Op2::Imp, at_natural, at_successor)?;
+    let step = kernel.imp_right(step_proof.theorem, positive(step_implication))?;
+    let step = kernel.forall_intro(step, natural)?;
+    let induction = naturals.induct(kernel, predicate, base_proof.theorem, step.theorem)?;
+    let generalized = kernel.forall_intro(induction.theorem, parameter)?;
+    Ok((generalized.universal, generalized.theorem))
 }
 
 fn predicate_application(
@@ -717,6 +908,18 @@ fn normalize_application(
     let fact = kernel.syn_trans(None, head, tail)?;
     kernel.union_syn_fact(fact)?;
     Ok((output, fact))
+}
+
+fn forall_elim_normalized(
+    kernel: &mut Kernel,
+    theorem: ThmId,
+    argument: Ref,
+    opaque: &[Ref],
+) -> Result<(Ref, ThmId), NaturalError> {
+    let specialized = forall_elim(kernel, theorem, argument)?;
+    let (normal, _) = normalize_application(kernel, specialized.proposition, opaque)?;
+    kernel.convert_conclusions(specialized.theorem, specialized.proposition, normal)?;
+    Ok((normal, specialized.theorem))
 }
 
 fn require_fact(
