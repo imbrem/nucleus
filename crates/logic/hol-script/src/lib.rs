@@ -21,6 +21,23 @@ use covalence_logic_hol::{Kernel, KernelError, Ref, builtin::Op2};
 /// manifest and not a kernel primitive.
 pub const INIT_SOURCE: &str = include_str!("../theories/init.sexpr");
 
+/// Representation chosen for logical connectives during elaboration.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LogicEncoding {
+    /// Compact `tm.op1`/`tm.op2` rows, useful for checked Gentzen automation.
+    #[default]
+    Compact,
+    /// Primitive equality/lambda/application definitions only.
+    EqualityOnly,
+}
+
+/// Untrusted theory-compiler configuration.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TheoryOptions {
+    /// Logical representation emitted by the elaborator.
+    pub logic: LogicEncoding,
+}
+
 /// A checked kernel and the public roots named by its source module.
 #[derive(Debug)]
 pub struct CompiledTheory {
@@ -178,8 +195,20 @@ enum Token<'a> {
 /// duplicate or unresolved names, an expression used in the wrong syntactic
 /// position, or any term rejected by the checked kernel constructors.
 pub fn compile_theory(source: &str) -> Result<CompiledTheory, TheoryError> {
+    compile_theory_with(source, TheoryOptions::default())
+}
+
+/// Compiles a module with an explicit untrusted representation policy.
+///
+/// # Errors
+///
+/// Returns the same errors as [`compile_theory`].
+pub fn compile_theory_with(
+    source: &str,
+    options: TheoryOptions,
+) -> Result<CompiledTheory, TheoryError> {
     let forms = read(source)?;
-    let mut compiler = Compiler::new()?;
+    let mut compiler = Compiler::new(options)?;
     for form in &forms {
         compiler.declaration(form)?;
     }
@@ -190,6 +219,25 @@ pub fn compile_theory(source: &str) -> Result<CompiledTheory, TheoryError> {
         definitions: compiler.definitions,
         symbols: compiler.symbols,
     })
+}
+
+/// Compiles the standard init source without compact logical opcodes.
+///
+/// This is the canonical init-library compilation path. The language, source,
+/// and representation policy remain userspace inputs; the returned arena has
+/// authority only through the checked constructors it invoked.
+///
+/// # Errors
+///
+/// Returns an error if [`INIT_SOURCE`] is malformed or rejected by checked HOL
+/// construction.
+pub fn compile_init() -> Result<CompiledTheory, TheoryError> {
+    compile_theory_with(
+        INIT_SOURCE,
+        TheoryOptions {
+            logic: LogicEncoding::EqualityOnly,
+        },
+    )
 }
 
 fn read(input: &str) -> Result<Vec<SExpr<'_>>, TheoryError> {
@@ -288,10 +336,11 @@ struct Compiler<'a> {
     symbols: BTreeMap<String, Ref>,
     arrows: BTreeMap<(Ref, Ref), Ref>,
     next_name: u64,
+    options: TheoryOptions,
 }
 
 impl<'a> Compiler<'a> {
-    fn new() -> Result<Self, TheoryError> {
+    fn new(options: TheoryOptions) -> Result<Self, TheoryError> {
         let mut kernel = Kernel::new();
         let star = kernel.star()?;
         let bool_ty = kernel.bool_ty(star)?;
@@ -305,6 +354,7 @@ impl<'a> Compiler<'a> {
             symbols: BTreeMap::new(),
             arrows: BTreeMap::new(),
             next_name: 0,
+            options,
         })
     }
 
@@ -706,15 +756,36 @@ impl<'a> Compiler<'a> {
     }
 
     fn and(&mut self, left: Ref, right: Ref) -> Result<Ref, TheoryError> {
-        Ok(self.kernel.op2(Op2::And, left, right)?)
+        if self.options.logic == LogicEncoding::Compact {
+            return Ok(self.kernel.op2(Op2::And, left, right)?);
+        }
+        let bool_to_bool = self.arrow(self.bool_ty, self.bool_ty)?;
+        let binder_ty = self.arrow(self.bool_ty, bool_to_bool)?;
+        let name = self.name();
+        let binder = self.kernel.tm_fv(name, binder_ty)?;
+        Ok(self.kernel.and_tm(self.bool_ty, binder, left, right)?)
     }
 
     fn or(&mut self, left: Ref, right: Ref) -> Result<Ref, TheoryError> {
-        Ok(self.kernel.op2(Op2::Or, left, right)?)
+        if self.options.logic == LogicEncoding::Compact {
+            return Ok(self.kernel.op2(Op2::Or, left, right)?);
+        }
+        let bool_to_bool = self.arrow(self.bool_ty, self.bool_ty)?;
+        let binder_ty = self.arrow(self.bool_ty, bool_to_bool)?;
+        let name = self.name();
+        let binder = self.kernel.tm_fv(name, binder_ty)?;
+        Ok(self.kernel.or_tm(self.bool_ty, binder, left, right)?)
     }
 
     fn imp(&mut self, left: Ref, right: Ref) -> Result<Ref, TheoryError> {
-        Ok(self.kernel.op2(Op2::Imp, left, right)?)
+        if self.options.logic == LogicEncoding::Compact {
+            return Ok(self.kernel.op2(Op2::Imp, left, right)?);
+        }
+        let bool_to_bool = self.arrow(self.bool_ty, self.bool_ty)?;
+        let binder_ty = self.arrow(self.bool_ty, bool_to_bool)?;
+        let name = self.name();
+        let binder = self.kernel.tm_fv(name, binder_ty)?;
+        Ok(self.kernel.imp_tm(self.bool_ty, binder, left, right)?)
     }
 
     fn equal(&mut self, left: Ref, right: Ref) -> Result<Ref, TheoryError> {

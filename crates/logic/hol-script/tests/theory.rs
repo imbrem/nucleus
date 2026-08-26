@@ -2,7 +2,7 @@
 
 use covalence_logic_hol::{AX_INF, AX_SUB, Sort, Tag, TmTag};
 use covalence_logic_hol_derived::{NaturalExt, NaturalRecExt};
-use covalence_logic_hol_script::{INIT_SOURCE, TheoryError, compile_theory};
+use covalence_logic_hol_script::{INIT_SOURCE, TheoryError, compile_init, compile_theory};
 
 const COPRODUCT: &str = r"
   ; The universal property, as an open schema rather than an assertion.
@@ -186,6 +186,25 @@ fn checked_init_source_is_a_deterministic_untrusted_compilation_unit() {
         second.kernel().arena().addr()
     );
     assert!(first.kernel().arena().axioms().next().is_none());
+}
+
+#[test]
+fn canonical_init_compilation_is_opcode_free() {
+    let compiled = compile_init().expect("opcode-free init source");
+    assert!(compiled.get("IsCoprod").is_some());
+    assert!(compiled.get("NatMember").is_some());
+    assert!(compiled.get("NatRecSpec").is_some());
+    assert!(compiled.get("NatRecGraph").is_some());
+
+    let last = i32::try_from(compiled.kernel().arena().len()).expect("arena fits Ref");
+    for index in 1..=last {
+        let reference = covalence_logic_hol::Ref::new(index).expect("positive index");
+        assert!(!matches!(
+            compiled.kernel().arena().tag(reference),
+            Some(Tag::Tm(TmTag::Op1 | TmTag::Op2))
+        ));
+    }
+    assert!(compiled.kernel().arena().axioms().next().is_none());
 }
 
 #[test]
