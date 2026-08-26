@@ -227,6 +227,103 @@ mutual
     | .mapCons key value tail => (encodeSyn key, encodeSyn value) :: encodeEntries tail
 end
 
+/-! ## Deterministic parsed normal form
+
+Encoding and parsing is not literally an identity on `Cbor`: map syntax keeps
+source order, whereas deterministic CBOR orders entries by their encoded keys.
+The following transformation states the exact parsed value targeted by the
+byte round-trip theorem. Values and array order are preserved; map keys and
+values are transformed recursively before entries are sorted. This is a
+one-encode-step operation rather than an idempotent normalizer: the existing
+insertion sort reverses equal encoded keys, so duplicate-key maps alternate
+their equal-key order on repeated application. -/
+
+private def canonicalEntryLt (left right : Cbor × Cbor) : Bool :=
+  lexLt (encodeSyn left.1) (encodeSyn right.1)
+
+private def insertCanonicalEntry (entry : Cbor × Cbor) :
+    List (Cbor × Cbor) → List (Cbor × Cbor)
+  | [] => [entry]
+  | head :: tail =>
+      if canonicalEntryLt entry head then
+        entry :: head :: tail
+      else
+        head :: insertCanonicalEntry entry tail
+
+private def sortCanonicalEntries :
+    List (Cbor × Cbor) → List (Cbor × Cbor)
+  | [] => []
+  | head :: tail => insertCanonicalEntry head (sortCanonicalEntries tail)
+
+mutual
+
+/-- Recursively transform a CBOR value to the map ordering produced by the
+deterministic encoder and recovered by the parser. Duplicate keys are retained
+and equal-key ordering exactly matches `sortEntries`. -/
+def canonicalize : Cbor → Cbor
+  | .primitive primitive => .primitive primitive
+  | .array items => .array (canonicalizeArray items)
+  | .map entries =>
+      .map (CborSyn.mapOfList
+        (sortCanonicalEntries (canonicalizeEntries entries)))
+  | .tag number content => .tag number (canonicalize content)
+
+private def canonicalizeArray : CborSyn .array → CborSyn .array
+  | .arrayNil => .arrayNil
+  | .arrayCons head tail =>
+      .arrayCons (canonicalize head) (canonicalizeArray tail)
+
+private def canonicalizeEntries : CborSyn .map → List (Cbor × Cbor)
+  | .mapNil => []
+  | .mapCons key value tail =>
+      (canonicalize key, canonicalize value) :: canonicalizeEntries tail
+
+end
+
+@[simp] theorem canonicalize_primitive (primitive : CborPrimitive) :
+    canonicalize (.primitive primitive) = .primitive primitive := by
+  rw [canonicalize]
+
+@[simp] theorem canonicalize_tag (number : UInt64) (content : Cbor) :
+    canonicalize (.tag number content) = .tag number (canonicalize content) := by
+  rw [canonicalize]
+
+@[simp] theorem canonicalize_arrayNil :
+    canonicalize (.array .arrayNil) = .array .arrayNil := by
+  rw [canonicalize, canonicalizeArray]
+
+@[simp] theorem canonicalize_mapNil :
+    canonicalize (.map .mapNil) = .map .mapNil := by
+  rw [canonicalize, canonicalizeEntries, sortCanonicalEntries, CborSyn.mapOfList]
+
+/-- Deterministic map order is length-first encoded-key order, not source
+order. This concrete regression also keeps the transformation executable. -/
+theorem canonicalize_unsorted_integer_map :
+    canonicalize (.map (CborSyn.mapOfList [
+      (.primitive (.integer (.unsigned 2)), .primitive (.integer (.unsigned 1))),
+      (.primitive (.integer (.unsigned 1)), .primitive (.integer (.unsigned 2)))])) =
+      .map (CborSyn.mapOfList [
+        (.primitive (.integer (.unsigned 1)), .primitive (.integer (.unsigned 2))),
+        (.primitive (.integer (.unsigned 2)), .primitive (.integer (.unsigned 1)))]) := by
+  simp [CborSyn.mapOfList, canonicalize,
+    canonicalizeEntries, sortCanonicalEntries, insertCanonicalEntry,
+    canonicalEntryLt, lexLt, encodeSyn, head,
+    show ¬ (([2] : List UInt8) < ([1] : List UInt8)) by decide]
+
+/-- The encoder's current insertion ordering retains duplicate entries but
+reverses an equal-key run. The byte-roundtrip theorem must preserve this exact
+behavior rather than silently assuming map-key uniqueness. -/
+theorem canonicalize_duplicate_integer_keys :
+    canonicalize (.map (CborSyn.mapOfList [
+      (.primitive (.integer (.unsigned 1)), .primitive (.integer (.unsigned 1))),
+      (.primitive (.integer (.unsigned 1)), .primitive (.integer (.unsigned 2)))])) =
+      .map (CborSyn.mapOfList [
+        (.primitive (.integer (.unsigned 1)), .primitive (.integer (.unsigned 2))),
+        (.primitive (.integer (.unsigned 1)), .primitive (.integer (.unsigned 1)))]) := by
+  simp [CborSyn.mapOfList, canonicalize,
+    canonicalizeEntries, sortCanonicalEntries, insertCanonicalEntry,
+    canonicalEntryLt, lexLt, encodeSyn, head]
+
 /-- RFC deterministic encoding candidate. On `Reasonable` values every length
 fits the definite argument field. -/
 def deterministic (value : {v : Cbor // v.Reasonable}) : Bytes :=
