@@ -9,9 +9,11 @@ use covalence_logic_hol::{
 };
 use covalence_logic_hol_derived::{
     ChosenModel, Infinity, InfinityDecl, InfinityError, ModelExt, NaturalArithmetic,
-    NaturalArithmeticDecl, NaturalArithmeticExt, NaturalError, NaturalExt, NaturalRecSchemas,
-    Naturals, NaturalsDecl, NaturalsProof, OpenedExists, OpenedExistsDecl, Subtype, SubtypeDecl,
-    SubtypeError, SyntaxError, join_alpha_equivalent, open_exists_at,
+    NaturalArithmeticDecl, NaturalArithmeticExt, NaturalArithmeticProof, NaturalError, NaturalExt,
+    NaturalRecGraphDecl, NaturalRecGraphProof, NaturalRecSchemas, NaturalRecursorDecl,
+    NaturalRecursorProof, Naturals, NaturalsDecl, NaturalsProof, OpenedExists, OpenedExistsDecl,
+    Subtype, SubtypeDecl, SubtypeError, SyntaxError, join_alpha_equivalent, join_alpha_equivalents,
+    open_exists_at,
 };
 
 use crate::{
@@ -461,6 +463,79 @@ impl InitSlice {
             subtype,
         })
     }
+
+    /// Replays primitive addition and multiplication over the frozen naturals.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if natural replay, recursion-schema compaction, or any
+    /// checked primitive-recursion and exact-row transport step fails. The
+    /// supplied kernel is unchanged on failure.
+    pub fn prove_arithmetic(
+        &self,
+        init: &LogicalInit,
+        kernel: &mut Kernel,
+    ) -> Result<NaturalArithmetic, InitLibraryError> {
+        let mut staged = kernel.fork();
+        let naturals = self.prove_naturals_inner(init, &mut staged)?;
+        let working_naturals = compact_natural_theorems(init, &mut staged, naturals)?;
+        let schema_roots = self.recursion_schemas.references().collect::<Vec<_>>();
+        let schema_aliases = staged
+            .compact_logical_trees(init, &schema_roots)
+            .map_err(|source| InitLibraryError::Kernel { source })?;
+        let [
+            graph,
+            graph_natural,
+            graph_codomain,
+            specification,
+            specification_natural,
+            specification_codomain,
+        ] = schema_aliases.as_slice()
+        else {
+            unreachable!("NaturalRecSchemas::references has a fixed field count")
+        };
+        let schemas = NaturalRecSchemas {
+            graph: graph.compact,
+            graph_natural: graph_natural.compact,
+            graph_codomain: graph_codomain.compact,
+            specification: specification.compact,
+            specification_natural: specification_natural.compact,
+            specification_codomain: specification_codomain.compact,
+        };
+        let generated = staged
+            .natural_arithmetic_at(&working_naturals, schemas, self.arithmetic.base_name)
+            .map_err(|source| InitLibraryError::Natural { source })?;
+        let declaration = self.arithmetic;
+
+        let reference_pairs = generated
+            .declaration
+            .references()
+            .zip(declaration.references())
+            .collect::<Vec<_>>();
+        let generated_roots = reference_pairs
+            .iter()
+            .map(|&(generated, _)| generated)
+            .collect::<Vec<_>>();
+        let lowered = staged
+            .lower_logical_trees(init, &generated_roots)
+            .map_err(|source| InitLibraryError::Kernel { source })?;
+        let alpha_pairs = lowered
+            .iter()
+            .zip(&reference_pairs)
+            .map(|(lowered, &(_, exact))| (lowered.raw, exact))
+            .collect::<Vec<_>>();
+        join_alpha_equivalents(&mut staged, &alpha_pairs)
+            .map_err(|source| InitLibraryError::Syntax { source })?;
+        let proof = retarget_arithmetic_proof(
+            init,
+            &mut staged,
+            generated.declaration,
+            generated.proof,
+            declaration,
+        )?;
+        *kernel = staged;
+        Ok(NaturalArithmetic { declaration, proof })
+    }
 }
 
 fn retarget_exact_theorem(
@@ -470,11 +545,121 @@ fn retarget_exact_theorem(
     generated: Ref,
     exact: Ref,
 ) -> Result<ThmId, InitLibraryError> {
+    if kernel.convert_theorem(theorem, generated, exact).is_ok() {
+        return Ok(theorem);
+    }
     retarget_exact_syntax(init, kernel, generated, exact)?;
     kernel
         .convert_theorem(theorem, generated, exact)
         .map_err(|source| InitLibraryError::Kernel { source })?;
     Ok(theorem)
+}
+
+fn retarget_arithmetic_proof(
+    init: &LogicalInit,
+    kernel: &mut Kernel,
+    generated: NaturalArithmeticDecl,
+    proof: NaturalArithmeticProof,
+    exact: NaturalArithmeticDecl,
+) -> Result<NaturalArithmeticProof, InitLibraryError> {
+    Ok(NaturalArithmeticProof {
+        add_rec: retarget_recursor_proof(
+            init,
+            kernel,
+            generated.add_rec,
+            proof.add_rec,
+            exact.add_rec,
+        )?,
+        add_zero: retarget_exact_theorem(
+            init,
+            kernel,
+            proof.add_zero,
+            generated.add_zero,
+            exact.add_zero,
+        )?,
+        add_successor: retarget_exact_theorem(
+            init,
+            kernel,
+            proof.add_successor,
+            generated.add_successor,
+            exact.add_successor,
+        )?,
+        mul_rec: retarget_recursor_proof(
+            init,
+            kernel,
+            generated.mul_rec,
+            proof.mul_rec,
+            exact.mul_rec,
+        )?,
+        mul_zero: retarget_exact_theorem(
+            init,
+            kernel,
+            proof.mul_zero,
+            generated.mul_zero,
+            exact.mul_zero,
+        )?,
+        mul_successor: retarget_exact_theorem(
+            init,
+            kernel,
+            proof.mul_successor,
+            generated.mul_successor,
+            exact.mul_successor,
+        )?,
+        one_plus_one: retarget_exact_theorem(
+            init,
+            kernel,
+            proof.one_plus_one,
+            generated.one_plus_one,
+            exact.one_plus_one,
+        )?,
+    })
+}
+
+fn retarget_recursor_proof(
+    init: &LogicalInit,
+    kernel: &mut Kernel,
+    generated: NaturalRecursorDecl,
+    proof: NaturalRecursorProof,
+    exact: NaturalRecursorDecl,
+) -> Result<NaturalRecursorProof, InitLibraryError> {
+    Ok(NaturalRecursorProof {
+        graph: retarget_graph_proof(init, kernel, generated.graph, proof.graph, exact.graph)?,
+        specification: retarget_exact_theorem(
+            init,
+            kernel,
+            proof.specification,
+            generated.specification,
+            exact.specification,
+        )?,
+        unique: retarget_exact_theorem(init, kernel, proof.unique, generated.unique, exact.unique)?,
+    })
+}
+
+fn retarget_graph_proof(
+    init: &LogicalInit,
+    kernel: &mut Kernel,
+    generated: NaturalRecGraphDecl,
+    proof: NaturalRecGraphProof,
+    exact: NaturalRecGraphDecl,
+) -> Result<NaturalRecGraphProof, InitLibraryError> {
+    macro_rules! theorem {
+        ($field:ident) => {
+            retarget_exact_theorem(init, kernel, proof.$field, generated.$field, exact.$field)?
+        };
+    }
+    Ok(NaturalRecGraphProof {
+        base: theorem!(base),
+        step: theorem!(step),
+        total: theorem!(total),
+        has_shape: theorem!(has_shape),
+        zero_value: theorem!(zero_value),
+        successor_value: theorem!(successor_value),
+        zero_functional: theorem!(zero_functional),
+        functional: theorem!(functional),
+        rec_graph: theorem!(rec_graph),
+        rec_zero: theorem!(rec_zero),
+        rec_successor: theorem!(rec_successor),
+    })
 }
 
 fn compact_theorem(
@@ -493,6 +678,33 @@ fn compact_theorem(
         .convert_theorem(theorem, proposition, alias.compact)
         .map_err(|source| InitLibraryError::Kernel { source })?;
     Ok((alias.compact, theorem))
+}
+
+fn compact_natural_theorems(
+    init: &LogicalInit,
+    kernel: &mut Kernel,
+    mut naturals: Naturals,
+) -> Result<Naturals, InitLibraryError> {
+    macro_rules! compact {
+        ($statement:ident) => {{
+            let (statement, theorem) = compact_theorem(
+                init,
+                kernel,
+                naturals.declaration.$statement,
+                naturals.proof.$statement,
+            )?;
+            naturals.declaration.$statement = statement;
+            naturals.proof.$statement = theorem;
+        }};
+    }
+    compact!(zero_member);
+    compact!(member_inhabited);
+    compact!(rep_member);
+    compact!(member_succ);
+    compact!(induction);
+    compact!(succ_injective);
+    compact!(zero_ne_succ);
+    Ok(naturals)
 }
 
 fn retarget_exact_syntax(

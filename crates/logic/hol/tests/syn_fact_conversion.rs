@@ -123,7 +123,7 @@ fn a_binder_refuses_to_capture_the_replacement() {
 }
 
 #[test]
-fn two_rows_for_one_binder_name_are_ambiguous_rather_than_equal() {
+fn certified_duplicate_rows_for_one_binder_name_shadow_together() {
     let mut fix = Fix::new();
     let star = fix.star;
     let bool_ty = fix.bool_ty;
@@ -142,7 +142,7 @@ fn two_rows_for_one_binder_name_are_ambiguous_rather_than_equal() {
     let binder_fact = fix
         .syn_refl(None, SynRel::Syn, binder)
         .expect("reflexivity");
-    let error = fix
+    let fact = fix
         .syn_binder_congr(
             None,
             SynRel::Syn,
@@ -153,8 +153,10 @@ fn two_rows_for_one_binder_name_are_ambiguous_rather_than_equal() {
             binder_fact,
             binder_fact,
         )
-        .expect_err("ambiguous");
-    assert_eq!(invalid(&error), "ambiguous binder identity");
+        .expect("certified duplicate binder shadows the substitution");
+    let fact = fix.syn_fact(fact).expect("substitution fact");
+    assert_eq!((fact.input(), fact.output()), (lam, lam));
+    assert_eq!((fact.var(), fact.val()), (Some(twin), Some(value)));
 }
 
 #[test]

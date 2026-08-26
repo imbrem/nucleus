@@ -260,6 +260,60 @@ impl Kernel {
         )
     }
 
+    /// Establishes the variable case at a duplicate named-variable row.
+    ///
+    /// Arenas are not hash-consed, so structurally identical occurrences of a
+    /// variable need not share a physical [`Ref`]. This rule recognizes such
+    /// an occurrence using its constructor payload and the already checked
+    /// syntactic class of its classifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `var` and `val` form a valid substitution pair,
+    /// `input` is a variable of the same category and name as `var`, and their
+    /// classifier rows are members of one checked syntactic-equivalence class.
+    pub fn syn_sub_var_at(
+        &mut self,
+        target: Option<SynFactId>,
+        var: Ref,
+        val: Ref,
+        input: Ref,
+    ) -> Result<SynFactId, KernelError> {
+        self.require_substitution_pair::<Infallible>(var, val)?;
+        if !self.same_named_variable(var, input)? {
+            return Err(Self::invalid_fact("substitution variable occurrence"));
+        }
+        self.put_fact(
+            target,
+            SynFact::new(SynRel::Syn, Some(var), Some(val), input, val),
+        )
+    }
+
+    /// Tests named-variable identity modulo checked classifier syntax.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless both references are resident rows. Non-variable
+    /// rows simply compare unequal.
+    pub fn same_named_variable(&self, left: Ref, right: Ref) -> Result<bool, KernelError> {
+        self.same_named_variable_as::<Infallible>(left, right)
+    }
+
+    fn same_named_variable_as<E>(&self, left: Ref, right: Ref) -> Result<bool, KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let left_node = *self.row::<E>(left)?.expr();
+        let right_node = *self.row::<E>(right)?.expr();
+        if !Self::same_variable_name(left_node, right_node) {
+            return Ok(false);
+        }
+        let left_classifier = self.classifier_as::<E>(left)?;
+        let right_classifier = self.classifier_as::<E>(right)?;
+        Ok(self.find_path_in::<E>(EqColumn::Syn, left_classifier)?.0
+            == self.find_path_in::<E>(EqColumn::Syn, right_classifier)?.0)
+    }
+
     /// Establishes that substitution leaves one non-target leaf unchanged.
     ///
     /// # Errors
@@ -1270,7 +1324,7 @@ impl Kernel {
                 Err(Self::invalid_fact("partial substitution"))
             };
         };
-        if self.same_variable::<E>(binder, var)? {
+        if self.same_named_variable_as::<E>(binder, var)? {
             return Ok((None, None));
         }
         if Self::same_variable_name(*self.row::<E>(binder)?.expr(), *self.row::<E>(var)?.expr()) {
@@ -2009,5 +2063,41 @@ mod tests {
 
         let unrelated = kernel.bool(bool_ty, false).unwrap();
         assert!(kernel.syn_cached(None, left, unrelated).is_err());
+    }
+
+    #[test]
+    fn substitution_hits_duplicate_named_variables_only_after_classifier_certification() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let left_ty = kernel.bool_ty(star).unwrap();
+        let right_ty = kernel.bool_ty(star).unwrap();
+        let variable = kernel.tm_fv(7, left_ty).unwrap();
+        let occurrence = kernel.tm_fv(7, right_ty).unwrap();
+        let other = kernel.tm_fv(8, right_ty).unwrap();
+        let replacement = kernel.bool(left_ty, true).unwrap();
+
+        assert!(
+            kernel
+                .syn_sub_var_at(None, variable, replacement, occurrence)
+                .is_err()
+        );
+        let classifier = kernel
+            .syn_congr(None, SynRel::Syn, None, None, left_ty, right_ty, &[])
+            .unwrap();
+        kernel.union_syn_fact(classifier).unwrap();
+
+        assert!(kernel.same_named_variable(variable, occurrence).unwrap());
+        let fact = kernel
+            .syn_sub_var_at(None, variable, replacement, occurrence)
+            .unwrap();
+        let fact = kernel.syn_fact(fact).unwrap();
+        assert_eq!(fact.var(), Some(variable));
+        assert_eq!(fact.val(), Some(replacement));
+        assert_eq!((fact.input(), fact.output()), (occurrence, replacement));
+        assert!(
+            kernel
+                .syn_sub_var_at(None, variable, replacement, other)
+                .is_err()
+        );
     }
 }

@@ -16,6 +16,8 @@ use covalence_logic_hol::{
     Kernel, KernelError, KindTag, Ref, SynFactId, SynRel, Tag, ThmId, TmTag, TyTag,
 };
 
+use crate::join_same_syntax;
+
 /// A chosen type together with the checked theorem that specifies it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ChosenModel {
@@ -461,10 +463,29 @@ impl TypeSubstitution<'_> {
         if let Some(&result) = self.memo.get(&input) {
             return Ok(result);
         }
+        if input != self.variable
+            && self.kernel.arena().tag(input) == self.kernel.arena().tag(self.variable)
+            && matches!(
+                self.kernel.arena().tag(input),
+                Some(Tag::Ty(TyTag::Fv) | Tag::Tm(TmTag::Fv))
+            )
+            && self.kernel.arena().name(input) == self.kernel.arena().name(self.variable)
+        {
+            let input_classifier = self.kernel.classifier(input)?;
+            let variable_classifier = self.kernel.classifier(self.variable)?;
+            if let Ok(fact) = join_same_syntax(self.kernel, input_classifier, variable_classifier) {
+                self.kernel.union_syn_fact(fact)?;
+            }
+        }
         let result = if input == self.variable {
             let fact = self
                 .kernel
                 .syn_sub_var(None, self.variable, self.replacement)?;
+            (self.replacement, fact)
+        } else if let Ok(fact) =
+            self.kernel
+                .syn_sub_var_at(None, self.variable, self.replacement, input)
+        {
             (self.replacement, fact)
         } else if self.kernel.substitution_fresh(self.variable, input)? {
             let fact = self
@@ -666,7 +687,17 @@ impl TypeSubstitution<'_> {
                 tag,
             });
         };
-        let shadowed = binder == self.variable;
+        if self.kernel.arena().tag(binder) == self.kernel.arena().tag(self.variable)
+            && self.kernel.arena().name(binder) == self.kernel.arena().name(self.variable)
+        {
+            let binder_classifier = self.kernel.classifier(binder)?;
+            let variable_classifier = self.kernel.classifier(self.variable)?;
+            if let Ok(fact) = join_same_syntax(self.kernel, binder_classifier, variable_classifier)
+            {
+                self.kernel.union_syn_fact(fact)?;
+            }
+        }
+        let shadowed = self.kernel.same_named_variable(binder, self.variable)?;
         let substitutes_binder_classifier = if tag == Tag::Tm(TmTag::Lam) {
             let classifier = self.kernel.classifier(binder)?;
             !self.kernel.substitution_fresh(self.variable, classifier)?
