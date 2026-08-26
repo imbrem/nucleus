@@ -455,6 +455,58 @@ theorem mul_comm (x y : M.carrier) : M.mul x y = M.mul y x := by
   · intro z ih
     simp only [M.mul_succ, M.succ_mul, ih]
 
+/-! ## The userspace init arithmetic package
+
+The Rust package uses closed function-valued graph recursors, with the
+recursive argument first.  These definitions mirror that construction rather
+than merely restating the conventional operations above. -/
+
+noncomputable def graphAdd (M : CNatModel) (n m : M.carrier) : M.carrier :=
+  M.graphRecursor (fun value => value)
+    (fun _ previous value => M.succ (previous value)) n m
+
+@[simp] theorem graphAdd_zero (m : M.carrier) :
+    M.graphAdd M.zero m = m := by
+  simp [graphAdd]
+
+@[simp] theorem graphAdd_succ (n m : M.carrier) :
+    M.graphAdd (M.succ n) m = M.succ (M.graphAdd n m) := by
+  simp [graphAdd]
+
+theorem graphAdd_eq_add (n m : M.carrier) :
+    M.graphAdd n m = M.add m n := by
+  refine M.induction (fun n => M.graphAdd n m = M.add m n) ?_ ?_ n
+  · simp
+  · intro k ih
+    simp [ih]
+
+noncomputable def graphMul (M : CNatModel) (n m : M.carrier) : M.carrier :=
+  M.graphRecursor (fun _ => M.zero)
+    (fun _ previous value => M.graphAdd (previous value) value) n m
+
+@[simp] theorem graphMul_zero (m : M.carrier) :
+    M.graphMul M.zero m = M.zero := by
+  simp [graphMul]
+
+@[simp] theorem graphMul_succ (n m : M.carrier) :
+    M.graphMul (M.succ n) m = M.graphAdd (M.graphMul n m) m := by
+  simp [graphMul]
+
+theorem graphMul_eq_mul (n m : M.carrier) :
+    M.graphMul n m = M.mul m n := by
+  refine M.induction (fun n => M.graphMul n m = M.mul m n) ?_ ?_ n
+  · simp
+  · intro k ih
+    rw [M.graphMul_succ, M.graphAdd_eq_add, ih, M.mul_succ]
+    exact M.add_comm m (M.mul m k)
+
+def one (M : CNatModel) : M.carrier := M.succ M.zero
+
+def two (M : CNatModel) : M.carrier := M.succ M.one
+
+theorem graphAdd_one_one : M.graphAdd M.one M.one = M.two := by
+  simp [one, two]
+
 /-! ## Any two models are the same model
 
 Categoricity within a model (`ofNat_toNat_inverse`) immediately gives it

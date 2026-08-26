@@ -107,7 +107,8 @@ pub fn equality_symmetry(
 ///
 /// Returns an error unless `left_theorem` concludes `x = y`, `right_theorem`
 /// concludes `y = z` with the exact same middle row, and every checked
-/// beta/congruence certificate is accepted.
+/// beta/congruence certificate is accepted. Independently allocated but
+/// syntactically identical domain and middle rows are transported first.
 pub fn equality_transitivity(
     kernel: &mut Kernel,
     bool_ty: Ref,
@@ -115,12 +116,31 @@ pub fn equality_transitivity(
     right_theorem: ThmId,
 ) -> Result<ProvedEquality, EqualityError> {
     let (left_equality, domain, left, middle) = equality_conclusion(kernel, left_theorem)?;
-    let (_, right_domain, right_middle, right) = equality_conclusion(kernel, right_theorem)?;
-    if domain != right_domain || middle != right_middle {
-        return Err(EqualityError::WrongTheorem {
-            theorem: right_theorem,
-        });
-    }
+    let (right_equality, right_domain, right_middle, right) =
+        equality_conclusion(kernel, right_theorem)?;
+    let right_theorem = if domain == right_domain && middle == right_middle {
+        right_theorem
+    } else {
+        crate::syntax::require_same_syntax(kernel, right_domain, domain)?;
+        crate::syntax::require_same_syntax(kernel, right_middle, middle)?;
+        let target = kernel.eq_at(bool_ty, domain, middle, right)?;
+        let domain_fact = join_same_syntax(kernel, right_domain, domain)?;
+        let middle_fact = join_same_syntax(kernel, right_middle, middle)?;
+        let right_fact = kernel.syn_refl(None, covalence_logic_hol::SynRel::Syn, right)?;
+        let fact = kernel.syn_congr(
+            None,
+            covalence_logic_hol::SynRel::Conv,
+            None,
+            None,
+            right_equality,
+            target,
+            &[domain_fact, middle_fact, right_fact],
+        )?;
+        kernel.union_syn_fact(fact)?;
+        let theorem = kernel.copy_theorem(right_theorem)?;
+        kernel.convert_conclusions(theorem, right_equality, target)?;
+        theorem
+    };
     let binder = kernel.tm_fv(kernel.fresh_name(&[left_equality])?, domain)?;
     let body = kernel.eq(bool_ty, left, binder)?;
     let predicate = kernel.lam(binder, body)?;

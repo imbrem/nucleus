@@ -52,6 +52,12 @@ pub enum ModelError {
         /// Underlying checked failure.
         source: KernelError,
     },
+    /// Structurally identical rebuilt classifier rows could not be certified.
+    #[snafu(display("chosen-model classifier transport failed: {source}"))]
+    Syntax {
+        /// Underlying userspace structural comparison failure.
+        source: crate::SyntaxError,
+    },
     /// The supplied theorem is not a premise-free positive type existential.
     #[snafu(display("theorem {theorem:?} does not conclude one positive type existential"))]
     WrongTheorem {
@@ -71,6 +77,12 @@ pub enum ModelError {
 impl From<KernelError> for ModelError {
     fn from(source: KernelError) -> Self {
         Self::Kernel { source }
+    }
+}
+
+impl From<crate::SyntaxError> for ModelError {
+    fn from(source: crate::SyntaxError) -> Self {
+        Self::Syntax { source }
     }
 }
 
@@ -160,6 +172,20 @@ pub fn substitute(
     }
     .derive(input)?;
     Ok(Substitution { output, fact })
+}
+
+fn retry_classifier(
+    kernel: &mut Kernel,
+    mut build: impl FnMut(&mut Kernel) -> Result<Ref, KernelError>,
+) -> Result<Ref, ModelError> {
+    match build(kernel) {
+        Ok(output) => Ok(output),
+        Err(KernelError::ClassifierMismatch { expected, actual }) => {
+            crate::join_same_syntax(kernel, expected, actual)?;
+            Ok(build(kernel)?)
+        }
+        Err(source) => Err(source.into()),
+    }
 }
 
 /// Eta-expands a function with an exact requested arrow classifier.
@@ -444,7 +470,7 @@ impl TypeSubstitution<'_> {
         &mut self,
         input: Ref,
         children: &[Ref],
-        build: impl FnOnce(&mut Kernel, Ref) -> Result<Ref, KernelError>,
+        mut build: impl FnMut(&mut Kernel, Ref) -> Result<Ref, KernelError>,
     ) -> Result<(Ref, SynFactId), ModelError> {
         let &[child] = children else {
             return Err(ModelError::UnsupportedSyntax {
@@ -460,7 +486,7 @@ impl TypeSubstitution<'_> {
         let output = if child == children[0] {
             input
         } else {
-            build(self.kernel, child)?
+            retry_classifier(self.kernel, |kernel| build(kernel, child))?
         };
         let fact = self.congr(input, output, &[child_fact])?;
         Ok((output, fact))
@@ -470,7 +496,7 @@ impl TypeSubstitution<'_> {
         &mut self,
         input: Ref,
         children: &[Ref],
-        build: impl FnOnce(&mut Kernel, Ref, Ref) -> Result<Ref, KernelError>,
+        mut build: impl FnMut(&mut Kernel, Ref, Ref) -> Result<Ref, KernelError>,
     ) -> Result<(Ref, SynFactId), ModelError> {
         let &[left, right] = children else {
             return Err(ModelError::UnsupportedSyntax {
@@ -487,7 +513,7 @@ impl TypeSubstitution<'_> {
         let output = if [left, right] == children {
             input
         } else {
-            build(self.kernel, left, right)?
+            retry_classifier(self.kernel, |kernel| build(kernel, left, right))?
         };
         let fact = self.congr(input, output, &[left_fact, right_fact])?;
         Ok((output, fact))
