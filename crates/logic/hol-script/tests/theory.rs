@@ -1,7 +1,7 @@
 //! End-to-end coverage for the untrusted theory front end.
 
 use covalence_logic_hol::{AX_INF, AX_SUB, Sort, Tag, TmTag};
-use covalence_logic_hol_derived::NaturalExt;
+use covalence_logic_hol_derived::{NaturalExt, NaturalRecExt};
 use covalence_logic_hol_script::{INIT_SOURCE, TheoryError, compile_theory};
 
 const COPRODUCT: &str = r"
@@ -215,6 +215,58 @@ fn compiled_nat_member_drives_the_userspace_natural_package() {
     assert_eq!(naturals.subtype.predicate, naturals.member);
     assert_eq!(naturals.get("nat"), Some(naturals.ty));
     assert_eq!(naturals.get("nat.induction"), Some(naturals.induction));
+}
+
+#[test]
+fn compiled_recursion_graph_has_a_checked_base_theorem() {
+    let compiled = compile_theory(INIT_SOURCE).expect("init source");
+    let bool_ty = compiled.bool_type();
+    let natural_parameter = compiled.get("NatRecGraph/'a").expect("natural parameter");
+    let codomain_parameter = compiled.get("NatRecGraph/'c").expect("codomain parameter");
+    let schema = compiled.get("NatRecGraph").expect("graph schema");
+    let (mut kernel, _) = compiled.into_parts();
+    kernel.add_axiom(AX_INF).expect("infinity capability");
+    kernel.add_axiom(AX_SUB).expect("subtype capability");
+    let naturals = kernel.choose_naturals(bool_ty).expect("naturals");
+
+    let base = kernel.bool(bool_ty, true).expect("base");
+    let n = kernel
+        .tm_fv(
+            kernel.fresh_name(&[naturals.ty]).expect("name"),
+            naturals.ty,
+        )
+        .expect("natural binder");
+    let accumulator = kernel
+        .tm_fv(kernel.fresh_name(&[n]).expect("name"), bool_ty)
+        .expect("accumulator binder");
+    let inner = kernel.lam(accumulator, accumulator).expect("inner step");
+    let step = kernel.lam(n, inner).expect("step");
+    let graph = kernel
+        .natural_rec_graph_from_schema(
+            &naturals,
+            natural_parameter,
+            codomain_parameter,
+            schema,
+            bool_ty,
+            base,
+            step,
+        )
+        .expect("checked graph base");
+
+    for (proposition, theorem) in [
+        (graph.base, graph.base_theorem),
+        (graph.step, graph.step_theorem),
+        (graph.total, graph.total_theorem),
+    ] {
+        let theorem = kernel.thm().get(theorem).expect("graph theorem");
+        assert!(theorem.lhs.rows().next().is_none());
+        let conclusions = theorem.rhs.rows().collect::<Vec<_>>();
+        assert_eq!(conclusions.len(), 1);
+        assert_eq!(
+            conclusions[0],
+            [covalence_logic_hol::Lit::positive(proposition.get())]
+        );
+    }
 }
 
 #[test]
