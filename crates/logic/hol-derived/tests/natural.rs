@@ -57,6 +57,8 @@ fn naturals_are_carved_from_infinity_with_only_the_two_named_capabilities() {
         (naturals.rep_member, naturals.rep_member_theorem),
         (naturals.member_succ, naturals.member_succ_theorem),
         (naturals.induction, naturals.induction_theorem),
+        (naturals.succ_injective, naturals.succ_injective_theorem),
+        (naturals.zero_ne_succ, naturals.zero_ne_succ_theorem),
     ] {
         let theorem = kernel.thm().get(theorem).expect("derived exact theorem");
         assert!(theorem.lhs.rows().next().is_none());
@@ -67,7 +69,7 @@ fn naturals_are_carved_from_infinity_with_only_the_two_named_capabilities() {
         assert_eq!(rows[0][0].magnitude(), proposition.get().cast_unsigned());
     }
     assert_eq!(naturals.get("nat.member_succ"), Some(naturals.member_succ));
-    assert_eq!(naturals.symbols().len(), 14);
+    assert_eq!(naturals.symbols().len(), 16);
     assert_eq!(naturals.get("nat.rec"), None);
     assert_eq!(
         kernel.arena().axioms().collect::<Vec<_>>(),

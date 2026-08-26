@@ -1037,6 +1037,13 @@ impl PyKernel {
             .map_err(value_error)
     }
 
+    fn refl(&mut self, bool_ty: i32, term: i32) -> PyResult<(i32, i32)> {
+        self.kernel
+            .refl(reference(bool_ty)?, reference(term)?)
+            .map(|result| (result.equality.get(), result.theorem.get()))
+            .map_err(value_error)
+    }
+
     fn ap_thm(&mut self, theorem: i32, argument: i32) -> PyResult<(i32, i32, i32, i32)> {
         self.kernel
             .ap_thm(theorem_id(theorem)?, reference(argument)?)

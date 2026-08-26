@@ -7,17 +7,16 @@
 //! the two small kernel capabilities consumed by [`InfinityExt`] and
 //! [`SubtypeExt`].
 
-use std::collections::BTreeMap;
-
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    AX_INF, AX_SUB, Kernel, KernelError, Lit, Ref, SynFactId, SynRel, Tag, ThmId, TmTag, TyTag,
-    builtin::Op2,
+    AX_INF, AX_SUB, Kernel, KernelError, Lit, Ref, SynRel, Tag, ThmId, TmTag,
+    builtin::{Op1, Op2},
 };
 
 use crate::{
-    ForallError, Infinity, InfinityError, InfinityExt, ModelError, Subtype, SubtypeError,
-    SubtypeExt, forall_elim, substitute,
+    EqualityError, ForallError, Infinity, InfinityError, InfinityExt, ModelError, ProvedEquality,
+    Subtype, SubtypeError, SubtypeExt, SyntaxError, equality_symmetry, equality_transitivity,
+    forall_elim, join_same_syntax, substitute,
 };
 
 /// The first object-language natural-number package.
@@ -55,6 +54,14 @@ pub struct Naturals {
     pub induction: Ref,
     /// Exact theorem `⊢ nat.induction`.
     pub induction_theorem: ThmId,
+    /// `∀m n : nat. nat.succ m = nat.succ n → m = n`.
+    pub succ_injective: Ref,
+    /// Exact theorem `⊢ nat.succ.injective`.
+    pub succ_injective_theorem: ThmId,
+    /// `∀n : nat. ¬(nat.zero = nat.succ n)`.
+    pub zero_ne_succ: Ref,
+    /// Exact theorem `⊢ nat.zero_ne_succ`.
+    pub zero_ne_succ_theorem: ThmId,
 }
 
 impl Naturals {
@@ -86,6 +93,8 @@ impl Naturals {
             ("nat.member_succ", self.member_succ),
             ("nat.succ", self.succ),
             ("nat.induction", self.induction),
+            ("nat.succ.injective", self.succ_injective),
+            ("nat.zero_ne_succ", self.zero_ne_succ),
         ]
         .into_iter()
     }
@@ -131,6 +140,18 @@ pub enum NaturalError {
         /// Underlying checked derived failure.
         source: ForallError,
     },
+    /// Structural syntax certification failed.
+    #[snafu(display("natural-number syntax certification failed: {source}"))]
+    Syntax {
+        /// Underlying userspace certification failure.
+        source: SyntaxError,
+    },
+    /// A derived equality rule failed.
+    #[snafu(display("natural-number equality derivation failed: {source}"))]
+    Equality {
+        /// Underlying userspace equality failure.
+        source: EqualityError,
+    },
 }
 
 impl From<KernelError> for NaturalError {
@@ -160,6 +181,18 @@ impl From<ModelError> for NaturalError {
 impl From<ForallError> for NaturalError {
     fn from(source: ForallError) -> Self {
         Self::Forall { source }
+    }
+}
+
+impl From<SyntaxError> for NaturalError {
+    fn from(source: SyntaxError) -> Self {
+        Self::Syntax { source }
+    }
+}
+
+impl From<EqualityError> for NaturalError {
+    fn from(source: EqualityError) -> Self {
+        Self::Equality { source }
     }
 }
 
@@ -288,6 +321,26 @@ fn finish_naturals(
         succ,
         induction,
     )?;
+    let (succ_injective, succ_injective_theorem) = prove_successor_injective(
+        kernel,
+        bool_ty,
+        &infinity,
+        &subtype,
+        rep_member_theorem,
+        member_succ_theorem,
+        succ,
+    )?;
+    let (zero_ne_succ, zero_ne_succ_theorem) = prove_zero_ne_successor(
+        kernel,
+        bool_ty,
+        &infinity,
+        &subtype,
+        zero,
+        zero_member_theorem,
+        rep_member_theorem,
+        member_succ_theorem,
+        succ,
+    )?;
 
     Ok(Naturals {
         infinity,
@@ -306,6 +359,432 @@ fn finish_naturals(
         succ,
         induction,
         induction_theorem,
+        succ_injective,
+        succ_injective_theorem,
+        zero_ne_succ,
+        zero_ne_succ_theorem,
+    })
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn prove_zero_ne_successor(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    infinity: &Infinity,
+    subtype: &Subtype,
+    zero: Ref,
+    zero_member_theorem: ThmId,
+    rep_member_theorem: ThmId,
+    member_succ_theorem: ThmId,
+    successor: Ref,
+) -> Result<(Ref, ThmId), NaturalError> {
+    let natural = kernel.tm_fv(kernel.fresh_name(&[zero, successor])?, subtype.sub)?;
+    let successor_natural = kernel.app(successor, natural)?;
+    let natural_equality = kernel.eq(bool_ty, zero, successor_natural)?;
+    let assumed = kernel.identity(positive(natural_equality))?;
+    let represented_equality = kernel.ap_term(assumed, subtype.rep)?;
+
+    let represented_natural = kernel.app(subtype.rep, natural)?;
+    let mapped = kernel.app(infinity.map, represented_natural)?;
+    let mapped_member = prove_mapped_rep_member(
+        kernel,
+        represented_natural,
+        mapped,
+        natural,
+        rep_member_theorem,
+        member_succ_theorem,
+    )?;
+    let successor_round_trip = prove_guarded_round_trip(kernel, subtype, mapped, mapped_member)?;
+    let zero_round_trip =
+        prove_guarded_round_trip(kernel, subtype, infinity.missed, zero_member_theorem)?;
+
+    let zero_shape = join_same_syntax(kernel, zero_round_trip.left, represented_equality.left)?;
+    let zero_target = kernel.eq(bool_ty, represented_equality.left, infinity.missed)?;
+    certify_equality_conversion(kernel, zero_round_trip.equality, zero_target, zero_shape)?;
+    kernel.convert_conclusions(
+        zero_round_trip.theorem,
+        zero_round_trip.equality,
+        zero_target,
+    )?;
+    let zero_round_trip = proved_equality(kernel, zero_round_trip.theorem)?;
+
+    let (expanded_successor, expansion) = expand_represented_successor(
+        kernel,
+        subtype.rep,
+        successor,
+        natural,
+        represented_equality.right,
+    )?;
+    let successor_shape = join_same_syntax(kernel, successor_round_trip.left, expanded_successor)?;
+    let expansion = kernel.syn_symm(None, expansion)?;
+    let successor_endpoint = kernel.syn_trans(None, successor_shape, expansion)?;
+    let successor_target = kernel.eq(bool_ty, represented_equality.right, mapped)?;
+    certify_equality_conversion(
+        kernel,
+        successor_round_trip.equality,
+        successor_target,
+        successor_endpoint,
+    )?;
+    kernel.convert_conclusions(
+        successor_round_trip.theorem,
+        successor_round_trip.equality,
+        successor_target,
+    )?;
+    let successor_round_trip = proved_equality(kernel, successor_round_trip.theorem)?;
+
+    let missed_to_zero = equality_symmetry(kernel, bool_ty, zero_round_trip.theorem)?;
+    let missed_to_successor = equality_transitivity(
+        kernel,
+        bool_ty,
+        missed_to_zero.theorem,
+        represented_equality.theorem,
+    )?;
+    let missed_to_mapped = equality_transitivity(
+        kernel,
+        bool_ty,
+        missed_to_successor.theorem,
+        successor_round_trip.theorem,
+    )?;
+    let mapped_to_missed = equality_symmetry(kernel, bool_ty, missed_to_mapped.theorem)?;
+
+    let avoided = forall_elim(kernel, infinity.avoids_missed_theorem, represented_natural)?;
+    let [_avoided_bool, forbidden_equality, falsehood] =
+        exact_children(kernel, avoided.proposition, Tag::Tm(TmTag::Eq))?;
+    join_same_syntax(kernel, mapped_to_missed.equality, forbidden_equality)?;
+    kernel.convert_conclusions(
+        mapped_to_missed.theorem,
+        mapped_to_missed.equality,
+        forbidden_equality,
+    )?;
+    let false_theorem = kernel.eq_mp(avoided.theorem, mapped_to_missed.theorem)?;
+    let false_left = kernel.false_left(positive(falsehood))?;
+    let contradiction = kernel.cut(false_theorem, false_left, positive(falsehood))?;
+    kernel.not_right(contradiction, positive(natural_equality))?;
+    let separation = kernel.op1(Op1::Not, natural_equality)?;
+    let separation_theorem = kernel.fold_conclusion(contradiction, positive(separation))?;
+    let generalized = kernel.forall_intro(separation_theorem, natural)?;
+    Ok((generalized.universal, generalized.theorem))
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn prove_successor_injective(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    infinity: &Infinity,
+    subtype: &Subtype,
+    rep_member_theorem: ThmId,
+    member_succ_theorem: ThmId,
+    successor: Ref,
+) -> Result<(Ref, ThmId), NaturalError> {
+    let left = kernel.tm_fv(kernel.fresh_name(&[subtype.sub, successor])?, subtype.sub)?;
+    let right = kernel.tm_fv(kernel.fresh_name(&[left])?, subtype.sub)?;
+    let successor_left = kernel.app(successor, left)?;
+    let successor_right = kernel.app(successor, right)?;
+    let successor_equality = kernel.eq(bool_ty, successor_left, successor_right)?;
+    let source = kernel.identity(positive(successor_equality))?;
+    let represented_successors = kernel.ap_term(source, subtype.rep)?;
+
+    let represented_left = kernel.app(subtype.rep, left)?;
+    let represented_right = kernel.app(subtype.rep, right)?;
+    let mapped_left = kernel.app(infinity.map, represented_left)?;
+    let mapped_right = kernel.app(infinity.map, represented_right)?;
+    let left_member = prove_mapped_rep_member(
+        kernel,
+        represented_left,
+        mapped_left,
+        left,
+        rep_member_theorem,
+        member_succ_theorem,
+    )?;
+    let right_member = prove_mapped_rep_member(
+        kernel,
+        represented_right,
+        mapped_right,
+        right,
+        rep_member_theorem,
+        member_succ_theorem,
+    )?;
+    let left_round_trip = prove_guarded_round_trip(kernel, subtype, mapped_left, left_member)?;
+    let right_round_trip = prove_guarded_round_trip(kernel, subtype, mapped_right, right_member)?;
+
+    let (represented_successor_left, left_expansion) = expand_represented_successor(
+        kernel,
+        subtype.rep,
+        successor,
+        left,
+        represented_successors.left,
+    )?;
+    let (represented_successor_right, right_expansion) = expand_represented_successor(
+        kernel,
+        subtype.rep,
+        successor,
+        right,
+        represented_successors.right,
+    )?;
+    let left_shape = join_same_syntax(kernel, left_round_trip.left, represented_successor_left)?;
+    let right_shape = join_same_syntax(kernel, right_round_trip.left, represented_successor_right)?;
+    let left_expansion = kernel.syn_symm(None, left_expansion)?;
+    let right_expansion = kernel.syn_symm(None, right_expansion)?;
+    let left_endpoint = kernel.syn_trans(None, left_shape, left_expansion)?;
+    let right_endpoint = kernel.syn_trans(None, right_shape, right_expansion)?;
+    let left_round_trip_theorem = kernel.copy_theorem(left_round_trip.theorem)?;
+    let left_round_trip_target = kernel.eq(bool_ty, represented_successors.left, mapped_left)?;
+    certify_equality_conversion(
+        kernel,
+        left_round_trip.equality,
+        left_round_trip_target,
+        left_endpoint,
+    )?;
+    kernel.convert_conclusions(
+        left_round_trip_theorem,
+        left_round_trip.equality,
+        left_round_trip_target,
+    )?;
+    let left_round_trip = proved_equality(kernel, left_round_trip_theorem)?;
+    let right_round_trip_theorem = kernel.copy_theorem(right_round_trip.theorem)?;
+    let right_round_trip_target = kernel.eq(bool_ty, represented_successors.right, mapped_right)?;
+    certify_equality_conversion(
+        kernel,
+        right_round_trip.equality,
+        right_round_trip_target,
+        right_endpoint,
+    )?;
+    kernel.convert_conclusions(
+        right_round_trip_theorem,
+        right_round_trip.equality,
+        right_round_trip_target,
+    )?;
+    let right_round_trip = proved_equality(kernel, right_round_trip_theorem)?;
+
+    let left_inverse = equality_symmetry(kernel, bool_ty, left_round_trip.theorem)?;
+    let through_successors = equality_transitivity(
+        kernel,
+        bool_ty,
+        left_inverse.theorem,
+        represented_successors.theorem,
+    )?;
+    let mapped_equality = equality_transitivity(
+        kernel,
+        bool_ty,
+        through_successors.theorem,
+        right_round_trip.theorem,
+    )?;
+
+    let reflected_left = forall_elim(kernel, infinity.reflects_equality_theorem, represented_left)?;
+    let reflected = forall_elim(kernel, reflected_left.theorem, represented_right)?;
+    let [_bool_ty, images_equal, _arguments_equal] =
+        exact_children(kernel, reflected.proposition, Tag::Tm(TmTag::Eq))?;
+    join_same_syntax(kernel, mapped_equality.equality, images_equal)?;
+    kernel.convert_conclusions(
+        mapped_equality.theorem,
+        mapped_equality.equality,
+        images_equal,
+    )?;
+    let represented_equality = kernel.eq_mp(reflected.theorem, mapped_equality.theorem)?;
+
+    let abstracted_equality = kernel.ap_term(represented_equality, subtype.abs)?;
+    let left_abs_rep = forall_elim(
+        kernel,
+        subtype.abs_rep_theorem.ok_or(NaturalError::WrongForm {
+            expected: "the proved subtype abs-rep law",
+        })?,
+        left,
+    )?;
+    let right_abs_rep = forall_elim(
+        kernel,
+        subtype.abs_rep_theorem.ok_or(NaturalError::WrongForm {
+            expected: "the proved subtype abs-rep law",
+        })?,
+        right,
+    )?;
+    let left_abs_rep = proved_equality(kernel, left_abs_rep.theorem)?;
+    let right_abs_rep = proved_equality(kernel, right_abs_rep.theorem)?;
+    let abstracted_left = join_same_syntax(kernel, abstracted_equality.left, left_abs_rep.left)?;
+    let abstracted_right = join_same_syntax(kernel, abstracted_equality.right, right_abs_rep.left)?;
+    let abstracted_target = kernel.eq(bool_ty, left_abs_rep.left, right_abs_rep.left)?;
+    certify_equality_conversion_both(
+        kernel,
+        abstracted_equality.equality,
+        abstracted_target,
+        abstracted_left,
+        abstracted_right,
+    )?;
+    kernel.convert_conclusions(
+        abstracted_equality.theorem,
+        abstracted_equality.equality,
+        abstracted_target,
+    )?;
+    let abstracted_equality = proved_equality(kernel, abstracted_equality.theorem)?;
+    let left_inverse = equality_symmetry(kernel, bool_ty, left_abs_rep.theorem)?;
+    let through_abstraction = equality_transitivity(
+        kernel,
+        bool_ty,
+        left_inverse.theorem,
+        abstracted_equality.theorem,
+    )?;
+    let natural_equality = equality_transitivity(
+        kernel,
+        bool_ty,
+        through_abstraction.theorem,
+        right_abs_rep.theorem,
+    )?;
+
+    let implication = kernel.op2(Op2::Imp, successor_equality, natural_equality.equality)?;
+    let implication_theorem = kernel.imp_right(natural_equality.theorem, positive(implication))?;
+    kernel.contract_theorem(implication_theorem)?;
+    let inner = kernel.forall_intro(implication_theorem, right)?;
+    let outer = kernel.forall_intro(inner.theorem, left)?;
+    Ok((outer.universal, outer.theorem))
+}
+
+fn prove_mapped_rep_member(
+    kernel: &mut Kernel,
+    represented: Ref,
+    mapped: Ref,
+    natural: Ref,
+    rep_member_theorem: ThmId,
+    member_succ_theorem: ThmId,
+) -> Result<ThmId, NaturalError> {
+    let represented_member = forall_elim(kernel, rep_member_theorem, natural)?;
+    let closure = forall_elim(kernel, member_succ_theorem, represented)?;
+    let [source, target] = exact_op2(kernel, closure.proposition, Op2::Imp)?;
+    join_same_syntax(kernel, represented_member.proposition, source)?;
+    let represented_member_theorem = kernel.copy_theorem(represented_member.theorem)?;
+    kernel.convert_conclusions(
+        represented_member_theorem,
+        represented_member.proposition,
+        source,
+    )?;
+    let result = modus_ponens(
+        kernel,
+        closure.theorem,
+        represented_member_theorem,
+        closure.proposition,
+    )?;
+    let proposition = sole_conclusion(kernel, result)?;
+    let [_predicate, target_value] = exact_children(kernel, target, Tag::Tm(TmTag::App))?;
+    join_same_syntax(kernel, target_value, mapped)?;
+    join_same_syntax(kernel, proposition, target)?;
+    Ok(result)
+}
+
+fn prove_guarded_round_trip(
+    kernel: &mut Kernel,
+    subtype: &Subtype,
+    value: Ref,
+    member_theorem: ThmId,
+) -> Result<ProvedEquality, NaturalError> {
+    let specialized = forall_elim(
+        kernel,
+        subtype.rep_abs_theorem.ok_or(NaturalError::WrongForm {
+            expected: "the proved subtype rep-abs law",
+        })?,
+        value,
+    )?;
+    let [guard, _equality] = exact_op2(kernel, specialized.proposition, Op2::Imp)?;
+    let [member, empty] = exact_op2(kernel, guard, Op2::Or)?;
+    let source_member = sole_conclusion(kernel, member_theorem)?;
+    join_same_syntax(kernel, source_member, member)?;
+    let guard_theorem = kernel.copy_theorem(member_theorem)?;
+    kernel.convert_conclusions(guard_theorem, source_member, member)?;
+    kernel.weaken(guard_theorem, &[], &[positive(empty)])?;
+    let guard_theorem = kernel.or_right(guard_theorem, positive(guard))?;
+    let equality = modus_ponens(
+        kernel,
+        specialized.theorem,
+        guard_theorem,
+        specialized.proposition,
+    )?;
+    proved_equality(kernel, equality)
+}
+
+fn expand_represented_successor(
+    kernel: &mut Kernel,
+    representation: Ref,
+    successor: Ref,
+    argument: Ref,
+    represented_successor: Ref,
+) -> Result<(Ref, covalence_logic_hol::SynFactId), NaturalError> {
+    let [actual_representation, successor_application] =
+        exact_children(kernel, represented_successor, Tag::Tm(TmTag::App))?;
+    if actual_representation != representation {
+        return Err(NaturalError::WrongForm {
+            expected: "the representation of a natural successor",
+        });
+    }
+    let [actual_successor, actual_argument] =
+        exact_children(kernel, successor_application, Tag::Tm(TmTag::App))?;
+    if actual_successor != successor || actual_argument != argument {
+        return Err(NaturalError::WrongForm {
+            expected: "the expected natural successor application",
+        });
+    }
+    let [binder, body] = exact_children(kernel, successor, Tag::Tm(TmTag::Lam))?;
+    let substitution = substitute(kernel, binder, argument, body)?;
+    let beta = kernel.tm_beta_fact(None, successor_application, substitution.fact)?;
+    kernel.union_syn_fact(beta)?;
+    let expanded = kernel.app(representation, substitution.output)?;
+    let representation_refl = kernel.syn_refl(None, SynRel::Syn, representation)?;
+    let congruence = kernel.syn_congr(
+        None,
+        SynRel::Conv,
+        None,
+        None,
+        represented_successor,
+        expanded,
+        &[representation_refl, beta],
+    )?;
+    kernel.union_syn_fact(congruence)?;
+    Ok((expanded, congruence))
+}
+
+fn certify_equality_conversion(
+    kernel: &mut Kernel,
+    source: Ref,
+    target: Ref,
+    left: covalence_logic_hol::SynFactId,
+) -> Result<(), NaturalError> {
+    let [_source_domain, _source_left, source_right] =
+        exact_children(kernel, source, Tag::Tm(TmTag::Eq))?;
+    let [_target_domain, _target_left, target_right] =
+        exact_children(kernel, target, Tag::Tm(TmTag::Eq))?;
+    let right = join_same_syntax(kernel, source_right, target_right)?;
+    certify_equality_conversion_both(kernel, source, target, left, right)
+}
+
+fn certify_equality_conversion_both(
+    kernel: &mut Kernel,
+    source: Ref,
+    target: Ref,
+    left: covalence_logic_hol::SynFactId,
+    right: covalence_logic_hol::SynFactId,
+) -> Result<(), NaturalError> {
+    let [source_domain, _source_left, _source_right] =
+        exact_children(kernel, source, Tag::Tm(TmTag::Eq))?;
+    let [target_domain, _target_left, _target_right] =
+        exact_children(kernel, target, Tag::Tm(TmTag::Eq))?;
+    let domain = join_same_syntax(kernel, source_domain, target_domain)?;
+    let fact = kernel.syn_congr(
+        None,
+        SynRel::Conv,
+        None,
+        None,
+        source,
+        target,
+        &[domain, left, right],
+    )?;
+    kernel.union_syn_fact(fact)?;
+    Ok(())
+}
+
+fn proved_equality(kernel: &Kernel, theorem: ThmId) -> Result<ProvedEquality, NaturalError> {
+    let equality = sole_conclusion(kernel, theorem)?;
+    let [_domain, left, right] = exact_children(kernel, equality, Tag::Tm(TmTag::Eq))?;
+    Ok(ProvedEquality {
+        left,
+        right,
+        equality,
+        theorem,
     })
 }
 
@@ -921,81 +1400,6 @@ fn exact_children<const N: usize>(
         .map_err(|_| NaturalError::WrongForm {
             expected: "the natural schema's exact arity",
         })
-}
-
-fn join_same_syntax(kernel: &mut Kernel, left: Ref, right: Ref) -> Result<SynFactId, NaturalError> {
-    fn derive(
-        kernel: &mut Kernel,
-        left: Ref,
-        right: Ref,
-        memo: &mut BTreeMap<(Ref, Ref), SynFactId>,
-    ) -> Result<SynFactId, NaturalError> {
-        if let Some(fact) = memo.get(&(left, right)) {
-            return Ok(*fact);
-        }
-        if left == right {
-            let fact = kernel.syn_refl(None, SynRel::Syn, left)?;
-            memo.insert((left, right), fact);
-            return Ok(fact);
-        }
-        let tag = kernel.arena().tag(left);
-        if tag.is_none()
-            || tag != kernel.arena().tag(right)
-            || kernel.arena().name(left) != kernel.arena().name(right)
-            || kernel.arena().bool_value(left) != kernel.arena().bool_value(right)
-            || kernel.arena().op1(left) != kernel.arena().op1(right)
-            || kernel.arena().op2(left) != kernel.arena().op2(right)
-        {
-            return Err(NaturalError::WrongForm {
-                expected: "syntactically identical checked propositions",
-            });
-        }
-        let left_children = kernel
-            .arena()
-            .children(left)
-            .ok_or(NaturalError::WrongForm {
-                expected: "resident syntax for equality checking",
-            })?
-            .collect::<Vec<_>>();
-        let right_children = kernel
-            .arena()
-            .children(right)
-            .ok_or(NaturalError::WrongForm {
-                expected: "resident syntax for equality checking",
-            })?
-            .collect::<Vec<_>>();
-        if left_children.len() != right_children.len() {
-            return Err(NaturalError::WrongForm {
-                expected: "equal syntax arity",
-            });
-        }
-        let facts = left_children
-            .iter()
-            .zip(&right_children)
-            .map(|(&left, &right)| derive(kernel, left, right, memo))
-            .collect::<Result<Vec<_>, _>>()?;
-        let fact_result = match tag {
-            Some(Tag::Tm(TmTag::Lam) | Tag::Ty(TyTag::Lam)) if facts.len() == 2 => kernel
-                .syn_binder_congr(
-                    None,
-                    SynRel::Syn,
-                    None,
-                    None,
-                    left,
-                    right,
-                    facts[0],
-                    facts[1],
-                ),
-            _ => kernel.syn_congr(None, SynRel::Syn, None, None, left, right, &facts),
-        };
-        let fact = fact_result?;
-        memo.insert((left, right), fact);
-        Ok(fact)
-    }
-
-    let fact = derive(kernel, left, right, &mut BTreeMap::new())?;
-    kernel.union_syn_fact(fact)?;
-    Ok(fact)
 }
 
 fn induction_member(

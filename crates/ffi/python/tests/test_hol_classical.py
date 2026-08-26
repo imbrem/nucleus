@@ -145,6 +145,11 @@ def test_negation_and_expansion_have_no_unchecked_admission_path() -> None:
 def test_standard_hol_rules_preserve_i32_ids_and_checked_contexts() -> None:
     kernel, bool_ty, p, q, p_ref = fixture()
     q_ref = abs(q)
+    reflexive_equality, reflexive_theorem = kernel.refl(bool_ty, p_ref)
+    assert kernel.theorem(reflexive_theorem) == (
+        [],
+        [[kernel.lit(reflexive_equality)]],
+    )
     equality = kernel.eq(bool_ty, p_ref, q_ref)
     equality_assumption = kernel.identity(kernel.lit(equality))
 

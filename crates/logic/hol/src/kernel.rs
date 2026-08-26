@@ -26,7 +26,7 @@ mod logic;
 mod subtype;
 mod syn_facts;
 
-pub use classical::{ApTerm, ApThm, ChoiceThm, ForallThm};
+pub use classical::{ApTerm, ApThm, ChoiceThm, ForallThm, ReflThm};
 pub use covalence_logic_classical::{
     CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, Dnf, DnfId, Lit,
     LitError, LitVec, Refutation, ThmId, ThmRef,

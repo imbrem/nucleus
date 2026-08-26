@@ -66,6 +66,12 @@ interface host {
         theorem: u64,
     }
 
+    /// Result of HOL equality reflexivity.
+    record refl-thm {
+        equality: u64,
+        theorem: u64,
+    }
+
     /// Result of universal introduction.
     record forall-thm {
         universal: u64,
@@ -289,6 +295,9 @@ interface host {
         model-spec: func(theorem: u64, substitution: u64) -> result<u64, string>;
 
         /// From `G |- f = g`, derive `G |- f argument = g argument`.
+        /// Introduces the exact theorem `|- term = term`.
+        refl: func(bool-ty: u64, term: u64) -> result<refl-thm, string>;
+
         ap-thm: func(theorem: u64, argument: u64) -> result<ap-thm, string>;
 
         /// From `G |- x = y`, derive `G |- function x = function y`.
