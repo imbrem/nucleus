@@ -221,69 +221,102 @@ pub trait InfinityExt {
     /// capability, `bool_ty` is its Boolean type, model selection succeeds,
     /// and both canonical term existentials admit checked beta opening.
     fn choose_infinity(&mut self, bool_ty: Ref) -> Result<Infinity, InfinityError>;
+
+    /// Projects infinity using an explicit five-name allocation block.
+    ///
+    /// This is the replay form: userspace can consume binder metadata from a
+    /// frozen declaration instead of allowing unrelated arena suffixes to
+    /// choose a parallel alpha-variant.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as [`choose_infinity`](Self::choose_infinity),
+    /// or if the requested name block overflows.
+    fn choose_infinity_at(
+        &mut self,
+        bool_ty: Ref,
+        base_name: u64,
+    ) -> Result<Infinity, InfinityError>;
 }
 
 impl InfinityExt for Kernel {
     fn choose_infinity(&mut self, bool_ty: Ref) -> Result<Infinity, InfinityError> {
         let axiom = self.inf_exists(bool_ty)?;
-        let model = self.choose_model(axiom.theorem)?;
-        let map = open_exists(self, model.specification)?;
-        let missed = open_exists(self, map.body)?;
-
-        if self.category(model.ty)? != Sort::Ty
-            || self.category(map.witness)? != Sort::Tm
-            || self.category(missed.witness)? != Sort::Tm
-            || self.classifier(missed.body)? != bool_ty
-        {
-            return Err(KernelError::InvalidTheoremRule {
-                rule: "infinity package projection",
-            }
-            .into());
-        }
-
-        if self.arena().op2(missed.body) != Some(Op2::And) {
-            return Err(KernelError::InvalidTheoremRule {
-                rule: "infinity package conjunction",
-            }
-            .into());
-        }
-        let properties: Vec<_> = self
-            .arena()
-            .children(missed.body)
-            .ok_or(KernelError::MissingDefinition {
-                reference: missed.body,
-            })?
-            .collect();
-        let [reflects_equality, avoids_missed] = properties.as_slice() else {
-            return Err(KernelError::InvalidTheoremRule {
-                rule: "infinity package conjunction",
-            }
-            .into());
-        };
-
-        // Retain the chosen-model theorem as evidence for `ChosenModel`; the
-        // package theorem is a converted copy whose physical atom is exactly
-        // the beta-opened conjunction.
-        let theorem = self.copy_theorem(model.theorem)?;
-        self.convert_theorem(theorem, model.specification, missed.body)?;
-        let property = Lit::positive(missed.body.get());
-        let reflects_equality_theorem = self.expand_conclusion(theorem, property, Some(false))?;
-        let avoids_missed_theorem = self.expand_conclusion(theorem, property, Some(true))?;
-
-        Ok(Infinity {
-            axiom,
-            model,
-            carrier: model.ty,
-            map: map.witness,
-            missed: missed.witness,
-            property: missed.body,
-            reflects_equality: *reflects_equality,
-            avoids_missed: *avoids_missed,
-            theorem,
-            reflects_equality_theorem,
-            avoids_missed_theorem,
-            map_beta: map.beta,
-            missed_beta: missed.beta,
-        })
+        project_infinity(self, bool_ty, axiom)
     }
+
+    fn choose_infinity_at(
+        &mut self,
+        bool_ty: Ref,
+        base_name: u64,
+    ) -> Result<Infinity, InfinityError> {
+        let axiom = self.inf_exists_at(bool_ty, base_name)?;
+        project_infinity(self, bool_ty, axiom)
+    }
+}
+
+fn project_infinity(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    axiom: InfinityAxiom,
+) -> Result<Infinity, InfinityError> {
+    let model = kernel.choose_model(axiom.theorem)?;
+    let map = open_exists(kernel, model.specification)?;
+    let missed = open_exists(kernel, map.body)?;
+
+    if kernel.category(model.ty)? != Sort::Ty
+        || kernel.category(map.witness)? != Sort::Tm
+        || kernel.category(missed.witness)? != Sort::Tm
+        || kernel.classifier(missed.body)? != bool_ty
+    {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "infinity package projection",
+        }
+        .into());
+    }
+
+    if kernel.arena().op2(missed.body) != Some(Op2::And) {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "infinity package conjunction",
+        }
+        .into());
+    }
+    let properties: Vec<_> = kernel
+        .arena()
+        .children(missed.body)
+        .ok_or(KernelError::MissingDefinition {
+            reference: missed.body,
+        })?
+        .collect();
+    let [reflects_equality, avoids_missed] = properties.as_slice() else {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "infinity package conjunction",
+        }
+        .into());
+    };
+
+    // Retain the chosen-model theorem as evidence for `ChosenModel`; the
+    // package theorem is a converted copy whose physical atom is exactly
+    // the beta-opened conjunction.
+    let theorem = kernel.copy_theorem(model.theorem)?;
+    kernel.convert_theorem(theorem, model.specification, missed.body)?;
+    let property = Lit::positive(missed.body.get());
+    let reflects_equality_theorem = kernel.expand_conclusion(theorem, property, Some(false))?;
+    let avoids_missed_theorem = kernel.expand_conclusion(theorem, property, Some(true))?;
+
+    Ok(Infinity {
+        axiom,
+        model,
+        carrier: model.ty,
+        map: map.witness,
+        missed: missed.witness,
+        property: missed.body,
+        reflects_equality: *reflects_equality,
+        avoids_missed: *avoids_missed,
+        theorem,
+        reflects_equality_theorem,
+        avoids_missed_theorem,
+        map_beta: map.beta,
+        missed_beta: missed.beta,
+    })
 }

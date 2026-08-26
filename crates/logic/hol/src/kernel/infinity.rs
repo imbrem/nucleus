@@ -98,12 +98,33 @@ impl Kernel {
     /// Returns an error if the arena does not carry the [`AX_INF`] capability,
     /// if `bool_ty` is not Boolean, or if no names remain.
     pub fn inf_exists(&mut self, bool_ty: Ref) -> Result<InfinityAxiom, KernelError> {
+        let base_name = self.fresh_name(&[bool_ty])?;
+        self.inf_exists_at(bool_ty, base_name)
+    }
+
+    /// Concludes the axiom of infinity at an explicit hygienic name block.
+    ///
+    /// This allocation-target form lets userspace replay a frozen declaration
+    /// without making theorem identity depend on the amount of unrelated
+    /// syntax already resident in the arena. The kernel still constructs the
+    /// complete sentence itself; the caller controls names, not content.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the infinity capability and Boolean type are
+    /// present, or if the five-name block overflows `u64`.
+    pub fn inf_exists_at(
+        &mut self,
+        bool_ty: Ref,
+        base_name: u64,
+    ) -> Result<InfinityAxiom, KernelError> {
         if !self.arena.axioms().any(|name| name == AX_INF) {
             return Err(KernelError::MissingAxiom { name: AX_INF });
         }
         self.require_bool_type::<Infallible>(bool_ty)?;
-
-        let base_name = self.fresh_name(&[bool_ty])?;
+        base_name
+            .checked_add(INFINITY_BINDER_COUNT - 1)
+            .ok_or(KernelError::TooManyNames)?;
         let name = |binder: InfinityBinder| base_name + binder as u64;
 
         // The model selected from this existential is classified by the same

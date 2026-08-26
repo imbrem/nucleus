@@ -93,6 +93,31 @@ fn projection_requires_exactly_the_infinity_capability() {
 }
 
 #[test]
+fn explicit_binder_replay_is_independent_of_the_ambient_suffix() {
+    let (mut first, bool_ty) = prelude();
+    first.add_axiom(AX_INF).expect("infinity capability");
+    let selected = first
+        .choose_infinity_at(bool_ty, 100)
+        .expect("explicit selection");
+
+    let (mut second, second_bool) = prelude();
+    second.add_axiom(AX_INF).expect("infinity capability");
+    for name in 1..20 {
+        second.tm_fv(name, second_bool).expect("ambient suffix");
+    }
+    let replayed = second
+        .choose_infinity_at(second_bool, 100)
+        .expect("replayed selection");
+
+    assert_eq!(selected.axiom.base_name, replayed.axiom.base_name);
+    assert_eq!(selected.axiom.carrier_name, replayed.axiom.carrier_name);
+    assert_eq!(
+        first.arena().name(selected.axiom.exists_type),
+        second.arena().name(replayed.axiom.exists_type)
+    );
+}
+
+#[test]
 fn infinity_reflection_specializes_through_standard_hol_rules() {
     let (mut kernel, bool_ty) = prelude();
     kernel.add_axiom(AX_INF).expect("infinity capability");
