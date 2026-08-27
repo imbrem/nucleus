@@ -142,6 +142,33 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-cas-s3@0.0.0",
+      "name": "covalence-data-cas-s3",
+      "version": "0.0.0",
+      "path": "crates/data/cas-s3",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_cas_s3",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "mock",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "provider",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-data-cas-sqlite@0.0.0",
       "name": "covalence-data-cas-sqlite",
       "version": "0.0.0",
@@ -364,6 +391,21 @@
       "targets": [
         {
           "name": "covalence_lib_rand",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-s3@0.0.0",
+      "name": "covalence-lib-s3",
+      "version": "0.0.0",
+      "path": "crates/lib/s3",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_s3",
           "kinds": [
             "lib"
           ]
@@ -994,6 +1036,41 @@
       ]
     },
     {
+      "source": "workspace#covalence-data-cas-s3@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-s3@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-s3@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-s3@0.0.0",
+      "target": "workspace#covalence-lib-s3@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-s3@0.0.0",
+      "target": "workspace#covalence-logic-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-data-cas-sqlite@0.0.0",
       "target": "workspace#covalence-data-cas@0.0.0",
       "kinds": [
@@ -1164,6 +1241,13 @@
     {
       "source": "workspace#covalence-lib-hash@0.0.0",
       "target": "workspace#covalence-lib-rand@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-lib-s3@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
       "kinds": [
         "normal"
       ]

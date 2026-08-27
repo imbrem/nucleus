@@ -37,14 +37,14 @@ rust_library(
     ],
     tests = [":covalence_lib_hash-unit-test"],
     named_deps = {
-        "blake3": "nucleus//buck/cargo/production:blake3-1.8.5",
+        "blake3": "nucleus//buck/cargo/production:blake3-1.8.7",
         "cid": "nucleus//buck/cargo/production:cid-0.11.3",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_rand": "nucleus//crates/lib/rand:covalence_lib_rand",
         "serde": "nucleus//buck/cargo/production:serde-1.0.229",
         "sha1": "nucleus//buck/cargo/production:sha1-0.10.7",
         "sha2": "nucleus//buck/cargo/production:sha2-0.10.9",
-        "zerocopy": "nucleus//buck/cargo/production:zerocopy-0.8.55",
+        "zerocopy": "nucleus//buck/cargo/production:zerocopy-0.8.56",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -82,7 +82,7 @@ rust_test(
         "sha256",
     ],
     named_deps = {
-        "blake3": "nucleus//buck/cargo/production:blake3-1.8.5",
+        "blake3": "nucleus//buck/cargo/production:blake3-1.8.7",
         "cid": "nucleus//buck/cargo/production:cid-0.11.3",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_rand": "nucleus//crates/lib/rand:covalence_lib_rand",
@@ -90,7 +90,7 @@ rust_test(
         "serde_json": "nucleus//buck/cargo/production:serde_json-1.0.151",
         "sha1": "nucleus//buck/cargo/production:sha1-0.10.7",
         "sha2": "nucleus//buck/cargo/production:sha2-0.10.9",
-        "zerocopy": "nucleus//buck/cargo/production:zerocopy-0.8.55",
+        "zerocopy": "nucleus//buck/cargo/production:zerocopy-0.8.56",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
