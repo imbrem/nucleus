@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use std::sync::Arc;
 
-use covalence_data_cas::{AsyncCas, IndexCas};
+use covalence_data_cas::{AsyncCas, IndexCas, get_exact_fact};
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_lib_wasm::wasmtime;
@@ -2307,13 +2307,7 @@ impl nucleus::proof::host::HostWithStore<ProofState> for ProofState {
         let fact = if resident.is_some() {
             resident
         } else if let Some(provider) = provider {
-            match provider.get_fact(address).await {
-                Ok(Some(fact)) if fact.hash() != address => {
-                    return Ok(Err(format!(
-                        "CAS returned address {} for request {address}",
-                        fact.hash()
-                    )));
-                }
+            match get_exact_fact(provider.as_ref(), address).await {
                 Ok(fact) => fact,
                 Err(error) => return Ok(Err(error.to_string())),
             }
