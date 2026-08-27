@@ -1,5 +1,6 @@
 //! Async HTTP client for whole-object CAS reads.
 
+use covalence_data_cas::{AsyncCas, AsyncCasError, CasFuture};
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_logic_cas::{Bytes, CasFact, CasLookupError};
@@ -70,7 +71,16 @@ impl HttpCas {
     /// Returns [`HttpCasError::InvalidBase`] if `base` is not an absolute HTTP
     /// or HTTPS URL.
     pub fn new(base: &str) -> Result<Self, HttpCasError> {
-        let client = reqwest::Client::new();
+        // A redirect can cross the network boundary approved for the original
+        // CAS endpoint. Policy-aware runtimes can construct a different
+        // adapter later; the first-party backend takes the conservative path.
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|source| HttpCasError::InvalidBase {
+                base: base.to_owned(),
+                source,
+            })?;
         let base = client
             .get(base)
             .build()
@@ -198,5 +208,15 @@ impl HttpCas {
         url.set_query(None);
         url.set_fragment(None);
         url
+    }
+}
+
+impl AsyncCas for HttpCas {
+    fn get_bytes(&self, address: O256) -> CasFuture<'_, Option<Bytes>> {
+        Box::pin(async move {
+            HttpCas::get_bytes(self, address)
+                .await
+                .map_err(AsyncCasError::provider)
+        })
     }
 }

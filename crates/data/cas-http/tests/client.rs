@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
 
-use covalence_data_cas::SharedIndexCas;
+use covalence_data_cas::{AsyncCas, AsyncCasError, SharedIndexCas};
 use covalence_data_cas_http::{HttpCas, HttpCasError, serve};
 use covalence_lib_hash::O256;
 use covalence_logic_cas::CasLookupError;
@@ -12,7 +12,7 @@ use covalence_logic_cas::CasLookupError;
 #[test]
 fn rejects_non_http_urls_at_configuration_time() {
     assert!(matches!(
-        HttpCas::new("file:///tmp/not-a-service"),
+        HttpCas::new("ftp://example.invalid/not-a-service"),
         Err(HttpCasError::UnsupportedScheme { .. })
     ));
 }
@@ -74,6 +74,22 @@ fn corrupt_successful_responses_cannot_become_facts() {
         assert!(matches!(
             client.get_fact(address).await,
             Err(CasLookupError::Check { .. })
+        ));
+    });
+    server.join().unwrap();
+}
+
+#[test]
+fn composable_async_boundary_checks_corrupt_responses() {
+    let address = O256::from_bytes(b"expected");
+    let (base, server) = fixed_server("200 OK", b"different");
+    let client = HttpCas::new(&base).unwrap();
+    let provider: &dyn AsyncCas = &client;
+
+    run(async {
+        assert!(matches!(
+            provider.get_fact(address).await,
+            Err(AsyncCasError::Check { .. })
         ));
     });
     server.join().unwrap();
