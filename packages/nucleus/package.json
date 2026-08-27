@@ -39,7 +39,7 @@
     "build:proof-demos": "cargo build --locked --target wasm32-unknown-unknown -p covalence-proof-demo -p covalence-proof-invalid-demo && wasm-tools component new ../../target/wasm32-unknown-unknown/debug/covalence_proof_demo.wasm -o ../../target/wasm32-unknown-unknown/debug/covalence_proof_demo.component.wasm && wasm-tools component new ../../target/wasm32-unknown-unknown/debug/covalence_proof_invalid_demo.wasm -o ../../target/wasm32-unknown-unknown/debug/covalence_proof_invalid_demo.component.wasm",
     "check": "tsc --noEmit",
     "pretest": "pnpm run build:proof-demos",
-    "test": "node --experimental-wasm-jspi --test test/*.test.mjs"
+    "test": "node --experimental-wasm-jspi --test --test-concurrency=1 test/*.test.mjs"
   },
   "dependencies": {
     "@bytecodealliance/jco": "1.32.1",
