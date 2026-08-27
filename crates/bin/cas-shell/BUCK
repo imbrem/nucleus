@@ -35,7 +35,7 @@ rust_binary(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
-        "cc": "nucleus//buck/cargo/production:cc-1.4.0",
+        "cc": "nucleus//buck/cargo/production:cc-1.4.4",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

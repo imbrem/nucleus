@@ -30,7 +30,7 @@ rust_library(
     named_deps = {
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
-        "zerocopy": "nucleus//buck/cargo/production:zerocopy-0.8.55",
+        "zerocopy": "nucleus//buck/cargo/production:zerocopy-0.8.56",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -61,7 +61,7 @@ rust_test(
     named_deps = {
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
-        "zerocopy": "nucleus//buck/cargo/production:zerocopy-0.8.55",
+        "zerocopy": "nucleus//buck/cargo/production:zerocopy-0.8.56",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

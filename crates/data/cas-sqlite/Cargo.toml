@@ -1,0 +1,22 @@
+[package]
+name = "covalence-data-cas-sqlite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "A persistent SQLite content-addressed store"
+publish = false
+
+[dependencies]
+covalence-data-cas = { path = "../cas" }
+covalence-lib-error = { path = "../../lib/error" }
+covalence-lib-hash = { path = "../../lib/hash" }
+covalence-lib-sqlite = { path = "../../lib/sqlite" }
+futures = "0.3"
+
+[dev-dependencies]
+covalence-nucleus = { path = "../../nucleus" }
+covalence-logic-cas = { path = "../../logic/cas" }
+
+[lints]
+workspace = true

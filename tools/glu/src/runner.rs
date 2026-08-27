@@ -828,7 +828,10 @@ impl Runner {
         let ar = command_path("ar")?;
         let cc = command_path("clang")?;
         let cxx = command_path("clang++")?;
-        format_buck_configuration(&ar, &cc, &cxx)
+        let wasi_cc = command_path("wasm32-unknown-wasi-cc")?;
+        let wasm_tools = command_path("wasm-tools")?;
+        let wit_bindgen = command_path("wit-bindgen")?;
+        format_buck_configuration(&ar, &cc, &cxx, &wasi_cc, &wasm_tools, &wit_bindgen)
     }
 
     pub(crate) fn doctor(&self) -> Result<()> {
@@ -1330,8 +1333,22 @@ fn collect_lean_projects(directory: &Path, found: &mut Vec<PathBuf>) -> Result<(
     Ok(())
 }
 
-fn format_buck_configuration(ar: &Path, cc: &Path, cxx: &Path) -> Result<String> {
-    for (name, path) in [("ar", ar), ("cc", cc), ("cxx", cxx)] {
+fn format_buck_configuration(
+    ar: &Path,
+    cc: &Path,
+    cxx: &Path,
+    wasi_cc: &Path,
+    wasm_tools: &Path,
+    wit_bindgen: &Path,
+) -> Result<String> {
+    for (name, path) in [
+        ("ar", ar),
+        ("cc", cc),
+        ("cxx", cxx),
+        ("wasi_cc", wasi_cc),
+        ("wasm_tools", wasm_tools),
+        ("wit_bindgen", wit_bindgen),
+    ] {
         if !path.is_absolute() {
             bail!("Buck {name} path is not absolute: {}", path.display());
         }
@@ -1339,12 +1356,18 @@ fn format_buck_configuration(ar: &Path, cc: &Path, cxx: &Path) -> Result<String>
     Ok(format!(
         "{BUCK_CONFIG_HEADER}\n\
          [nucleus]\n\
-           ar = {}\n\
-           cc = {}\n\
-           cxx = {}\n",
+         ar = {}\n\
+         cc = {}\n\
+         cxx = {}\n\
+         wasi_cc = {}\n\
+         wasm_tools = {}\n\
+         wit_bindgen = {}\n",
         ar.display(),
         cc.display(),
         cxx.display(),
+        wasi_cc.display(),
+        wasm_tools.display(),
+        wit_bindgen.display(),
     ))
 }
 
@@ -1430,9 +1453,12 @@ mod tests {
             Path::new("/tools/ar"),
             Path::new("/tools/clang"),
             Path::new("/tools/clang++"),
+            Path::new("/tools/wasm32-unknown-wasi-cc"),
+            Path::new("/tools/wasm-tools"),
+            Path::new("/tools/wit-bindgen"),
         )
         .expect("Buck configuration");
-        for name in ["ar", "cc", "cxx"] {
+        for name in ["ar", "cc", "cxx", "wasi_cc", "wasm_tools", "wit_bindgen"] {
             let prefix = format!("{name} = ");
             let path = configuration
                 .lines()
@@ -1448,6 +1474,9 @@ mod tests {
             Path::new("ar"),
             Path::new("/tools/clang"),
             Path::new("/tools/clang++"),
+            Path::new("/tools/wasm32-unknown-wasi-cc"),
+            Path::new("/tools/wasm-tools"),
+            Path::new("/tools/wit-bindgen"),
         )
         .expect_err("relative paths must be rejected");
         assert!(error.to_string().contains("ar path is not absolute"));
