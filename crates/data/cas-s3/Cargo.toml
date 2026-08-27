@@ -8,8 +8,11 @@ description = "Async S3-compatible content-addressed storage"
 publish = false
 
 [dependencies]
-aws-config = "1"
-aws-sdk-s3 = "1"
+# The SDK defaults to AWS-LC. Its sys/build-script layering is not yet
+# representable by our generated Buck rules, while the supported Rustls/ring
+# client is portable across both Cargo and Buck.
+aws-config = { version = "1", default-features = false, features = ["credentials-process", "rt-tokio"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
 aws-smithy-types = "1"
 bytes = "1"
 covalence-lib-error = { path = "../../lib/error" }

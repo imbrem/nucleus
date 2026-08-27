@@ -136,6 +136,33 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-cas-s3@0.0.0",
+      "name": "covalence-data-cas-s3",
+      "version": "0.0.0",
+      "path": "crates/data/cas-s3",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_cas_s3",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "mock",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "provider",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-data-cbor@0.0.0",
       "name": "covalence-data-cbor",
       "version": "0.0.0",
@@ -933,6 +960,27 @@
     {
       "source": "workspace#covalence-data-cas-http@0.0.0",
       "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-s3@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-s3@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-s3@0.0.0",
+      "target": "workspace#covalence-logic-cas@0.0.0",
       "kinds": [
         "normal"
       ]

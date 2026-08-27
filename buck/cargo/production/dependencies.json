@@ -132,6 +132,26 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#arc-swap@1.9.2",
+      "name": "arc-swap",
+      "version": "1.9.2",
+      "checksum": "c049c0be4daef0b145cb3555416b3b8ef5b7888a38aea1a3a155801fe7b0810b",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Michal 'vorner' Vaner <vorner@vorner.cz>",
+        "CARGO_PKG_DESCRIPTION": "Atomically swappable Arc",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/vorner/arc-swap"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "rustversion": ":rustversion-1.0.23"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#arrayref@0.3.9",
       "name": "arrayref",
       "version": "0.3.9",
@@ -217,6 +237,689 @@
       "targets": [
         {}
       ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "name": "aws-config",
+      "version": "1.11.0",
+      "checksum": "a767267da9e2c2e189b2f9df8b5657e850ecf5352644734ba130d4a57095cf1b",
+      "edition": "2021",
+      "features": [
+        "credentials-process",
+        "rt-tokio"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:Russell Cohen <rcoh@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "AWS SDK config and credential provider implementations.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_credential_types": ":aws-credential-types-1.3.0",
+            "aws_runtime": ":aws-runtime-1.9.1",
+            "aws_sdk_sts": ":aws-sdk-sts-1.113.0",
+            "aws_smithy_async": ":aws-smithy-async-1.3.0",
+            "aws_smithy_http": ":aws-smithy-http-0.64.0",
+            "aws_smithy_json": ":aws-smithy-json-0.63.0",
+            "aws_smithy_runtime": ":aws-smithy-runtime-1.14.0",
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0",
+            "aws_smithy_schema": ":aws-smithy-schema-0.2.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "aws_types": ":aws-types-1.5.0",
+            "bytes": ":bytes-1.12.1",
+            "fastrand": ":fastrand-2.5.0",
+            "http": ":http-1.5.0",
+            "time": ":time-0.3.55",
+            "tokio": ":tokio-1.53.1",
+            "tracing": ":tracing-0.1.44",
+            "url": ":url-2.5.8"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-credential-types@1.3.0",
+      "name": "aws-credential-types",
+      "version": "1.3.0",
+      "checksum": "e93964ffdaf57857f544be3666a5f57570bb699e934700f11b49708f61bb556e",
+      "edition": "2021",
+      "features": [
+        "test-util"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "Types for AWS SDK credentials.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_smithy_async": ":aws-smithy-async-1.3.0",
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "zeroize": ":zeroize-1.9.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "name": "aws-runtime",
+      "version": "1.9.1",
+      "checksum": "c9007227e10b5fed2f3e0a2beff489211e2b5604c400b7a9d5d81ca9d64c24bb",
+      "edition": "2021",
+      "features": [
+        "event-stream",
+        "http-02x",
+        "http-1x"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "Runtime support code for the AWS SDK. This crate isn't intended to be used directly.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_credential_types": ":aws-credential-types-1.3.0",
+            "aws_sigv4": ":aws-sigv4-1.5.1",
+            "aws_smithy_async": ":aws-smithy-async-1.3.0",
+            "aws_smithy_eventstream": ":aws-smithy-eventstream-0.61.2",
+            "aws_smithy_http": ":aws-smithy-http-0.64.0",
+            "aws_smithy_runtime": ":aws-smithy-runtime-1.14.0",
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "aws_types": ":aws-types-1.5.0",
+            "bytes": ":bytes-1.12.1",
+            "bytes_utils": ":bytes-utils-0.1.4",
+            "fastrand": ":fastrand-2.5.0",
+            "http_02x": ":http-0.2.12",
+            "http_1x": ":http-1.5.0",
+            "http_body_04x": ":http-body-0.4.6",
+            "http_body_1x": ":http-body-1.1.0",
+            "percent_encoding": ":percent-encoding-2.3.2",
+            "pin_project_lite": ":pin-project-lite-0.2.17",
+            "tracing": ":tracing-0.1.44",
+            "uuid": ":uuid-1.26.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "name": "aws-sdk-s3",
+      "version": "1.144.0",
+      "checksum": "30dc8bf6baaf7d46336a0ca2c69f223d9b90d7a801fb3e28f7ea17b00dc6b1de",
+      "edition": "2021",
+      "features": [
+        "rt-tokio",
+        "rustls"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:Russell Cohen <rcoh@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "AWS SDK for Amazon Simple Storage Service",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/awslabs/aws-sdk-rust"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "arc_swap": ":arc-swap-1.9.2",
+            "aws_credential_types": ":aws-credential-types-1.3.0",
+            "aws_runtime": ":aws-runtime-1.9.1",
+            "aws_sigv4": ":aws-sigv4-1.5.1",
+            "aws_smithy_async": ":aws-smithy-async-1.3.0",
+            "aws_smithy_checksums": ":aws-smithy-checksums-0.65.0",
+            "aws_smithy_eventstream": ":aws-smithy-eventstream-0.61.2",
+            "aws_smithy_http": ":aws-smithy-http-0.64.0",
+            "aws_smithy_json": ":aws-smithy-json-0.63.0",
+            "aws_smithy_observability": ":aws-smithy-observability-0.3.0",
+            "aws_smithy_runtime": ":aws-smithy-runtime-1.14.0",
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0",
+            "aws_smithy_schema": ":aws-smithy-schema-0.2.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "aws_smithy_xml": ":aws-smithy-xml-0.62.0",
+            "aws_types": ":aws-types-1.5.0",
+            "bytes": ":bytes-1.12.1",
+            "fastrand": ":fastrand-2.5.0",
+            "hex": ":hex-0.4.3",
+            "hmac": ":hmac-0.13.0",
+            "http": ":http-0.2.12",
+            "http_1x": ":http-1.5.0",
+            "http_body_1x": ":http-body-1.1.0",
+            "lru": ":lru-0.18.2",
+            "percent_encoding": ":percent-encoding-2.3.2",
+            "regex_lite": ":regex-lite-0.1.9",
+            "sha2": ":sha2-0.11.0",
+            "tracing": ":tracing-0.1.44",
+            "url": ":url-2.5.8"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "name": "aws-sdk-sts",
+      "version": "1.113.0",
+      "checksum": "68182ecb449f7537db0f4d5d25917789cf41e32074a9fe47b6a0b847fe1d2032",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:Russell Cohen <rcoh@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "AWS SDK for AWS Security Token Service",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/awslabs/aws-sdk-rust"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "arc_swap": ":arc-swap-1.9.2",
+            "aws_credential_types": ":aws-credential-types-1.3.0",
+            "aws_runtime": ":aws-runtime-1.9.1",
+            "aws_smithy_async": ":aws-smithy-async-1.3.0",
+            "aws_smithy_http": ":aws-smithy-http-0.64.0",
+            "aws_smithy_json": ":aws-smithy-json-0.63.0",
+            "aws_smithy_observability": ":aws-smithy-observability-0.3.0",
+            "aws_smithy_query": ":aws-smithy-query-0.62.0",
+            "aws_smithy_runtime": ":aws-smithy-runtime-1.14.0",
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0",
+            "aws_smithy_schema": ":aws-smithy-schema-0.2.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "aws_smithy_xml": ":aws-smithy-xml-0.62.0",
+            "aws_types": ":aws-types-1.5.0",
+            "fastrand": ":fastrand-2.5.0",
+            "http": ":http-0.2.12",
+            "http_1x": ":http-1.5.0",
+            "regex_lite": ":regex-lite-0.1.9",
+            "tracing": ":tracing-0.1.44"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "name": "aws-sigv4",
+      "version": "1.5.1",
+      "checksum": "723c2234ad7511ceef63eab016b7ba6ff7c55590fefb96fa8467af014a07309f",
+      "edition": "2021",
+      "features": [
+        "default",
+        "http0-compat",
+        "http1",
+        "sign-eventstream",
+        "sign-http"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:David Barsky <me@davidbarsky.com>",
+        "CARGO_PKG_DESCRIPTION": "SigV4 signer for HTTP requests and Event Stream messages.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_credential_types": ":aws-credential-types-1.3.0",
+            "aws_smithy_eventstream": ":aws-smithy-eventstream-0.61.2",
+            "aws_smithy_http": ":aws-smithy-http-0.64.0",
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "bytes": ":bytes-1.12.1",
+            "form_urlencoded": ":form_urlencoded-1.2.2",
+            "hex": ":hex-0.4.3",
+            "hmac": ":hmac-0.13.0",
+            "http": ":http-1.5.0",
+            "http0": ":http-0.2.12",
+            "percent_encoding": ":percent-encoding-2.3.2",
+            "sha2": ":sha2-0.11.0",
+            "time": ":time-0.3.55",
+            "tracing": ":tracing-0.1.44"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-async@1.3.0",
+      "name": "aws-smithy-async",
+      "version": "1.3.0",
+      "checksum": "f02e407fb3b54891734224b9ffac8a71fdd35f542500fa1af95754a6b2beb316",
+      "edition": "2021",
+      "features": [
+        "rt-tokio"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:John DiSanti <jdisanti@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "Async runtime agnostic abstractions for smithy-rs.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "futures_util": ":futures-util-0.3.34",
+            "pin_project_lite": ":pin-project-lite-0.2.17",
+            "tokio": ":tokio-1.53.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "name": "aws-smithy-checksums",
+      "version": "0.65.0",
+      "checksum": "b67ecd999972b58e67cab052f5129906c08c25883bd0788ceefc55ef97d61307",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:Zelda Hessler <zhessler@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "Checksum calculation and verification callbacks",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_smithy_http": ":aws-smithy-http-0.64.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "bytes": ":bytes-1.12.1",
+            "crc_fast": ":crc-fast-1.10.0",
+            "hex": ":hex-0.4.3",
+            "http_1x": ":http-1.5.0",
+            "http_body_1x": ":http-body-1.1.0",
+            "http_body_util": ":http-body-util-0.1.4",
+            "md5": ":md-5-0.11.0",
+            "pin_project_lite": ":pin-project-lite-0.2.17",
+            "sha1": ":sha1-0.11.0",
+            "sha2": ":sha2-0.11.0",
+            "tracing": ":tracing-0.1.44"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-eventstream@0.61.2",
+      "name": "aws-smithy-eventstream",
+      "version": "0.61.2",
+      "checksum": "6de526c7b567420a31bc283657a7921b45c4cafe0827fdf2490713dcc770c28f",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:John DiSanti <jdisanti@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "Event stream logic for smithy-rs.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "bytes": ":bytes-1.12.1",
+            "crc32fast": ":crc32fast-1.5.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "name": "aws-smithy-http",
+      "version": "0.64.0",
+      "checksum": "37843d9add67c3aff5856f409c6dc315d3cdff60f9c0cb5b670dab1e9920306d",
+      "edition": "2021",
+      "features": [
+        "aws-smithy-eventstream",
+        "event-stream"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:Russell Cohen <rcoh@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "Smithy HTTP logic for smithy-rs.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_smithy_eventstream": ":aws-smithy-eventstream-0.61.2",
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "bytes": ":bytes-1.12.1",
+            "bytes_utils": ":bytes-utils-0.1.4",
+            "futures_core": ":futures-core-0.3.34",
+            "futures_util": ":futures-util-0.3.34",
+            "http_1x": ":http-1.5.0",
+            "http_body_1x": ":http-body-1.1.0",
+            "http_body_util": ":http-body-util-0.1.4",
+            "percent_encoding": ":percent-encoding-2.3.2",
+            "pin_project_lite": ":pin-project-lite-0.2.17",
+            "pin_utils": ":pin-utils-0.1.0",
+            "tracing": ":tracing-0.1.44"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "name": "aws-smithy-http-client",
+      "version": "1.4.0",
+      "checksum": "ebfd138fac0337cee7516c352757ea73b9f2266e57d0bcb5bc70e9547e45aef1",
+      "edition": "2021",
+      "features": [
+        "hyper-014",
+        "legacy-rustls-ring"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "HTTP client abstractions for generated smithy clients",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_smithy_async": ":aws-smithy-async-1.3.0",
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "h2": ":h2-0.4.19",
+            "h2_0_3": ":h2-0.3.27",
+            "http_02x": ":http-0.2.12",
+            "http_body_04x": ":http-body-0.4.6",
+            "hyper_0_14": ":hyper-0.14.32",
+            "legacy_hyper_rustls": ":hyper-rustls-0.24.2",
+            "legacy_rustls": ":rustls-0.21.12",
+            "pin_project_lite": ":pin-project-lite-0.2.17",
+            "rustls_native_certs": ":rustls-native-certs-0.8.4",
+            "tokio": ":tokio-1.53.1",
+            "tracing": ":tracing-0.1.44"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-json@0.63.0",
+      "name": "aws-smithy-json",
+      "version": "0.63.0",
+      "checksum": "3dc65a121adb4b33729919fcfa14fa36fb33c1555a8f06bb0e2188dbfdc1d9ef",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:John DiSanti <jdisanti@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "Token streaming JSON parser for smithy-rs.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0",
+            "aws_smithy_schema": ":aws-smithy-schema-0.2.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-observability@0.3.0",
+      "name": "aws-smithy-observability",
+      "version": "0.3.0",
+      "checksum": "8e86338c869539a581bf161247762a6e87f92c5c075060057b5ed6d06632ed0c",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "Smithy observability implementation.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/awslabs/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-query@0.62.0",
+      "name": "aws-smithy-query",
+      "version": "0.62.0",
+      "checksum": "512346c7212ab7436df2d77a16d976a468ae44a418835511d2a69269810aaf62",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:John DiSanti <jdisanti@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "AWSQuery and EC2Query Smithy protocol logic for smithy-rs.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0",
+            "aws_smithy_schema": ":aws-smithy-schema-0.2.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "aws_smithy_xml": ":aws-smithy-xml-0.62.0",
+            "urlencoding": ":urlencoding-2.1.3"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "name": "aws-smithy-runtime",
+      "version": "1.14.0",
+      "checksum": "b82e438d30e02a825d363bd639a9efaed68a8089d86101054b0081e7e0d3e606",
+      "edition": "2021",
+      "features": [
+        "client",
+        "connector-hyper-0-14-x",
+        "rt-tokio",
+        "tls-rustls"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:Zelda Hessler <zhessler@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "The new smithy runtime crate",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_smithy_async": ":aws-smithy-async-1.3.0",
+            "aws_smithy_http": ":aws-smithy-http-0.64.0",
+            "aws_smithy_http_client": ":aws-smithy-http-client-1.4.0",
+            "aws_smithy_observability": ":aws-smithy-observability-0.3.0",
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0",
+            "aws_smithy_schema": ":aws-smithy-schema-0.2.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "bytes": ":bytes-1.12.1",
+            "fastrand": ":fastrand-2.5.0",
+            "http_02x": ":http-0.2.12",
+            "http_1x": ":http-1.5.0",
+            "http_body_04x": ":http-body-0.4.6",
+            "http_body_1x": ":http-body-1.1.0",
+            "http_body_util": ":http-body-util-0.1.4",
+            "pin_project_lite": ":pin-project-lite-0.2.17",
+            "pin_utils": ":pin-utils-0.1.0",
+            "tokio": ":tokio-1.53.1",
+            "tracing": ":tracing-0.1.44"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "name": "aws-smithy-runtime-api",
+      "version": "1.15.0",
+      "checksum": "954c563ce84507722d2679f07a35d21b9c6466b3872d513020d0281fc8112ac9",
+      "edition": "2021",
+      "features": [
+        "client",
+        "default",
+        "http-02x",
+        "http-1x",
+        "http-auth",
+        "legacy-client",
+        "test-util"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:Zelda Hessler <zhessler@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "Smithy runtime types.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_smithy_async": ":aws-smithy-async-1.3.0",
+            "aws_smithy_runtime_api_macros": ":aws-smithy-runtime-api-macros-1.1.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "bytes": ":bytes-1.12.1",
+            "http_02x": ":http-0.2.12",
+            "http_1x": ":http-1.5.0",
+            "pin_project_lite": ":pin-project-lite-0.2.17",
+            "tokio": ":tokio-1.53.1",
+            "tracing": ":tracing-0.1.44",
+            "zeroize": ":zeroize-1.9.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api-macros@1.1.0",
+      "name": "aws-smithy-runtime-api-macros",
+      "version": "1.1.0",
+      "checksum": "221eaa237ddf1ca79b60d1372aad77e47f9c0ea5b3ce5099da8c61d027dc77b3",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "Proc macros for aws-smithy-runtime-api.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-2.0.119"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-schema@0.2.0",
+      "name": "aws-smithy-schema",
+      "version": "0.2.0",
+      "checksum": "7d56e0a4e53127a632224e43633b0fe045fa9e1e3cfc68b9830f1115e103f910",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "Schema types for the smithy-rs ecosystem",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "http": ":http-1.5.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "name": "aws-smithy-types",
+      "version": "1.6.2",
+      "checksum": "fce83ce9abbb198d25bc7131e468d0f9fe1257125e58c39f3f9fc9f5098c9647",
+      "edition": "2021",
+      "features": [
+        "byte-stream-poll-next",
+        "http-body-0-4-x",
+        "http-body-1-x",
+        "rt-tokio",
+        "test-util"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:Russell Cohen <rcoh@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "Types for smithy-rs codegen.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "base64_simd": ":base64-simd-0.8.0",
+            "bytes": ":bytes-1.12.1",
+            "bytes_utils": ":bytes-utils-0.1.4",
+            "futures_core": ":futures-core-0.3.34",
+            "http": ":http-0.2.12",
+            "http_1x": ":http-1.5.0",
+            "http_body_0_4": ":http-body-0.4.6",
+            "http_body_1_0": ":http-body-1.1.0",
+            "http_body_util": ":http-body-util-0.1.4",
+            "itoa": ":itoa-1.0.18",
+            "num_integer": ":num-integer-0.1.47",
+            "pin_project_lite": ":pin-project-lite-0.2.17",
+            "pin_utils": ":pin-utils-0.1.0",
+            "ryu": ":ryu-1.0.23",
+            "time": ":time-0.3.55",
+            "tokio": ":tokio-1.53.1",
+            "tokio_util": ":tokio-util-0.7.19"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-xml@0.62.0",
+      "name": "aws-smithy-xml",
+      "version": "0.62.0",
+      "checksum": "ce84f71c72fee2cbbadde6e7d082f5fb466e3a84733855295fa7aafd1b31b7d8",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:Russell Cohen <rcoh@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "XML parsing logic for Smithy protocols.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0",
+            "aws_smithy_schema": ":aws-smithy-schema-0.2.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "xmlparser": ":xmlparser-0.13.6"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#aws-types@1.5.0",
+      "name": "aws-types",
+      "version": "1.5.0",
+      "checksum": "eec1cd5469f328c782dc3e33d4153cf118a54e33cbb3356d60d16f89883e1f94",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "AWS Rust SDK Team <aws-sdk-rust@amazon.com>:Russell Cohen <rcoh@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "Cross-service types for the AWS SDK.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smithy-lang/smithy-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "aws_credential_types": ":aws-credential-types-1.3.0",
+            "aws_smithy_async": ":aws-smithy-async-1.3.0",
+            "aws_smithy_runtime_api": ":aws-smithy-runtime-api-1.15.0",
+            "aws_smithy_schema": ":aws-smithy-schema-0.2.0",
+            "aws_smithy_types": ":aws-smithy-types-1.6.2",
+            "tracing": ":tracing-0.1.44"
+          }
+        }
+      ],
+      "buildscript": {
+        "named_deps": {
+          "rustc_version": ":rustc_version-0.4.1"
+        }
+      }
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
@@ -472,6 +1175,32 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#base64-simd@0.8.0",
+      "name": "base64-simd",
+      "version": "0.8.0",
+      "checksum": "339abbe78e73178762e23bea9dfd08e697eb3f3301cd4be981c0f78ba5859195",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "default",
+        "detect",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "SIMD-accelerated base64 encoding and decoding",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/Nugine/simd"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "outref": ":outref-0.5.2",
+            "vsimd": ":vsimd-0.8.0"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#base64ct@1.8.3",
       "name": "base64ct",
       "version": "1.8.3",
@@ -565,6 +1294,26 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#block-buffer@0.12.1",
+      "name": "block-buffer",
+      "version": "0.12.1",
+      "checksum": "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "RustCrypto Developers",
+        "CARGO_PKG_DESCRIPTION": "Buffer types for block processing of data",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/RustCrypto/utils"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "hybrid_array": ":hybrid-array-0.4.14"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#borsh@1.8.0",
       "name": "borsh",
       "version": "1.8.0",
@@ -635,6 +1384,31 @@
       },
       "targets": [
         {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#bytes-utils@0.1.4",
+      "name": "bytes-utils",
+      "version": "0.1.4",
+      "checksum": "7dafe3a8757b027e2be6e4e5601ed563c55989fcf1546e933c66c8eb3a058d35",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Michal 'vorner' Vaner <vorner@vorner.cz>",
+        "CARGO_PKG_DESCRIPTION": "Additional utilities for working with the bytes crate",
+        "CARGO_PKG_LICENSE": "Apache-2.0/MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/vorner/bytes-utils"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bytes": ":bytes-1.12.1",
+            "either": ":either-1.18.0"
+          }
+        }
       ]
     },
     {
@@ -898,6 +1672,22 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cmov@0.5.4",
+      "name": "cmov",
+      "version": "0.5.4",
+      "checksum": "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "RustCrypto Developers",
+        "CARGO_PKG_DESCRIPTION": "Conditional move CPU intrinsics which are guaranteed on major platforms (ARM32/ARM64, x86/x86_64,\nRISC-V) to execute in constant-time and not be rewritten as branches by the compiler. Provides\nwrappers for the CMOV family of instructions on x86/x86_64 and CSEL on AArch64, along with a\nportable \"best-effort\" pure Rust fallback implementation.\n",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/RustCrypto/utils"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#cobs@0.3.0",
       "name": "cobs",
       "version": "0.3.0",
@@ -915,6 +1705,23 @@
             "thiserror": ":thiserror-2.0.19"
           }
         }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#const-oid@0.10.2",
+      "name": "const-oid",
+      "version": "0.10.2",
+      "checksum": "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "RustCrypto Developers",
+        "CARGO_PKG_DESCRIPTION": "Const-friendly implementation of the ISO/IEC Object Identifier (OID) standard\nas defined in ITU X.660, with support for BER/DER encoding/decoding as well as\nheapless no_std (i.e. embedded) support\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/RustCrypto/formats/tree/master/const-oid",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/RustCrypto/formats"
+      },
+      "targets": [
+        {}
       ]
     },
     {
@@ -1355,12 +2162,42 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#crc-fast@1.10.0",
+      "name": "crc-fast",
+      "version": "1.10.0",
+      "checksum": "e75b2483e97a5a7da73ac68a05b629f9c53cff58d8ed1c77866079e18b00dba5",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "default",
+        "digest",
+        "ffi",
+        "panic-handler",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Don MacAskill",
+        "CARGO_PKG_DESCRIPTION": "World's fastest generic CRC16, CRC32, and CRC64 calculator using SIMD. Supplies a C-compatible shared library for use in other languages.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/awesomized/crc-fast-rust"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "digest": ":digest-0.10.7",
+            "spin": ":spin-0.10.1"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#crc32fast@1.5.1",
       "name": "crc32fast",
       "version": "1.5.1",
       "checksum": "8498c871161e1742aaa9d52551b2d6ebdd4c3d45a3be423e3728f33b955be550",
       "edition": "2021",
       "features": [
+        "default",
         "std"
       ],
       "env": {
@@ -1398,6 +2235,47 @@
           "named_deps": {
             "generic_array": ":generic-array-0.14.7",
             "typenum": ":typenum-1.20.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#crypto-common@0.2.2",
+      "name": "crypto-common",
+      "version": "0.2.2",
+      "checksum": "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "RustCrypto Developers",
+        "CARGO_PKG_DESCRIPTION": "Common traits used by cryptographic algorithms",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/RustCrypto/traits"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "hybrid_array": ":hybrid-array-0.4.14"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#ctutils@0.4.2",
+      "name": "ctutils",
+      "version": "0.4.2",
+      "checksum": "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "RustCrypto Developers",
+        "CARGO_PKG_DESCRIPTION": "Constant-time utility library with selection and equality testing support targeting cryptographic\napplications. Supports `const fn` where appropriate. Built on the `cmov` crate which provides\narchitecture-specific predication intrinsics. Heavily inspired by the `subtle` crate.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/RustCrypto/utils/tree/master/ctselect",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/RustCrypto/utils"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cmov": ":cmov-0.5.4"
           }
         }
       ]
@@ -1549,6 +2427,25 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#deranged@0.5.8",
+      "name": "deranged",
+      "version": "0.5.8",
+      "checksum": "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c",
+      "edition": "2021",
+      "features": [
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jacob Pratt <jacob@jhpratt.dev>",
+        "CARGO_PKG_DESCRIPTION": "Ranged integers",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/jhpratt/deranged"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#digest@0.10.7",
       "name": "digest",
       "version": "0.10.7",
@@ -1572,6 +2469,36 @@
           "named_deps": {
             "block_buffer": ":block-buffer-0.10.4",
             "crypto_common": ":crypto-common-0.1.7"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#digest@0.11.3",
+      "name": "digest",
+      "version": "0.11.3",
+      "checksum": "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2",
+      "edition": "2024",
+      "features": [
+        "alloc",
+        "block-api",
+        "default",
+        "mac",
+        "oid"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "RustCrypto Developers",
+        "CARGO_PKG_DESCRIPTION": "Traits for cryptographic hash functions and message authentication codes",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/RustCrypto/traits"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "block_buffer": ":block-buffer-0.12.1",
+            "common": ":crypto-common-0.2.2",
+            "const_oid": ":const-oid-0.10.2",
+            "ctutils": ":ctutils-0.4.2"
           }
         }
       ]
@@ -1760,6 +2687,7 @@
       "checksum": "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb",
       "edition": "2018",
       "features": [
+        "default",
         "std"
       ],
       "env": {
@@ -1774,6 +2702,27 @@
             "libc": ":libc-0.2.189"
           }
         }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#fastrand@2.5.0",
+      "name": "fastrand",
+      "version": "2.5.0",
+      "checksum": "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Stjepan Glavina <stjepang@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A simple and fast random number generator",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/smol-rs/fastrand"
+      },
+      "targets": [
+        {}
       ]
     },
     {
@@ -2033,6 +2982,7 @@
       "edition": "2018",
       "features": [
         "alloc",
+        "default",
         "std"
       ],
       "env": {
@@ -2261,6 +3211,66 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#h2@0.3.27",
+      "name": "h2",
+      "version": "0.3.27",
+      "checksum": "0beca50380b1fc32983fc1cb4587bfa4bb9e78fc259aad4a0032d2080309222d",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Carl Lerche <me@carllerche.com>:Sean McArthur <sean@seanmonstar.com>",
+        "CARGO_PKG_DESCRIPTION": "An HTTP/2 client and server",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/hyperium/h2"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bytes": ":bytes-1.12.1",
+            "fnv": ":fnv-1.0.7",
+            "futures_core": ":futures-core-0.3.34",
+            "futures_sink": ":futures-sink-0.3.34",
+            "futures_util": ":futures-util-0.3.34",
+            "http": ":http-0.2.12",
+            "indexmap": ":indexmap-2.14.0",
+            "slab": ":slab-0.4.12",
+            "tokio": ":tokio-1.53.1",
+            "tokio_util": ":tokio-util-0.7.19",
+            "tracing": ":tracing-0.1.44"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#h2@0.4.19",
+      "name": "h2",
+      "version": "0.4.19",
+      "checksum": "ef8e5e5a340588f4452631496976cf8636d4a7ecf600239fdc27615d2530bc16",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Carl Lerche <me@carllerche.com>:Sean McArthur <sean@seanmonstar.com>",
+        "CARGO_PKG_DESCRIPTION": "An HTTP/2 client and server",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/hyperium/h2"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "atomic_waker": ":atomic-waker-1.1.2",
+            "bytes": ":bytes-1.12.1",
+            "fnv": ":fnv-1.0.7",
+            "futures_core": ":futures-core-0.3.34",
+            "futures_sink": ":futures-sink-0.3.34",
+            "http": ":http-1.5.0",
+            "indexmap": ":indexmap-2.14.0",
+            "slab": ":slab-0.4.12",
+            "tokio": ":tokio-1.53.1",
+            "tokio_util": ":tokio-util-0.7.19",
+            "tracing": ":tracing-0.1.44"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#half@2.7.1",
       "name": "half",
       "version": "2.7.1",
@@ -2311,7 +3321,12 @@
       "checksum": "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a",
       "edition": "2024",
       "features": [
+        "allocator-api2",
+        "default",
         "default-hasher",
+        "equivalent",
+        "inline-more",
+        "raw-entry",
         "serde"
       ],
       "env": {
@@ -2322,6 +3337,8 @@
       "targets": [
         {
           "named_deps": {
+            "allocator_api2": ":allocator-api2-0.2.21",
+            "equivalent": ":equivalent-1.0.2",
             "foldhash": ":foldhash-0.2.0",
             "serde_core": ":serde_core-1.0.229"
           }
@@ -2392,6 +3409,69 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#hex@0.4.3",
+      "name": "hex",
+      "version": "0.4.3",
+      "checksum": "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "KokaKiwi <kokakiwi@kokakiwi.net>",
+        "CARGO_PKG_DESCRIPTION": "Encoding and decoding data into/from hexadecimal representation.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/KokaKiwi/rust-hex"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#hmac@0.13.0",
+      "name": "hmac",
+      "version": "0.13.0",
+      "checksum": "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "RustCrypto Developers",
+        "CARGO_PKG_DESCRIPTION": "Generic implementation of Hash-based Message Authentication Code (HMAC)",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/RustCrypto/MACs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "digest": ":digest-0.11.3"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "name": "http",
+      "version": "0.2.12",
+      "checksum": "601cbb57e577e2f5ef5be8e7b83f0f63994f25aa94d673e54a92d5c516d101f1",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>:Carl Lerche <me@carllerche.com>:Sean McArthur <sean@seanmonstar.com>",
+        "CARGO_PKG_DESCRIPTION": "A set of types for representing HTTP requests and responses.\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/hyperium/http"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bytes": ":bytes-1.12.1",
+            "fnv": ":fnv-1.0.7",
+            "itoa": ":itoa-1.0.18"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
       "name": "http",
       "version": "1.5.0",
@@ -2412,6 +3492,28 @@
           "named_deps": {
             "bytes": ":bytes-1.12.1",
             "itoa": ":itoa-1.0.18"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#http-body@0.4.6",
+      "name": "http-body",
+      "version": "0.4.6",
+      "checksum": "7ceab25649e9960c0311ea418d17bee82c0dcec1bd053b5f9a66e265a693bed2",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Carl Lerche <me@carllerche.com>:Lucio Franco <luciofranco14@gmail.com>:Sean McArthur <sean@seanmonstar.com>",
+        "CARGO_PKG_DESCRIPTION": "Trait representing an asynchronous, streaming, HTTP request or response body.\n",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/hyperium/http-body"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bytes": ":bytes-1.12.1",
+            "http": ":http-0.2.12",
+            "pin_project_lite": ":pin-project-lite-0.2.17"
           }
         }
       ]
@@ -2502,6 +3604,73 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#hybrid-array@0.4.14",
+      "name": "hybrid-array",
+      "version": "0.4.14",
+      "checksum": "707114b52a152fa7bdb290cd7cd5912d9467273b6d74e21b8d81aca1f8533f6b",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "RustCrypto Developers",
+        "CARGO_PKG_DESCRIPTION": "Hybrid typenum-based and const generic array types designed to provide the\nflexibility of typenum-based expressions while also allowing interoperability\nand a transition path to const generics\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/RustCrypto/hybrid-array"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "typenum": ":typenum-1.20.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "name": "hyper",
+      "version": "0.14.32",
+      "checksum": "41dfc780fdec9373c01bae43289ea34c972e40ee3c9f6b3c8801a35f35586ce7",
+      "edition": "2018",
+      "features": [
+        "client",
+        "h2",
+        "http1",
+        "http2",
+        "runtime",
+        "server",
+        "socket2",
+        "stream",
+        "tcp"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Sean McArthur <sean@seanmonstar.com>",
+        "CARGO_PKG_DESCRIPTION": "A fast and correct HTTP library.",
+        "CARGO_PKG_HOMEPAGE": "https://hyper.rs",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/hyperium/hyper"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bytes": ":bytes-1.12.1",
+            "futures_channel": ":futures-channel-0.3.34",
+            "futures_core": ":futures-core-0.3.34",
+            "futures_util": ":futures-util-0.3.34",
+            "h2": ":h2-0.3.27",
+            "http": ":http-0.2.12",
+            "http_body": ":http-body-0.4.6",
+            "httparse": ":httparse-1.10.1",
+            "httpdate": ":httpdate-1.0.3",
+            "itoa": ":itoa-1.0.18",
+            "pin_project_lite": ":pin-project-lite-0.2.17",
+            "socket2": ":socket2-0.5.10",
+            "tokio": ":tokio-1.53.1",
+            "tower_service": ":tower-service-0.3.3",
+            "tracing": ":tracing-0.1.44",
+            "want": ":want-0.3.1"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#hyper@1.11.0",
       "name": "hyper",
       "version": "1.11.0",
@@ -2534,6 +3703,41 @@
             "pin_project_lite": ":pin-project-lite-0.2.17",
             "smallvec": ":smallvec-1.15.2",
             "tokio": ":tokio-1.53.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.24.2",
+      "name": "hyper-rustls",
+      "version": "0.24.2",
+      "checksum": "ec3efd23720e2049821a693cbc7e65ea87c72f1c58ff2f9522ff332b1491e590",
+      "edition": "2021",
+      "features": [
+        "acceptor",
+        "http1",
+        "http2",
+        "log",
+        "logging",
+        "tls12",
+        "tokio-runtime"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Rustls+hyper integration for pure rust HTTPS",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rustls/hyper-rustls",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR ISC OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rustls/hyper-rustls"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "futures_util": ":futures-util-0.3.34",
+            "http": ":http-0.2.12",
+            "hyper": ":hyper-0.14.32",
+            "log": ":log-0.4.33",
+            "rustls": ":rustls-0.21.12",
+            "tokio": ":tokio-1.53.1",
+            "tokio_rustls": ":tokio-rustls-0.24.1"
           }
         }
       ]
@@ -3137,6 +4341,31 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#lru@0.18.2",
+      "name": "lru",
+      "version": "0.18.2",
+      "checksum": "5d2f2f9b4ba7e6b24d95e7e899329d35be83bcded72c8540cdd5368932d1d90a",
+      "edition": "2015",
+      "features": [
+        "default",
+        "hashbrown"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jerome Froelich <jeromefroelic@hotmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A LRU cache implementation",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/jeromefroe/lru-rs",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/jeromefroe/lru-rs.git"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "hashbrown": ":hashbrown-0.17.1"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#macro-string@0.2.0",
       "name": "macro-string",
       "version": "0.2.0",
@@ -3214,6 +4443,33 @@
       },
       "targets": [
         {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#md-5@0.11.0",
+      "name": "md-5",
+      "version": "0.11.0",
+      "checksum": "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98",
+      "edition": "2024",
+      "features": [
+        "alloc",
+        "default",
+        "oid"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "RustCrypto Developers",
+        "CARGO_PKG_DESCRIPTION": "MD5 hash function",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/RustCrypto/hashes"
+      },
+      "targets": [
+        {
+          "crate_name": "md5",
+          "named_deps": {
+            "cfg_if": ":cfg-if-1.0.4",
+            "digest": ":digest-0.11.3"
+          }
+        }
       ]
     },
     {
@@ -3457,12 +4713,29 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#num-conv@0.2.2",
+      "name": "num-conv",
+      "version": "0.2.2",
+      "checksum": "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jacob Pratt <jacob@jhpratt.dev>",
+        "CARGO_PKG_DESCRIPTION": "`num_conv` is a crate to convert between integer types without using `as` casts. This provides\nbetter certainty when refactoring, makes the exact behavior of code more explicit, and allows using\nturbofish syntax.\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/jhpratt/num-conv"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47",
       "name": "num-integer",
       "version": "0.1.47",
       "checksum": "7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b",
       "edition": "2018",
       "features": [
+        "default",
         "i128",
         "std"
       ],
@@ -3601,6 +4874,38 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#openssl-probe@0.2.1",
+      "name": "openssl-probe",
+      "version": "0.2.1",
+      "checksum": "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>",
+        "CARGO_PKG_DESCRIPTION": "A library for helping to find system-wide trust anchor (\"root\") certificate\nlocations based on paths typically used by `openssl`.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rustls/openssl-probe",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rustls/openssl-probe"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#outref@0.5.2",
+      "name": "outref",
+      "version": "0.5.2",
+      "checksum": "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Out reference",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/Nugine/outref"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#owo-colors@4.3.0",
       "name": "owo-colors",
       "version": "4.3.0",
@@ -3648,6 +4953,22 @@
         "CARGO_PKG_DESCRIPTION": "A lightweight version of pin-project written with declarative macros.\n",
         "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
         "CARGO_PKG_REPOSITORY": "https://github.com/taiki-e/pin-project-lite"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#pin-utils@0.1.0",
+      "name": "pin-utils",
+      "version": "0.1.0",
+      "checksum": "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Josef Brandl <mail@josefbrandl.de>",
+        "CARGO_PKG_DESCRIPTION": "Utilities for pinning\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang-nursery/pin-utils"
       },
       "targets": [
         {}
@@ -3743,6 +5064,22 @@
             "zerovec": ":zerovec-0.11.8"
           }
         }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#powerfmt@0.2.0",
+      "name": "powerfmt",
+      "version": "0.2.0",
+      "checksum": "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jacob Pratt <jacob@jhpratt.dev>",
+        "CARGO_PKG_DESCRIPTION": "    `powerfmt` is a library that provides utilities for formatting values. This crate makes it\n    significantly easier to support filling to a minimum width with alignment, avoid heap\n    allocation, and avoid repetitive calculations.\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/jhpratt/powerfmt"
+      },
+      "targets": [
+        {}
       ]
     },
     {
@@ -4240,6 +5577,60 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#regex-lite@0.1.9",
+      "name": "regex-lite",
+      "version": "0.1.9",
+      "checksum": "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std",
+        "string"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Rust Project Developers:Andrew Gallant <jamslam@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A lightweight regex engine that optimizes for binary size and compilation time.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rust-lang/regex/tree/master/regex-lite",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/regex"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
+      "name": "ring",
+      "version": "0.17.14",
+      "checksum": "a4689e6c2294d81e88dc6261c768b63bc4fcdb852be6d1352498b114f61383b7",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "default",
+        "dev_urandom_fallback"
+      ],
+      "env": {
+        "CARGO_MANIFEST_LINKS": "ring_core_0_17_14_",
+        "CARGO_PKG_DESCRIPTION": "An experiment.",
+        "CARGO_PKG_LICENSE": "Apache-2.0 AND ISC",
+        "CARGO_PKG_REPOSITORY": "https://github.com/briansmith/ring"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cfg_if": ":cfg-if-1.0.4",
+            "getrandom": ":getrandom-0.2.17",
+            "untrusted": ":untrusted-0.9.0"
+          }
+        }
+      ],
+      "buildscript": {
+        "named_deps": {
+          "cc": ":cc-1.4.0"
+        }
+      }
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#rustc-demangle@0.1.28",
       "name": "rustc-demangle",
       "version": "0.1.28",
@@ -4360,6 +5751,108 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.21.12",
+      "name": "rustls",
+      "version": "0.21.12",
+      "checksum": "3f56a14d1f48b391359b22f731fd4bd7e43c97f3c50eee276f3aa09c94784d3e",
+      "edition": "2021",
+      "features": [
+        "default",
+        "log",
+        "logging",
+        "tls12"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Rustls is a modern TLS library written in Rust.",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rustls/rustls",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR ISC OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rustls/rustls"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "log": ":log-0.4.33",
+            "ring": ":ring-0.17.14",
+            "sct": ":sct-0.7.1",
+            "webpki": ":rustls-webpki-0.101.7"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustls-native-certs@0.8.4",
+      "name": "rustls-native-certs",
+      "version": "0.8.4",
+      "checksum": "dab5152771c58876a2146916e53e35057e1a4dfa2b9df0f0305b07f611fdea4d",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "rustls-native-certs allows rustls to use the platform native certificate store",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rustls/rustls-native-certs",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR ISC OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rustls/rustls-native-certs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "openssl_probe": ":openssl-probe-0.2.1",
+            "pki_types": ":rustls-pki-types-1.15.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustls-pki-types@1.15.1",
+      "name": "rustls-pki-types",
+      "version": "1.15.1",
+      "checksum": "2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Shared types for the rustls PKI ecosystem",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rustls/pki-types",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rustls/pki-types"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "zeroize": ":zeroize-1.9.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustls-webpki@0.101.7",
+      "name": "rustls-webpki",
+      "version": "0.101.7",
+      "checksum": "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Web PKI X.509 Certificate Verification.",
+        "CARGO_PKG_LICENSE": "ISC",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rustls/webpki"
+      },
+      "targets": [
+        {
+          "crate_name": "webpki",
+          "named_deps": {
+            "ring": ":ring-0.17.14",
+            "untrusted": ":untrusted-0.9.0"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#rustversion@1.0.23",
       "name": "rustversion",
       "version": "1.0.23",
@@ -4394,6 +5887,28 @@
       },
       "targets": [
         {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#sct@0.7.1",
+      "name": "sct",
+      "version": "0.7.1",
+      "checksum": "da046153aa2352493d6cb7da4b6e5c0c057d8a1d0a9aa8560baffdd945acd414",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Joseph Birr-Pixton <jpixton@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Certificate transparency SCT verification library",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rustls/sct.rs",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR ISC OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rustls/sct.rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "ring": ":ring-0.17.14",
+            "untrusted": ":untrusted-0.9.0"
+          }
+        }
       ]
     },
     {
@@ -4603,6 +6118,33 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#sha1@0.11.0",
+      "name": "sha1",
+      "version": "0.11.0",
+      "checksum": "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214",
+      "edition": "2024",
+      "features": [
+        "alloc",
+        "default",
+        "oid"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "RustCrypto Developers",
+        "CARGO_PKG_DESCRIPTION": "SHA-1 hash function",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/RustCrypto/hashes"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cfg_if": ":cfg-if-1.0.4",
+            "cpufeatures": ":cpufeatures-0.3.0",
+            "digest": ":digest-0.11.3"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
       "name": "sha2",
       "version": "0.10.9",
@@ -4629,6 +6171,33 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#sha2@0.11.0",
+      "name": "sha2",
+      "version": "0.11.0",
+      "checksum": "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4",
+      "edition": "2024",
+      "features": [
+        "alloc",
+        "default",
+        "oid"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "RustCrypto Developers",
+        "CARGO_PKG_DESCRIPTION": "Pure Rust implementation of the SHA-2 hash function family\nincluding SHA-224, SHA-256, SHA-384, and SHA-512.\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/RustCrypto/hashes"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cfg_if": ":cfg-if-1.0.4",
+            "cpufeatures": ":cpufeatures-0.3.0",
+            "digest": ":digest-0.11.3"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#shlex@2.0.1",
       "name": "shlex",
       "version": "2.0.1",
@@ -4646,6 +6215,27 @@
       },
       "targets": [
         {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#signal-hook-registry@1.4.8",
+      "name": "signal-hook-registry",
+      "version": "1.4.8",
+      "checksum": "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Michal 'vorner' Vaner <vorner@vorner.cz>:Masaki Hara <ackie.h.gmai@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Backend crate for signal-hook",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/vorner/signal-hook"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "errno": ":errno-0.3.14",
+            "libc": ":libc-0.2.189"
+          }
+        }
       ]
     },
     {
@@ -4679,6 +6269,7 @@
       "checksum": "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5",
       "edition": "2018",
       "features": [
+        "default",
         "std"
       ],
       "env": {
@@ -4793,6 +6384,30 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#socket2@0.5.10",
+      "name": "socket2",
+      "version": "0.5.10",
+      "checksum": "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678",
+      "edition": "2021",
+      "features": [
+        "all"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>:Thomas de Zeeuw <thomasdezeeuw@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Utilities for handling networking sockets with a maximal amount of configuration\npossible intended.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rust-lang/socket2",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/socket2"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "libc": ":libc-0.2.189"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#socket2@0.6.5",
       "name": "socket2",
       "version": "0.6.5",
@@ -4814,6 +6429,28 @@
             "libc": ":libc-0.2.189"
           }
         }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#spin@0.10.1",
+      "name": "spin",
+      "version": "0.10.1",
+      "checksum": "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3",
+      "edition": "2015",
+      "features": [
+        "mutex",
+        "once",
+        "rwlock",
+        "spin_mutex"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Mathijs van de Nes <git@mathijs.vd-nes.nl>:John Ericson <git@JohnEricson.me>:Joshua Barretto <joshua.s.barretto@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Spin-based synchronization primitives",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/mvdnes/spin-rs.git"
+      },
+      "targets": [
+        {}
       ]
     },
     {
@@ -5172,6 +6809,79 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#time@0.3.55",
+      "name": "time",
+      "version": "0.3.55",
+      "checksum": "cdb87b95ec50ddfa440816d227a17b2ccbdda963a316a727fda0fc4334f7d134",
+      "edition": "2024",
+      "features": [
+        "alloc",
+        "default",
+        "parsing",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jacob Pratt <open-source@jhpratt.dev>:Time contributors",
+        "CARGO_PKG_DESCRIPTION": "Date and time library. Fully interoperable with the standard library. Mostly compatible with #![no_std].",
+        "CARGO_PKG_HOMEPAGE": "https://time-rs.github.io",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/time-rs/time"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "deranged": ":deranged-0.5.8",
+            "num_conv": ":num-conv-0.2.2",
+            "powerfmt": ":powerfmt-0.2.0",
+            "serde_core": ":serde_core-1.0.229",
+            "time_core": ":time-core-0.1.9",
+            "time_macros": ":time-macros-0.2.32"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#time-core@0.1.9",
+      "name": "time-core",
+      "version": "0.1.9",
+      "checksum": "9e1c906769ad99c88eaa54e728060edef082f8e358ff32030cb7c7d315e81109",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jacob Pratt <open-source@jhpratt.dev>:Time contributors",
+        "CARGO_PKG_DESCRIPTION": "This crate is an implementation detail and should not be relied upon directly.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/time-rs/time"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#time-macros@0.2.32",
+      "name": "time-macros",
+      "version": "0.2.32",
+      "checksum": "7e689342a48d2ea927c87ea50cabf8594854bf940e9310208848d680d668ed85",
+      "edition": "2024",
+      "features": [
+        "parsing"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jacob Pratt <open-source@jhpratt.dev>:Time contributors",
+        "CARGO_PKG_DESCRIPTION": "    Procedural macros for the time crate.\n    This crate is an implementation detail and should not be relied upon directly.\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/time-rs/time"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "num_conv": ":num-conv-0.2.2",
+            "time_core": ":time-core-0.1.9"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#tinystr@0.8.4",
       "name": "tinystr",
       "version": "0.8.4",
@@ -5204,14 +6914,17 @@
       "features": [
         "bytes",
         "default",
+        "fs",
         "io-std",
         "io-util",
         "libc",
         "macros",
         "mio",
         "net",
+        "process",
         "rt",
         "rt-multi-thread",
+        "signal-hook-registry",
         "socket2",
         "sync",
         "time",
@@ -5232,6 +6945,7 @@
             "libc": ":libc-0.2.189",
             "mio": ":mio-1.2.2",
             "pin_project_lite": ":pin-project-lite-0.2.17",
+            "signal_hook_registry": ":signal-hook-registry-1.4.8",
             "socket2": ":socket2-0.6.5",
             "tokio_macros": ":tokio-macros-2.7.2"
           }
@@ -5259,6 +6973,63 @@
             "syn": ":syn-3.0.3"
           },
           "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#tokio-rustls@0.24.1",
+      "name": "tokio-rustls",
+      "version": "0.24.1",
+      "checksum": "c28327cf380ac148141087fbfb9de9d7bd4e84ab5d2c28fbc911d753de8a7081",
+      "edition": "2018",
+      "features": [
+        "logging",
+        "tls12"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Asynchronous TLS/SSL streams for Tokio using Rustls.",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rustls/tokio-rustls",
+        "CARGO_PKG_LICENSE": "MIT/Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rustls/tokio-rustls"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "rustls": ":rustls-0.21.12",
+            "tokio": ":tokio-1.53.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#tokio-util@0.7.19",
+      "name": "tokio-util",
+      "version": "0.7.19",
+      "checksum": "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52",
+      "edition": "2021",
+      "features": [
+        "codec",
+        "default",
+        "io",
+        "libc"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Tokio Contributors <team@tokio.rs>",
+        "CARGO_PKG_DESCRIPTION": "Additional utilities for working with Tokio.\n",
+        "CARGO_PKG_HOMEPAGE": "https://tokio.rs",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/tokio-rs/tokio"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bytes": ":bytes-1.12.1",
+            "futures_core": ":futures-core-0.3.34",
+            "futures_sink": ":futures-sink-0.3.34",
+            "libc": ":libc-0.2.189",
+            "pin_project_lite": ":pin-project-lite-0.2.17",
+            "tokio": ":tokio-1.53.1"
+          }
         }
       ]
     },
@@ -5373,6 +7144,7 @@
       "edition": "2018",
       "features": [
         "attributes",
+        "default",
         "log",
         "std",
         "tracing-attributes"
@@ -5445,11 +7217,31 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#try-lock@0.2.5",
+      "name": "try-lock",
+      "version": "0.2.5",
+      "checksum": "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Sean McArthur <sean@seanmonstar.com>",
+        "CARGO_PKG_DESCRIPTION": "A lightweight atomic lock.",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/seanmonstar/try-lock",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/seanmonstar/try-lock"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#typenum@1.20.1",
       "name": "typenum",
       "version": "1.20.1",
       "checksum": "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20",
       "edition": "2018",
+      "features": [
+        "const-generics"
+      ],
       "env": {
         "CARGO_PKG_DESCRIPTION": "Typenum is a Rust library for type-level numbers evaluated at\n    compile time. It currently supports bits, unsigned integers, and signed\n    integers. It also provides a type-level array of type-level numbers, but its\n    implementation is incomplete.",
         "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
@@ -5554,6 +7346,22 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#untrusted@0.9.0",
+      "name": "untrusted",
+      "version": "0.9.0",
+      "checksum": "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Brian Smith <brian@briansmith.org>",
+        "CARGO_PKG_DESCRIPTION": "Safe, fast, zero-panic, zero-crashing, zero-allocation parsing of untrusted inputs in Rust.",
+        "CARGO_PKG_LICENSE": "ISC",
+        "CARGO_PKG_REPOSITORY": "https://github.com/briansmith/untrusted"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
       "name": "url",
       "version": "2.5.8",
@@ -5581,6 +7389,23 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#urlencoding@2.1.3",
+      "name": "urlencoding",
+      "version": "2.1.3",
+      "checksum": "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Kornel <kornel@geekhood.net>:Bertram Truong <b@bertramtruong.com>",
+        "CARGO_PKG_DESCRIPTION": "A Rust library for doing URL percentage encoding.",
+        "CARGO_PKG_HOMEPAGE": "https://lib.rs/urlencoding",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/kornelski/rust_urlencoding"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#utf8_iter@1.0.4",
       "name": "utf8_iter",
       "version": "1.0.4",
@@ -5592,6 +7417,27 @@
         "CARGO_PKG_HOMEPAGE": "https://docs.rs/utf8_iter/",
         "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
         "CARGO_PKG_REPOSITORY": "https://github.com/hsivonen/utf8_iter"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#uuid@1.26.0",
+      "name": "uuid",
+      "version": "1.26.0",
+      "checksum": "b5772d71c9be8a8a6ac2117d949c5b224c1b72241bb611d9a3012edcf8af7812",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Ashley Mannix<ashleymannix@live.com.au>:Dylan DPC<dylan.dpc@gmail.com>:Hunar Roop Kahlon<hunar.roop@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A library to generate and parse UUIDs.",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/uuid-rs/uuid",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/uuid-rs/uuid"
       },
       "targets": [
         {}
@@ -5627,6 +7473,46 @@
       },
       "targets": [
         {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#vsimd@0.8.0",
+      "name": "vsimd",
+      "version": "0.8.0",
+      "checksum": "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "detect",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "SIMD utilities",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/Nugine/simd"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#want@0.3.1",
+      "name": "want",
+      "version": "0.3.1",
+      "checksum": "bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Sean McArthur <sean@seanmonstar.com>",
+        "CARGO_PKG_DESCRIPTION": "Detect when another Future wants a result.",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/seanmonstar/want"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "try_lock": ":try-lock-0.2.5"
+          }
+        }
       ]
     },
     {
@@ -6692,6 +8578,26 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#xmlparser@0.13.6",
+      "name": "xmlparser",
+      "version": "0.13.6",
+      "checksum": "66fee0b777b0f5ac1c69bb06d361268faafa61cd4682ae064a171c16c433e9e4",
+      "edition": "2018",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Yevhenii Reizner <razrfalcon@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Pull-based, zero-allocation XML parser.",
+        "CARGO_PKG_LICENSE": "MIT/Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/RazrFalcon/xmlparser"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#yoke@0.8.3",
       "name": "yoke",
       "version": "0.8.3",
@@ -6844,7 +8750,8 @@
       "checksum": "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e",
       "edition": "2024",
       "features": [
-        "alloc"
+        "alloc",
+        "default"
       ],
       "env": {
         "CARGO_PKG_AUTHORS": "The RustCrypto Project Developers",
@@ -6996,6 +8903,19 @@
         "registry+https://github.com/rust-lang/crates.io-index#headers@0.4.1",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
         "registry+https://github.com/rust-lang/crates.io-index#tower-http@0.6.11"
+      ]
+    },
+    {
+      "id": "workspace#covalence-data-cas-s3@0.0.0",
+      "name": "covalence-data-cas-s3",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+        "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+        "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+        "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
+        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+        "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1"
       ]
     },
     {
@@ -7223,6 +9143,13 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#arc-swap@1.9.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustversion@1.0.23",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#async-trait@0.1.91",
       "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
       "kinds": [
@@ -7239,6 +9166,1567 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#async-trait@0.1.91",
       "target": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-credential-types@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-async@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-json@0.63.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-schema@0.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-types@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#fastrand@2.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#time@0.3.55",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-credential-types@1.3.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-async@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-credential-types@1.3.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-credential-types@1.3.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-credential-types@1.3.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-credential-types@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-async@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-eventstream@0.61.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-types@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes-utils@0.1.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#fastrand@2.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body@0.4.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body@1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#percent-encoding@2.3.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#uuid@1.26.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#arc-swap@1.9.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-credential-types@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-async@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-eventstream@0.61.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-json@0.63.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-observability@0.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-schema@0.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-xml@0.62.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-types@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#fastrand@2.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hex@0.4.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hmac@0.13.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body@1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#lru@0.18.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#percent-encoding@2.3.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#regex-lite@0.1.9",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#sha2@0.11.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#arc-swap@1.9.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-credential-types@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-runtime@1.9.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-async@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-json@0.63.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-observability@0.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-query@0.62.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-schema@0.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-xml@0.62.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-types@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#fastrand@2.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#regex-lite@0.1.9",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-sts@1.113.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-credential-types@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-eventstream@0.61.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#form_urlencoded@1.2.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hex@0.4.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hmac@0.13.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#percent-encoding@2.3.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#sha2@0.11.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#time@0.3.55",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-sigv4@1.5.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-async@1.3.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-async@1.3.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-async@1.3.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#crc-fast@1.10.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hex@0.4.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body-util@0.1.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body@1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#md-5@0.11.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#sha1@0.11.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#sha2@0.11.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-checksums@0.65.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-eventstream@0.61.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-eventstream@0.61.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-eventstream@0.61.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#crc32fast@1.5.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-async@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#h2@0.3.27",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#h2@0.4.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body@0.4.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.24.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls-native-certs@0.8.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.21.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-eventstream@0.61.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes-utils@0.1.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body-util@0.1.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body@1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#percent-encoding@2.3.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-utils@0.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-json@0.63.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-json@0.63.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-schema@0.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-json@0.63.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-observability@0.3.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-query@0.62.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-query@0.62.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-schema@0.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-query@0.62.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-query@0.62.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-xml@0.62.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-query@0.62.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#urlencoding@2.1.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api-macros@1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api-macros@1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api-macros@1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-async@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api-macros@1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-async@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http@0.64.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-observability@0.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-schema@0.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#fastrand@2.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body-util@0.1.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body@0.4.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body@1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-utils@0.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime@1.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-schema@0.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-schema@0.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-schema@0.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#base64-simd@0.8.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes-utils@0.1.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body-util@0.1.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body@0.4.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body@1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#itoa@1.0.18",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-utils@0.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#ryu@1.0.23",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#time@0.3.55",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio-util@0.7.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-xml@0.62.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-xml@0.62.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-schema@0.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-xml@0.62.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-xml@0.62.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#xmlparser@0.13.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-types@1.5.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-credential-types@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-types@1.5.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-async@1.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-types@1.5.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-runtime-api@1.15.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-types@1.5.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-schema@0.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-types@1.5.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-types@1.5.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustc_version@0.4.1",
+      "kinds": [
+        "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-types@1.5.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
       "kinds": [
         "normal"
       ]
@@ -7664,6 +11152,20 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#base64-simd@0.8.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#outref@0.5.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#base64-simd@0.8.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#vsimd@0.8.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#blake3@1.8.5",
       "target": "registry+https://github.com/rust-lang/crates.io-index#arrayref@0.3.9",
       "kinds": [
@@ -7713,6 +11215,13 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#block-buffer@0.12.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hybrid-array@0.4.14",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#borsh@1.8.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
       "kinds": [
@@ -7729,6 +11238,20 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#bumpalo@3.20.3",
       "target": "registry+https://github.com/rust-lang/crates.io-index#allocator-api2@0.2.21",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#bytes-utils@0.1.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#bytes-utils@0.1.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#either@1.18.0",
       "kinds": [
         "normal"
       ]
@@ -8273,6 +11796,22 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#crc-fast@1.10.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#digest@0.10.7",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#crc-fast@1.10.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#spin@0.10.1",
+      "kinds": [
+        "normal (cfg(target_arch = \"aarch64\"))",
+        "normal (cfg(target_arch = \"x86\"))",
+        "normal (cfg(target_arch = \"x86_64\"))"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#crc32fast@1.5.1",
       "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
       "kinds": [
@@ -8289,6 +11828,20 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#crypto-common@0.1.7",
       "target": "registry+https://github.com/rust-lang/crates.io-index#typenum@1.20.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#crypto-common@0.2.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hybrid-array@0.4.14",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#ctutils@0.4.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cmov@0.5.4",
       "kinds": [
         "normal"
       ]
@@ -8415,6 +11968,34 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#digest@0.10.7",
       "target": "registry+https://github.com/rust-lang/crates.io-index#crypto-common@0.1.7",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#digest@0.11.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#block-buffer@0.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#digest@0.11.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#const-oid@0.10.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#digest@0.11.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#crypto-common@0.2.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#digest@0.11.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#ctutils@0.4.2",
       "kinds": [
         "normal"
       ]
@@ -8807,6 +12388,160 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.3.27",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.3.27",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.3.27",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.3.27",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-sink@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.3.27",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.3.27",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.3.27",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.3.27",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#slab@0.4.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.3.27",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio-util@0.7.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.3.27",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.3.27",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.4.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#atomic-waker@1.1.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.4.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.4.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.4.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.4.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-sink@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.4.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.4.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.4.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#slab@0.4.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.4.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio-util@0.7.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.4.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#h2@0.4.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#half@2.7.1",
       "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
       "kinds": [
@@ -8823,6 +12558,20 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.16.1",
       "target": "registry+https://github.com/rust-lang/crates.io-index#foldhash@0.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#allocator-api2@0.2.21",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#equivalent@1.0.2",
       "kinds": [
         "normal"
       ]
@@ -8898,6 +12647,13 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hmac@0.13.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#digest@0.11.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#http-body-util@0.1.4",
       "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
       "kinds": [
@@ -8933,6 +12689,27 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#http-body@0.4.6",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#http-body@0.4.6",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#http-body@0.4.6",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#http-body@1.1.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
       "kinds": [
@@ -8947,6 +12724,27 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#itoa@1.0.18",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
       "kinds": [
@@ -8956,6 +12754,62 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#itoa@1.0.18",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hybrid-array@0.4.14",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#typenum@1.20.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.24.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.24.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.24.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.24.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.24.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.21.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.24.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio-rustls@0.24.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.24.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
       "kinds": [
         "normal"
       ]
@@ -9005,6 +12859,118 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
       "target": "registry+https://github.com/rust-lang/crates.io-index#tower-service@0.3.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-channel@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#h2@0.3.27",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body@0.4.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@0.2.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#httparse@1.10.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#httpdate@1.0.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#itoa@1.0.18",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#socket2@0.5.10",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tower-service@0.3.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#want@0.3.1",
       "kinds": [
         "normal"
       ]
@@ -9402,6 +13368,13 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#lru@0.18.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#macro-string@0.2.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
       "kinds": [
@@ -9439,6 +13412,20 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#match-lookup@0.1.2",
       "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#md-5@0.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#md-5@0.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#digest@0.11.3",
       "kinds": [
         "normal"
       ]
@@ -10033,6 +14020,34 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cc@1.4.0",
+      "kinds": [
+        "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#getrandom@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#untrusted@0.9.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#rustc_version@0.4.1",
       "target": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
       "kinds": [
@@ -10083,6 +14098,83 @@
       "kinds": [
         "normal (cfg(all(any(target_os = \"linux\", target_os = \"android\"), any(rustix_use_libc, miri, not(all(target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\"))))))))",
         "normal (cfg(all(not(rustix_use_libc), not(miri), target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\")))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls-native-certs@0.8.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#openssl-probe@0.2.1",
+      "kinds": [
+        "normal (cfg(all(unix, not(target_os = \"macos\"))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls-native-certs@0.8.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls-pki-types@1.15.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls-pki-types@1.15.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls-webpki@0.101.7",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls-webpki@0.101.7",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#untrusted@0.9.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.21.12",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.21.12",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.21.12",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls-webpki@0.101.7",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.21.12",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#sct@0.7.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#sct@0.7.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#sct@0.7.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#untrusted@0.9.0",
+      "kinds": [
+        "normal"
       ]
     },
     {
@@ -10219,6 +14311,27 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#sha1@0.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#sha1@0.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cpufeatures@0.3.0",
+      "kinds": [
+        "normal (cfg(any(target_arch = \"aarch64\", target_arch = \"x86\", target_arch = \"x86_64\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#sha1@0.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#digest@0.11.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
       "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
       "kinds": [
@@ -10235,6 +14348,41 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
       "target": "registry+https://github.com/rust-lang/crates.io-index#digest@0.10.7",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#sha2@0.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#sha2@0.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cpufeatures@0.3.0",
+      "kinds": [
+        "normal (cfg(any(target_arch = \"aarch64\", target_arch = \"x86_64\", target_arch = \"x86\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#sha2@0.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#digest@0.11.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#signal-hook-registry@1.4.8",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#errno@0.3.14",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#signal-hook-registry@1.4.8",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
       "kinds": [
         "normal"
       ]
@@ -10300,6 +14448,13 @@
       "target": "registry+https://github.com/rust-lang/crates.io-index#snafu-derive@0.9.2",
       "kinds": [
         "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#socket2@0.5.10",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal (cfg(unix))"
       ]
     },
     {
@@ -10443,6 +14598,62 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#time-macros@0.2.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#num-conv@0.2.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#time-macros@0.2.32",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#time-core@0.1.9",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#time@0.3.55",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#deranged@0.5.8",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#time@0.3.55",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#num-conv@0.2.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#time@0.3.55",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#powerfmt@0.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#time@0.3.55",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#time@0.3.55",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#time-core@0.1.9",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#time@0.3.55",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#time-macros@0.2.32",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#tinystr@0.8.4",
       "target": "registry+https://github.com/rust-lang/crates.io-index#displaydoc@0.2.7",
       "kinds": [
@@ -10478,6 +14689,62 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tokio-rustls@0.24.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.21.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tokio-rustls@0.24.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tokio-util@0.7.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tokio-util@0.7.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tokio-util@0.7.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-sink@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tokio-util@0.7.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal (cfg(unix))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tokio-util@0.7.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tokio-util@0.7.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
       "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
       "kinds": [
@@ -10506,6 +14773,13 @@
       "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
       "kinds": [
         "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#signal-hook-registry@1.4.8",
+      "kinds": [
+        "normal (cfg(unix))"
       ]
     },
     {
@@ -10700,6 +14974,13 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
       "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#want@0.3.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#try-lock@0.2.5",
       "kinds": [
         "normal"
       ]
