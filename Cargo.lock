@@ -506,6 +506,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-data-cas-sqlite"
+version = "0.0.0"
+dependencies = [
+ "covalence-data-cas",
+ "covalence-lib-error",
+ "covalence-lib-hash",
+ "covalence-lib-sqlite",
+ "covalence-logic-cas",
+ "covalence-nucleus",
+ "futures",
+]
+
+[[package]]
 name = "covalence-data-cbor"
 version = "0.0.0"
 dependencies = [
