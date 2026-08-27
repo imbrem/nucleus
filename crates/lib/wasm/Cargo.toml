@@ -14,17 +14,19 @@ component-guest = ["dep:wit-bindgen-rt"]
 component-host = ["dep:wasmtime", "dep:wasmtime-wasi"]
 
 [dependencies]
-wit-bindgen-rt = { version = "=0.44.0", features = ["bitflags"], optional = true }
+wit-bindgen-rt = { version = "=0.44.0", features = ["async", "bitflags"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-wasmtime = { version = "=46.0.1", default-features = false, features = [
+wasmtime = { version = "=48.0.1", default-features = false, features = [
   "anyhow",
+  "async",
   "component-model",
+  "component-model-async",
   "cranelift",
   "runtime",
   "std",
 ], optional = true }
-wasmtime-wasi = { version = "=46.0.1", default-features = false, features = ["p2"], optional = true }
+wasmtime-wasi = { version = "=48.0.1", default-features = false, features = ["p3"], optional = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 wasm-bindgen = { version = "=0.2.121", optional = true }

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Change Nucleus Logic"
+  short_description: "Safely evolve checked logic across implementations"
+  default_prompt: "Use $change-logic to implement a checked logic change end to end."

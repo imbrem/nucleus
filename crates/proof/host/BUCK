@@ -20,6 +20,23 @@ filegroup(
     visibility = ["PUBLIC"],
 )
 
+# Some compile-time macros read shared workspace files relative to
+# `CARGO_MANIFEST_DIR`. Recreate that part of the workspace as one declared
+# Buck input tree so Cargo and Buck resolve the same relative paths.
+_MANIFEST_FILES = {
+    "crates/proof/host/{}".format(source): source
+    for source in _PACKAGE_FILES
+}
+_MANIFEST_FILES.update({
+    "wit/proof/proof.wit": "nucleus//:proof_wit",
+})
+
+filegroup(
+    name = "manifest_files",
+    srcs = _MANIFEST_FILES,
+    visibility = [],
+)
+
 rust_library(
     name = "covalence_proof_host",
     crate = "covalence_proof_host",
@@ -33,7 +50,7 @@ rust_library(
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_logic_cas": "nucleus//crates/logic/cas:covalence_logic_cas",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
-        "wit_bindgen_rt": "nucleus//buck/cargo/production:wit-bindgen-rt-0.44.0",
+        "wit_bindgen": "nucleus//buck/cargo/production:wit-bindgen-0.61.1",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -50,7 +67,7 @@ rust_library(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
-        "CARGO_MANIFEST_DIR": "$(location :package_files)",
+        "CARGO_MANIFEST_DIR": "$(location :manifest_files)/crates/proof/host",
     },
     visibility = ["PUBLIC"],
 )
@@ -67,7 +84,7 @@ rust_test(
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_logic_cas": "nucleus//crates/logic/cas:covalence_logic_cas",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
-        "wit_bindgen_rt": "nucleus//buck/cargo/production:wit-bindgen-rt-0.44.0",
+        "wit_bindgen": "nucleus//buck/cargo/production:wit-bindgen-0.61.1",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -84,7 +101,7 @@ rust_test(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
-        "CARGO_MANIFEST_DIR": "$(location :package_files)",
+        "CARGO_MANIFEST_DIR": "$(location :manifest_files)/crates/proof/host",
     },
     visibility = ["PUBLIC"],
 )

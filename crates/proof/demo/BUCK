@@ -20,6 +20,23 @@ filegroup(
     visibility = ["PUBLIC"],
 )
 
+# Some compile-time macros read shared workspace files relative to
+# `CARGO_MANIFEST_DIR`. Recreate that part of the workspace as one declared
+# Buck input tree so Cargo and Buck resolve the same relative paths.
+_MANIFEST_FILES = {
+    "crates/proof/demo/{}".format(source): source
+    for source in _PACKAGE_FILES
+}
+_MANIFEST_FILES.update({
+    "wit/proof/proof.wit": "nucleus//:proof_wit",
+})
+
+filegroup(
+    name = "manifest_files",
+    srcs = _MANIFEST_FILES,
+    visibility = [],
+)
+
 rust_library(
     name = "covalence_proof_demo",
     crate = "covalence_proof_demo",
@@ -28,7 +45,7 @@ rust_library(
     srcs = _RUST_SOURCES,
     tests = [":covalence_proof_demo-unit-test"],
     named_deps = {
-        "wit_bindgen_rt": "nucleus//buck/cargo/production:wit-bindgen-rt-0.44.0",
+        "wit_bindgen": "nucleus//buck/cargo/production:wit-bindgen-0.61.1",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -45,7 +62,7 @@ rust_library(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
-        "CARGO_MANIFEST_DIR": "$(location :package_files)",
+        "CARGO_MANIFEST_DIR": "$(location :manifest_files)/crates/proof/demo",
     },
     visibility = ["PUBLIC"],
 )
@@ -57,7 +74,7 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
-        "wit_bindgen_rt": "nucleus//buck/cargo/production:wit-bindgen-rt-0.44.0",
+        "wit_bindgen": "nucleus//buck/cargo/production:wit-bindgen-0.61.1",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -74,7 +91,7 @@ rust_test(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
-        "CARGO_MANIFEST_DIR": "$(location :package_files)",
+        "CARGO_MANIFEST_DIR": "$(location :manifest_files)/crates/proof/demo",
     },
     visibility = ["PUBLIC"],
 )

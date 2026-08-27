@@ -3,7 +3,8 @@
 //! Covalence crates select the runtime appropriate to their boundary rather
 //! than pinning versions independently:
 //!
-//! - `component-host` exposes Wasmtime and its minimal WASI Preview 2 host;
+//! - `component-host` exposes Wasmtime with native Component Model async and
+//!   the WASI Preview 3 host;
 //! - `component-guest` exposes the canonical-ABI runtime used by generated WIT
 //!   bindings;
 //! - `browser` exposes `wasm-bindgen` on `wasm32-unknown-unknown`.

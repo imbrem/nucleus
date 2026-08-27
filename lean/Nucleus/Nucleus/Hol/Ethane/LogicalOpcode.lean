@@ -27,28 +27,28 @@ def op1Row (op : Builtin.Op1) : OneBased.detail.Row :=
 def op2Row (op : Builtin.Op2) : OneBased.detail.Row :=
   { expr := .op2 op one two }
 
-/-- Exact Rust golden bytes for `tm.op1.v1/not`. -/
+/-- Exact deterministic CBOR bytes for `tm.op1.v1/not`. -/
 def notGolden : Bytes := ⟨[
-  163, 99, 116, 97, 103, 105, 116, 109, 46, 111, 112, 49, 46, 118, 49, 99,
-  105, 120, 115, 129, 1, 99, 118, 97, 108, 0].toByteArray⟩
+  163, 99, 105, 120, 115, 129, 1, 99, 116, 97, 103, 105, 116, 109, 46, 111,
+  112, 49, 46, 118, 49, 99, 118, 97, 108, 0].toByteArray⟩
 
-/-- Exact Rust golden bytes for one binary row discriminant. -/
+/-- Exact deterministic CBOR bytes for each binary row discriminant. -/
 def op2Golden : Builtin.Op2 → Bytes
   | .and => ⟨[
-      163, 99, 116, 97, 103, 105, 116, 109, 46, 111, 112, 50, 46, 118, 49, 99,
-      105, 120, 115, 130, 1, 2, 99, 118, 97, 108, 0].toByteArray⟩
+      163, 99, 105, 120, 115, 130, 1, 2, 99, 116, 97, 103, 105, 116, 109, 46,
+      111, 112, 50, 46, 118, 49, 99, 118, 97, 108, 0].toByteArray⟩
   | .or => ⟨[
-      163, 99, 116, 97, 103, 105, 116, 109, 46, 111, 112, 50, 46, 118, 49, 99,
-      105, 120, 115, 130, 1, 2, 99, 118, 97, 108, 1].toByteArray⟩
+      163, 99, 105, 120, 115, 130, 1, 2, 99, 116, 97, 103, 105, 116, 109, 46,
+      111, 112, 50, 46, 118, 49, 99, 118, 97, 108, 1].toByteArray⟩
   | .imp => ⟨[
-      163, 99, 116, 97, 103, 105, 116, 109, 46, 111, 112, 50, 46, 118, 49, 99,
-      105, 120, 115, 130, 1, 2, 99, 118, 97, 108, 2].toByteArray⟩
+      163, 99, 105, 120, 115, 130, 1, 2, 99, 116, 97, 103, 105, 116, 109, 46,
+      111, 112, 50, 46, 118, 49, 99, 118, 97, 108, 2].toByteArray⟩
 
-/-- The Rust unary golden parses to exactly the production row encoder's CBOR. -/
+/-- The unary golden parses to exactly the production row encoder's CBOR. -/
 example : CborWire.parse? notGolden =
     some (OneBased.Cbor.encodeRow (op1Row .not)) := by native_decide
 
-/-- Every Rust binary golden parses to exactly the production row encoder's CBOR. -/
+/-- Every binary golden parses to exactly the production row encoder's CBOR. -/
 example (op : Builtin.Op2) : CborWire.parse? (op2Golden op) =
     some (OneBased.Cbor.encodeRow (op2Row op)) := by
   cases op <;> native_decide

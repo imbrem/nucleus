@@ -153,6 +153,19 @@ interface host {
     /// Finds an object in the proof's default CAS by checked address.
     cas-find: func(address: list<u8>) -> result<option<u64>, string>;
 
+    /// Fetches untrusted bytes from the proof's default CAS.
+    ///
+    /// The result is deliberately not a checked fact: callers may use it when
+    /// a later operation independently validates its output.
+    cas-get-bytes: async func(address: list<u8>) -> result<option<bytes>, string>;
+
+    /// Fetches a checked whole-blob fact from the proof's default CAS.
+    ///
+    /// The host checks that any optimized cached fact answers the exact
+    /// requested address. The default implementation fetches and hashes all
+    /// bytes before introducing the fact.
+    cas-get-fact: async func(address: list<u8>) -> result<option<blob>, string>;
+
     /// A raw, unvalidated Ethane syntax arena.
     resource arena {
         constructor();
@@ -437,17 +450,31 @@ interface host {
     }
 }
 
+/// Default non-authoritative capabilities available to proof components.
+interface capabilities {
+    use host.{bytes};
+
+    /// Returns bytes from the loader's cryptographically secure random source.
+    /// Test and replay profiles may substitute a deterministic seeded source.
+    random-bytes: func(len: u64) -> result<bytes, string>;
+}
+
 /// The conventional entry point understood by standard proof loaders.
 interface standard {
     use host.{kernel};
 
-    /// Runs the proof and transfers its checked kernel to the caller.
-    prove: func() -> result<kernel, string>;
+    /// Resolves a prover-local request and transfers a checked kernel.
+    ///
+    /// The request is an opaque `o256` selector, not necessarily the address
+    /// of the returned kernel. By convention the all-zero selector requests
+    /// this prover's default result.
+    prove: async func(target: list<u8>) -> result<kernel, string>;
 }
 
 /// A portable standard proof component.
 world standard-proof {
     import host;
+    import capabilities;
     export standard;
 }
 

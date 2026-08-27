@@ -1,16 +1,15 @@
 <script lang="ts">
   import { base } from "$app/paths";
+  import { navigation } from "$lib/site-content";
   import "../app.css";
 
   let { children } = $props();
 </script>
 
 <nav class="site-nav" aria-label="Primary navigation">
-  <a href={`${base}/`}>Status</a>
-  <a href={`${base}/crates/`}>Crates</a>
-  <a href={`${base}/dependencies/`}>Dependencies</a>
-  <a href={`${base}/api/nucleus/`}>API</a>
-  <a href={`${base}/lean/Nucleus/`}>Lean</a>
+  {#each navigation as item}
+    <a href={`${base}${item.href}`}>{item.label}</a>
+  {/each}
 </nav>
 
 {@render children()}

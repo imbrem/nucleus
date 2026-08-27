@@ -10,18 +10,24 @@
     clippy::nursery,
     clippy::restriction
 )]
-#[cfg(target_os = "wasi")]
+#[cfg(target_arch = "wasm32")]
 mod bindings;
 
-#[cfg(target_os = "wasi")]
+#[cfg(target_arch = "wasm32")]
 use bindings::{exports::nucleus::proof::standard::Guest, nucleus::proof::host::Kernel};
 
-#[cfg(target_os = "wasi")]
+#[cfg(target_arch = "wasm32")]
 struct Component;
 
-#[cfg(target_os = "wasi")]
+#[cfg(target_arch = "wasm32")]
 impl Guest for Component {
-    fn prove() -> Result<Kernel, String> {
+    async fn prove(target: Vec<u8>) -> Result<Kernel, String> {
+        if target.len() != 32 {
+            return Err(format!(
+                "proof targets contain 32 bytes, got {}",
+                target.len()
+            ));
+        }
         let kernel = Kernel::new();
         let star = kernel.kind_star()?;
         match kernel.bool_lit(star, true) {
@@ -31,7 +37,7 @@ impl Guest for Component {
     }
 }
 
-#[cfg(target_os = "wasi")]
+#[cfg(target_arch = "wasm32")]
 #[allow(unsafe_code, clippy::used_underscore_items)]
 mod component_export {
     use super::{Component, bindings};

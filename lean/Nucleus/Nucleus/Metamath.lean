@@ -10,9 +10,9 @@ import Nucleus.Metamath.HolMM
 
 A specification of the Metamath proof checker, and its soundness proof.
 
-`Nucleus.Metamath.Provable` is the derivability relation — hypothesis,
-hypothesis, and schematic rule application, with distinct-variable obligations
-propagated outwards. `Nucleus.Metamath.verifyDatabase` is the executable
+`Nucleus.Metamath.Provable` is the derivability relation — floating hypothesis,
+essential hypothesis, and schematic rule application, with distinct-variable
+obligations propagated outwards. `Nucleus.Metamath.verifyDatabase` is the executable
 checker. `Nucleus.Metamath.verifyDatabase_sound` is the statement that connects
 them: everything the checker accepts is derivable from what precedes it.
 

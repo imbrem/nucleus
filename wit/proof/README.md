@@ -9,12 +9,14 @@ The `standard-proof` world imports `nucleus:proof/host` and exports one
 conventional entry point:
 
 ```wit
-prove: func() -> result<kernel, string>;
+prove: async func(target: list<u8>) -> result<kernel, string>;
 ```
 
-A standard loader calls `prove` and takes ownership of the returned checked
-kernel. A component may instead import the host interface under a different
-world and implement any higher-level protocol it needs.
+A standard loader calls `prove` with a prover-local `o256` request and takes
+ownership of the returned checked kernel. The request need not be the returned
+kernel's address; the all-zero value conventionally asks for the prover's
+default result. A component may instead import the host interface under a
+different world and implement any higher-level protocol it needs.
 
 ## Host resources
 
@@ -31,6 +33,9 @@ world and implement any higher-level protocol it needs.
   `blob.bytes()` forgets the checked proposition while sharing the payload.
 - `index-cas` is a component-private insertion-ordered CAS. The free
   `cas-*` functions access the loader's default host CAS instead.
+- `cas-get-bytes` asynchronously returns untrusted bytes. `cas-get-fact`
+  asynchronously returns an opaque checked whole-blob fact; its default path
+  hashes the bytes, while a checked cache may avoid rehashing.
 
 An arena reference, import ID, CAS object ID, or syntactic-fact slot is only
 meaningful for the object that issued it. Arena references and syntactic-fact
@@ -49,15 +54,15 @@ The Rust demo exercises checked byte/blob conversions, both CAS views, and a
 small Ethane derivation:
 
 ```sh
-cd crates/proof/demo
-cargo component build
-cd ../../..
+pnpm --filter @nucleus/nucleus build:proof-demo
 wasm-tools validate \
-  target/wasm32-wasip1/debug/covalence_proof_demo.wasm
+  --features cm-async \
+  target/wasm32-unknown-unknown/debug/covalence_proof_demo.component.wasm
 cargo run -p covalence-nucleus --example load-proof -- \
-  target/wasm32-wasip1/debug/covalence_proof_demo.wasm
+  target/wasm32-unknown-unknown/debug/covalence_proof_demo.component.wasm
 ```
 
-The loader supplies a minimal WASI context with no inherited filesystem,
-network, environment, or command-line capabilities. Nucleus resources are the
-component's proof capabilities.
+The proof component imports no ambient WASI world. Its default capabilities are
+the Nucleus kernel, default CAS, and secure randomness; loaders may add filtered
+HTTP, VFS, named CAS, or other capabilities according to the proof's permission
+profile. Tests may replace randomness with a deterministic seeded provider.

@@ -16,7 +16,7 @@ covalence-data-cas = { path = "../../data/cas" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
 covalence-logic-cas = { path = "../../logic/cas" }
 covalence-logic-hol = { path = "../../logic/hol" }
-wit-bindgen-rt = { version = "=0.44.0", features = ["bitflags"] }
+wit-bindgen = "=0.61.1"
 
 [package.metadata.component]
 package = "nucleus:proof-host"
@@ -26,6 +26,9 @@ path = "../../../wit/proof"
 world = "kernel-host"
 
 [package.metadata.component.dependencies]
+
+[package.metadata.glu]
+buck-manifest-mapped-srcs = { "nucleus//:proof_wit" = "wit/proof/proof.wit" }
 
 [lints]
 workspace = true

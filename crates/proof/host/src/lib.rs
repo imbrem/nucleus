@@ -1,6 +1,6 @@
 //! Portable implementation of the Nucleus proof host interface.
 
-#![cfg(target_os = "wasi")]
+#![cfg(target_arch = "wasm32")]
 
 use std::cell::RefCell;
 
@@ -50,7 +50,11 @@ struct HostKernel(RefCell<InnerKernel>);
 struct Component;
 
 thread_local! {
-    static DEFAULT_CAS: RefCell<InnerIndexCas> = const { RefCell::new(InnerIndexCas::new()) };
+    static DEFAULT_CAS: RefCell<InnerIndexCas> = RefCell::new({
+        let mut cas = InnerIndexCas::new();
+        cas.insert(SharedBytes::from_static(b"nucleus proof demo"));
+        cas
+    });
 }
 
 impl Guest for Component {
@@ -80,6 +84,25 @@ impl Guest for Component {
     fn cas_find(address: Vec<u8>) -> Result<Option<u64>, String> {
         let address = address_from_bytes(address)?;
         Ok(DEFAULT_CAS.with_borrow(|cas| cas.id(address)))
+    }
+
+    async fn cas_get_bytes(address: Vec<u8>) -> Result<Option<Bytes>, String> {
+        wit_bindgen::yield_async().await;
+        let address = address_from_bytes(address)?;
+        Ok(DEFAULT_CAS.with_borrow(|cas| {
+            cas.fact_at(address)
+                .map(|fact| Bytes::new(HostBytes(fact.bytes().clone())))
+        }))
+    }
+
+    async fn cas_get_fact(address: Vec<u8>) -> Result<Option<Blob>, String> {
+        wit_bindgen::yield_async().await;
+        let address = address_from_bytes(address)?;
+        Ok(DEFAULT_CAS.with_borrow(|cas| {
+            cas.fact_at(address)
+                .cloned()
+                .map(|fact| Blob::new(HostBlob(fact)))
+        }))
     }
 }
 

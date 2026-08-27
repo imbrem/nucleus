@@ -10,21 +10,49 @@
     clippy::nursery,
     clippy::restriction
 )]
-#[cfg(target_os = "wasi")]
+#[cfg(target_arch = "wasm32")]
 mod bindings;
 
-#[cfg(target_os = "wasi")]
+#[cfg(target_arch = "wasm32")]
 use bindings::{
     exports::nucleus::proof::standard::Guest,
-    nucleus::proof::host::{Bytes, IndexCas, Kernel, Sort, SynRel, cas_get, cas_insert},
+    nucleus::proof::host::{
+        Bytes, IndexCas, Kernel, Sort, SynRel, cas_get, cas_get_bytes, cas_insert,
+    },
 };
 
-#[cfg(target_os = "wasi")]
+#[cfg(target_arch = "wasm32")]
 struct Component;
 
-#[cfg(target_os = "wasi")]
+#[cfg(target_arch = "wasm32")]
 impl Guest for Component {
-    fn prove() -> Result<Kernel, String> {
+    async fn prove(target: Vec<u8>) -> Result<Kernel, String> {
+        if target.len() != 32 {
+            return Err(format!(
+                "proof targets contain 32 bytes, got {}",
+                target.len()
+            ));
+        }
+
+        // The zero selector conventionally requests this component's default
+        // proof. Its input is independently addressed in the default CAS.
+        const INPUT: [u8; 32] = [
+            0x02, 0xc4, 0xf6, 0x10, 0xbb, 0x41, 0xad, 0x65, 0x2b, 0xf8, 0x7d, 0x0d, 0xba, 0x85,
+            0x83, 0xd8, 0x99, 0xd0, 0x94, 0x79, 0xef, 0x66, 0x32, 0x86, 0xf3, 0xb3, 0xa1, 0x61,
+            0xc2, 0x2c, 0x09, 0xcf,
+        ];
+        let input_address = if target.iter().all(|byte| *byte == 0) {
+            INPUT.as_slice()
+        } else {
+            target.as_slice()
+        };
+        let fetched = cas_get_bytes(input_address.to_vec())
+            .await?
+            .ok_or_else(|| "proof input is absent from the default CAS".to_owned())?;
+        if fetched.to_list() != b"nucleus proof demo" {
+            return Err("async CAS fetch changed the proof input".to_owned());
+        }
+
         let bytes = Bytes::new(b"nucleus proof demo");
         let blob = bytes.blob();
         if blob.bytes().to_list() != b"nucleus proof demo" {
@@ -87,7 +115,7 @@ impl Guest for Component {
     }
 }
 
-#[cfg(target_os = "wasi")]
+#[cfg(target_arch = "wasm32")]
 #[allow(unsafe_code, clippy::used_underscore_items)]
 mod component_export {
     use super::{Component, bindings};

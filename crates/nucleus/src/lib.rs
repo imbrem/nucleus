@@ -13,7 +13,9 @@ pub use covalence_data_cas::IndexCas;
 mod proof;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use proof::{ProofError, load_standard_proof};
+pub use proof::{
+    ProofError, load_standard_proof, load_standard_proof_async, load_standard_proof_with_cas_async,
+};
 
 pub use covalence_logic_hol_derived::{
     ChosenModel, ExistsError, Infinity, InfinityError, InfinityExt, ModelError, ModelExt,

@@ -1,16 +1,3 @@
-import {
-  environment,
-  exit,
-  stderr,
-  stdin,
-  stdout,
-} from "@bytecodealliance/preview2-shim/cli";
-import {
-  preopens,
-  types as filesystemTypes,
-} from "@bytecodealliance/preview2-shim/filesystem";
-import { error as ioError, streams } from "@bytecodealliance/preview2-shim/io";
-
 import { host as proofHost } from "../generated/proof-host/host.js";
 import type { Kernel } from "../generated/proof-host/interfaces/nucleus-proof-host.js";
 
@@ -18,10 +5,10 @@ type GeneratedFiles = Record<string, Uint8Array>;
 
 interface StandardProofExports {
   standard?: {
-    prove(): Kernel;
+    prove(target: Uint8Array): Promise<Kernel>;
   };
   "nucleus:proof/standard@0.1.0"?: {
-    prove(): Kernel;
+    prove(target: Uint8Array): Promise<Kernel>;
   };
 }
 
@@ -44,7 +31,13 @@ export type { Kernel };
 /** Runs a standard proof component and returns its checked kernel. */
 export async function loadStandardProof(
   component: Uint8Array | ArrayBuffer,
+  target: Uint8Array = new Uint8Array(32),
 ): Promise<Kernel> {
+  if (target.length !== 32) {
+    throw new Error(
+      `proof targets must contain 32 bytes, got ${target.length}`,
+    );
+  }
   const { transpile } = await import("@bytecodealliance/jco");
   const bytes =
     component instanceof Uint8Array ? component : new Uint8Array(component);
@@ -54,6 +47,10 @@ export async function loadStandardProof(
     // The browser implementation consumes the component-model variant; its
     // public declaration currently exposes the CLI spelling instead.
     instantiation: { tag: "async" } as unknown as "async",
+    asyncMode: {
+      tag: "jspi",
+      val: { imports: [], exports: [] },
+    } as unknown as "jspi",
   });
   const rawFiles = generated.files as unknown;
   const files: GeneratedFiles = Array.isArray(rawFiles)
@@ -82,7 +79,7 @@ export async function loadStandardProof(
     if (standard === undefined) {
       throw new Error("component does not export the standard proof interface");
     }
-    const kernel = standard.prove();
+    const kernel = await standard.prove(target);
     if (!(kernel instanceof proofHost.Kernel)) {
       throw new Error("standard proof returned an unknown kernel resource");
     }
@@ -96,12 +93,13 @@ export async function loadStandardProof(
 export async function fetchStandardProof(
   input: RequestInfo | URL,
   init?: RequestInit,
+  target?: Uint8Array,
 ): Promise<Kernel> {
   const response = await fetch(input, init);
   if (!response.ok) {
     throw new Error(`proof server returned ${response.status}`);
   }
-  return loadStandardProof(await response.arrayBuffer());
+  return loadStandardProof(await response.arrayBuffer(), target);
 }
 
 /** Formats the kernel's checked CBOR address as lowercase hexadecimal. */
@@ -115,30 +113,32 @@ export function proofStats(kernel: Kernel): ProofStats {
 }
 
 function componentImports(): Record<string, unknown> {
+  const maxRandomBytes = 1 << 20;
+  const capabilities = {
+    randomBytes(len: bigint): InstanceType<typeof proofHost.Bytes> {
+      const size = Number(len);
+      if (!Number.isSafeInteger(size) || size < 0 || size > maxRandomBytes) {
+        throw new Error(
+          `random byte request must be at most ${maxRandomBytes} bytes`,
+        );
+      }
+      const value = new Uint8Array(size);
+      for (let offset = 0; offset < value.length; offset += 65_536) {
+        globalThis.crypto.getRandomValues(
+          value.subarray(offset, Math.min(offset + 65_536, value.length)),
+        );
+      }
+      return new proofHost.Bytes(value);
+    },
+  };
   const imports = {
     "nucleus:proof/host": proofHost,
-    "wasi:cli/environment": environment,
-    "wasi:cli/exit": exit,
-    "wasi:cli/stderr": stderr,
-    "wasi:cli/stdin": stdin,
-    "wasi:cli/stdout": stdout,
-    "wasi:filesystem/preopens": preopens,
-    "wasi:filesystem/types": filesystemTypes,
-    "wasi:io/error": ioError,
-    "wasi:io/streams": streams,
+    "nucleus:proof/capabilities": capabilities,
   };
   return {
     ...imports,
     "nucleus:proof/host@0.1.0": proofHost,
-    "wasi:cli/environment@0.2.3": environment,
-    "wasi:cli/exit@0.2.3": exit,
-    "wasi:cli/stderr@0.2.3": stderr,
-    "wasi:cli/stdin@0.2.3": stdin,
-    "wasi:cli/stdout@0.2.3": stdout,
-    "wasi:filesystem/preopens@0.2.3": preopens,
-    "wasi:filesystem/types@0.2.3": filesystemTypes,
-    "wasi:io/error@0.2.3": ioError,
-    "wasi:io/streams@0.2.3": streams,
+    "nucleus:proof/capabilities@0.1.0": capabilities,
   };
 }
 
