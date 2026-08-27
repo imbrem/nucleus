@@ -1,0 +1,4 @@
+interface:
+  display_name: "Formalize in Lean"
+  short_description: "Develop and relate Nucleus formal designs"
+  default_prompt: "Use $formalize-in-lean to develop or review a Nucleus Lean formalization."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Work on Docs Site"
+  short_description: "Maintain the generated Nucleus documentation UI"
+  default_prompt: "Use $work-on-docs-site to update the Nucleus documentation application."

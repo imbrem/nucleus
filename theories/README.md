@@ -11,9 +11,10 @@ Its arena address is a golden test, so changing row order or content is an
 explicit hash change.
 
 The checked format intentionally has no theorem entry. Definitions add rows;
-theorem statements and checked proofs need distinct future representations,
-and an external existence obligation must remain explicit metadata rather than
-becoming an Ethane axiom. Before expanding this slice, its raw declaration
+theorem statements and checked proofs need distinct future representations.
+An unchecked external existence claim must remain explicit metadata rather
+than becoming an Ethane axiom; existence may instead be established as an
+internal HOL theorem. Before expanding this slice, its raw declaration
 vocabulary should be folded into the shared Rust/Lean/Python constructor
 manifest tracked by #745; the separate filename makes that migration visible
 instead of presenting a competing permanent format.
