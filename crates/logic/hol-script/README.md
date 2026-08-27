@@ -66,6 +66,13 @@ The present frozen prefix has 1,331 rows. Its address and the semantic roots for
 the natural carrier, zero, successor, induction, successor injectivity, and
 zero/successor separation are pinned by regression tests.
 
+[`theories/init.dag.json`](theories/init.dag.json) is an editable, untrusted
+rendering of that exact arena wire value. Definition rows may carry a `name`,
+and references into the same `hol.defs` table may use that name or their
+one-based numeric index. A regression test compiles the JSON to byte-for-byte
+identical canonical CBOR; names are discarded before the existing raw arena
+decoder sees the value and carry no authority.
+
 ## Formal verification boundary
 
 Lean does not formalize this parser or assume the compiler is correct. The
