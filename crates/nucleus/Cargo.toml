@@ -16,11 +16,13 @@ covalence-data-cas = { path = "../data/cas" }
 covalence-lib-crypto = { path = "../lib/crypto" }
 covalence-lib-error = { path = "../lib/error" }
 covalence-lib-hash = { path = "../lib/hash", default-features = false, features = ["blake3"] }
+covalence-lib-rand = { path = "../lib/rand" }
 covalence-lib-sqlite = { path = "../lib/sqlite" }
 covalence-logic-cas = { path = "../logic/cas" }
 covalence-logic-hol = { path = "../logic/hol" }
 covalence-logic-hol-derived = { path = "../logic/hol-derived" }
 covalence-neutron = { path = "../neutron" }
+futures = "0.3"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 covalence-lib-wasm = { path = "../lib/wasm", features = ["component-host"] }
@@ -29,7 +31,7 @@ covalence-lib-wasm = { path = "../lib/wasm", features = ["component-host"] }
 wasm-bindgen = "=0.2.121"
 
 [target.'cfg(target_os = "wasi")'.dependencies]
-wit-bindgen-rt = { version = "=0.44.0", features = ["bitflags"] }
+wit-bindgen-rt = { version = "=0.44.0", features = ["async", "bitflags"] }
 
 [package.metadata.component]
 package = "nucleus:smoke"

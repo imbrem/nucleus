@@ -2,7 +2,7 @@
 //! surface, and the kernel it returns records that it did.
 //!
 //! Ignored by default because it consumes a build artifact rather than a
-//! source fixture: run `cargo component build -p covalence-proof-demo` first,
+//! source fixture: run `pnpm --filter @nucleus/nucleus build:proof-demo` first,
 //! then `cargo test -p covalence-nucleus --test proof_subtype -- --ignored`.
 
 use std::path::PathBuf;
@@ -13,11 +13,11 @@ fn demo_component() -> PathBuf {
         .and_then(|crates| crates.parent())
         .expect("workspace root")
         .to_path_buf();
-    root.join("target/wasm32-wasip1/debug/covalence_proof_demo.wasm")
+    root.join("target/wasm32-unknown-unknown/debug/covalence_proof_demo.component.wasm")
 }
 
 #[test]
-#[ignore = "requires `cargo component build -p covalence-proof-demo`"]
+#[ignore = "requires `pnpm --filter @nucleus/nucleus build:proof-demo`"]
 fn the_demo_component_takes_on_the_subtype_axiom() {
     let path = demo_component();
     let component = std::fs::read(&path)
