@@ -3081,7 +3081,10 @@
       "checksum": "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0",
       "edition": "2018",
       "features": [
-        "std"
+        "js",
+        "js-sys",
+        "std",
+        "wasm-bindgen"
       ],
       "env": {
         "CARGO_PKG_AUTHORS": "The Rand Project Developers",
@@ -3132,7 +3135,8 @@
       "edition": "2024",
       "features": [
         "std",
-        "sys_rng"
+        "sys_rng",
+        "wasm_js"
       ],
       "env": {
         "CARGO_PKG_AUTHORS": "The Rand Project Developers",
@@ -3730,6 +3734,40 @@
             "rustls": ":rustls-0.21.12",
             "tokio": ":tokio-1.53.1",
             "tokio_rustls": ":tokio-rustls-0.24.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.27.9",
+      "name": "hyper-rustls",
+      "version": "0.27.9",
+      "checksum": "33ca68d021ef39cf6463ab54c1d0f5daf03377b70561305bb89a8f83aab66e0f",
+      "edition": "2021",
+      "features": [
+        "http1",
+        "ring",
+        "tls12",
+        "webpki-roots",
+        "webpki-tokio"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Rustls+hyper integration for pure rust HTTPS",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rustls/hyper-rustls",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR ISC OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rustls/hyper-rustls"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "http": ":http-1.5.0",
+            "hyper": ":hyper-1.11.0",
+            "hyper_util": ":hyper-util-0.1.20",
+            "rustls": ":rustls-0.23.43",
+            "tokio": ":tokio-1.53.1",
+            "tokio_rustls": ":tokio-rustls-0.26.4",
+            "tower_service": ":tower-service-0.3.3",
+            "webpki_roots": ":webpki-roots-1.0.9"
           }
         }
       ]
@@ -4367,6 +4405,22 @@
             "hashbrown": ":hashbrown-0.17.1"
           }
         }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#lru-slab@0.1.2",
+      "name": "lru-slab",
+      "version": "0.1.2",
+      "checksum": "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Benjamin Saunders <ben.e.saunders@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Pre-allocated storage with constant-time LRU tracking",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0 OR Zlib",
+        "CARGO_PKG_REPOSITORY": "https://github.com/Ralith/lru-slab"
+      },
+      "targets": [
+        {}
       ]
     },
     {
@@ -5369,6 +5423,107 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#quinn@0.11.11",
+      "name": "quinn",
+      "version": "0.11.11",
+      "checksum": "0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8",
+      "edition": "2021",
+      "features": [
+        "ring",
+        "runtime-tokio",
+        "rustls",
+        "rustls-ring"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Versatile QUIC transport protocol implementation",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/quinn-rs/quinn"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bytes": ":bytes-1.12.1",
+            "pin_project_lite": ":pin-project-lite-0.2.17",
+            "proto": ":quinn-proto-0.11.17",
+            "rustc_hash": ":rustc-hash-2.1.3",
+            "rustls": ":rustls-0.23.43",
+            "socket2": ":socket2-0.6.5",
+            "thiserror": ":thiserror-2.0.20",
+            "tokio": ":tokio-1.53.1",
+            "tracing": ":tracing-0.1.44",
+            "udp": ":quinn-udp-0.5.15"
+          }
+        }
+      ],
+      "buildscript": {
+        "named_deps": {
+          "cfg_aliases": ":cfg_aliases-0.2.2"
+        }
+      }
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#quinn-proto@0.11.17",
+      "name": "quinn-proto",
+      "version": "0.11.17",
+      "checksum": "04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83",
+      "edition": "2021",
+      "features": [
+        "ring",
+        "rustls-ring"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "State machine for the QUIC transport protocol",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/quinn-rs/quinn"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bytes": ":bytes-1.12.1",
+            "lru_slab": ":lru-slab-0.1.2",
+            "rand": ":rand-0.10.2",
+            "rand_pcg": ":rand_pcg-0.10.2",
+            "ring": ":ring-0.17.14",
+            "rustc_hash": ":rustc-hash-2.1.3",
+            "rustls": ":rustls-0.23.43",
+            "slab": ":slab-0.4.12",
+            "thiserror": ":thiserror-2.0.20",
+            "tinyvec": ":tinyvec-1.12.0",
+            "tracing": ":tracing-0.1.44"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#quinn-udp@0.5.15",
+      "name": "quinn-udp",
+      "version": "0.5.15",
+      "checksum": "35a133f956daabe89a61a685c2649f13d82d5aa4bd5d12d1277e1072a21c0694",
+      "edition": "2021",
+      "features": [
+        "tracing"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "UDP sockets with ECN information for the QUIC transport protocol",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/quinn-rs/quinn"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "libc": ":libc-0.2.189",
+            "socket2": ":socket2-0.6.5",
+            "tracing": ":tracing-0.1.44"
+          }
+        }
+      ],
+      "buildscript": {
+        "named_deps": {
+          "cfg_aliases": ":cfg_aliases-0.2.2"
+        }
+      }
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
       "name": "quote",
       "version": "1.0.47",
@@ -5401,6 +5556,7 @@
       "edition": "2024",
       "features": [
         "alloc",
+        "default",
         "std",
         "std_rng",
         "sys_rng",
@@ -5548,6 +5704,27 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rand_pcg@0.10.2",
+      "name": "rand_pcg",
+      "version": "0.10.2",
+      "checksum": "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Rand Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Selected PCG random number generators",
+        "CARGO_PKG_HOMEPAGE": "https://rust-random.github.io/book",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-random/rngs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "rand_core": ":rand_core-0.10.1"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#regalloc2@0.15.2",
       "name": "regalloc2",
       "version": "0.15.2",
@@ -5603,6 +5780,58 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "name": "reqwest",
+      "version": "0.12.28",
+      "checksum": "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147",
+      "edition": "2021",
+      "features": [
+        "__rustls",
+        "__rustls-ring",
+        "__tls",
+        "rustls-tls",
+        "rustls-tls-webpki-roots",
+        "rustls-tls-webpki-roots-no-provider"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Sean McArthur <sean@seanmonstar.com>",
+        "CARGO_PKG_DESCRIPTION": "higher level HTTP client library",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/seanmonstar/reqwest"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "base64": ":base64-0.22.1",
+            "bytes": ":bytes-1.12.1",
+            "futures_core": ":futures-core-0.3.34",
+            "http": ":http-1.5.0",
+            "http_body": ":http-body-1.1.0",
+            "http_body_util": ":http-body-util-0.1.5",
+            "hyper": ":hyper-1.11.0",
+            "hyper_rustls": ":hyper-rustls-0.27.9",
+            "hyper_util": ":hyper-util-0.1.20",
+            "log": ":log-0.4.34",
+            "percent_encoding": ":percent-encoding-2.3.2",
+            "pin_project_lite": ":pin-project-lite-0.2.17",
+            "quinn": ":quinn-0.11.11",
+            "rustls": ":rustls-0.23.43",
+            "rustls_pki_types": ":rustls-pki-types-1.15.1",
+            "serde": ":serde-1.0.229",
+            "serde_urlencoded": ":serde_urlencoded-0.7.1",
+            "sync_wrapper": ":sync_wrapper-1.0.2",
+            "tokio": ":tokio-1.53.1",
+            "tokio_rustls": ":tokio-rustls-0.26.4",
+            "tower": ":tower-0.5.3",
+            "tower_http": ":tower-http-0.6.11",
+            "tower_service": ":tower-service-0.3.3",
+            "url": ":url-2.5.8",
+            "webpki_roots": ":webpki-roots-1.0.9"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
       "name": "ring",
       "version": "0.17.14",
@@ -5611,7 +5840,8 @@
       "features": [
         "alloc",
         "default",
-        "dev_urandom_fallback"
+        "dev_urandom_fallback",
+        "wasm32_unknown_unknown_js"
       ],
       "env": {
         "CARGO_PKG_DESCRIPTION": "An experiment.",
@@ -5663,6 +5893,7 @@
       "checksum": "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d",
       "edition": "2021",
       "features": [
+        "default",
         "std"
       ],
       "env": {
@@ -5787,6 +6018,37 @@
       "buildscript": {}
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.23.43",
+      "name": "rustls",
+      "version": "0.23.43",
+      "checksum": "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06",
+      "edition": "2021",
+      "features": [
+        "ring",
+        "std",
+        "tls12"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Rustls is a modern TLS library written in Rust.",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rustls/rustls",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR ISC OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rustls/rustls"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "once_cell": ":once_cell-1.21.4",
+            "pki_types": ":rustls-pki-types-1.15.1",
+            "ring": ":ring-0.17.14",
+            "subtle": ":subtle-2.6.1",
+            "webpki": ":rustls-webpki-0.103.15",
+            "zeroize": ":zeroize-1.9.0"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#rustls-native-certs@0.8.4",
       "name": "rustls-native-certs",
       "version": "0.8.4",
@@ -5816,7 +6078,9 @@
       "features": [
         "alloc",
         "default",
-        "std"
+        "std",
+        "web",
+        "web-time"
       ],
       "env": {
         "CARGO_PKG_DESCRIPTION": "Shared types for the rustls PKI ecosystem",
@@ -5852,6 +6116,33 @@
         {
           "crate_name": "webpki",
           "named_deps": {
+            "ring": ":ring-0.17.14",
+            "untrusted": ":untrusted-0.9.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustls-webpki@0.103.15",
+      "name": "rustls-webpki",
+      "version": "0.103.15",
+      "checksum": "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "ring",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Web PKI X.509 Certificate Verification.",
+        "CARGO_PKG_LICENSE": "ISC",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rustls/webpki"
+      },
+      "targets": [
+        {
+          "crate_name": "webpki",
+          "named_deps": {
+            "pki_types": ":rustls-pki-types-1.15.1",
             "ring": ":ring-0.17.14",
             "untrusted": ":untrusted-0.9.0"
           }
@@ -6647,6 +6938,10 @@
       "version": "1.0.2",
       "checksum": "0bf256ce5efdfa370213c1dabab5935a12e49f2c58d15e9eac2870d3b4f27263",
       "edition": "2021",
+      "features": [
+        "futures",
+        "futures-core"
+      ],
       "env": {
         "CARGO_PKG_AUTHORS": "Actyx AG <developer@actyx.io>",
         "CARGO_PKG_DESCRIPTION": "A tool for enlisting the compiler's help in proving the absence of concurrency",
@@ -6655,7 +6950,11 @@
         "CARGO_PKG_REPOSITORY": "https://github.com/Actyx/sync_wrapper"
       },
       "targets": [
-        {}
+        {
+          "named_deps": {
+            "futures_core": ":futures-core-0.3.34"
+          }
+        }
       ]
     },
     {
@@ -6912,6 +7211,47 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#tinyvec@1.12.0",
+      "name": "tinyvec",
+      "version": "1.12.0",
+      "checksum": "bb4ebadaa0af04fab11ae01eb5f9fdb5f9c5b875506e210e71c07873528baa7f",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "default",
+        "tinyvec_macros"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Lokathor <zefria@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "`tinyvec` provides 100% safe vec-like data structures.",
+        "CARGO_PKG_LICENSE": "Zlib OR Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/Lokathor/tinyvec"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "tinyvec_macros": ":tinyvec_macros-0.1.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#tinyvec_macros@0.1.1",
+      "name": "tinyvec_macros",
+      "version": "0.1.1",
+      "checksum": "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Soveu <marx.tomasz@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Some macros for tiny containers",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0 OR Zlib",
+        "CARGO_PKG_REPOSITORY": "https://github.com/Soveu/tinyvec_macros"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
       "name": "tokio",
       "version": "1.53.1",
@@ -7008,6 +7348,31 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#tokio-rustls@0.26.4",
+      "name": "tokio-rustls",
+      "version": "0.26.4",
+      "checksum": "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61",
+      "edition": "2021",
+      "features": [
+        "ring",
+        "tls12"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Asynchronous TLS/SSL streams for Tokio using Rustls.",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rustls/tokio-rustls",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rustls/tokio-rustls"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "rustls": ":rustls-0.23.43",
+            "tokio": ":tokio-1.53.1"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#tokio-util@0.7.19",
       "name": "tokio-util",
       "version": "0.7.19",
@@ -7051,7 +7416,9 @@
         "log",
         "make",
         "pin-project-lite",
+        "retry",
         "sync_wrapper",
+        "timeout",
         "tokio",
         "tracing",
         "util"
@@ -7086,7 +7453,10 @@
       "edition": "2018",
       "features": [
         "cors",
-        "default"
+        "default",
+        "follow-redirect",
+        "futures-util",
+        "tower"
       ],
       "env": {
         "CARGO_PKG_AUTHORS": "Tower Maintainers <team@tower-rs.com>",
@@ -7100,10 +7470,14 @@
           "named_deps": {
             "bitflags": ":bitflags-2.13.1",
             "bytes": ":bytes-1.12.1",
+            "futures_util": ":futures-util-0.3.34",
             "http": ":http-1.5.0",
+            "http_body": ":http-body-1.1.0",
             "pin_project_lite": ":pin-project-lite-0.2.17",
+            "tower": ":tower-0.5.3",
             "tower_layer": ":tower-layer-0.3.3",
-            "tower_service": ":tower-service-0.3.3"
+            "tower_service": ":tower-service-0.3.3",
+            "url": ":url-2.5.8"
           }
         }
       ]
@@ -8286,6 +8660,26 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#webpki-roots@1.0.9",
+      "name": "webpki-roots",
+      "version": "1.0.9",
+      "checksum": "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Mozilla's CA root certificates for use with webpki",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rustls/webpki-roots",
+        "CARGO_PKG_LICENSE": "CDLA-Permissive-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rustls/webpki-roots"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "pki_types": ":rustls-pki-types-1.15.1"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#winnow@1.0.4",
       "name": "winnow",
       "version": "1.0.4",
@@ -8905,6 +9299,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#headers@0.4.1",
+        "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
         "registry+https://github.com/rust-lang/crates.io-index#tower-http@0.6.11"
       ]
@@ -12865,6 +13260,62 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.27.9",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.27.9",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.27.9",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hyper@1.11.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.27.9",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.23.43",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.27.9",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio-rustls@0.26.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.27.9",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.27.9",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tower-service@0.3.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.27.9",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#webpki-roots@1.0.9",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
       "target": "registry+https://github.com/rust-lang/crates.io-index#base64@0.22.1",
       "kinds": [
@@ -14021,6 +14472,189 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-proto@0.11.17",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-proto@0.11.17",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#lru-slab@0.1.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-proto@0.11.17",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rand@0.10.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-proto@0.11.17",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rand_pcg@0.10.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-proto@0.11.17",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
+      "kinds": [
+        "normal",
+        "normal (cfg(all(target_family = \"wasm\", target_os = \"unknown\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-proto@0.11.17",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-proto@0.11.17",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.23.43",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-proto@0.11.17",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#slab@0.4.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-proto@0.11.17",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.20",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-proto@0.11.17",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tinyvec@1.12.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-proto@0.11.17",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-udp@0.5.15",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg_aliases@0.2.2",
+      "kinds": [
+        "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-udp@0.5.15",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-udp@0.5.15",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#socket2@0.6.5",
+      "kinds": [
+        "normal (cfg(not(all(target_family = \"wasm\", target_os = \"unknown\"))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn-udp@0.5.15",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn@0.11.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn@0.11.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg_aliases@0.2.2",
+      "kinds": [
+        "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn@0.11.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn@0.11.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quinn-proto@0.11.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn@0.11.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quinn-udp@0.5.15",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn@0.11.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn@0.11.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.23.43",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn@0.11.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#socket2@0.6.5",
+      "kinds": [
+        "normal (cfg(not(all(target_family = \"wasm\", target_os = \"unknown\"))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn@0.11.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.20",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn@0.11.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quinn@0.11.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
       "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
       "kinds": [
@@ -14091,6 +14725,13 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rand_pcg@0.10.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rand_core@0.10.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#regalloc2@0.15.2",
       "target": "registry+https://github.com/rust-lang/crates.io-index#allocator-api2@0.2.21",
       "kinds": [
@@ -14137,6 +14778,181 @@
       "target": "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2",
       "kinds": [
         "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#base64@0.22.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body-util@0.1.5",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body@1.1.0",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.27.9",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hyper@1.11.0",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.34",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#percent-encoding@2.3.2",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quinn@0.11.11",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls-pki-types@1.15.1",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.23.43",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_urlencoded@0.7.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#sync_wrapper@1.0.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio-rustls@0.26.4",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tower-http@0.6.11",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tower-service@0.3.3",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tower@0.5.3",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#webpki-roots@1.0.9",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
       ]
     },
     {
@@ -14256,6 +15072,27 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls-webpki@0.103.15",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls-webpki@0.103.15",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls-pki-types@1.15.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls-webpki@0.103.15",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#untrusted@0.9.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.21.12",
       "target": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.34",
       "kinds": [
@@ -14279,6 +15116,48 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.21.12",
       "target": "registry+https://github.com/rust-lang/crates.io-index#sct@0.7.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.23.43",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.23.43",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.23.43",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls-pki-types@1.15.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.23.43",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls-webpki@0.103.15",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.23.43",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#subtle@2.6.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.23.43",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.0",
       "kinds": [
         "normal"
       ]
@@ -14648,6 +15527,13 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#sync_wrapper@1.0.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#synstructure@0.13.2",
       "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
       "kinds": [
@@ -14788,6 +15674,13 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tinyvec@1.12.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tinyvec_macros@0.1.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#tokio-macros@2.7.2",
       "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
       "kinds": [
@@ -14817,6 +15710,20 @@
     },
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#tokio-rustls@0.24.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tokio-rustls@0.26.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.23.43",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tokio-rustls@0.26.4",
       "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
       "kinds": [
         "normal"
@@ -14932,6 +15839,20 @@
     },
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#tower-http@0.6.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tower-http@0.6.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http-body@1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tower-http@0.6.11",
       "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
       "kinds": [
         "normal"
@@ -14954,6 +15875,20 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#tower-http@0.6.11",
       "target": "registry+https://github.com/rust-lang/crates.io-index#tower-service@0.3.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tower-http@0.6.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tower@0.5.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tower-http@0.6.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
       "kinds": [
         "normal"
       ]
@@ -16240,6 +17175,13 @@
       "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-versioned-export-macros@48.0.1",
       "kinds": [
         "build",
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#webpki-roots@1.0.9",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls-pki-types@1.15.1",
+      "kinds": [
         "normal"
       ]
     },
