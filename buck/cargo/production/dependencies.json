@@ -8910,9 +8910,6 @@
       "name": "covalence-data-cas-s3",
       "category": "tcb",
       "dependencies": [
-        "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
-        "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
-        "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
         "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.34",
@@ -9004,6 +9001,17 @@
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#rand@0.9.5"
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-s3@0.0.0",
+      "name": "covalence-lib-s3",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
+        "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+        "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
+        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
       ]
     },
     {

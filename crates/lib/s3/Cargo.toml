@@ -1,0 +1,21 @@
+[package]
+name = "covalence-lib-s3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "S3-compatible object operations for Nucleus"
+publish = false
+
+[dependencies]
+# The SDK defaults to AWS-LC. Its sys/build-script layering is not yet
+# representable by our generated Buck rules, while the supported Rustls/ring
+# client is portable across both Cargo and Buck.
+aws-config = { version = "1", default-features = false, features = ["credentials-process", "rt-tokio"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
+aws-smithy-types = "1"
+bytes = "1"
+covalence-lib-error = { path = "../error" }
+
+[lints]
+workspace = true

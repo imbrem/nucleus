@@ -9,6 +9,7 @@ members = [
   "crates/lib/parse",
   "crates/lib/python",
   "crates/lib/rand",
+  "crates/lib/s3",
   "crates/lib/serde",
   "crates/lib/sqlite",
   "crates/lib/table",

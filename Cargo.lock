@@ -967,14 +967,12 @@ dependencies = [
 name = "covalence-data-cas-s3"
 version = "0.0.0"
 dependencies = [
- "aws-config",
- "aws-sdk-s3",
- "aws-smithy-types",
  "axum",
  "bytes",
  "covalence-data-cas",
  "covalence-lib-error",
  "covalence-lib-hash",
+ "covalence-lib-s3",
  "covalence-logic-cas",
  "futures",
  "tokio",
@@ -1088,6 +1086,17 @@ dependencies = [
  "getrandom 0.3.4",
  "rand 0.9.5",
  "wasm-bindgen-test",
+]
+
+[[package]]
+name = "covalence-lib-s3"
+version = "0.0.0"
+dependencies = [
+ "aws-config",
+ "aws-sdk-s3",
+ "aws-smithy-types",
+ "bytes",
+ "covalence-lib-error",
 ]
 
 [[package]]

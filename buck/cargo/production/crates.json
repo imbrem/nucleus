@@ -371,6 +371,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-lib-s3@0.0.0",
+      "name": "covalence-lib-s3",
+      "version": "0.0.0",
+      "path": "crates/lib/s3",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_s3",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-serde@0.0.0",
       "name": "covalence-lib-serde",
       "version": "0.0.0",
@@ -987,6 +1002,13 @@
     },
     {
       "source": "workspace#covalence-data-cas-s3@0.0.0",
+      "target": "workspace#covalence-lib-s3@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-s3@0.0.0",
       "target": "workspace#covalence-logic-cas@0.0.0",
       "kinds": [
         "normal"
@@ -1121,6 +1143,13 @@
     {
       "source": "workspace#covalence-lib-hash@0.0.0",
       "target": "workspace#covalence-lib-rand@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-lib-s3@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
       "kinds": [
         "normal"
       ]

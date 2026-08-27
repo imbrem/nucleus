@@ -9,19 +9,11 @@
 //! returns ordinary bytes; [`S3Cas::get_fact`] hashes the complete response
 //! before it can introduce a checked whole-object CAS fact.
 
-use aws_config::{BehaviorVersion, Region, meta::region::RegionProviderChain};
-use aws_sdk_s3::{
-    Client,
-    config::Credentials,
-    error::SdkError,
-    operation::{get_object::GetObjectError, put_object::PutObjectError},
-    primitives::ByteStream,
-};
-use aws_smithy_types::byte_stream::error::Error as ByteStreamError;
 use bytes::Bytes;
 use covalence_data_cas::{AsyncCas, AsyncCasError, CasFuture};
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_hash::O256;
+use covalence_lib_s3::{S3Client, S3Config, S3Error};
 use covalence_logic_cas::{CasCheckError, CasFact};
 
 /// Conventional top-level key prefix for whole CAS objects.
@@ -38,7 +30,7 @@ pub struct S3CasConfig {
     endpoint: Option<String>,
     region: Option<String>,
     force_path_style: bool,
-    credentials: Option<Credentials>,
+    credentials: Option<(String, String, Option<String>)>,
     max_object_bytes: u64,
 }
 
@@ -108,12 +100,10 @@ impl S3CasConfig {
         secret_access_key: impl Into<String>,
         session_token: Option<String>,
     ) -> Self {
-        self.credentials = Some(Credentials::new(
-            access_key_id,
-            secret_access_key,
+        self.credentials = Some((
+            access_key_id.into(),
+            secret_access_key.into(),
             session_token,
-            None,
-            "nucleus-explicit",
         ));
         self
     }
@@ -122,7 +112,7 @@ impl S3CasConfig {
 /// An async whole-object CAS backed by one S3 bucket and key prefix.
 #[derive(Clone, Debug)]
 pub struct S3Cas {
-    client: Client,
+    client: S3Client,
     bucket: String,
     prefix: String,
     max_object_bytes: u64,
@@ -132,22 +122,19 @@ impl S3Cas {
     /// Builds an S3 client using the configured values and standard AWS
     /// provider chains for values which were omitted.
     pub async fn new(config: S3CasConfig) -> Self {
-        let region = RegionProviderChain::first_try(config.region.map(Region::new))
-            .or_default_provider()
-            .or_else(Region::new("us-east-1"));
-        let mut loader = aws_config::defaults(BehaviorVersion::latest()).region(region);
-        if let Some(credentials) = config.credentials {
-            loader = loader.credentials_provider(credentials);
+        let mut client_config = S3Config::new().with_path_style(config.force_path_style);
+        if let Some(region) = config.region {
+            client_config = client_config.with_region(region);
         }
-        if let Some(endpoint) = &config.endpoint {
-            loader = loader.endpoint_url(endpoint);
+        if let Some(endpoint) = config.endpoint {
+            client_config = client_config.with_endpoint(endpoint);
         }
-        let shared = loader.load().await;
-        let service = aws_sdk_s3::config::Builder::from(&shared)
-            .force_path_style(config.force_path_style)
-            .build();
+        if let Some((access_key_id, secret_access_key, session_token)) = config.credentials {
+            client_config =
+                client_config.with_credentials(access_key_id, secret_access_key, session_token);
+        }
         Self {
-            client: Client::from_conf(service),
+            client: S3Client::new(client_config).await,
             bucket: config.bucket,
             prefix: config.prefix,
             max_object_bytes: config.max_object_bytes,
@@ -171,53 +158,20 @@ impl S3Cas {
     /// Returns an S3 request or response-body failure, or rejects a response
     /// which exceeds the configured object-size limit.
     pub async fn get_bytes(&self, address: O256) -> Result<Option<Bytes>, S3CasError> {
-        let result = self
-            .client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(self.key(address))
-            .send()
-            .await;
-        let output = match result {
-            Ok(output) => output,
-            Err(error) if is_not_found(&error) => return Ok(None),
-            Err(source) => {
-                return Err(S3CasError::Get {
-                    source: Box::new(source),
-                });
-            }
-        };
-        if let Some(declared) = output.content_length() {
-            let declared = u64::try_from(declared)
-                .map_err(|_| S3CasError::InvalidContentLength { declared })?;
-            if declared > self.max_object_bytes {
-                return Err(S3CasError::ObjectTooLarge {
-                    limit: self.max_object_bytes,
-                    observed: declared,
-                });
-            }
-        }
-
-        let mut body = output.body;
-        let initial = body.size_hint().1.unwrap_or(0).min(self.max_object_bytes);
-        let initial = usize::try_from(initial).unwrap_or(usize::MAX);
-        let mut bytes = Vec::new();
-        bytes.try_reserve(initial).context(ReserveBodySnafu)?;
-        while let Some(chunk) = body.try_next().await.context(ReadBodySnafu)? {
-            let chunk_len = u64::try_from(chunk.len()).unwrap_or(u64::MAX);
-            let observed = u64::try_from(bytes.len())
-                .unwrap_or(u64::MAX)
-                .saturating_add(chunk_len);
-            if observed > self.max_object_bytes {
-                return Err(S3CasError::ObjectTooLarge {
-                    limit: self.max_object_bytes,
-                    observed,
-                });
-            }
-            bytes.try_reserve(chunk.len()).context(ReserveBodySnafu)?;
-            bytes.extend_from_slice(&chunk);
-        }
-        Ok(Some(Bytes::from(bytes)))
+        self.client
+            .get_bounded(&self.bucket, &self.key(address), self.max_object_bytes)
+            .await
+            .map_err(|source| match source {
+                S3Error::Get { .. } | S3Error::Put { .. } => S3CasError::Get { source },
+                S3Error::ReadBody { .. } => S3CasError::ReadBody { source },
+                S3Error::ReserveBody { source } => S3CasError::ReserveBody { source },
+                S3Error::InvalidContentLength { declared } => {
+                    S3CasError::InvalidContentLength { declared }
+                }
+                S3Error::ObjectTooLarge { limit, observed } => {
+                    S3CasError::ObjectTooLarge { limit, observed }
+                }
+            })
     }
 
     /// Fetches and validates a whole-object CAS fact.
@@ -250,15 +204,9 @@ impl S3Cas {
         }
         let address = O256::from_bytes(&bytes);
         self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(self.key(address))
-            .body(ByteStream::from(bytes))
-            .send()
+            .put(&self.bucket, &self.key(address), bytes)
             .await
-            .map_err(|source| S3CasError::Put {
-                source: Box::new(source),
-            })?;
+            .map_err(|source| S3CasError::Put { source })?;
         Ok(address)
     }
 }
@@ -273,12 +221,6 @@ impl AsyncCas for S3Cas {
     }
 }
 
-fn is_not_found(error: &SdkError<GetObjectError>) -> bool {
-    error
-        .as_service_error()
-        .is_some_and(GetObjectError::is_no_such_key)
-}
-
 /// Failure to access or validate an S3-backed CAS object.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
@@ -286,14 +228,14 @@ pub enum S3CasError {
     /// The object request failed.
     #[snafu(display("could not get S3 CAS object: {source}"))]
     Get {
-        /// S3 SDK failure.
-        source: Box<SdkError<GetObjectError>>,
+        /// Facade-level S3 failure.
+        source: S3Error,
     },
     /// Reading a successful object's response body failed.
     #[snafu(display("could not read S3 CAS object body: {source}"))]
     ReadBody {
-        /// Streaming response failure.
-        source: ByteStreamError,
+        /// Facade-level S3 streaming failure.
+        source: S3Error,
     },
     /// Memory for a bounded response body could not be reserved.
     #[snafu(display("could not reserve memory for S3 CAS object body: {source}"))]
@@ -307,12 +249,12 @@ pub enum S3CasError {
         /// Invalid signed content length.
         declared: i64,
     },
-    /// The response exceeded this CAS's configured admission limit.
+    /// The response or upload exceeded this CAS's configured admission limit.
     #[snafu(display("S3 CAS object exceeds {limit}-byte limit after {observed} bytes"))]
     ObjectTooLarge {
         /// Configured largest accepted object.
         limit: u64,
-        /// Declared or received byte count which crossed the limit.
+        /// Declared, received, or upload byte count which crossed the limit.
         observed: u64,
     },
     /// The downloaded object did not match its requested address.
@@ -326,7 +268,7 @@ pub enum S3CasError {
     /// Uploading an object failed.
     #[snafu(display("could not put S3 CAS object: {source}"))]
     Put {
-        /// S3 SDK failure.
-        source: Box<SdkError<PutObjectError>>,
+        /// Facade-level S3 upload failure.
+        source: S3Error,
     },
 }
