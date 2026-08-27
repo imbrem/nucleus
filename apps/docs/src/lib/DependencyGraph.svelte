@@ -3,23 +3,19 @@
   import { onMount } from "svelte";
   import GraphView from "./GraphView.svelte";
   import {
-    crateNodes,
-    dependencyDistances,
+    dependencyInventory,
     dependencyNodes,
+    type DependencyInventoryEntry,
+  } from "./dependency-presentation";
+  import {
+    crateNodes,
     loadRepositoryData,
-    type Dependency,
     type RepositoryData,
   } from "./repository-data";
-
-  interface InventoryEntry {
-    name: string;
-    versions: Array<
-      Dependency & { category: "tcb-direct" | "tcb-indirect" | "external" }
-    >;
-  }
+  import { graphCopy, statusMetrics } from "./site-content";
 
   let data: RepositoryData | undefined = $state();
-  let inventory: InventoryEntry[] = $state([]);
+  let inventory: DependencyInventoryEntry[] = $state([]);
   let error: string | undefined = $state();
   const format = new Intl.NumberFormat("en");
 
@@ -28,28 +24,7 @@
     void loadRepositoryData(controller.signal)
       .then((loaded) => {
         data = loaded;
-        const distances = dependencyDistances(loaded.dependencies);
-        const grouped = new Map<string, InventoryEntry["versions"]>();
-        for (const dependency of loaded.dependencies.packages) {
-          const distance = distances.get(dependency.id);
-          const category =
-            distance === 1
-              ? "tcb-direct"
-              : distance === undefined
-                ? "external"
-                : "tcb-indirect";
-          const versions = grouped.get(dependency.name) ?? [];
-          versions.push({ ...dependency, category });
-          grouped.set(dependency.name, versions);
-        }
-        inventory = [...grouped]
-          .map(([name, versions]) => ({
-            name,
-            versions: versions.sort((left, right) =>
-              left.version.localeCompare(right.version),
-            ),
-          }))
-          .sort((left, right) => left.name.localeCompare(right.name));
+        inventory = dependencyInventory(loaded.dependencies);
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted) {
@@ -77,17 +52,13 @@
     <p class="error">{error}</p>
   {:else if data}
     <div class="metrics" aria-label="Project statistics">
-      <article>
-        <strong>{format.format(data.lines.total)}</strong><span>total LoC</span>
-      </article>
-      <article>
-        <strong>{format.format(data.lines.crates)}</strong><span
-          >crates LoC</span
-        >
-      </article>
-      <article class="tcb-metric">
-        <strong>{format.format(data.lines.tcb)}</strong><span>TCB LoC</span>
-      </article>
+      {#each statusMetrics as metric}
+        <article class:tcb-metric={metric.emphasis ?? false}>
+          <strong>{format.format(data.lines[metric.key])}</strong><span
+            >{metric.label}</span
+          >
+        </article>
+      {/each}
       <article>
         <strong>{data.crates.crates.length}</strong><span
           >production crates</span
@@ -109,8 +80,8 @@
 
 {#if data}
   <GraphView
-    eyebrow="Workspace topology"
-    title="Crate graph"
+    eyebrow={graphCopy.crates.eyebrow}
+    title={graphCopy.crates.title}
     nodes={crateNodes(data.crates)}
     edges={data.crates.edges}
     compact
@@ -119,8 +90,8 @@
   >
 
   <GraphView
-    eyebrow="Resolved by Cargo"
-    title="Dependency graph"
+    eyebrow={graphCopy.dependencies.eyebrow}
+    title={graphCopy.dependencies.title}
     nodes={dependencyNodes(data.dependencies)}
     edges={data.dependencies.edges}
     compact
