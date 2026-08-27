@@ -157,63 +157,70 @@ test("the browser runs the same REPL as the CLI", async (context) => {
   assert.match(result.help, /\(connect "URL"\)/);
 });
 
-test("the browser composes the full kernel host with a proof", async (context) => {
-  const origin = await servePackage(context);
-  const page = await openPage(context, origin);
-  const component = await readFile(
-    join(
-      repository,
-      "target/wasm32-unknown-unknown/debug/covalence_proof_demo.component.wasm",
-    ),
-  );
+test(
+  "the browser composes the full kernel host with a proof",
+  { timeout: 30_000 },
+  async (context) => {
+    const origin = await servePackage(context);
+    const page = await openPage(context, origin);
+    const component = await readFile(
+      join(
+        repository,
+        "target/wasm32-unknown-unknown/debug/covalence_proof_demo.component.wasm",
+      ),
+    );
 
-  const result = await page.evaluate(async (bytes) => {
-    const { kernelAddress, loadStandardProof, proofHost, proofStats } =
-      window.nucleus;
-    const kernel = await loadStandardProof(new Uint8Array(bytes));
-    const stats = proofStats(kernel);
+    const result = await page.evaluate(async (bytes) => {
+      const { kernelAddress, loadStandardProof, proofHost, proofStats } =
+        window.nucleus;
+      const kernel = await loadStandardProof(new Uint8Array(bytes));
+      const stats = proofStats(kernel);
 
-    // Exercise methods outside the demo's original subset through the same
-    // generated WIT API that prover components import.
-    const star = kernel.kindStar();
-    const arrow = kernel.kindArr(star, star);
-    const encoded = kernel.arena().toCbor();
-    const table = proofHost.Table.fromBlob(encoded.blob());
-    return {
-      address: kernelAddress(kernel),
-      rows: stats.rows.toString(),
-      synFacts: stats.synFacts.toString(),
-      category: kernel.category(arrow),
-      tableAddressBytes: table.address().length,
-    };
-  }, Array.from(component));
+      // Exercise methods outside the demo's original subset through the same
+      // generated WIT API that prover components import.
+      const star = kernel.kindStar();
+      const arrow = kernel.kindArr(star, star);
+      const encoded = kernel.arena().toCbor();
+      const table = proofHost.Table.fromBlob(encoded.blob());
+      return {
+        address: kernelAddress(kernel),
+        rows: stats.rows.toString(),
+        synFacts: stats.synFacts.toString(),
+        category: kernel.category(arrow),
+        tableAddressBytes: table.address().length,
+      };
+    }, Array.from(component));
 
-  assert.match(result.address, /^[0-9a-f]{64}$/);
-  // The demo now exercises the full subtype package rather than stopping at
-  // the three-row Boolean prelude.
-  assert.equal(result.rows, "75");
-  assert.equal(result.synFacts, "0");
-  assert.equal(result.category, "kind");
-  assert.equal(result.tableAddressBytes, 32);
+    assert.match(result.address, /^[0-9a-f]{64}$/);
+    // The demo now exercises the full subtype package rather than stopping at
+    // the three-row Boolean prelude.
+    assert.equal(result.rows, "75");
+    assert.equal(result.synFacts, "0");
+    assert.equal(result.category, "kind");
+    assert.equal(result.tableAddressBytes, 32);
 
-  await page.goto(`${origin}/proof.html`);
-  await page.waitForFunction(() => document.body.dataset.ready === "yes");
-  await page.locator("#file").setInputFiles({
-    name: "demo-proof.wasm",
-    mimeType: "application/wasm",
-    buffer: component,
-  });
-  await page.waitForFunction(() =>
-    ["ok", "error"].includes(document.getElementById("status").dataset.state),
-  );
-  assert.equal(
-    await page.locator("#status").getAttribute("data-state"),
-    "ok",
-    await page.locator("#status").textContent(),
-  );
-  assert.match(await page.locator("#address").textContent(), /^[0-9a-f]{64}$/);
-  assert.equal(await page.locator("#rows").textContent(), "75");
-});
+    await page.goto(`${origin}/proof.html`);
+    await page.waitForFunction(() => document.body.dataset.ready === "yes");
+    await page.locator("#file").setInputFiles({
+      name: "demo-proof.wasm",
+      mimeType: "application/wasm",
+      buffer: component,
+    });
+    await page.waitForFunction(() =>
+      ["ok", "error"].includes(document.getElementById("status").dataset.state),
+    );
+    assert.equal(
+      await page.locator("#status").getAttribute("data-state"),
+      "ok",
+      await page.locator("#status").textContent(),
+    );
+    assert.match(
+      await page.locator("#address").textContent(),
+      /^[0-9a-f]{64}$/,
+    );
+    assert.equal(await page.locator("#rows").textContent(), "75");
+  },
+);
 
 test("the REPL runs proofs from the selected kernel by content address", async (context) => {
   const origin = await servePackage(context);
