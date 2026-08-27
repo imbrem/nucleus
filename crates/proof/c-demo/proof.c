@@ -42,6 +42,7 @@ static standard_proof_callback_code_t finish_fetch(struct proof_task *task) {
     return STANDARD_PROOF_CALLBACK_CODE_EXIT;
   }
   if (!task->fetch.val.ok.is_some) {
+    nucleus_proof_host_result_option_own_bytes_string_free(&task->fetch);
     return_error("proof input is absent from the default CAS");
     free(task);
     return STANDARD_PROOF_CALLBACK_CODE_EXIT;
@@ -54,7 +55,7 @@ static standard_proof_callback_code_t finish_fetch(struct proof_task *task) {
   bool matches = value.len == sizeof(EXPECTED_INPUT) - 1 &&
                  memcmp(value.ptr, EXPECTED_INPUT, value.len) == 0;
   standard_proof_list_u8_free(&value);
-  nucleus_proof_host_bytes_drop_own(bytes);
+  nucleus_proof_host_result_option_own_bytes_string_free(&task->fetch);
 
   if (!matches) {
     return_error("async CAS fetch changed the proof input");
