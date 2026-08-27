@@ -109,7 +109,7 @@ async function startKernel(context, files = [fixture]) {
   };
 }
 
-async function openPage(context, origin) {
+async function openPage(context, origin, path = "/test/browser.html") {
   const executablePath = process.env.CHROMIUM_PATH;
   assert.ok(executablePath, "CHROMIUM_PATH is set by the Nix shell");
   const browser = await chromium.launch({
@@ -123,7 +123,7 @@ async function openPage(context, origin) {
     if (message.type() === "error") console.error("page:", message.text());
   });
   page.on("pageerror", (error) => console.error("page error:", error));
-  await page.goto(`${origin}/test/browser.html`);
+  await page.goto(`${origin}${path}`);
   await page.waitForFunction(() => document.body.dataset.ready === "yes");
   return page;
 }
@@ -196,23 +196,29 @@ test("the browser composes the full kernel host with a proof", async (context) =
   assert.equal(result.category, "kind");
   assert.equal(result.tableAddressBytes, 32);
 
-  await page.goto(`${origin}/proof.html`);
-  await page.waitForFunction(() => document.body.dataset.ready === "yes");
-  await page.locator("#file").setInputFiles({
+  // Start the UI assertion in a fresh browser process. Discarding a page that
+  // has run a native-async component while navigating it can terminate
+  // Chromium in constrained container environments.
+  await page.close();
+  const proofPage = await openPage(context, origin, "/proof.html");
+  await proofPage.locator("#file").setInputFiles({
     name: "demo-proof.wasm",
     mimeType: "application/wasm",
     buffer: component,
   });
-  await page.waitForFunction(() =>
+  await proofPage.waitForFunction(() =>
     ["ok", "error"].includes(document.getElementById("status").dataset.state),
   );
   assert.equal(
-    await page.locator("#status").getAttribute("data-state"),
+    await proofPage.locator("#status").getAttribute("data-state"),
     "ok",
-    await page.locator("#status").textContent(),
+    await proofPage.locator("#status").textContent(),
   );
-  assert.match(await page.locator("#address").textContent(), /^[0-9a-f]{64}$/);
-  assert.equal(await page.locator("#rows").textContent(), "75");
+  assert.match(
+    await proofPage.locator("#address").textContent(),
+    /^[0-9a-f]{64}$/,
+  );
+  assert.equal(await proofPage.locator("#rows").textContent(), "75");
 });
 
 test("the REPL runs proofs from the selected kernel by content address", async (context) => {
