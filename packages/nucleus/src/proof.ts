@@ -34,7 +34,9 @@ export async function loadStandardProof(
   target: Uint8Array = new Uint8Array(32),
 ): Promise<Kernel> {
   if (target.length !== 32) {
-    throw new Error(`proof targets must contain 32 bytes, got ${target.length}`);
+    throw new Error(
+      `proof targets must contain 32 bytes, got ${target.length}`,
+    );
   }
   const { transpile } = await import("@bytecodealliance/jco");
   const bytes =
