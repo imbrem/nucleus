@@ -966,6 +966,13 @@
     },
     {
       "source": "workspace#covalence-data-cas-s3@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-s3@0.0.0",
       "target": "workspace#covalence-lib-error@0.0.0",
       "kinds": [
         "normal"

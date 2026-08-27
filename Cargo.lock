@@ -972,6 +972,7 @@ dependencies = [
  "aws-smithy-types",
  "axum",
  "bytes",
+ "covalence-data-cas",
  "covalence-lib-error",
  "covalence-lib-hash",
  "covalence-logic-cas",

@@ -15,6 +15,7 @@ aws-config = { version = "1", default-features = false, features = ["credentials
 aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "rustls"] }
 aws-smithy-types = "1"
 bytes = "1"
+covalence-data-cas = { path = "../cas" }
 covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
 covalence-logic-cas = { path = "../../logic/cas" }

@@ -8,6 +8,7 @@ use axum::{
     routing::get,
 };
 use bytes::Bytes;
+use covalence_data_cas::{AsyncCas, get_exact_fact};
 use covalence_data_cas_s3::{S3Cas, S3CasConfig};
 use covalence_lib_hash::O256;
 use tokio::{net::TcpListener, sync::Mutex};
@@ -75,6 +76,15 @@ async fn canonical_round_trip_and_missing_object() {
             .await
             .contains_key(&format!("test-bucket/cas/{address}"))
     );
+
+    let provider: &dyn AsyncCas = &cas;
+    assert_eq!(
+        provider.get_bytes(address).await.unwrap(),
+        Some(bytes.clone())
+    );
+    let exact = get_exact_fact(provider, address).await.unwrap().unwrap();
+    assert_eq!(exact.hash(), address);
+    assert_eq!(exact.bytes(), &bytes);
 }
 
 #[tokio::test]

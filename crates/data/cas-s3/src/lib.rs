@@ -19,6 +19,7 @@ use aws_sdk_s3::{
 };
 use aws_smithy_types::byte_stream::error::Error as ByteStreamError;
 use bytes::Bytes;
+use covalence_data_cas::{AsyncCas, AsyncCasError, CasFuture};
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_hash::O256;
 use covalence_logic_cas::{CasCheckError, CasFact};
@@ -203,6 +204,16 @@ impl S3Cas {
                 source: Box::new(source),
             })?;
         Ok(address)
+    }
+}
+
+impl AsyncCas for S3Cas {
+    fn get_bytes(&self, address: O256) -> CasFuture<'_, Option<Bytes>> {
+        Box::pin(async move {
+            S3Cas::get_bytes(self, address)
+                .await
+                .map_err(AsyncCasError::provider)
+        })
     }
 }
 
