@@ -11,7 +11,7 @@ description: Develop, compare, or review Nucleus formal designs in Lean. Use for
    intentional; Rust remains the single running implementation.
 3. Share definitions when the abstraction expresses a useful invariant or
    correspondence. Do not erase meaningful differences to reduce duplication.
-4. State the trust boundary in theorem types. Prefer bridges from exact decoded
+4. Make assumptions visible in theorem types. Prefer bridges from exact decoded
    artifacts to abstract semantics over trusting parsers, names, or compilers.
 5. Avoid `sorry`. Inspect exported axioms and separate expected classical/HOL
    assumptions from accidental ones.

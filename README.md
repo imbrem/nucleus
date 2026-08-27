@@ -1,14 +1,15 @@
 # Nucleus
 
-Nucleus is a content-addressed theorem-prover substrate with a small checked
-HOL kernel. Other logics and computation systems can be represented and
-reasoned about inside HOL. Proving a foreign judgment need not construct or
-decide a derivation in the foreign system.
+Nucleus is a content-addressed theorem prover built around a small HOL kernel.
+Other logics and computation systems can be represented and reasoned about
+inside HOL. Proving a foreign judgment need not construct or decide a
+derivation in the foreign system.
 
-Parsers, elaborators, tactics, solvers, importers, and executors do not carry
-logical authority. They contribute through checked kernel operations. Hashes
-identify bytes; checked relations establish what those bytes mean. Signatures
-and execution records provide provenance without changing theorem meaning.
+The kernel API follows the LCF pattern: callers can use theorem handles, but
+only the kernel can create valid ones. Parsers, tactics, solvers, and importers
+propose work for the kernel to check. Proof-producing tools are intended to run
+as untrusted Wasm components. Hashes identify bytes; kernel-checked facts state
+what those bytes mean.
 
 The Rust workspace contains the running implementation. Lean contains its
 formal models and deliberately explores multiple related designs; every
@@ -25,4 +26,5 @@ checked-in Lean module should build continuously.
 - `.agents/skills/`: task-specific contributor guidance
 
 Start with the local README or module documentation nearest the code you are
-changing. See `AGENTS.md` for repository-wide working rules.
+changing. See `AGENTS.md` for repository-wide working rules and
+`docs/glossary.md` for project terminology.

@@ -8,9 +8,8 @@ contains useful investigations, not one authoritative roadmap.
 
 - HOL is the ambient semantic envelope. An embedded judgment may be proved
   without constructing or deciding an object-theory derivation.
-- Only checked operations confer logical authority. Keep parsing, elaboration,
-  automation, importing, execution, storage policy, and naming outside that
-  boundary.
+- Only the kernel creates trusted theorem facts. Keep parsing, elaboration,
+  automation, importing, execution, storage policy, and naming outside the TCB.
 - A content address identifies bytes. Semantic claims about those bytes require
   checked evidence; signatures record provenance or policy.
 - Rust has one running design. Lean may contain multiple named designs so they
