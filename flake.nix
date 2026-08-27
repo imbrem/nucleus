@@ -18,10 +18,13 @@
         pkgs = import nixpkgs { inherit system overlays; };
         rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
         wasiCC = pkgs.pkgsCross.wasi32.stdenv.cc;
-        wasiTools = pkgs.runCommand "nucleus-wasi-tools" {} ''
+        wasiTools = pkgs.runCommand "nucleus-wasi-tools" {
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+        } ''
           mkdir -p $out/bin
           ln -s ${pkgs.llvmPackages.clang-unwrapped}/bin/clang $out/bin/nucleus-wasm-clang
-          ln -s ${wasiCC}/bin/wasm32-unknown-wasi-cc $out/bin/
+          makeWrapper ${wasiCC}/bin/wasm32-unknown-wasi-cc $out/bin/wasm32-unknown-wasi-cc \
+            --add-flags "-fuse-ld=${pkgs.llvmPackages.lld}/bin/wasm-ld"
           ln -s ${wasiCC}/bin/wasm32-unknown-wasi-ar $out/bin/
         '';
         rustPlatform = pkgs.makeRustPlatform {
