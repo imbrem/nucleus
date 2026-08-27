@@ -55,7 +55,7 @@ impl S3CasConfig {
     /// Sets the key prefix. Leading and trailing slashes are ignored.
     #[must_use]
     pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
-        self.prefix = prefix.into().trim_matches('/').to_owned();
+        prefix.into().trim_matches('/').clone_into(&mut self.prefix);
         self
     }
 
@@ -161,7 +161,11 @@ impl S3Cas {
         let output = match result {
             Ok(output) => output,
             Err(error) if is_not_found(&error) => return Ok(None),
-            Err(source) => return Err(S3CasError::Get { source }),
+            Err(source) => {
+                return Err(S3CasError::Get {
+                    source: Box::new(source),
+                });
+            }
         };
         let collected = output.body.collect().await.context(ReadBodySnafu)?;
         Ok(Some(collected.into_bytes()))
@@ -195,7 +199,9 @@ impl S3Cas {
             .body(ByteStream::from(bytes))
             .send()
             .await
-            .context(PutSnafu)?;
+            .map_err(|source| S3CasError::Put {
+                source: Box::new(source),
+            })?;
         Ok(address)
     }
 }
@@ -214,7 +220,7 @@ pub enum S3CasError {
     #[snafu(display("could not get S3 CAS object: {source}"))]
     Get {
         /// S3 SDK failure.
-        source: SdkError<GetObjectError>,
+        source: Box<SdkError<GetObjectError>>,
     },
     /// Reading a successful object's response body failed.
     #[snafu(display("could not read S3 CAS object body: {source}"))]
@@ -234,6 +240,6 @@ pub enum S3CasError {
     #[snafu(display("could not put S3 CAS object: {source}"))]
     Put {
         /// S3 SDK failure.
-        source: SdkError<PutObjectError>,
+        source: Box<SdkError<PutObjectError>>,
     },
 }

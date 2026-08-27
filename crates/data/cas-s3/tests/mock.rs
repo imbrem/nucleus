@@ -69,9 +69,12 @@ async fn canonical_round_trip_and_missing_object() {
     let fact = cas.get_fact(address).await.unwrap().unwrap();
     assert_eq!(fact.hash(), address);
     assert_eq!(fact.bytes(), &bytes);
-    assert!(objects.lock().await.contains_key(&format!(
-        "test-bucket/cas/{address}"
-    )));
+    assert!(
+        objects
+            .lock()
+            .await
+            .contains_key(&format!("test-bucket/cas/{address}"))
+    );
 }
 
 #[tokio::test]
