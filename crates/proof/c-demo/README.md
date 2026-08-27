@@ -6,9 +6,9 @@ returns a host-created empty checked kernel.
 
 The component is still untrusted: C code receives and returns opaque host
 resources, while only the host kernel can construct theorem facts. The demo
-completes immediately, but its generated ABI is genuinely asynchronous. A C
-component that waits for CAS or another async import can use the generated
-subtask and callback API without changing the WIT world.
+performs an asynchronous CAS fetch and uses the generated subtask and callback
+API when that fetch suspends. The same mechanism can drive other asynchronous
+imports without changing the WIT world.
 
 From the repository development shell, build and run it with:
 
