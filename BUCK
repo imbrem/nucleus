@@ -55,23 +55,17 @@ export_file(
     visibility = ["PUBLIC"],
 )
 
-export_file(
-    name = "proof_c_demo_source",
-    src = "crates/proof/c-demo/proof.c",
-    visibility = ["PUBLIC"],
-)
-
 genrule(
     name = "proof-c-demo",
     srcs = with_environment([
-        ":proof_c_demo_source",
+        "//crates/proof/c-demo:package_files",
         ":proof_wit",
         "flake.lock",
         "flake.nix",
         "//tools/glu:glu",
     ]),
     out = "covalence-proof-c-demo.component.wasm",
-    cmd = "$(exe //tools/glu:glu) artifact proof-c-demo --proof $(location :proof_c_demo_source) --wit $(location :proof_wit) --wit-bindgen {} --wasi-cc {} --wasm-tools {} --out $OUT".format(_WIT_BINDGEN, _WASI_CC, _WASM_TOOLS),
+    cmd = "$(exe //tools/glu:glu) artifact proof-c-demo --proof $(location //crates/proof/c-demo:package_files)/proof.c --wit $(location :proof_wit) --wit-bindgen {} --wasi-cc {} --wasm-tools {} --out $OUT".format(_WIT_BINDGEN, _WASI_CC, _WASM_TOOLS),
     labels = ["uses_undeclared_inputs"],
     visibility = ["PUBLIC"],
 )

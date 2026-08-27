@@ -16,7 +16,7 @@ From the repository development shell, build and run it with:
 pnpm --filter @nucleus/nucleus build:proof-c-demo
 cargo run -p covalence-nucleus --example load-proof -- \
   target/wasm32-wasip1/covalence_proof_c_demo.component.wasm
-cargo test -p covalence-nucleus --test proof_c -- --ignored
+cargo test -p covalence-proof-c-demo-test --test proof_c -- --ignored
 ```
 
 The build generates C bindings from `wit/proof/proof.wit` rather than checking

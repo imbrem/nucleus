@@ -679,12 +679,6 @@
           ]
         },
         {
-          "name": "proof_c",
-          "kinds": [
-            "test"
-          ]
-        },
-        {
           "name": "proof_subtype",
           "kinds": [
             "test"
@@ -692,6 +686,21 @@
         },
         {
           "name": "sqlite",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-proof-c-demo-test@0.0.0",
+      "name": "covalence-proof-c-demo-test",
+      "version": "0.0.0",
+      "path": "crates/proof/c-demo",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "proof_c",
           "kinds": [
             "test"
           ]
@@ -1354,6 +1363,13 @@
       "target": "workspace#covalence-neutron@0.0.0",
       "kinds": [
         "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-proof-c-demo-test@0.0.0",
+      "target": "workspace#covalence-nucleus@0.0.0",
+      "kinds": [
+        "dev"
       ]
     },
     {

@@ -2,7 +2,7 @@
 //!
 //! Ignored by default because it consumes a generated build artifact: run
 //! `pnpm --filter @nucleus/nucleus build:proof-c-demo` first, then
-//! `cargo test -p covalence-nucleus --test proof_c -- --ignored`.
+//! `cargo test -p covalence-proof-c-demo-test --test proof_c -- --ignored`.
 
 #[cfg(not(feature = "buck-test-fixtures"))]
 use std::path::PathBuf;
@@ -11,6 +11,7 @@ use std::path::PathBuf;
 fn demo_component() -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
+        .and_then(|proof| proof.parent())
         .and_then(|crates| crates.parent())
         .expect("workspace root")
         .to_path_buf();
@@ -18,7 +19,7 @@ fn demo_component() -> PathBuf {
 }
 
 #[cfg(feature = "buck-test-fixtures")]
-const DEMO_COMPONENT: &[u8] = include_bytes!("../fixtures/covalence-proof-c-demo.component.wasm");
+const DEMO_COMPONENT: &[u8] = include_bytes!("fixtures/covalence-proof-c-demo.component.wasm");
 
 #[test]
 #[cfg_attr(
