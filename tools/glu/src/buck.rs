@@ -1409,7 +1409,7 @@ fn package_directory(root: &Path, package: &Package) -> Result<PathBuf> {
 
 fn cargo_package_env(package: &Package) -> Vec<(String, String)> {
     let version = &package.version;
-    [
+    let mut environment = [
         ("CARGO_PKG_AUTHORS", package.authors.join(":")),
         (
             "CARGO_PKG_DESCRIPTION",
@@ -1446,7 +1446,18 @@ fn cargo_package_env(package: &Package) -> Vec<(String, String)> {
     ]
     .into_iter()
     .map(|(name, value)| (name.to_owned(), value))
-    .collect()
+    .collect::<Vec<_>>();
+    push_manifest_links(&mut environment, package.links.as_deref());
+    environment
+}
+
+fn push_manifest_links(environment: &mut Vec<(String, String)>, links: Option<&str>) {
+    if let Some(links) = links {
+        // Cargo exposes a package's own `links` value to its build script.
+        // Crates such as `ring` use it to keep generated native-library names
+        // consistent with the manifest.
+        environment.push(("CARGO_MANIFEST_LINKS".to_owned(), links.to_owned()));
+    }
 }
 
 fn external_package_env(package: &Package) -> BTreeMap<String, String> {
@@ -1464,4 +1475,22 @@ fn external_package_env(package: &Package) -> BTreeMap<String, String> {
                 )
         })
         .collect()
+}
+
+#[cfg(test)]
+mod package_environment_tests {
+    use super::push_manifest_links;
+
+    #[test]
+    fn package_links_reaches_its_own_build_script_environment() {
+        let mut environment = Vec::new();
+        push_manifest_links(&mut environment, Some("example-native-library"));
+        assert_eq!(
+            environment,
+            vec![(
+                "CARGO_MANIFEST_LINKS".to_owned(),
+                "example-native-library".to_owned()
+            )]
+        );
+    }
 }
