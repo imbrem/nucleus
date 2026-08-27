@@ -679,6 +679,12 @@
           ]
         },
         {
+          "name": "proof_c",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "proof_subtype",
           "kinds": [
             "test"
