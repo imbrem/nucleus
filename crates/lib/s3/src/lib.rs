@@ -88,6 +88,9 @@ impl S3Client {
         }
         if let Some(endpoint) = &config.endpoint {
             loader = loader.endpoint_url(endpoint);
+            if endpoint.starts_with("http://") {
+                loader = loader.http_client(aws_smithy_http_client::Builder::new().build_http());
+            }
         }
         let shared = loader.load().await;
         let service = aws_sdk_s3::config::Builder::from(&shared)

@@ -30,6 +30,7 @@ rust_library(
     named_deps = {
         "aws_config": "nucleus//buck/cargo/production:aws-config-1.11.0",
         "aws_sdk_s3": "nucleus//buck/cargo/production:aws-sdk-s3-1.144.0",
+        "aws_smithy_http_client": "nucleus//buck/cargo/production:aws-smithy-http-client-1.4.0",
         "aws_smithy_types": "nucleus//buck/cargo/production:aws-smithy-types-1.6.2",
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
@@ -63,6 +64,7 @@ rust_test(
     named_deps = {
         "aws_config": "nucleus//buck/cargo/production:aws-config-1.11.0",
         "aws_sdk_s3": "nucleus//buck/cargo/production:aws-sdk-s3-1.144.0",
+        "aws_smithy_http_client": "nucleus//buck/cargo/production:aws-smithy-http-client-1.4.0",
         "aws_smithy_types": "nucleus//buck/cargo/production:aws-smithy-types-1.6.2",
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",

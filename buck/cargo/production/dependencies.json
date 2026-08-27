@@ -603,6 +603,7 @@
       "checksum": "ebfd138fac0337cee7516c352757ea73b9f2266e57d0bcb5bc70e9547e45aef1",
       "edition": "2021",
       "features": [
+        "default-client",
         "hyper-014",
         "legacy-rustls-ring"
       ],
@@ -621,13 +622,18 @@
             "h2": ":h2-0.4.19",
             "h2_0_3": ":h2-0.3.27",
             "http_02x": ":http-0.2.12",
+            "http_1x": ":http-1.5.0",
             "http_body_04x": ":http-body-0.4.6",
+            "hyper": ":hyper-1.11.0",
             "hyper_0_14": ":hyper-0.14.32",
+            "hyper_util": ":hyper-util-0.1.20",
             "legacy_hyper_rustls": ":hyper-rustls-0.24.2",
             "legacy_rustls": ":rustls-0.21.12",
             "pin_project_lite": ":pin-project-lite-0.2.17",
             "rustls_native_certs": ":rustls-native-certs-0.8.4",
+            "rustls_pki_types": ":rustls-pki-types-1.15.1",
             "tokio": ":tokio-1.53.1",
+            "tower": ":tower-0.5.3",
             "tracing": ":tracing-0.1.44"
           }
         }
@@ -3677,8 +3683,10 @@
       "checksum": "d22053281f852e11534f5198498373cbb59295120a20771d90f7ed1897490a72",
       "edition": "2021",
       "features": [
+        "client",
         "default",
         "http1",
+        "http2",
         "server"
       ],
       "env": {
@@ -3695,6 +3703,7 @@
             "bytes": ":bytes-1.12.1",
             "futures_channel": ":futures-channel-0.3.34",
             "futures_core": ":futures-core-0.3.34",
+            "h2": ":h2-0.4.19",
             "http": ":http-1.5.0",
             "http_body": ":http-body-1.1.0",
             "httparse": ":httparse-1.10.1",
@@ -3702,7 +3711,8 @@
             "itoa": ":itoa-1.0.18",
             "pin_project_lite": ":pin-project-lite-0.2.17",
             "smallvec": ":smallvec-1.15.2",
-            "tokio": ":tokio-1.53.1"
+            "tokio": ":tokio-1.53.1",
+            "want": ":want-0.3.1"
           }
         }
       ]
@@ -3749,8 +3759,12 @@
       "checksum": "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0",
       "edition": "2021",
       "features": [
+        "client",
+        "client-legacy",
+        "client-proxy",
         "default",
         "http1",
+        "http2",
         "server",
         "service",
         "tokio"
@@ -3765,13 +3779,21 @@
       "targets": [
         {
           "named_deps": {
+            "base64": ":base64-0.22.1",
             "bytes": ":bytes-1.12.1",
+            "futures_channel": ":futures-channel-0.3.34",
+            "futures_util": ":futures-util-0.3.34",
             "http": ":http-1.5.0",
             "http_body": ":http-body-1.1.0",
             "hyper": ":hyper-1.11.0",
+            "ipnet": ":ipnet-2.12.1",
+            "libc": ":libc-0.2.189",
+            "percent_encoding": ":percent-encoding-2.3.2",
             "pin_project_lite": ":pin-project-lite-0.2.17",
+            "socket2": ":socket2-0.5.10",
             "tokio": ":tokio-1.53.1",
-            "tower_service": ":tower-service-0.3.3"
+            "tower_service": ":tower-service-0.3.3",
+            "tracing": ":tracing-0.1.44"
           }
         }
       ]
@@ -9012,6 +9034,7 @@
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
         "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
+        "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
         "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
       ]
@@ -10100,6 +10123,13 @@
     },
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#hyper-rustls@0.24.2",
       "kinds": [
         "normal"
@@ -10107,7 +10137,21 @@
     },
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#hyper@0.14.32",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hyper@1.11.0",
       "kinds": [
         "normal"
       ]
@@ -10128,6 +10172,13 @@
     },
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustls-pki-types@1.15.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#rustls@0.21.12",
       "kinds": [
         "normal"
@@ -10136,6 +10187,13 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-http-client@1.4.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tower@0.5.3",
       "kinds": [
         "normal"
       ]
@@ -12827,7 +12885,28 @@
     },
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#base64@0.22.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
       "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-channel@0.3.34",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.34",
       "kinds": [
         "normal"
       ]
@@ -12855,7 +12934,35 @@
     },
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#ipnet@2.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#percent-encoding@2.3.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
       "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#socket2@0.5.10",
       "kinds": [
         "normal"
       ]
@@ -12870,6 +12977,13 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
       "target": "registry+https://github.com/rust-lang/crates.io-index#tower-service@0.3.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
       "kinds": [
         "normal"
       ]
@@ -13016,6 +13130,13 @@
     },
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#h2@0.4.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@1.11.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#http-body@1.1.0",
       "kinds": [
         "normal"
@@ -13066,6 +13187,13 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@1.11.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hyper@1.11.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#want@0.3.1",
       "kinds": [
         "normal"
       ]

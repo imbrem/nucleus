@@ -324,13 +324,18 @@ dependencies = [
  "h2 0.3.27",
  "h2 0.4.19",
  "http 0.2.12",
+ "http 1.5.0",
  "http-body 0.4.6",
  "hyper 0.14.32",
+ "hyper 1.11.0",
  "hyper-rustls",
+ "hyper-util",
  "pin-project-lite",
  "rustls",
  "rustls-native-certs",
+ "rustls-pki-types",
  "tokio",
+ "tower",
  "tracing",
 ]
 
@@ -1094,6 +1099,7 @@ version = "0.0.0"
 dependencies = [
  "aws-config",
  "aws-sdk-s3",
+ "aws-smithy-http-client",
  "aws-smithy-types",
  "bytes",
  "covalence-lib-error",
@@ -2112,6 +2118,7 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
+ "h2 0.4.19",
  "http 1.5.0",
  "http-body 1.1.0",
  "httparse",
@@ -2120,6 +2127,7 @@ dependencies = [
  "pin-project-lite",
  "smallvec",
  "tokio",
+ "want",
 ]
 
 [[package]]
@@ -2143,13 +2151,21 @@ version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
 dependencies = [
+ "base64",
  "bytes",
+ "futures-channel",
+ "futures-util",
  "http 1.5.0",
  "http-body 1.1.0",
  "hyper 1.11.0",
+ "ipnet",
+ "libc",
+ "percent-encoding",
  "pin-project-lite",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
