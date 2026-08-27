@@ -763,6 +763,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-proof-c-demo-test"
+version = "0.0.0"
+dependencies = [
+ "covalence-nucleus",
+]
+
+[[package]]
 name = "covalence-proof-demo"
 version = "0.0.0"
 dependencies = [
