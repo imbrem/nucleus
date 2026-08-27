@@ -194,11 +194,11 @@
       />
     </label>
     <div class="view-controls" aria-label="Graph view controls">
-      <button title="Zoom out" aria-label="Zoom out" onclick={() => zoom(0.8)}
+      <button type="button" title="Zoom out" aria-label="Zoom out" onclick={() => zoom(0.8)}
         >−</button
       >
-      <button title="Fit graph" onclick={fit}>Fit</button>
-      <button title="Zoom in" aria-label="Zoom in" onclick={() => zoom(1.25)}
+      <button type="button" title="Fit graph" onclick={fit}>Fit</button>
+      <button type="button" title="Zoom in" aria-label="Zoom in" onclick={() => zoom(1.25)}
         >+</button
       >
     </div>
@@ -213,6 +213,7 @@
     {#if selected}
       <aside class="node-detail" aria-live="polite">
         <button
+          type="button"
           aria-label="Close crate details"
           onclick={() => (selected = undefined)}>×</button
         >

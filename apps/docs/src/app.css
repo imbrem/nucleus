@@ -19,8 +19,11 @@ body {
   gap: 1.25rem;
   margin: 0 auto;
   padding-top: 1.25rem;
+  overflow-x: auto;
   font-size: 0.72rem;
   font-weight: 700;
+  scrollbar-width: thin;
+  white-space: nowrap;
 }
 
 button,

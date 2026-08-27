@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { dependencyNodes } from "./dependency-presentation";
   import GraphView from "./GraphView.svelte";
   import {
     crateNodes,
-    dependencyNodes,
     loadRepositoryData,
     type RepositoryData,
   } from "./repository-data";
+  import { graphCopy } from "./site-content";
 
   let { kind }: { kind: "crates" | "dependencies" } = $props();
   let data: RepositoryData | undefined = $state();
@@ -35,15 +36,15 @@
     <p class="error">{error}</p>
   {:else if data && kind === "crates"}
     <GraphView
-      eyebrow="Workspace topology"
-      title="Crate graph"
+      eyebrow={graphCopy.crates.eyebrow}
+      title={graphCopy.crates.title}
       nodes={crateNodes(data.crates)}
       edges={data.crates.edges}
     />
   {:else if data}
     <GraphView
-      eyebrow="Resolved by Cargo"
-      title="Dependency graph"
+      eyebrow={graphCopy.dependencies.eyebrow}
+      title={graphCopy.dependencies.title}
       nodes={dependencyNodes(data.dependencies)}
       edges={data.dependencies.edges}
     />
