@@ -27,3 +27,6 @@ rev = "810849d47d1084f2e98844d316091845c561bb25"
 
 [[lean_lib]]
 name = "Nucleus"
+# Lean intentionally contains several related formal designs. Validate every
+# checked-in module; the root import list only defines the public library API.
+globs = ["Nucleus.+"]
