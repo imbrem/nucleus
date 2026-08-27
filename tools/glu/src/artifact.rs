@@ -241,9 +241,10 @@ impl Runner {
                 "compile the proof host component",
                 "cargo",
                 [
-                    "component",
                     "build",
                     "--locked",
+                    "--target",
+                    "wasm32-unknown-unknown",
                     "--target-dir",
                     as_utf8(&component_target, "temporary target")?,
                     "--profile",
@@ -256,6 +257,20 @@ impl Runner {
                     ("TMPDIR", component_target.as_os_str()),
                 ],
             )?;
+            let core = component_target
+                .join("wasm32-unknown-unknown/wasm-release/covalence_proof_host.wasm");
+            let component = component_target.join("covalence_proof_host.component.wasm");
+            self.run(
+                "wrap the proof host component",
+                "wasm-tools",
+                [
+                    "component",
+                    "new",
+                    as_utf8(&core, "proof host core module")?,
+                    "-o",
+                    as_utf8(&component, "proof host component")?,
+                ],
+            )?;
             self.run(
                 "generate proof host bindings",
                 "pnpm",
@@ -265,15 +280,13 @@ impl Runner {
                     "exec",
                     "jco",
                     "transpile",
-                    as_utf8(
-                        &component_target
-                            .join("wasm32-wasip1/wasm-release/covalence_proof_host.wasm"),
-                        "proof host component",
-                    )?,
+                    as_utf8(&component, "proof host component")?,
                     "--out-dir",
                     as_utf8(&generated.join("proof-host"), "proof host output")?,
                     "--name",
                     "host",
+                    "--async-mode",
+                    "jspi",
                 ],
             )
         })();
