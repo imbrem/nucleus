@@ -199,7 +199,7 @@ test("the browser composes the full kernel host with a proof", async (context) =
   // Start the UI assertion in a fresh browser process. Discarding a page that
   // has run a native-async component while navigating it can terminate
   // Chromium in constrained container environments.
-  await page.close();
+  await page.context().browser().close();
   const proofPage = await openPage(context, origin, "/proof.html");
   await proofPage.locator("#file").setInputFiles({
     name: "demo-proof.wasm",
