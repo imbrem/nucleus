@@ -738,6 +738,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-proof-naturals@0.0.0",
+      "name": "covalence-proof-naturals",
+      "version": "0.0.0",
+      "path": "crates/proof/naturals",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_proof_naturals",
+          "kinds": [
+            "cdylib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-proton@0.0.0",
       "name": "covalence-proton",
       "version": "0.0.0",

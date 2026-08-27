@@ -789,6 +789,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-proof-naturals"
+version = "0.0.0"
+dependencies = [
+ "wit-bindgen 0.61.1",
+]
+
+[[package]]
 name = "covalence-proton"
 version = "0.0.0"
 

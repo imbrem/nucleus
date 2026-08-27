@@ -62,6 +62,18 @@ cargo run -p covalence-nucleus --example load-proof -- \
   target/wasm32-unknown-unknown/debug/covalence_proof_demo.component.wasm
 ```
 
+`covalence-proof-naturals` is a larger ABI proof of concept. It concludes
+infinity, constructs the impredicative reachability predicate over an explicit
+carrier, and carves a guarded subtype. It is intentionally not described as the
+standard init proof: eliminating the infinity existential and proving the
+Peano package still live only in the native derived layer.
+
+```sh
+pnpm --filter @nucleus/nucleus build:proof-naturals
+cargo run -p covalence-nucleus --example load-proof -- \
+  target/wasm32-unknown-unknown/debug/covalence_proof_naturals.component.wasm
+```
+
 The proof component imports no ambient WASI world. Its default capabilities are
 the Nucleus kernel, default CAS, and secure randomness; loaders may add filtered
 HTTP, VFS, named CAS, or other capabilities according to the proof's permission
