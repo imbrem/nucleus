@@ -5,6 +5,10 @@ SDK with configurable endpoint, signing region, credentials, and path-style
 addressing, so the same code can target AWS S3, Cloudflare R2, Backblaze B2,
 or a local S3-compatible server.
 
+Downloads are limited to 64 MiB by default. Configure a different admission
+limit with `S3CasConfig::with_max_object_bytes`; the implementation enforces it
+against both the declared content length and the body as it is streamed.
+
 The ordinary test suite uses a loopback HTTP mock and requires no credentials.
 Real-provider conformance is explicit and ignored by default:
 

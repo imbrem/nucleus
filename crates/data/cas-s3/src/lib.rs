@@ -27,6 +27,9 @@ use covalence_logic_cas::{CasCheckError, CasFact};
 /// Conventional top-level key prefix for whole CAS objects.
 pub const DEFAULT_PREFIX: &str = "cas";
 
+/// Default largest object accepted from an S3 response (64 MiB).
+pub const DEFAULT_MAX_OBJECT_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Configuration for one S3-compatible CAS namespace.
 #[derive(Clone, Debug)]
 pub struct S3CasConfig {
@@ -36,6 +39,7 @@ pub struct S3CasConfig {
     region: Option<String>,
     force_path_style: bool,
     credentials: Option<Credentials>,
+    max_object_bytes: u64,
 }
 
 impl S3CasConfig {
@@ -50,6 +54,7 @@ impl S3CasConfig {
             region: None,
             force_path_style: false,
             credentials: None,
+            max_object_bytes: DEFAULT_MAX_OBJECT_BYTES,
         }
     }
 
@@ -81,6 +86,17 @@ impl S3CasConfig {
         self
     }
 
+    /// Sets the largest response body this CAS will accept.
+    ///
+    /// The limit is checked against both the declared response length and the
+    /// bytes actually received, so a missing or dishonest `Content-Length`
+    /// cannot bypass it.
+    #[must_use]
+    pub const fn with_max_object_bytes(mut self, max_object_bytes: u64) -> Self {
+        self.max_object_bytes = max_object_bytes;
+        self
+    }
+
     /// Sets credentials explicitly instead of using the AWS provider chain.
     ///
     /// Prefer the provider chain for applications. This hook is useful for
@@ -109,6 +125,7 @@ pub struct S3Cas {
     client: Client,
     bucket: String,
     prefix: String,
+    max_object_bytes: u64,
 }
 
 impl S3Cas {
@@ -133,6 +150,7 @@ impl S3Cas {
             client: Client::from_conf(service),
             bucket: config.bucket,
             prefix: config.prefix,
+            max_object_bytes: config.max_object_bytes,
         }
     }
 
@@ -150,7 +168,8 @@ impl S3Cas {
     ///
     /// # Errors
     ///
-    /// Returns an S3 request or response-body failure.
+    /// Returns an S3 request or response-body failure, or rejects a response
+    /// which exceeds the configured object-size limit.
     pub async fn get_bytes(&self, address: O256) -> Result<Option<Bytes>, S3CasError> {
         let result = self
             .client
@@ -168,8 +187,37 @@ impl S3Cas {
                 });
             }
         };
-        let collected = output.body.collect().await.context(ReadBodySnafu)?;
-        Ok(Some(collected.into_bytes()))
+        if let Some(declared) = output.content_length() {
+            let declared = u64::try_from(declared)
+                .map_err(|_| S3CasError::InvalidContentLength { declared })?;
+            if declared > self.max_object_bytes {
+                return Err(S3CasError::ObjectTooLarge {
+                    limit: self.max_object_bytes,
+                    observed: declared,
+                });
+            }
+        }
+
+        let mut body = output.body;
+        let initial = body.size_hint().1.unwrap_or(0).min(self.max_object_bytes);
+        let initial = usize::try_from(initial).unwrap_or(usize::MAX);
+        let mut bytes = Vec::new();
+        bytes.try_reserve(initial).context(ReserveBodySnafu)?;
+        while let Some(chunk) = body.try_next().await.context(ReadBodySnafu)? {
+            let chunk_len = u64::try_from(chunk.len()).unwrap_or(u64::MAX);
+            let observed = u64::try_from(bytes.len())
+                .unwrap_or(u64::MAX)
+                .saturating_add(chunk_len);
+            if observed > self.max_object_bytes {
+                return Err(S3CasError::ObjectTooLarge {
+                    limit: self.max_object_bytes,
+                    observed,
+                });
+            }
+            bytes.try_reserve(chunk.len()).context(ReserveBodySnafu)?;
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(Some(Bytes::from(bytes)))
     }
 
     /// Fetches and validates a whole-object CAS fact.
@@ -219,8 +267,8 @@ impl AsyncCas for S3Cas {
 
 fn is_not_found(error: &SdkError<GetObjectError>) -> bool {
     error
-        .raw_response()
-        .is_some_and(|response| response.status().as_u16() == 404)
+        .as_service_error()
+        .is_some_and(GetObjectError::is_no_such_key)
 }
 
 /// Failure to access or validate an S3-backed CAS object.
@@ -238,6 +286,26 @@ pub enum S3CasError {
     ReadBody {
         /// Streaming response failure.
         source: ByteStreamError,
+    },
+    /// Memory for a bounded response body could not be reserved.
+    #[snafu(display("could not reserve memory for S3 CAS object body: {source}"))]
+    ReserveBody {
+        /// Allocation reservation failure.
+        source: std::collections::TryReserveError,
+    },
+    /// S3 supplied a negative declared response length.
+    #[snafu(display("S3 CAS object declared invalid content length {declared}"))]
+    InvalidContentLength {
+        /// Invalid signed content length.
+        declared: i64,
+    },
+    /// The response exceeded this CAS's configured admission limit.
+    #[snafu(display("S3 CAS object exceeds {limit}-byte limit after {observed} bytes"))]
+    ObjectTooLarge {
+        /// Configured largest accepted object.
+        limit: u64,
+        /// Declared or received byte count which crossed the limit.
+        observed: u64,
     },
     /// The downloaded object did not match its requested address.
     #[snafu(display("S3 CAS bytes for {address} failed validation: {source}"))]

@@ -15,6 +15,27 @@ fn optional(name: &str) -> Option<String> {
     env::var(name).ok().filter(|value| !value.is_empty())
 }
 
+fn explicit_credentials(
+    access: Option<String>,
+    secret: Option<String>,
+) -> Option<(String, String)> {
+    match (access, secret) {
+        (Some(access), Some(secret)) => Some((access, secret)),
+        (None, None) => None,
+        _ => panic!("selected provider must set both ACCESS_KEY_ID and SECRET_ACCESS_KEY"),
+    }
+}
+
+#[test]
+fn partial_explicit_credentials_are_rejected() {
+    assert!(
+        std::panic::catch_unwind(|| explicit_credentials(Some("access".to_owned()), None)).is_err()
+    );
+    assert!(
+        std::panic::catch_unwind(|| explicit_credentials(None, Some("secret".to_owned()))).is_err()
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires an explicitly selected real S3-compatible provider"]
 async fn real_provider_round_trip() {
@@ -38,7 +59,7 @@ async fn real_provider_round_trip() {
     if optional(&variable("PATH_STYLE")).as_deref() == Some("1") {
         config = config.with_path_style(true);
     }
-    if let (Some(access), Some(secret)) = (
+    if let Some((access, secret)) = explicit_credentials(
         optional(&variable("ACCESS_KEY_ID")),
         optional(&variable("SECRET_ACCESS_KEY")),
     ) {

@@ -73,6 +73,7 @@ rust_test(
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_logic_cas": "nucleus//crates/logic/cas:covalence_logic_cas",
+        "futures": "nucleus//buck/cargo/production:futures-0.3.34",
         "tokio": "nucleus//buck/cargo/production:tokio-1.53.1",
     },
     env = {
@@ -112,6 +113,7 @@ rust_test(
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_logic_cas": "nucleus//crates/logic/cas:covalence_logic_cas",
+        "futures": "nucleus//buck/cargo/production:futures-0.3.34",
         "tokio": "nucleus//buck/cargo/production:tokio-1.53.1",
     },
     env = {
@@ -151,6 +153,7 @@ rust_test(
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_logic_cas": "nucleus//crates/logic/cas:covalence_logic_cas",
+        "futures": "nucleus//buck/cargo/production:futures-0.3.34",
         "tokio": "nucleus//buck/cargo/production:tokio-1.53.1",
     },
     env = {

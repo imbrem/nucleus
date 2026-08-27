@@ -8915,6 +8915,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#aws-smithy-types@1.6.2",
         "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+        "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.34",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1"
       ]
     },

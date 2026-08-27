@@ -1,30 +1,64 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, sync::Arc};
 
 use axum::{
     Router,
-    body::Bytes as AxumBytes,
+    body::{Body, Bytes as AxumBytes},
     extract::{Path, State},
-    http::StatusCode,
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
     routing::get,
 };
 use bytes::Bytes;
 use covalence_data_cas::{AsyncCas, get_exact_fact};
-use covalence_data_cas_s3::{S3Cas, S3CasConfig};
+use covalence_data_cas_s3::{S3Cas, S3CasConfig, S3CasError};
 use covalence_lib_hash::O256;
+use futures::stream;
 use tokio::{net::TcpListener, sync::Mutex};
 
-type Objects = Arc<Mutex<HashMap<String, AxumBytes>>>;
+#[derive(Clone)]
+enum Object {
+    Bytes(AxumBytes),
+    Declared { content_length: u64 },
+    Streamed(Vec<AxumBytes>),
+}
+
+type Objects = Arc<Mutex<HashMap<String, Object>>>;
+
+fn s3_error(status: StatusCode, code: &str) -> Response {
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/xml")],
+        format!("<Error><Code>{code}</Code><Message>mock error</Message></Error>"),
+    )
+        .into_response()
+}
 
 async fn get_object(
     State(objects): State<Objects>,
     Path((bucket, key)): Path<(String, String)>,
-) -> Result<AxumBytes, StatusCode> {
-    objects
+) -> Response {
+    if bucket == "missing-bucket" {
+        return s3_error(StatusCode::NOT_FOUND, "NoSuchBucket");
+    }
+    let object = objects
         .lock()
         .await
         .get(&format!("{bucket}/{key}"))
-        .cloned()
-        .ok_or(StatusCode::NOT_FOUND)
+        .cloned();
+    match object {
+        Some(Object::Bytes(bytes)) => bytes.into_response(),
+        Some(Object::Declared { content_length }) => Response::builder()
+            .header(header::CONTENT_LENGTH, content_length)
+            .body(Body::from_stream(stream::pending::<
+                Result<AxumBytes, Infallible>,
+            >()))
+            .expect("valid mock response"),
+        Some(Object::Streamed(chunks)) => {
+            let chunks = chunks.into_iter().map(Ok::<_, Infallible>);
+            Response::new(Body::from_stream(stream::iter(chunks)))
+        }
+        None => s3_error(StatusCode::NOT_FOUND, "NoSuchKey"),
+    }
 }
 
 async fn put_object(
@@ -35,10 +69,10 @@ async fn put_object(
     objects
         .lock()
         .await
-        .insert(format!("{bucket}/{key}"), bytes);
+        .insert(format!("{bucket}/{key}"), Object::Bytes(bytes));
 }
 
-async fn fixture(objects: Objects) -> S3Cas {
+async fn fixture_for_bucket(objects: Objects, bucket: &str, max_object_bytes: u64) -> S3Cas {
     let app = Router::new()
         .route("/{bucket}/{*key}", get(get_object).put(put_object))
         .with_state(objects);
@@ -46,13 +80,18 @@ async fn fixture(objects: Objects) -> S3Cas {
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     S3Cas::new(
-        S3CasConfig::new("test-bucket")
+        S3CasConfig::new(bucket)
             .with_endpoint(format!("http://{address}"))
             .with_region("us-east-1")
             .with_path_style(true)
+            .with_max_object_bytes(max_object_bytes)
             .with_credentials("test-access", "test-secret", None),
     )
     .await
+}
+
+async fn fixture(objects: Objects) -> S3Cas {
+    fixture_for_bucket(objects, "test-bucket", 64 * 1024 * 1024).await
 }
 
 #[tokio::test]
@@ -94,7 +133,7 @@ async fn checked_lookup_rejects_wrong_bytes() {
     let requested = O256::from_bytes(b"requested");
     objects.lock().await.insert(
         format!("test-bucket/cas/{requested}"),
-        AxumBytes::from_static(b"different"),
+        Object::Bytes(AxumBytes::from_static(b"different")),
     );
 
     assert_eq!(
@@ -102,4 +141,60 @@ async fn checked_lookup_rejects_wrong_bytes() {
         Some(Bytes::from_static(b"different"))
     );
     assert!(cas.get_fact(requested).await.is_err());
+}
+
+#[tokio::test]
+async fn declared_oversize_is_rejected_before_reading() {
+    let objects = Objects::default();
+    let requested = O256::from_bytes(b"declared oversize");
+    objects.lock().await.insert(
+        format!("test-bucket/cas/{requested}"),
+        Object::Declared { content_length: 5 },
+    );
+    let cas = fixture_for_bucket(objects, "test-bucket", 4).await;
+
+    let result = cas.get_bytes(requested).await;
+    assert!(
+        matches!(
+            result,
+            Err(S3CasError::ObjectTooLarge {
+                limit: 4,
+                observed: 5
+            })
+        ),
+        "unexpected result: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn streamed_oversize_is_rejected_without_a_declared_length() {
+    let objects = Objects::default();
+    let requested = O256::from_bytes(b"streamed oversize");
+    objects.lock().await.insert(
+        format!("test-bucket/cas/{requested}"),
+        Object::Streamed(vec![
+            AxumBytes::from_static(b"abc"),
+            AxumBytes::from_static(b"def"),
+        ]),
+    );
+    let cas = fixture_for_bucket(objects, "test-bucket", 4).await;
+
+    assert!(matches!(
+        cas.get_bytes(requested).await,
+        Err(S3CasError::ObjectTooLarge {
+            limit: 4,
+            observed: 6
+        })
+    ));
+}
+
+#[tokio::test]
+async fn no_such_bucket_is_not_object_absence() {
+    let cas = fixture_for_bucket(Objects::default(), "missing-bucket", 1024).await;
+    let requested = O256::from_bytes(b"requested");
+
+    assert!(matches!(
+        cas.get_bytes(requested).await,
+        Err(S3CasError::Get { .. })
+    ));
 }
