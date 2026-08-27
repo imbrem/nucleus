@@ -161,7 +161,10 @@ test("the browser composes the full kernel host with a proof", async (context) =
   const origin = await servePackage(context);
   const page = await openPage(context, origin);
   const component = await readFile(
-    join(repository, "target/wasm32-wasip1/debug/covalence_proof_demo.wasm"),
+    join(
+      repository,
+      "target/wasm32-unknown-unknown/debug/covalence_proof_demo.component.wasm",
+    ),
   );
 
   const result = await page.evaluate(async (bytes) => {
@@ -215,10 +218,13 @@ test("the browser composes the full kernel host with a proof", async (context) =
 test("the REPL runs proofs from the selected kernel by content address", async (context) => {
   const origin = await servePackage(context);
   const kernel = await startKernel(context, [
-    join(repository, "target/wasm32-wasip1/debug/covalence_proof_demo.wasm"),
     join(
       repository,
-      "target/wasm32-wasip1/debug/covalence_proof_invalid_demo.wasm",
+      "target/wasm32-unknown-unknown/debug/covalence_proof_demo.component.wasm",
+    ),
+    join(
+      repository,
+      "target/wasm32-unknown-unknown/debug/covalence_proof_invalid_demo.component.wasm",
     ),
   ]);
   const page = await openPage(context, origin);
