@@ -488,6 +488,7 @@ dependencies = [
  "covalence-lib-hash",
  "covalence-lib-table",
  "covalence-logic-cas",
+ "futures",
 ]
 
 [[package]]

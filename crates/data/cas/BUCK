@@ -66,6 +66,7 @@ rust_test(
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_lib_table": "nucleus//crates/lib/table:covalence_lib_table",
         "covalence_logic_cas": "nucleus//crates/logic/cas:covalence_logic_cas",
+        "futures": "nucleus//buck/cargo/production:futures-0.3.34",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
