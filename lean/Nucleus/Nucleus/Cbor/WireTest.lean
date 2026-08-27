@@ -2,6 +2,9 @@ import Nucleus.Cbor.Wire
 
 namespace Nucleus.CborWire
 
+-- These executable parser examples are tests, not exported proof declarations.
+set_option linter.style.nativeDecide false
+
 private def wire (xs : List UInt8) : Bytes := ⟨xs.toByteArray⟩
 
 example : parse? (wire [0x00]) = some (.primitive (.integer (.unsigned 0))) := by native_decide
