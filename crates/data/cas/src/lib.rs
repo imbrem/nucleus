@@ -5,7 +5,7 @@ mod index;
 
 pub use bytes::Bytes;
 
-pub use r#async::{AsyncCas, AsyncCasError, CasFuture};
+pub use r#async::{AsyncCas, AsyncCasError, CasFuture, get_exact_fact};
 pub use index::{AdmissionError, CasStats, IndexCas, InvalidRange, ResidentObject, SharedIndexCas};
 
 pub use covalence_logic_cas::{Cas, CasMut, CasShared};

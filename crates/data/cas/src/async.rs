@@ -31,6 +31,14 @@ pub enum AsyncCasError {
         /// Failed whole-object check.
         source: CasCheckError,
     },
+    /// An optimized fact lookup answered a different address.
+    #[snafu(display("CAS returned address {returned} for request {requested}"))]
+    WrongAddress {
+        /// Requested address.
+        requested: O256,
+        /// Address carried by the returned fact.
+        returned: O256,
+    },
 }
 
 impl AsyncCasError {
@@ -75,6 +83,23 @@ pub trait AsyncCas: Send + Sync {
     }
 }
 
+/// Gets a fact and verifies that it answers exactly `address`.
+///
+/// This check is required even though [`CasFact`] itself is valid: an
+/// untrusted optimized provider can return a valid fact for the wrong request.
+pub fn get_exact_fact(provider: &dyn AsyncCas, address: O256) -> CasFuture<'_, Option<CasFact>> {
+    Box::pin(async move {
+        let fact = provider.get_fact(address).await?;
+        match fact {
+            Some(fact) if fact.hash() != address => Err(AsyncCasError::WrongAddress {
+                requested: address,
+                returned: fact.hash(),
+            }),
+            fact => Ok(fact),
+        }
+    })
+}
+
 macro_rules! async_resident_cas {
     ($cas:ty) => {
         impl AsyncCas for $cas {
@@ -100,5 +125,39 @@ impl AsyncCas for SharedIndexCas {
 
     fn get_fact(&self, address: O256) -> CasFuture<'_, Option<CasFact>> {
         Box::pin(async move { Ok(self.fact_at(address)) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AsyncCas, CasFuture, get_exact_fact};
+    use crate::Bytes;
+    use covalence_lib_hash::O256;
+    use covalence_logic_cas::CasFact;
+
+    struct WrongFact(CasFact);
+
+    impl AsyncCas for WrongFact {
+        fn get_bytes(&self, _address: O256) -> CasFuture<'_, Option<Bytes>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_fact(&self, _address: O256) -> CasFuture<'_, Option<CasFact>> {
+            Box::pin(async { Ok(Some(self.0.clone())) })
+        }
+    }
+
+    #[test]
+    fn exact_lookup_rejects_a_valid_fact_for_the_wrong_request() {
+        let returned = CasFact::from_bytes(Bytes::from_static(b"returned"));
+        let requested = O256::from_bytes(b"requested");
+        let result = futures::executor::block_on(get_exact_fact(&WrongFact(returned), requested));
+        assert!(matches!(
+            result,
+            Err(super::AsyncCasError::WrongAddress {
+                requested: actual,
+                ..
+            }) if actual == requested
+        ));
     }
 }

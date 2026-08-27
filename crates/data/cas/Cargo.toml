@@ -14,5 +14,8 @@ covalence-lib-hash = { path = "../../lib/hash", default-features = false, featur
 covalence-lib-table = { path = "../../lib/table" }
 covalence-logic-cas = { path = "../../logic/cas" }
 
+[dev-dependencies]
+futures = "0.3"
+
 [lints]
 workspace = true
