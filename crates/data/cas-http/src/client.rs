@@ -3,7 +3,7 @@
 use covalence_data_cas::{AsyncCas, AsyncCasError, CasFuture};
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
-use covalence_logic_cas::{Bytes, CasFact, CasLookupError};
+use covalence_logic_cas::Bytes;
 use std::collections::TryReserveError;
 
 use crate::{MAX_RESPONSE_BYTES, OBJECT_PREFIX};
@@ -11,8 +11,8 @@ use crate::{MAX_RESPONSE_BYTES, OBJECT_PREFIX};
 /// A bounded, read-only HTTP CAS client.
 ///
 /// The server is untrusted. [`Self::get_bytes`] deliberately returns raw
-/// bytes, while [`Self::get_fact`] hashes the complete response before it can
-/// introduce a checked [`CasFact`].
+/// bytes, while the [`AsyncCas`] default fact lookup hashes the complete
+/// response before it can introduce a checked fact.
 #[derive(Clone, Debug)]
 pub struct HttpCas {
     client: reqwest::Client,
@@ -122,7 +122,7 @@ impl HttpCas {
     ///
     /// Absence is represented by `Ok(None)`. Any successful body remains
     /// untrusted until a caller hashes it or obtains it through
-    /// [`Self::get_fact`].
+    /// [`AsyncCas::get_fact`].
     ///
     /// # Errors
     ///
@@ -182,35 +182,6 @@ impl HttpCas {
             bytes.extend_from_slice(&chunk);
         }
         Ok(Some(Bytes::from(bytes)))
-    }
-
-    /// Gets a checked whole-object fact from the service.
-    ///
-    /// The client hashes the complete response against the requested address.
-    /// An HTTP service cannot confer trust merely by naming a response after a
-    /// hash.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CasLookupError::Provider`] for HTTP failures and
-    /// [`CasLookupError::Check`] when returned bytes do not match `address`.
-    pub async fn get_fact(
-        &self,
-        address: O256,
-    ) -> Result<Option<CasFact>, CasLookupError<HttpCasError>> {
-        self.get_bytes(address)
-            .await
-            .map_err(|source| CasLookupError::Provider {
-                requested: address,
-                source,
-            })?
-            .map(|bytes| {
-                CasFact::new(address, bytes).map_err(|source| CasLookupError::Check {
-                    requested: address,
-                    source,
-                })
-            })
-            .transpose()
     }
 
     fn object_url(&self, address: O256) -> reqwest::Url {

@@ -7,7 +7,6 @@ use std::sync::Arc;
 use covalence_data_cas::{AsyncCas, AsyncCasError, SharedIndexCas};
 use covalence_data_cas_http::{HttpCas, HttpCasError, serve};
 use covalence_lib_hash::O256;
-use covalence_logic_cas::CasLookupError;
 
 #[test]
 fn rejects_non_http_urls_at_configuration_time() {
@@ -29,7 +28,8 @@ fn fetches_raw_bytes_and_a_checked_fact() {
             client.get_bytes(address).await.unwrap().unwrap(),
             b"from HTTP" as &[u8]
         );
-        let fact = client.get_fact(address).await.unwrap().unwrap();
+        let provider: &dyn AsyncCas = &client;
+        let fact = provider.get_fact(address).await.unwrap().unwrap();
         assert_eq!(fact.hash(), address);
         assert_eq!(fact.bytes(), b"from HTTP" as &[u8]);
     });
@@ -53,7 +53,7 @@ fn absent_objects_are_not_errors() {
 }
 
 #[test]
-fn corrupt_successful_responses_cannot_become_facts() {
+fn corrupt_successful_responses_remain_untrusted_bytes() {
     let address = O256::from_bytes(b"expected");
     let (base, server) = fixed_server("200 OK", b"different");
     let client = HttpCas::new(&base).unwrap();
@@ -65,22 +65,10 @@ fn corrupt_successful_responses_cannot_become_facts() {
         );
     });
     server.join().unwrap();
-
-    // A second server is needed because each tiny adversarial fixture accepts
-    // exactly one request.
-    let (base, server) = fixed_server("200 OK", b"different");
-    let client = HttpCas::new(&base).unwrap();
-    run(async {
-        assert!(matches!(
-            client.get_fact(address).await,
-            Err(CasLookupError::Check { .. })
-        ));
-    });
-    server.join().unwrap();
 }
 
 #[test]
-fn composable_async_boundary_checks_corrupt_responses() {
+fn shared_default_fact_lookup_rejects_corrupt_responses() {
     let address = O256::from_bytes(b"expected");
     let (base, server) = fixed_server("200 OK", b"different");
     let client = HttpCas::new(&base).unwrap();
