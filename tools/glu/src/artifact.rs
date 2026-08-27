@@ -234,6 +234,9 @@ impl Runner {
             PathBuf::from("/tmp")
         };
         let component_target = temp.join(format!("nucleus-proof-host-target-{}", process::id()));
+        let bindings = self.root().join("crates/proof/host/src/bindings.rs");
+        let bindings_before =
+            fs::read(&bindings).wrap_err("could not read committed proof host bindings")?;
         fs::create_dir_all(&component_target)
             .wrap_err("could not create proof host target directory")?;
         let result = (|| {
@@ -241,7 +244,6 @@ impl Runner {
                 "compile the proof host component",
                 "cargo",
                 [
-                    "component",
                     "build",
                     "--locked",
                     "--target-dir",
@@ -250,10 +252,28 @@ impl Runner {
                     "wasm-release",
                     "-p",
                     "covalence-proof-host",
+                    "--target",
+                    "wasm32-unknown-unknown",
                 ],
                 &[
                     ("CARGO_TARGET_DIR", component_target.as_os_str()),
                     ("TMPDIR", component_target.as_os_str()),
+                ],
+            )?;
+            let component = component_target.join("covalence_proof_host.component.wasm");
+            self.run(
+                "componentize proof host",
+                "wasm-tools",
+                [
+                    "component",
+                    "new",
+                    as_utf8(
+                        &component_target
+                            .join("wasm32-unknown-unknown/wasm-release/covalence_proof_host.wasm"),
+                        "proof host core Wasm",
+                    )?,
+                    "-o",
+                    as_utf8(&component, "proof host component")?,
                 ],
             )?;
             self.run(
@@ -265,21 +285,43 @@ impl Runner {
                     "exec",
                     "jco",
                     "transpile",
-                    as_utf8(
-                        &component_target
-                            .join("wasm32-wasip1/wasm-release/covalence_proof_host.wasm"),
-                        "proof host component",
-                    )?,
+                    as_utf8(&component, "proof host component")?,
                     "--out-dir",
                     as_utf8(&generated.join("proof-host"), "proof host output")?,
                     "--name",
                     "host",
+                    "--async-mode",
+                    "jspi",
                 ],
             )
         })();
+        let bindings_check = fs::read(&bindings)
+            .wrap_err("could not reread committed proof host bindings")
+            .and_then(|bindings_after| {
+                if bindings_before == bindings_after {
+                    Ok(())
+                } else {
+                    bail!("proof host artifact generation modified committed bindings")
+                }
+            });
         let cleanup = fs::remove_dir_all(&component_target)
             .wrap_err("could not remove proof host target directory");
-        result.and(cleanup)
+        let failures = [
+            ("artifact", result),
+            ("source check", bindings_check),
+            ("cleanup", cleanup),
+        ]
+        .into_iter()
+        .filter_map(|(phase, result)| result.err().map(|error| format!("{phase}: {error:#}")))
+        .collect::<Vec<_>>();
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            bail!(
+                "proof host artifact generation did not finish cleanly:\n{}",
+                failures.join("\n")
+            )
+        }
     }
 
     pub(crate) fn artifact_docs(
