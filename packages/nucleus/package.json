@@ -36,6 +36,7 @@
     "build": "pnpm run generate && tsc",
     "build:proof-host": "cargo build --locked --target wasm32-unknown-unknown -p covalence-proof-host && wasm-tools component new ../../target/wasm32-unknown-unknown/debug/covalence_proof_host.wasm -o ../../target/wasm32-unknown-unknown/debug/covalence_proof_host.component.wasm",
     "build:proof-demo": "cargo build --locked --target wasm32-unknown-unknown -p covalence-proof-demo && wasm-tools component new ../../target/wasm32-unknown-unknown/debug/covalence_proof_demo.wasm -o ../../target/wasm32-unknown-unknown/debug/covalence_proof_demo.component.wasm",
+    "build:proof-c-demo": "../../tools/build-c-proof-demo.sh",
     "build:proof-demos": "cargo build --locked --target wasm32-unknown-unknown -p covalence-proof-demo -p covalence-proof-invalid-demo && wasm-tools component new ../../target/wasm32-unknown-unknown/debug/covalence_proof_demo.wasm -o ../../target/wasm32-unknown-unknown/debug/covalence_proof_demo.component.wasm && wasm-tools component new ../../target/wasm32-unknown-unknown/debug/covalence_proof_invalid_demo.wasm -o ../../target/wasm32-unknown-unknown/debug/covalence_proof_invalid_demo.component.wasm",
     "check": "tsc --noEmit",
     "pretest": "pnpm run build:proof-demos",

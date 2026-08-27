@@ -100,6 +100,7 @@
           wasm-tools
           wasmtime
           wasiTools
+          wit-bindgen
           xdg-utils
         ];
       in {

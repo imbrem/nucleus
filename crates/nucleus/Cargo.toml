@@ -40,6 +40,11 @@ package = "nucleus:smoke"
 
 [package.metadata.glu]
 buck-manifest-mapped-srcs = { "nucleus//:proof_wit" = "wit/proof/proof.wit" }
+buck-test-features = ["buck-test-fixtures"]
+buck-test-mapped-srcs = { "nucleus//:proof-c-demo" = "fixtures/covalence-proof-c-demo.component.wasm" }
+
+[features]
+buck-test-fixtures = []
 
 [lints]
 workspace = true

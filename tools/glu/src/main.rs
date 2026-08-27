@@ -243,6 +243,15 @@ enum ArtifactTask {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Internal: build the C proof component micro-demo.
+    ProofCDemo {
+        #[arg(long)]
+        proof: PathBuf,
+        #[arg(long)]
+        wit: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Internal: build the WASI CLI component.
     CliComponent {
         #[arg(long)]
@@ -327,6 +336,9 @@ fn run() -> Result<()> {
             ArtifactTask::Component { out } => runner.artifact_component(&out),
             ArtifactTask::ComponentJs { component, out } => {
                 runner.artifact_component_js(&component, &out)
+            }
+            ArtifactTask::ProofCDemo { proof, wit, out } => {
+                runner.artifact_proof_c_demo(&proof, &wit, &out)
             }
             ArtifactTask::CliComponent { out } => runner.artifact_cli_component(&out),
             ArtifactTask::Python { out } => runner.artifact_python(&out),

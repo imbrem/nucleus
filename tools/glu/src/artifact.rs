@@ -418,6 +418,87 @@ impl Runner {
         )
     }
 
+    pub(crate) fn artifact_proof_c_demo(&self, proof: &Path, wit: &Path, out: &Path) -> Result<()> {
+        const WIT_BINDGEN_VERSION: &str = "wit-bindgen-cli 0.59.0";
+
+        let proof = absolute(proof)?;
+        let wit = absolute(wit)?;
+        let out = absolute(out)?;
+        let temp = artifact_temp(&out, "proof-c-demo")?;
+        if temp.exists() {
+            fs::remove_dir_all(&temp).wrap_err("could not clear C proof build directory")?;
+        }
+        fs::create_dir_all(&temp).wrap_err("could not create C proof build directory")?;
+        let staged_proof = temp.join("proof.c");
+        fs::copy(&proof, &staged_proof).wrap_err("could not stage C proof source")?;
+
+        let version = Command::new("wit-bindgen")
+            .arg("--version")
+            .current_dir(self.root())
+            .output()
+            .wrap_err("could not query wit-bindgen")?;
+        if !version.status.success()
+            || String::from_utf8_lossy(&version.stdout).trim() != WIT_BINDGEN_VERSION
+        {
+            bail!(
+                "C proof bindings require {WIT_BINDGEN_VERSION}; found {}",
+                String::from_utf8_lossy(&version.stdout).trim()
+            );
+        }
+
+        self.run(
+            "generate C proof bindings",
+            "wit-bindgen",
+            [
+                "c",
+                "--world",
+                "standard-proof",
+                "--out-dir",
+                as_utf8(&temp, "C binding output")?,
+                as_utf8(&wit, "proof WIT")?,
+            ],
+        )?;
+        let core = temp.join("covalence_proof_c_demo.wasm");
+        self.run(
+            "compile C proof",
+            "wasm32-unknown-wasi-cc",
+            [
+                as_utf8(&temp.join("standard_proof.c"), "generated C bindings")?,
+                as_utf8(
+                    &temp.join("standard_proof_component_type.o"),
+                    "component type object",
+                )?,
+                as_utf8(&staged_proof, "C proof source")?,
+                "-I",
+                as_utf8(&temp, "C include directory")?,
+                "-mexec-model=reactor",
+                "-o",
+                as_utf8(&core, "core Wasm output")?,
+            ],
+        )?;
+        self.run(
+            "componentize C proof",
+            "wasm-tools",
+            [
+                "component",
+                "new",
+                as_utf8(&core, "core Wasm input")?,
+                "-o",
+                as_utf8(&out, "C proof component")?,
+            ],
+        )?;
+        self.run(
+            "validate C proof component",
+            "wasm-tools",
+            [
+                "validate",
+                "--features",
+                "cm-async",
+                as_utf8(&out, "C proof component")?,
+            ],
+        )
+    }
+
     pub(crate) fn artifact_cli_component(&self, out: &Path) -> Result<()> {
         let out = absolute(out)?;
         let target = artifact_temp(&out, "cli-component-target")?;
