@@ -151,11 +151,7 @@ function componentImports(): Record<string, unknown> {
   };
 }
 
-type AsyncOption<T> =
-  | T
-  | undefined
-  | { tag: "none" }
-  | { tag: "some"; val: T };
+type AsyncOption<T> = T | undefined | { tag: "none" } | { tag: "some"; val: T };
 
 /**
  * JCO 1.32 leaves an option wrapper around values lifted through a native
