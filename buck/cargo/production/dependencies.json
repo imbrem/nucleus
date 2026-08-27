@@ -3069,6 +3069,9 @@
           "cc": ":cc-1.4.0",
           "pkg_config": ":pkg-config-0.3.33",
           "vcpkg": ":vcpkg-0.2.15"
+        },
+        "run_env": {
+          "CARGO_MANIFEST_LINKS": "sqlite3"
         }
       }
     },
@@ -3786,7 +3789,11 @@
           }
         }
       ],
-      "buildscript": {}
+      "buildscript": {
+        "run_env": {
+          "CARGO_MANIFEST_LINKS": "prettyplease02"
+        }
+      }
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
@@ -3903,6 +3910,9 @@
       "buildscript": {
         "named_deps": {
           "pyo3_build_config": ":pyo3-build-config-0.29.2"
+        },
+        "run_env": {
+          "CARGO_MANIFEST_LINKS": "pyo3-python"
         }
       }
     },
@@ -3962,6 +3972,9 @@
       "buildscript": {
         "named_deps": {
           "pyo3_build_config": ":pyo3-build-config-0.29.2"
+        },
+        "run_env": {
+          "CARGO_MANIFEST_LINKS": "python"
         }
       }
     },
@@ -5717,7 +5730,11 @@
           }
         }
       ],
-      "buildscript": {}
+      "buildscript": {
+        "run_env": {
+          "CARGO_MANIFEST_LINKS": "wasm_bindgen"
+        }
+      }
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#wasm-encoder@0.254.0",

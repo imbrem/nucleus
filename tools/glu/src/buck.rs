@@ -380,6 +380,9 @@ struct Buildscript {
     crate_root: Option<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     named_deps: BTreeMap<String, String>,
+    /// Environment present only while the compiled build script runs.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    run_env: BTreeMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -681,8 +684,11 @@ impl<'a> Graph<'a> {
             .into_iter()
             .map(|(name, value)| (name.to_owned(), value.to_owned())),
         );
-        let mut run_env = env.clone();
-        run_env.extend(self.links_metadata(&package.id));
+        let run_env = buildscript_run_env(
+            &env,
+            package.links.as_deref(),
+            self.links_metadata(&package.id),
+        );
         Some(WorkspaceBuildscript {
             name: package.name.to_string(),
             package_name: package.name.to_string(),
@@ -971,6 +977,7 @@ impl<'a> Graph<'a> {
                 .dependencies(&package.id, DependencyKind::Build, false)
                 .into_iter()
                 .collect(),
+            run_env: manifest_links_env(package.links.as_deref()),
         });
         let targets = package
             .targets
@@ -1449,6 +1456,25 @@ fn cargo_package_env(package: &Package) -> Vec<(String, String)> {
     .collect()
 }
 
+fn manifest_links_env(links: Option<&str>) -> BTreeMap<String, String> {
+    // Cargo exposes this only while running the owning package's build script,
+    // not while compiling build.rs and not while compiling ordinary targets.
+    links.map_or_else(BTreeMap::new, |links| {
+        BTreeMap::from([("CARGO_MANIFEST_LINKS".to_owned(), links.to_owned())])
+    })
+}
+
+fn buildscript_run_env(
+    compile_env: &[(String, String)],
+    links: Option<&str>,
+    dependency_metadata: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    let mut run_env = compile_env.to_vec();
+    run_env.extend(manifest_links_env(links));
+    run_env.extend(dependency_metadata);
+    run_env
+}
+
 fn external_package_env(package: &Package) -> BTreeMap<String, String> {
     cargo_package_env(package)
         .into_iter()
@@ -1464,4 +1490,83 @@ fn external_package_env(package: &Package) -> BTreeMap<String, String> {
                 )
         })
         .collect()
+}
+
+#[cfg(test)]
+mod package_environment_tests {
+    use std::collections::BTreeMap;
+
+    use super::{Buildscript, ExternalPackage, buildscript_run_env, manifest_links_env};
+
+    #[test]
+    fn links_has_exactly_one_run_only_variable() {
+        assert_eq!(
+            manifest_links_env(Some("example-native-library")),
+            std::collections::BTreeMap::from([(
+                "CARGO_MANIFEST_LINKS".to_owned(),
+                "example-native-library".to_owned()
+            )])
+        );
+        assert!(manifest_links_env(None).is_empty());
+    }
+
+    #[test]
+    fn workspace_links_is_absent_while_compiling_and_present_while_running() {
+        let compile_env = vec![("CARGO_PKG_NAME".to_owned(), "example".to_owned())];
+        let run_env = buildscript_run_env(&compile_env, Some("example-native-library"), Vec::new());
+        assert!(
+            !compile_env
+                .iter()
+                .any(|(name, _)| name == "CARGO_MANIFEST_LINKS")
+        );
+        assert_eq!(
+            run_env
+                .iter()
+                .filter(|(name, _)| name == "CARGO_MANIFEST_LINKS")
+                .map(|(_, value)| value.as_str())
+                .collect::<Vec<_>>(),
+            ["example-native-library"]
+        );
+
+        let no_links = buildscript_run_env(&compile_env, None, Vec::new());
+        assert!(
+            !no_links
+                .iter()
+                .any(|(name, _)| name == "CARGO_MANIFEST_LINKS")
+        );
+    }
+
+    #[test]
+    fn external_links_is_serialized_only_on_its_buildscript_run() {
+        let package = |links| ExternalPackage {
+            id: "fixture".to_owned(),
+            name: "fixture".to_owned(),
+            version: "1.0.0".to_owned(),
+            checksum: "00".to_owned(),
+            edition: "2024".to_owned(),
+            features: Vec::new(),
+            env: BTreeMap::from([("CARGO_PKG_LICENSE".to_owned(), "MIT".to_owned())]),
+            targets: Vec::new(),
+            buildscript: Some(Buildscript {
+                crate_root: None,
+                named_deps: BTreeMap::new(),
+                run_env: manifest_links_env(links),
+            }),
+        };
+
+        let linked = serde_json::to_value(package(Some("sqlite3"))).expect("linked package JSON");
+        assert!(linked["env"].get("CARGO_MANIFEST_LINKS").is_none());
+        assert_eq!(
+            linked["buildscript"]["run_env"]["CARGO_MANIFEST_LINKS"],
+            "sqlite3"
+        );
+
+        let unlinked = serde_json::to_value(package(None)).expect("unlinked package JSON");
+        assert!(unlinked["env"].get("CARGO_MANIFEST_LINKS").is_none());
+        assert!(
+            unlinked["buildscript"]["run_env"]
+                .get("CARGO_MANIFEST_LINKS")
+                .is_none()
+        );
+    }
 }
