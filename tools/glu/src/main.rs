@@ -250,6 +250,12 @@ enum ArtifactTask {
         #[arg(long)]
         wit: PathBuf,
         #[arg(long)]
+        wit_bindgen: PathBuf,
+        #[arg(long)]
+        wasi_cc: PathBuf,
+        #[arg(long)]
+        wasm_tools: PathBuf,
+        #[arg(long)]
         out: PathBuf,
     },
     /// Internal: build the WASI CLI component.
@@ -337,9 +343,21 @@ fn run() -> Result<()> {
             ArtifactTask::ComponentJs { component, out } => {
                 runner.artifact_component_js(&component, &out)
             }
-            ArtifactTask::ProofCDemo { proof, wit, out } => {
-                runner.artifact_proof_c_demo(&proof, &wit, &out)
-            }
+            ArtifactTask::ProofCDemo {
+                proof,
+                wit,
+                wit_bindgen,
+                wasi_cc,
+                wasm_tools,
+                out,
+            } => runner.artifact_proof_c_demo(
+                &proof,
+                &wit,
+                &wit_bindgen,
+                &wasi_cc,
+                &wasm_tools,
+                &out,
+            ),
             ArtifactTask::CliComponent { out } => runner.artifact_cli_component(&out),
             ArtifactTask::Python { out } => runner.artifact_python(&out),
             ArtifactTask::Docs {

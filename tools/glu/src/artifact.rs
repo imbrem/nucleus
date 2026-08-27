@@ -418,7 +418,15 @@ impl Runner {
         )
     }
 
-    pub(crate) fn artifact_proof_c_demo(&self, proof: &Path, wit: &Path, out: &Path) -> Result<()> {
+    pub(crate) fn artifact_proof_c_demo(
+        &self,
+        proof: &Path,
+        wit: &Path,
+        wit_bindgen: &Path,
+        wasi_cc: &Path,
+        wasm_tools: &Path,
+        out: &Path,
+    ) -> Result<()> {
         const WIT_BINDGEN_VERSION: &str = "wit-bindgen-cli 0.59.0";
 
         let proof = absolute(proof)?;
@@ -432,7 +440,7 @@ impl Runner {
         let staged_proof = temp.join("proof.c");
         fs::copy(&proof, &staged_proof).wrap_err("could not stage C proof source")?;
 
-        let version = Command::new("wit-bindgen")
+        let version = Command::new(wit_bindgen)
             .arg("--version")
             .current_dir(self.root())
             .output()
@@ -448,7 +456,7 @@ impl Runner {
 
         self.run(
             "generate C proof bindings",
-            "wit-bindgen",
+            as_utf8(wit_bindgen, "wit-bindgen executable")?,
             [
                 "c",
                 "--world",
@@ -461,7 +469,7 @@ impl Runner {
         let core = temp.join("covalence_proof_c_demo.wasm");
         self.run(
             "compile C proof",
-            "wasm32-unknown-wasi-cc",
+            as_utf8(wasi_cc, "WASI C compiler")?,
             [
                 as_utf8(&temp.join("standard_proof.c"), "generated C bindings")?,
                 as_utf8(
@@ -478,7 +486,7 @@ impl Runner {
         )?;
         self.run(
             "componentize C proof",
-            "wasm-tools",
+            as_utf8(wasm_tools, "wasm-tools executable")?,
             [
                 "component",
                 "new",
@@ -489,7 +497,7 @@ impl Runner {
         )?;
         self.run(
             "validate C proof component",
-            "wasm-tools",
+            as_utf8(wasm_tools, "wasm-tools executable")?,
             [
                 "validate",
                 "--features",

@@ -6,6 +6,9 @@ load("//buck:defs.bzl", "named_sources", "with_environment")
 _DOCS_BASE_PATH = read_config("docs", "base_path", "")
 _DOCS_COMMIT = read_config("docs", "commit", "unknown")
 _DOCS_DIRTY = read_config("docs", "dirty", "true")
+_WASI_CC = read_root_config("nucleus", "wasi_cc")
+_WASM_TOOLS = read_root_config("nucleus", "wasm_tools")
+_WIT_BINDGEN = read_root_config("nucleus", "wit_bindgen")
 
 _DOCS_SOURCES = glob(
     ["apps/docs/**"],
@@ -68,7 +71,7 @@ genrule(
         "//tools/glu:glu",
     ]),
     out = "covalence-proof-c-demo.component.wasm",
-    cmd = "$(exe //tools/glu:glu) artifact proof-c-demo --proof $(location :proof_c_demo_source) --wit $(location :proof_wit) --out $OUT",
+    cmd = "$(exe //tools/glu:glu) artifact proof-c-demo --proof $(location :proof_c_demo_source) --wit $(location :proof_wit) --wit-bindgen {} --wasi-cc {} --wasm-tools {} --out $OUT".format(_WIT_BINDGEN, _WASI_CC, _WASM_TOOLS),
     labels = ["uses_undeclared_inputs"],
     visibility = ["PUBLIC"],
 )

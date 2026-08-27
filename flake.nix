@@ -133,7 +133,7 @@
             # them runs with fd 3 closed. Keep new Buck calls inside this group.
             {
               glu buck configure >/dev/null 2>&1
-              buck_environment="$(command -v rustc):$(rustc --print sysroot):$(command -v clang):$(command -v cargo-component):$(command -v nucleus-wasm-clang):$(command -v wasm32-unknown-wasi-cc)"
+              buck_environment="$(command -v rustc):$(rustc --print sysroot):$(command -v clang):$(command -v cargo-component):$(command -v nucleus-wasm-clang):$(command -v wasm32-unknown-wasi-cc):$(command -v wasm-tools):$(command -v wit-bindgen)"
               if [ ! -f .direnv/buck-environment ] ||
                  [ "$(cat .direnv/buck-environment)" != "$buck_environment" ]; then
                 buck2 kill >/dev/null 2>&1 || true
