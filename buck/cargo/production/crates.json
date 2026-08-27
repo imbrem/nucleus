@@ -147,6 +147,12 @@
           "kinds": [
             "lib"
           ]
+        },
+        {
+          "name": "proof",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     },
@@ -983,6 +989,13 @@
     {
       "source": "workspace#covalence-data-cas-sqlite@0.0.0",
       "target": "workspace#covalence-logic-cas@0.0.0",
+      "kinds": [
+        "dev"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-sqlite@0.0.0",
+      "target": "workspace#covalence-nucleus@0.0.0",
       "kinds": [
         "dev"
       ]
