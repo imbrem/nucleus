@@ -5,7 +5,17 @@
 
 **Content address**
 : A digest that identifies exact bytes. It does not by itself say that the
-bytes are a valid proof, theory, or other object.
+bytes are a valid proof, theory, or other object. Nucleus currently uses the
+BLAKE3 family:
+
+- **Regular BLAKE3** is unkeyed: the same bytes always have the same digest.
+  This is the mode used for ordinary content addresses.
+- **Keyed BLAKE3** hashes with a 32-byte key. It provides a separate keyed
+  namespace and can authenticate identifiers when the key is secret.
+- **Context BLAKE3** uses BLAKE3's derive-key mode with a public,
+  human-readable context string. It provides domain separation: the same bytes
+  intentionally receive different identifiers in different contexts. Nucleus
+  can prederive and reuse the corresponding context key.
 
 **HOL (higher-order logic)**
 : The small ambient logic implemented by the kernel. Nucleus can define and
