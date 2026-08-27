@@ -99,6 +99,41 @@ fn responses_without_a_length_are_still_bounded() {
 }
 
 #[test]
+fn declared_oversized_responses_are_rejected() {
+    let address = O256::from_bytes(b"address is irrelevant");
+    let (base, server) = declared_server("200 OK", 17, "", b"");
+    let client = HttpCas::new(&base).unwrap().with_max_object_bytes(16);
+
+    run(async {
+        assert!(matches!(
+            client.get_bytes(address).await,
+            Err(HttpCasError::TooLarge { limit: 16, .. })
+        ));
+    });
+    server.join().unwrap();
+}
+
+#[test]
+fn redirects_are_not_followed() {
+    let address = O256::from_bytes(b"address is irrelevant");
+    let (base, server) = declared_server(
+        "302 Found",
+        0,
+        "Location: http://127.0.0.1:1/escaped\r\n",
+        b"",
+    );
+    let client = HttpCas::new(&base).unwrap();
+
+    run(async {
+        assert!(matches!(
+            client.get_bytes(address).await,
+            Err(HttpCasError::Status { status, .. }) if status.as_u16() == 302
+        ));
+    });
+    server.join().unwrap();
+}
+
+#[test]
 fn server_failures_are_not_reported_as_absence() {
     let address = O256::from_bytes(b"address is irrelevant");
     let (base, server) = fixed_server("500 Internal Server Error", &[]);
@@ -136,6 +171,29 @@ fn fixed_server(
         let mut request = [0; 4096];
         let _ = stream.read(&mut request).unwrap();
         write!(stream, "HTTP/1.1 {status}\r\nConnection: close\r\n\r\n").unwrap();
+        stream.write_all(body).unwrap();
+    });
+    (format!("http://{address}"), task)
+}
+
+/// Starts a one-request server with an explicit declared response length.
+fn declared_server(
+    status: &'static str,
+    content_length: u64,
+    headers: &'static str,
+    body: &'static [u8],
+) -> (String, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0; 4096];
+        let _ = stream.read(&mut request).unwrap();
+        write!(
+            stream,
+            "HTTP/1.1 {status}\r\nContent-Length: {content_length}\r\n{headers}Connection: close\r\n\r\n"
+        )
+        .unwrap();
         stream.write_all(body).unwrap();
     });
     (format!("http://{address}"), task)
