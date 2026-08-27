@@ -114,6 +114,15 @@ export function proofStats(kernel: Kernel): ProofStats {
 
 function componentImports(): Record<string, unknown> {
   const maxRandomBytes = 1 << 20;
+  const host = {
+    ...proofHost,
+    async casGetBytes(address: Uint8Array) {
+      return unwrapAsyncOption(await proofHost.casGetBytes(address));
+    },
+    async casGetFact(address: Uint8Array) {
+      return unwrapAsyncOption(await proofHost.casGetFact(address));
+    },
+  };
   const capabilities = {
     randomBytes(len: bigint): InstanceType<typeof proofHost.Bytes> {
       const size = Number(len);
@@ -132,14 +141,28 @@ function componentImports(): Record<string, unknown> {
     },
   };
   const imports = {
-    "nucleus:proof/host": proofHost,
+    "nucleus:proof/host": host,
     "nucleus:proof/capabilities": capabilities,
   };
   return {
     ...imports,
-    "nucleus:proof/host@0.1.0": proofHost,
+    "nucleus:proof/host@0.1.0": host,
     "nucleus:proof/capabilities@0.1.0": capabilities,
   };
+}
+
+type AsyncOption<T> = T | undefined | { tag: "none" } | { tag: "some"; val: T };
+
+/**
+ * JCO 1.32 leaves an option wrapper around values lifted through a native
+ * async export, although its generated declaration says `T | undefined`.
+ * Imports into the next component require the declared canonical JS shape.
+ */
+function unwrapAsyncOption<T>(value: AsyncOption<T>): T | undefined {
+  if (value !== null && typeof value === "object" && "tag" in value) {
+    return value.tag === "some" ? value.val : undefined;
+  }
+  return value;
 }
 
 function hex(value: Uint8Array): string {
