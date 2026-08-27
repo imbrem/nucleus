@@ -1,0 +1,24 @@
+[package]
+name = "covalence-data-cas-s3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Async S3-compatible content-addressed storage"
+publish = false
+
+[dependencies]
+aws-config = "1"
+aws-sdk-s3 = "1"
+aws-smithy-types = "1"
+bytes = "1"
+covalence-lib-error = { path = "../../lib/error" }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+covalence-logic-cas = { path = "../../logic/cas" }
+
+[dev-dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
+
+[lints]
+workspace = true

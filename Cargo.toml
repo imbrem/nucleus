@@ -27,6 +27,7 @@ members = [
   "crates/data/num",
   "crates/data/cas",
   "crates/data/cas-http",
+  "crates/data/cas-s3",
   "crates/data/container",
   "crates/ffi/python",
   "crates/proton",
