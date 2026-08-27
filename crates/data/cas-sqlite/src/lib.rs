@@ -12,6 +12,7 @@
 
 use std::ffi::CStr;
 use std::ops::Range;
+use std::sync::Arc;
 
 use covalence_data_cas::{AsyncCas, AsyncCasError, Bytes, Cas, CasFuture, CasShared};
 use covalence_lib_error::snafu::{ResultExt, Snafu};
@@ -19,7 +20,8 @@ use covalence_lib_hash::O256;
 use covalence_lib_sqlite::{Connection, Statement, Step, ValueRef};
 
 const SCHEMA_VERSION: i64 = 1;
-const SCHEMA: &str = "
+const INITIAL_SCHEMA: &str = "
+BEGIN IMMEDIATE;
 CREATE TABLE IF NOT EXISTS covalence_cas_metadata (
     singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton = 1),
     schema_version INTEGER NOT NULL
@@ -31,6 +33,7 @@ CREATE TABLE IF NOT EXISTS covalence_cas_objects (
     address BLOB PRIMARY KEY NOT NULL CHECK(length(address) = 32),
     bytes BLOB NOT NULL
 ) WITHOUT ROWID;
+COMMIT;
 ";
 
 /// Failure to open or use a [`SqliteCas`].
@@ -56,6 +59,12 @@ pub enum Error {
         expected: i64,
         /// Version recorded in the database.
         found: i64,
+    },
+    /// The background worker for asynchronous reads could not be started.
+    #[snafu(display("could not start SQLite CAS async worker: {source}"))]
+    WorkerStart {
+        /// Underlying thread creation error.
+        source: std::io::Error,
     },
     /// An object lookup failed.
     #[snafu(display("could not read SQLite CAS object {address}: {source}"))]
@@ -97,7 +106,13 @@ pub enum Error {
 
 /// A persistent whole-object CAS stored in one `SQLite` connection.
 pub struct SqliteCas {
-    connection: Connection,
+    connection: Arc<Connection>,
+    async_reads: std::sync::mpsc::Sender<ReadRequest>,
+}
+
+struct ReadRequest {
+    address: O256,
+    reply: futures::channel::oneshot::Sender<Result<Option<Bytes>, Error>>,
 }
 
 impl SqliteCas {
@@ -124,16 +139,53 @@ impl SqliteCas {
 
     /// Initializes a CAS in an existing connection.
     ///
-    /// This does not take ownership of the database schema beyond the
-    /// namespaced `covalence_cas_objects` table.
+    /// This does not take ownership of the database schema beyond the two
+    /// namespaced `covalence_cas_metadata` and `covalence_cas_objects` tables.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Schema`] when the table cannot be initialized.
+    /// Returns [`Error::Schema`] when the tables cannot be initialized,
+    /// [`Error::UnsupportedSchema`] for an unknown existing schema, or
+    /// [`Error::WorkerStart`] when the asynchronous reader cannot start.
     pub fn from_connection(connection: Connection) -> Result<Self, Error> {
-        Statement::execute_batch(&connection, SCHEMA).context(SchemaSnafu)?;
+        let metadata_exists = Self::metadata_exists(&connection)?;
+        if metadata_exists {
+            Self::check_schema_version(&connection)?;
+        } else {
+            Statement::execute_batch(&connection, INITIAL_SCHEMA).context(SchemaSnafu)?;
+            Self::check_schema_version(&connection)?;
+        }
+        let connection = Arc::new(connection);
+        let (async_reads, requests) = std::sync::mpsc::channel::<ReadRequest>();
+        let worker_connection = Arc::clone(&connection);
+        std::thread::Builder::new()
+            .name("sqlite-cas-reader".into())
+            .spawn(move || {
+                for request in requests {
+                    let result = Self::read_connection(&worker_connection, request.address);
+                    let _ = request.reply.send(result);
+                }
+            })
+            .context(WorkerStartSnafu)?;
+        Ok(Self {
+            connection,
+            async_reads,
+        })
+    }
+
+    fn metadata_exists(connection: &Connection) -> Result<bool, Error> {
+        let mut statement = Statement::prepare(
+            connection,
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' \
+             AND name = 'covalence_cas_metadata'",
+        )
+        .context(SchemaSnafu)?;
+        Ok(matches!(statement.step().context(SchemaSnafu)?, Step::Row))
+    }
+
+    fn check_schema_version(connection: &Connection) -> Result<(), Error> {
         let mut version = Statement::prepare(
-            &connection,
+            connection,
             "SELECT schema_version FROM covalence_cas_metadata WHERE singleton = 1",
         )
         .context(SchemaSnafu)?;
@@ -148,12 +200,12 @@ impl SqliteCas {
             }
             .fail();
         }
-        Ok(Self { connection })
+        Ok(())
     }
 
-    fn read(&self, address: O256) -> Result<Option<Bytes>, Error> {
+    fn read_connection(connection: &Connection, address: O256) -> Result<Option<Bytes>, Error> {
         let mut statement = Statement::prepare(
-            &self.connection,
+            connection,
             "SELECT bytes FROM covalence_cas_objects WHERE address = ?1",
         )
         .context(ReadSnafu { address })?;
@@ -167,6 +219,10 @@ impl SqliteCas {
                 _ => InvalidStorageSnafu { address }.fail(),
             },
         }
+    }
+
+    fn read(&self, address: O256) -> Result<Option<Bytes>, Error> {
+        Self::read_connection(&self.connection, address)
     }
 }
 
@@ -223,7 +279,18 @@ impl CasShared for SqliteCas {
 
 impl AsyncCas for SqliteCas {
     fn get_bytes(&self, address: O256) -> CasFuture<'_, Option<Bytes>> {
-        Box::pin(async move { self.read(address).map_err(AsyncCasError::provider) })
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        let dispatch = self.async_reads.send(ReadRequest {
+            address,
+            reply: sender,
+        });
+        Box::pin(async move {
+            dispatch.map_err(AsyncCasError::provider)?;
+            receiver
+                .await
+                .map_err(AsyncCasError::provider)?
+                .map_err(AsyncCasError::provider)
+        })
     }
 }
 
@@ -233,7 +300,7 @@ mod tests {
 
     use covalence_data_cas::{Cas, CasShared};
     use covalence_lib_hash::O256;
-    use covalence_lib_sqlite::{Connection, Statement};
+    use covalence_lib_sqlite::{Connection, Statement, Step};
     use covalence_logic_cas::CasExt;
 
     use super::{Error, SqliteCas};
@@ -273,6 +340,17 @@ mod tests {
             .expect("present");
         assert_eq!(fact.hash(), first);
         assert_eq!(fact.as_ref(), b"same");
+    }
+
+    #[test]
+    fn async_lookup_uses_the_background_reader() {
+        let cas = SqliteCas::open_in_memory().expect("open CAS");
+        let address = cas.insert("asynchronous".into()).expect("insert");
+        let bytes =
+            futures::executor::block_on(covalence_data_cas::AsyncCas::get_bytes(&cas, address))
+                .expect("async read")
+                .expect("present");
+        assert_eq!(bytes, "asynchronous");
     }
 
     #[test]
@@ -351,12 +429,51 @@ mod tests {
              INSERT INTO covalence_cas_metadata VALUES (1, 99);",
         )
         .expect("install future schema marker");
+        let result = SqliteCas::from_connection(connection);
         assert!(matches!(
-            SqliteCas::from_connection(connection),
+            result,
             Err(Error::UnsupportedSchema {
                 expected: 1,
                 found: 99
             })
         ));
+    }
+
+    #[test]
+    fn rejecting_a_future_schema_does_not_mutate_it() {
+        let path = std::env::temp_dir().join(format!(
+            "covalence-cas-sqlite-future-{}-{}.sqlite",
+            std::process::id(),
+            O256::from_bytes(b"future schema test")
+        ));
+        let path = CString::new(path.to_string_lossy().as_bytes()).expect("path");
+        {
+            let connection = Connection::open(&path).expect("open database");
+            Statement::execute_batch(
+                &connection,
+                "CREATE TABLE covalence_cas_metadata (
+                    singleton INTEGER PRIMARY KEY,
+                    schema_version INTEGER NOT NULL
+                 );
+                 INSERT INTO covalence_cas_metadata VALUES (1, 99);",
+            )
+            .expect("install future schema marker");
+            assert!(matches!(
+                SqliteCas::from_connection(connection),
+                Err(Error::UnsupportedSchema { found: 99, .. })
+            ));
+        }
+
+        let connection = Connection::open(&path).expect("reopen database");
+        let mut statement = Statement::prepare(
+            &connection,
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' \
+             AND name = 'covalence_cas_objects'",
+        )
+        .expect("inspect schema");
+        assert_eq!(statement.step().expect("query schema"), Step::Done);
+        drop(statement);
+        drop(connection);
+        std::fs::remove_file(path.to_str().expect("UTF-8 path")).expect("remove database");
     }
 }

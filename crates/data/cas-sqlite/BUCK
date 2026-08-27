@@ -32,6 +32,7 @@ rust_library(
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
+        "futures": "nucleus//buck/cargo/production:futures-0.3.34",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

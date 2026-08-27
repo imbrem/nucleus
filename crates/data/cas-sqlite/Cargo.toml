@@ -12,11 +12,11 @@ covalence-data-cas = { path = "../cas" }
 covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-hash = { path = "../../lib/hash" }
 covalence-lib-sqlite = { path = "../../lib/sqlite" }
+futures = "0.3"
 
 [dev-dependencies]
 covalence-nucleus = { path = "../../nucleus" }
 covalence-logic-cas = { path = "../../logic/cas" }
-futures = "0.3"
 
 [lints]
 workspace = true
