@@ -7521,6 +7521,14 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-cas-sqlite@0.0.0",
+      "name": "covalence-data-cas-sqlite",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.34"
+      ]
+    },
+    {
       "id": "workspace#covalence-ffi-python@0.0.0",
       "name": "covalence-ffi-python",
       "category": "tcb",

@@ -62,6 +62,16 @@ cargo run -p covalence-nucleus --example load-proof -- \
   target/wasm32-unknown-unknown/debug/covalence_proof_demo.component.wasm
 ```
 
+The same world can be implemented without Rust. The C micro-demo generates
+bindings with `wit-bindgen`, compiles them with the WASI C compiler, validates
+the native-async component, and runs under the same loader:
+
+```console
+pnpm --filter @nucleus/nucleus build:proof-c-demo
+cargo run -p covalence-nucleus --example load-proof -- \
+  target/wasm32-wasip1/covalence_proof_c_demo.component.wasm
+```
+
 The proof component imports no ambient WASI world. Its default capabilities are
 the Nucleus kernel, default CAS, and secure randomness; loaders may add filtered
 HTTP, VFS, named CAS, or other capabilities according to the proof's permission

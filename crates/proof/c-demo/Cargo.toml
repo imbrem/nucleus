@@ -1,0 +1,25 @@
+[package]
+name = "covalence-proof-c-demo-test"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Integration test for the C native-async proof component demo"
+publish = false
+
+[[test]]
+name = "proof_c"
+path = "test.rs"
+
+[dev-dependencies]
+covalence-nucleus = { path = "../../nucleus" }
+
+[package.metadata.glu]
+buck-test-features = ["buck-test-fixtures"]
+buck-test-mapped-srcs = { "nucleus//:proof-c-demo" = "fixtures/covalence-proof-c-demo.component.wasm" }
+
+[features]
+buck-test-fixtures = []
+
+[lints]
+workspace = true
