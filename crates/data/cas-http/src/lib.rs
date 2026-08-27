@@ -1,7 +1,9 @@
-//! Bounded, read-only CAS access over ranged HTTP.
+//! Bounded, read-only CAS access over HTTP.
 
+mod client;
 mod server;
 
+pub use client::{HttpCas, HttpCasError};
 pub use server::{Serving, serve};
 
 /// Path prefix under which objects are served.

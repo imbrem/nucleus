@@ -12,8 +12,11 @@ axum = "0.8"
 axum-extra = { version = "0.10", features = ["typed-header"] }
 bytes = "1"
 covalence-data-cas = { path = "../cas" }
+covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+covalence-logic-cas = { path = "../../logic/cas" }
 headers = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 tokio = { version = "1", features = ["net", "rt-multi-thread"] }
 tower-http = { version = "0.6", features = ["cors"] }
 
