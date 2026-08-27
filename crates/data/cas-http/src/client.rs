@@ -4,6 +4,7 @@ use covalence_data_cas::{AsyncCas, AsyncCasError, CasFuture};
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_logic_cas::{Bytes, CasFact, CasLookupError};
+use std::collections::TryReserveError;
 
 use crate::{MAX_RESPONSE_BYTES, OBJECT_PREFIX};
 
@@ -60,6 +61,14 @@ pub enum HttpCasError {
         address: O256,
         /// Configured maximum response size.
         limit: u64,
+    },
+    /// Memory for the bounded response could not be reserved.
+    #[snafu(display("could not allocate HTTP CAS object {address}: {source}"))]
+    Allocate {
+        /// Requested content address.
+        address: O256,
+        /// Allocation failure.
+        source: TryReserveError,
     },
 }
 
@@ -152,7 +161,7 @@ impl HttpCas {
             .min(self.max_object_bytes);
         let mut bytes = Vec::new();
         if let Ok(capacity) = usize::try_from(capacity) {
-            bytes.reserve(capacity);
+            reserve_response(&mut bytes, capacity, address)?;
         }
         while let Some(chunk) = response
             .chunk()
@@ -168,6 +177,8 @@ impl HttpCas {
                     limit: self.max_object_bytes,
                 });
             }
+            reserve_response(&mut bytes, chunk.len(), address)?;
+            // `try_reserve` above guarantees this append does not allocate.
             bytes.extend_from_slice(&chunk);
         }
         Ok(Some(Bytes::from(bytes)))
@@ -211,6 +222,16 @@ impl HttpCas {
     }
 }
 
+fn reserve_response(
+    bytes: &mut Vec<u8>,
+    additional: usize,
+    address: O256,
+) -> Result<(), HttpCasError> {
+    bytes
+        .try_reserve(additional)
+        .map_err(|source| HttpCasError::Allocate { address, source })
+}
+
 impl AsyncCas for HttpCas {
     fn get_bytes(&self, address: O256) -> CasFuture<'_, Option<Bytes>> {
         Box::pin(async move {
@@ -218,5 +239,24 @@ impl AsyncCas for HttpCas {
                 .await
                 .map_err(AsyncCasError::provider)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HttpCasError, reserve_response};
+    use covalence_lib_hash::O256;
+
+    #[test]
+    fn allocation_failure_is_typed() {
+        let address = O256::from_bytes(b"allocation test");
+        let error = reserve_response(&mut Vec::new(), usize::MAX, address).unwrap_err();
+        assert!(matches!(
+            error,
+            HttpCasError::Allocate {
+                address: actual,
+                ..
+            } if actual == address
+        ));
     }
 }
