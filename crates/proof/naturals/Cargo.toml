@@ -1,0 +1,29 @@
+[package]
+name = "covalence-proof-naturals"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Portable proof component building a natural-number syntax skeleton"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "=0.61.1"
+
+[package.metadata.component]
+package = "nucleus:proof-naturals"
+
+[package.metadata.component.target]
+path = "../../../wit/proof"
+world = "standard-proof"
+
+[package.metadata.component.dependencies]
+
+[package.metadata.glu]
+buck-manifest-mapped-srcs = { "nucleus//:proof_wit" = "wit/proof/proof.wit" }
+
+[lints]
+workspace = true

@@ -35,6 +35,7 @@ members = [
   "crates/proof/demo",
   "crates/proof/invalid-demo",
   "crates/proof/host",
+  "crates/proof/naturals",
   "crates/repl",
   "crates/browser",
   "crates/bin/cas-serve",

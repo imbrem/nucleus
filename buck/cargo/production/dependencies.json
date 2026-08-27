@@ -7182,6 +7182,14 @@
       ]
     },
     {
+      "id": "workspace#covalence-proof-naturals@0.0.0",
+      "name": "covalence-proof-naturals",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#wit-bindgen@0.61.1"
+      ]
+    },
+    {
       "id": "workspace#covalence-repl@0.0.0",
       "name": "covalence-repl",
       "category": "tcb",
