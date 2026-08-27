@@ -238,8 +238,16 @@ impl S3Cas {
     ///
     /// # Errors
     ///
-    /// Returns an S3 upload failure.
+    /// Returns [`S3CasError::ObjectTooLarge`] before making a request when the
+    /// bytes exceed the configured object-size limit, or an S3 upload failure.
     pub async fn insert(&self, bytes: Bytes) -> Result<O256, S3CasError> {
+        let observed = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        if observed > self.max_object_bytes {
+            return Err(S3CasError::ObjectTooLarge {
+                limit: self.max_object_bytes,
+                observed,
+            });
+        }
         let address = O256::from_bytes(&bytes);
         self.client
             .put_object()

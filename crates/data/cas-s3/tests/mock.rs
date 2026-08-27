@@ -198,3 +198,18 @@ async fn no_such_bucket_is_not_object_absence() {
         Err(S3CasError::Get { .. })
     ));
 }
+
+#[tokio::test]
+async fn oversized_insert_is_rejected_without_uploading() {
+    let objects = Objects::default();
+    let cas = fixture_for_bucket(Arc::clone(&objects), "test-bucket", 4).await;
+
+    assert!(matches!(
+        cas.insert(Bytes::from_static(b"12345")).await,
+        Err(S3CasError::ObjectTooLarge {
+            limit: 4,
+            observed: 5
+        })
+    ));
+    assert!(objects.lock().await.is_empty());
+}
