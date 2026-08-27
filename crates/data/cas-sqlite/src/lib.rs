@@ -13,12 +13,20 @@
 use std::ffi::CStr;
 use std::ops::Range;
 
-use covalence_data_cas::{Bytes, Cas, CasShared};
+use covalence_data_cas::{AsyncCas, AsyncCasError, Bytes, Cas, CasFuture, CasShared};
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite::{Connection, Statement, Step, ValueRef};
 
+const SCHEMA_VERSION: i64 = 1;
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS covalence_cas_metadata (
+    singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton = 1),
+    schema_version INTEGER NOT NULL
+);
+INSERT INTO covalence_cas_metadata(singleton, schema_version)
+VALUES (1, 1)
+ON CONFLICT(singleton) DO NOTHING;
 CREATE TABLE IF NOT EXISTS covalence_cas_objects (
     address BLOB PRIMARY KEY NOT NULL CHECK(length(address) = 32),
     bytes BLOB NOT NULL
@@ -40,6 +48,14 @@ pub enum Error {
     Schema {
         /// Underlying `SQLite` error.
         source: covalence_lib_sqlite::Error,
+    },
+    /// The database uses a CAS schema this implementation does not know.
+    #[snafu(display("SQLite CAS schema version {found} is unsupported; expected {expected}"))]
+    UnsupportedSchema {
+        /// Version this implementation supports.
+        expected: i64,
+        /// Version recorded in the database.
+        found: i64,
     },
     /// An object lookup failed.
     #[snafu(display("could not read SQLite CAS object {address}: {source}"))]
@@ -64,7 +80,9 @@ pub enum Error {
         address: O256,
     },
     /// A byte range was invalid for the stored object.
-    #[snafu(display("range {start}..{end} lies outside SQLite CAS object {address} of length {len}"))]
+    #[snafu(display(
+        "range {start}..{end} lies outside SQLite CAS object {address} of length {len}"
+    ))]
     InvalidRange {
         /// Requested address.
         address: O256,
@@ -114,6 +132,22 @@ impl SqliteCas {
     /// Returns [`Error::Schema`] when the table cannot be initialized.
     pub fn from_connection(connection: Connection) -> Result<Self, Error> {
         Statement::execute_batch(&connection, SCHEMA).context(SchemaSnafu)?;
+        let mut version = Statement::prepare(
+            &connection,
+            "SELECT schema_version FROM covalence_cas_metadata WHERE singleton = 1",
+        )
+        .context(SchemaSnafu)?;
+        let found = match version.step().context(SchemaSnafu)? {
+            Step::Row => version.column(0).as_integer().unwrap_or_default(),
+            Step::Done => 0,
+        };
+        if found != SCHEMA_VERSION {
+            return UnsupportedSchemaSnafu {
+                expected: SCHEMA_VERSION,
+                found,
+            }
+            .fail();
+        }
         Ok(Self { connection })
     }
 
@@ -172,7 +206,7 @@ impl CasShared for SqliteCas {
         let mut statement = Statement::prepare(
             &self.connection,
             "INSERT INTO covalence_cas_objects(address, bytes) VALUES (?1, ?2) \
-             ON CONFLICT(address) DO NOTHING",
+             ON CONFLICT(address) DO UPDATE SET bytes = excluded.bytes",
         )
         .context(WriteSnafu { address })?;
         statement
@@ -184,6 +218,12 @@ impl CasShared for SqliteCas {
         let step = statement.step().context(WriteSnafu { address })?;
         debug_assert_eq!(step, Step::Done);
         Ok(address)
+    }
+}
+
+impl AsyncCas for SqliteCas {
+    fn get_bytes(&self, address: O256) -> CasFuture<'_, Option<Bytes>> {
+        Box::pin(async move { self.read(address).map_err(AsyncCasError::provider) })
     }
 }
 
@@ -210,7 +250,9 @@ mod tests {
             Some(b"stored bytes".as_slice())
         );
         assert_eq!(
-            cas.get_range(address, 7..12).expect("read range").as_deref(),
+            cas.get_range(address, 7..12)
+                .expect("read range")
+                .as_deref(),
             Some(b"bytes".as_slice())
         );
         assert!(matches!(
@@ -264,11 +306,57 @@ mod tests {
             "INSERT INTO covalence_cas_objects(address, bytes) VALUES (?1, ?2)",
         )
         .expect("prepare corruption");
-        statement.bind_blob(1, address.as_ref()).expect("bind address");
+        statement
+            .bind_blob(1, address.as_ref())
+            .expect("bind address");
         statement.bind_blob(2, b"wrong").expect("bind wrong bytes");
         statement.step().expect("insert corruption");
 
-        assert_eq!(cas.get_bytes(address).expect("raw read").as_deref(), Some(b"wrong".as_slice()));
+        assert_eq!(
+            cas.get_bytes(address).expect("raw read").as_deref(),
+            Some(b"wrong".as_slice())
+        );
         assert!(cas.get_checked(address).is_err());
+    }
+
+    #[test]
+    fn insertion_repairs_a_corrupt_row() {
+        let connection = Connection::open_in_memory().expect("open database");
+        let address = O256::from_bytes(b"expected");
+        let cas = SqliteCas::from_connection(connection).expect("initialize CAS");
+        let mut statement = Statement::prepare(
+            &cas.connection,
+            "INSERT INTO covalence_cas_objects(address, bytes) VALUES (?1, ?2)",
+        )
+        .expect("prepare corruption");
+        statement
+            .bind_blob(1, address.as_ref())
+            .expect("bind address");
+        statement.bind_blob(2, b"wrong").expect("bind wrong bytes");
+        statement.step().expect("insert corruption");
+
+        assert_eq!(cas.insert("expected".into()).expect("repair"), address);
+        assert!(cas.get_checked(address).expect("check repaired").is_some());
+    }
+
+    #[test]
+    fn rejects_an_unknown_schema_version() {
+        let connection = Connection::open_in_memory().expect("open database");
+        Statement::execute_batch(
+            &connection,
+            "CREATE TABLE covalence_cas_metadata (
+                singleton INTEGER PRIMARY KEY,
+                schema_version INTEGER NOT NULL
+             );
+             INSERT INTO covalence_cas_metadata VALUES (1, 99);",
+        )
+        .expect("install future schema marker");
+        assert!(matches!(
+            SqliteCas::from_connection(connection),
+            Err(Error::UnsupportedSchema {
+                expected: 1,
+                found: 99
+            })
+        ));
     }
 }
