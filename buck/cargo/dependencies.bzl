@@ -84,7 +84,9 @@ def _buildscript(package, script, label, archive):
         "rustc_link_search": True,
         "version": package["version"],
     }
-    run_attributes["env"] = env
+    run_env = dict(env)
+    run_env.update(script.get("run_env", {}))
+    run_attributes["env"] = run_env
     if package.get("features"):
         run_attributes["features"] = package["features"]
     buildscript_run(**run_attributes)

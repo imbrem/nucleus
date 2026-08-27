@@ -3056,7 +3056,6 @@
         "vcpkg"
       ],
       "env": {
-        "CARGO_MANIFEST_LINKS": "sqlite3",
         "CARGO_PKG_AUTHORS": "The rusqlite developers",
         "CARGO_PKG_DESCRIPTION": "Native bindings to the libsqlite3 library",
         "CARGO_PKG_LICENSE": "MIT",
@@ -3070,6 +3069,9 @@
           "cc": ":cc-1.4.0",
           "pkg_config": ":pkg-config-0.3.33",
           "vcpkg": ":vcpkg-0.2.15"
+        },
+        "run_env": {
+          "CARGO_MANIFEST_LINKS": "sqlite3"
         }
       }
     },
@@ -3774,7 +3776,6 @@
       "checksum": "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b",
       "edition": "2021",
       "env": {
-        "CARGO_MANIFEST_LINKS": "prettyplease02",
         "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
         "CARGO_PKG_DESCRIPTION": "A minimal `syn` syntax tree pretty-printer",
         "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
@@ -3788,7 +3789,11 @@
           }
         }
       ],
-      "buildscript": {}
+      "buildscript": {
+        "run_env": {
+          "CARGO_MANIFEST_LINKS": "prettyplease02"
+        }
+      }
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
@@ -3886,7 +3891,6 @@
         "pyo3-macros"
       ],
       "env": {
-        "CARGO_MANIFEST_LINKS": "pyo3-python",
         "CARGO_PKG_AUTHORS": "PyO3 Project and Contributors <https://github.com/PyO3>",
         "CARGO_PKG_DESCRIPTION": "Bindings to Python interpreter",
         "CARGO_PKG_HOMEPAGE": "https://github.com/pyo3/pyo3",
@@ -3906,6 +3910,9 @@
       "buildscript": {
         "named_deps": {
           "pyo3_build_config": ":pyo3-build-config-0.29.2"
+        },
+        "run_env": {
+          "CARGO_MANIFEST_LINKS": "pyo3-python"
         }
       }
     },
@@ -3949,7 +3956,6 @@
         "default"
       ],
       "env": {
-        "CARGO_MANIFEST_LINKS": "python",
         "CARGO_PKG_AUTHORS": "PyO3 Project and Contributors <https://github.com/PyO3>",
         "CARGO_PKG_DESCRIPTION": "Python-API bindings for the PyO3 ecosystem",
         "CARGO_PKG_HOMEPAGE": "https://github.com/pyo3/pyo3",
@@ -3966,6 +3972,9 @@
       "buildscript": {
         "named_deps": {
           "pyo3_build_config": ":pyo3-build-config-0.29.2"
+        },
+        "run_env": {
+          "CARGO_MANIFEST_LINKS": "python"
         }
       }
     },
@@ -5708,7 +5717,6 @@
       "checksum": "c4e0100b01e9f0d03189a92b96772a1fb998639d981193d7dbab487302513441",
       "edition": "2021",
       "env": {
-        "CARGO_MANIFEST_LINKS": "wasm_bindgen",
         "CARGO_PKG_AUTHORS": "The wasm-bindgen Developers",
         "CARGO_PKG_DESCRIPTION": "Shared support between wasm-bindgen and wasm-bindgen cli, an internal\ndependency.\n",
         "CARGO_PKG_HOMEPAGE": "https://wasm-bindgen.github.io/wasm-bindgen/",
@@ -5722,7 +5730,11 @@
           }
         }
       ],
-      "buildscript": {}
+      "buildscript": {
+        "run_env": {
+          "CARGO_MANIFEST_LINKS": "wasm_bindgen"
+        }
+      }
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#wasm-encoder@0.254.0",
