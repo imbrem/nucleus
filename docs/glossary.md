@@ -7,9 +7,18 @@
 : A digest that identifies exact bytes. It does not by itself say that the
 bytes are a valid proof, theory, or other object.
 
+**HOL (higher-order logic)**
+: The small ambient logic implemented by the kernel. Nucleus can define and
+reason about other logics inside it.
+
 **LCF style**
 : An API in which theorem values cannot be forged by callers; they are produced
 only by a small kernel from existing theorem values and checked inputs.
+
+**Provenance**
+: Information about where an artifact came from, such as a signer, tool,
+source, or execution record. Provenance is separate from whether a theorem is
+valid.
 
 **Semantic envelope**
 : The use of HOL to state and prove claims about another logic or computation
@@ -27,3 +36,7 @@ integer or serialized value that resembles a handle must not forge one.
 **Wasm proof component**
 : Untrusted proof-producing code compiled as a WebAssembly component. It may
 call exposed kernel operations but cannot create theorems on its own.
+
+**WIT (WebAssembly Interface Type)**
+: The interface language used to describe capabilities available across a Wasm
+component boundary.

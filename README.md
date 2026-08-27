@@ -2,8 +2,8 @@
 
 Nucleus is a content-addressed theorem prover built around a small HOL kernel.
 Other logics and computation systems can be represented and reasoned about
-inside HOL. Proving a foreign judgment need not construct or decide a
-derivation in the foreign system.
+inside HOL. Proving a claim made in another logic need not construct or decide
+a derivation in that logic.
 
 The kernel API follows the LCF pattern: callers can use theorem handles, but
 only the kernel can create valid ones. Parsers, tactics, solvers, and importers
