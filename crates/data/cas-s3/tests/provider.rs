@@ -9,6 +9,7 @@
 use std::env;
 
 use bytes::Bytes;
+use covalence_data_cas::get_exact_fact;
 use covalence_data_cas_s3::{S3Cas, S3CasConfig};
 
 fn optional(name: &str) -> Option<String> {
@@ -70,7 +71,7 @@ async fn real_provider_round_trip() {
     let bytes = Bytes::from_static(b"nucleus S3 CAS provider conformance v1");
     let address = cas.insert(bytes.clone()).await.unwrap();
     assert_eq!(cas.get_bytes(address).await.unwrap(), Some(bytes.clone()));
-    let fact = cas.get_fact(address).await.unwrap().unwrap();
+    let fact = get_exact_fact(&cas, address).await.unwrap().unwrap();
     assert_eq!(fact.hash(), address);
     assert_eq!(fact.bytes(), &bytes);
 }

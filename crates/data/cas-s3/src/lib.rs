@@ -6,15 +6,14 @@
 //! to target AWS S3, Cloudflare R2, Backblaze B2, and local test servers.
 //!
 //! S3 and its responses are untrusted. [`S3Cas::get_bytes`] deliberately
-//! returns ordinary bytes; [`S3Cas::get_fact`] hashes the complete response
-//! before it can introduce a checked whole-object CAS fact.
+//! returns ordinary bytes; the [`AsyncCas`] default hashes the complete
+//! response before it can introduce a checked whole-object CAS fact.
 
 use bytes::Bytes;
 use covalence_data_cas::{AsyncCas, AsyncCasError, CasFuture};
-use covalence_lib_error::snafu::{ResultExt, Snafu};
+use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_lib_s3::{S3Client, S3Config, S3Error};
-use covalence_logic_cas::{CasCheckError, CasFact};
 
 /// Conventional top-level key prefix for whole CAS objects.
 pub const DEFAULT_PREFIX: &str = "cas";
@@ -174,19 +173,6 @@ impl S3Cas {
             })
     }
 
-    /// Fetches and validates a whole-object CAS fact.
-    ///
-    /// # Errors
-    ///
-    /// Returns an S3 failure or [`S3CasError::Check`] when the bytes do not
-    /// hash to the requested address.
-    pub async fn get_fact(&self, address: O256) -> Result<Option<CasFact>, S3CasError> {
-        self.get_bytes(address)
-            .await?
-            .map(|bytes| CasFact::new(address, bytes).context(CheckSnafu { address }))
-            .transpose()
-    }
-
     /// Stores bytes at their canonical content-derived key and returns their
     /// BLAKE3 address.
     ///
@@ -256,14 +242,6 @@ pub enum S3CasError {
         limit: u64,
         /// Declared, received, or upload byte count which crossed the limit.
         observed: u64,
-    },
-    /// The downloaded object did not match its requested address.
-    #[snafu(display("S3 CAS bytes for {address} failed validation: {source}"))]
-    Check {
-        /// Requested content address.
-        address: O256,
-        /// Whole-object validation failure.
-        source: CasCheckError,
     },
     /// Uploading an object failed.
     #[snafu(display("could not put S3 CAS object: {source}"))]

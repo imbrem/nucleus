@@ -106,7 +106,7 @@ async fn canonical_round_trip_and_missing_object() {
     assert_eq!(cas.insert(bytes.clone()).await.unwrap(), address);
     assert_eq!(cas.get_bytes(address).await.unwrap(), Some(bytes.clone()));
 
-    let fact = cas.get_fact(address).await.unwrap().unwrap();
+    let fact = get_exact_fact(&cas, address).await.unwrap().unwrap();
     assert_eq!(fact.hash(), address);
     assert_eq!(fact.bytes(), &bytes);
     assert!(
@@ -140,7 +140,7 @@ async fn checked_lookup_rejects_wrong_bytes() {
         cas.get_bytes(requested).await.unwrap(),
         Some(Bytes::from_static(b"different"))
     );
-    assert!(cas.get_fact(requested).await.is_err());
+    assert!(get_exact_fact(&cas, requested).await.is_err());
 }
 
 #[tokio::test]
