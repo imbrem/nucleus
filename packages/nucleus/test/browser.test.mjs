@@ -195,12 +195,17 @@ test("the browser composes the full kernel host with a proof", async (context) =
   assert.equal(result.synFacts, "0");
   assert.equal(result.category, "kind");
   assert.equal(result.tableAddressBytes, 32);
+});
 
-  // Start the UI assertion in a fresh browser process. Discarding a page that
-  // has run a native-async component while navigating it can terminate
-  // Chromium in constrained container environments.
-  await page.context().browser().close();
+test("the browser proof loader runs a proof component", async (context) => {
+  const origin = await servePackage(context);
   const proofPage = await openPage(context, origin, "/proof.html");
+  const component = await readFile(
+    join(
+      repository,
+      "target/wasm32-unknown-unknown/debug/covalence_proof_demo.component.wasm",
+    ),
+  );
   await proofPage.locator("#file").setInputFiles({
     name: "demo-proof.wasm",
     mimeType: "application/wasm",

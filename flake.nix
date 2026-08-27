@@ -125,6 +125,7 @@
           packages = tools;
           shellHook = ''
             export CHROMIUM_PATH="${pkgs.chromium}/bin/chromium"
+            export FONTCONFIG_FILE="${pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; }}"
             export CC_wasm32_unknown_unknown=nucleus-wasm-clang
             export CC_wasm32_wasip1=wasm32-unknown-wasi-cc
             export CC_wasm32_wasip2=wasm32-unknown-wasi-cc
