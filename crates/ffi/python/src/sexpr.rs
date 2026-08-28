@@ -4,7 +4,9 @@
 // thin boundary only reads them.
 #![allow(clippy::needless_pass_by_value)]
 
-use covalence_data_sexpr::{Atom, Document, Event, Expr, ExprKind, parse, parse_one};
+use covalence_data_sexpr::{
+    Atom, Document, Event, Expr, ExprKind, SDocument, SExpr, SExprNode, parse, parse_one,
+};
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::types::{PyBytes, PyString, PyTuple};
 
@@ -217,7 +219,7 @@ impl PySExpr {
 
     #[getter]
     fn kind(&self) -> &'static str {
-        match self.expression.kind() {
+        match self.expression.node() {
             ExprKind::Atom { .. } => "atom",
             ExprKind::List { .. } => "list",
         }
@@ -225,7 +227,7 @@ impl PySExpr {
 
     #[getter]
     fn atom_value(&self) -> Option<PySExprAtom> {
-        match self.expression.kind() {
+        match self.expression.node() {
             ExprKind::Atom { value, .. } => Some(PySExprAtom::wrap(value.clone())),
             ExprKind::List { .. } => None,
         }
@@ -233,31 +235,31 @@ impl PySExpr {
 
     #[getter]
     fn span(&self) -> (u64, u64) {
-        match self.expression.kind() {
-            ExprKind::Atom { span, .. } => (span.start, span.end),
-            ExprKind::List { open, close, .. } => (open.start, close.end),
+        match self.expression.node() {
+            ExprKind::Atom { metadata, .. } => (metadata.start, metadata.end),
+            ExprKind::List { metadata, .. } => (metadata.open.start, metadata.close.end),
         }
     }
 
     #[getter]
     fn open_span(&self) -> Option<(u64, u64)> {
-        match self.expression.kind() {
-            ExprKind::List { open, .. } => Some((open.start, open.end)),
+        match self.expression.node() {
+            ExprKind::List { metadata, .. } => Some((metadata.open.start, metadata.open.end)),
             ExprKind::Atom { .. } => None,
         }
     }
 
     #[getter]
     fn close_span(&self) -> Option<(u64, u64)> {
-        match self.expression.kind() {
-            ExprKind::List { close, .. } => Some((close.start, close.end)),
+        match self.expression.node() {
+            ExprKind::List { metadata, .. } => Some((metadata.close.start, metadata.close.end)),
             ExprKind::Atom { .. } => None,
         }
     }
 
     #[getter]
     fn items(&self, python: Python<'_>) -> PyResult<Py<PyTuple>> {
-        let values = match self.expression.kind() {
+        let values = match self.expression.node() {
             ExprKind::List { items, .. } => items
                 .iter()
                 .cloned()
@@ -273,8 +275,85 @@ impl PySExpr {
         self.expression.events().map(PySExprEvent::wrap).collect()
     }
 
+    /// Returns an immutable tree with all source positions removed.
+    fn erase(&self) -> PyErasedSExpr {
+        PyErasedSExpr::wrap(self.expression.erase())
+    }
+
     fn __repr__(&self) -> String {
         format!("SExpr(kind='{}')", self.kind())
+    }
+}
+
+/// An immutable S-expression without source positions.
+#[pyclass(
+    frozen,
+    skip_from_py_object,
+    module = "covalence.data.sexpr",
+    name = "ErasedSExpr"
+)]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Clone)]
+pub struct PyErasedSExpr {
+    expression: SExpr,
+}
+
+impl PyErasedSExpr {
+    fn wrap(expression: SExpr) -> Self {
+        Self { expression }
+    }
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyErasedSExpr {
+    #[staticmethod]
+    fn atom(atom: PyRef<'_, PySExprAtom>) -> Self {
+        Self::wrap(SExpr::<(), ()>::atom(atom.atom.clone()))
+    }
+
+    #[staticmethod]
+    fn list(items: Vec<PyRef<'_, Self>>) -> Self {
+        Self::wrap(SExpr::<(), ()>::list(
+            items
+                .iter()
+                .map(|item| item.expression.clone())
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    #[getter]
+    fn kind(&self) -> &'static str {
+        match self.expression.node() {
+            SExprNode::Atom { .. } => "atom",
+            SExprNode::List { .. } => "list",
+        }
+    }
+
+    #[getter]
+    fn atom_value(&self) -> Option<PySExprAtom> {
+        match self.expression.node() {
+            SExprNode::Atom { value, .. } => Some(PySExprAtom::wrap(value.clone())),
+            SExprNode::List { .. } => None,
+        }
+    }
+
+    #[getter]
+    fn items(&self, python: Python<'_>) -> PyResult<Py<PyTuple>> {
+        let values = match self.expression.node() {
+            SExprNode::List { items, .. } => items
+                .iter()
+                .cloned()
+                .map(Self::wrap)
+                .map(|item| Py::new(python, item))
+                .collect::<PyResult<Vec<_>>>()?,
+            SExprNode::Atom { .. } => Vec::new(),
+        };
+        Ok(PyTuple::new(python, values)?.unbind())
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ErasedSExpr(kind='{}')", self.kind())
     }
 }
 
@@ -319,12 +398,69 @@ impl PySExprDocument {
         self.document.events().map(PySExprEvent::wrap).collect()
     }
 
+    /// Returns a document with all source positions removed.
+    fn erase(&self) -> PyErasedSExprDocument {
+        PyErasedSExprDocument {
+            document: self.document.erase(),
+        }
+    }
+
     fn __len__(&self) -> usize {
         self.document.expressions().len()
     }
 
     fn __repr__(&self) -> String {
         format!("Document(expressions={})", self.__len__())
+    }
+}
+
+/// An immutable document of S-expressions without source positions.
+#[pyclass(
+    frozen,
+    skip_from_py_object,
+    module = "covalence.data.sexpr",
+    name = "ErasedDocument"
+)]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Clone)]
+pub struct PyErasedSExprDocument {
+    document: SDocument,
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyErasedSExprDocument {
+    #[new]
+    fn new(expressions: Vec<PyRef<'_, PyErasedSExpr>>) -> Self {
+        Self {
+            document: SDocument::new(
+                expressions
+                    .iter()
+                    .map(|expression| expression.expression.clone())
+                    .collect::<Vec<_>>(),
+            ),
+        }
+    }
+
+    #[getter]
+    fn expressions(&self, python: Python<'_>) -> PyResult<Py<PyTuple>> {
+        let expressions = self
+            .document
+            .expressions()
+            .iter()
+            .cloned()
+            .map(PyErasedSExpr::wrap)
+            .map(|expression| Py::new(python, expression))
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(PyTuple::new(python, expressions)?.unbind())
+    }
+
+    fn __len__(&self) -> usize {
+        self.document.expressions().len()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ErasedDocument(expressions={})", self.__len__())
     }
 }
 
@@ -354,7 +490,9 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PySExprAtom>()?;
     module.add_class::<PySExprEvent>()?;
     module.add_class::<PySExpr>()?;
+    module.add_class::<PyErasedSExpr>()?;
     module.add_class::<PySExprDocument>()?;
+    module.add_class::<PyErasedSExprDocument>()?;
     module.add_function(wrap_pyfunction!(parse_document, module)?)?;
     module.add_function(wrap_pyfunction!(parse_expression, module)?)?;
     module.add_function(wrap_pyfunction!(parse_events, module)?)

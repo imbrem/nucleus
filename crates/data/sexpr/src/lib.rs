@@ -383,44 +383,99 @@ impl Iterator for Parser<'_> {
 
 impl FusedIterator for Parser<'_> {}
 
-/// An immutable, cheaply cloned S-expression.
+/// The two delimiter spans attached to a parsed list.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Expr(Arc<ExprKind>);
+pub struct ListSpan {
+    /// Opening-parenthesis span.
+    pub open: Span,
+    /// Closing-parenthesis span.
+    pub close: Span,
+}
 
-/// The contents of an [`Expr`].
+/// An immutable, cheaply cloned S-expression template.
+///
+/// `AtomMeta` and `ListMeta` configure data carried by each node. The default
+/// is the spanless form; [`Expr`] selects source spans for parsed syntax.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum ExprKind {
-    /// An atomic value and its source span.
-    Atom { value: Atom, span: Span },
-    /// A proper list. Delimiter spans are retained independently.
+pub struct SExpr<AtomMeta = (), ListMeta = ()>(Arc<SExprNode<AtomMeta, ListMeta>>);
+
+/// One layer of an [`SExpr`] template.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum SExprNode<AtomMeta = (), ListMeta = ()> {
+    /// An atomic value and its configured node data.
+    Atom { value: Atom, metadata: AtomMeta },
+    /// A proper list and its configured node data.
     List {
-        open: Span,
-        items: Arc<[Expr]>,
-        close: Span,
+        metadata: ListMeta,
+        items: Arc<[SExpr<AtomMeta, ListMeta>]>,
     },
+}
+
+/// A parsed S-expression carrying source spans.
+pub type Expr = SExpr<Span, ListSpan>;
+
+/// The contents of a parsed [`Expr`].
+pub type ExprKind = SExprNode<Span, ListSpan>;
+
+impl<AtomMeta, ListMeta> SExpr<AtomMeta, ListMeta> {
+    /// Returns this expression's immutable contents.
+    #[must_use]
+    pub fn node(&self) -> &SExprNode<AtomMeta, ListMeta> {
+        &self.0
+    }
+}
+
+impl SExpr {
+    /// Creates a spanless atomic expression.
+    #[must_use]
+    pub fn atom(value: Atom) -> Self {
+        Self(Arc::new(SExprNode::Atom {
+            value,
+            metadata: (),
+        }))
+    }
+
+    /// Creates a spanless proper-list expression.
+    #[must_use]
+    pub fn list(items: impl Into<Arc<[Self]>>) -> Self {
+        Self(Arc::new(SExprNode::List {
+            metadata: (),
+            items: items.into(),
+        }))
+    }
 }
 
 impl Expr {
     /// Creates an atomic expression.
     #[must_use]
     pub fn atom(value: Atom, span: Span) -> Self {
-        Self(Arc::new(ExprKind::Atom { value, span }))
+        Self(Arc::new(ExprKind::Atom {
+            value,
+            metadata: span,
+        }))
     }
 
     /// Creates a proper-list expression.
     #[must_use]
     pub fn list(open: Span, items: impl Into<Arc<[Self]>>, close: Span) -> Self {
         Self(Arc::new(ExprKind::List {
-            open,
+            metadata: ListSpan { open, close },
             items: items.into(),
-            close,
         }))
     }
 
-    /// Returns this expression's immutable contents.
+    /// Erases all source spans, preserving atoms and tree shape.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the internal iterative traversal fails to produce one
+    /// output for its one input, which would be an implementation defect.
     #[must_use]
-    pub fn kind(&self) -> &ExprKind {
-        &self.0
+    pub fn erase(&self) -> SExpr {
+        erase_expressions(core::slice::from_ref(self))
+            .into_iter()
+            .next()
+            .expect("one input expression produces one output expression")
     }
 
     /// Traverses this expression as a balanced event stream without recursion.
@@ -451,6 +506,12 @@ impl Document {
     #[must_use]
     pub fn events(&self) -> Events<'_> {
         Events::document(self)
+    }
+
+    /// Erases every source span from this document.
+    #[must_use]
+    pub fn erase(&self) -> SDocument {
+        SDocument::new(erase_expressions(self.expressions()))
     }
 
     /// Folds a structural event stream into an owned document without recursion.
@@ -516,6 +577,57 @@ pub enum StructureError {
     },
 }
 
+/// An immutable, cheaply cloned spanless S-expression document.
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct SDocument(Arc<[SExpr]>);
+
+impl SDocument {
+    /// Creates a spanless document.
+    #[must_use]
+    pub fn new(expressions: impl Into<Arc<[SExpr]>>) -> Self {
+        Self(expressions.into())
+    }
+
+    /// Returns the document's top-level expressions.
+    #[must_use]
+    pub fn expressions(&self) -> &[SExpr] {
+        &self.0
+    }
+}
+
+fn erase_expressions(expressions: &[Expr]) -> Vec<SExpr> {
+    enum Pending<'a> {
+        Visit(&'a Expr),
+        FinishList(usize),
+    }
+
+    let mut pending = expressions
+        .iter()
+        .rev()
+        .map(Pending::Visit)
+        .collect::<Vec<_>>();
+    let mut values = Vec::new();
+    while let Some(item) = pending.pop() {
+        match item {
+            Pending::Visit(expression) => match expression.node() {
+                ExprKind::Atom { value, .. } => {
+                    values.push(SExpr::<(), ()>::atom(value.clone()));
+                }
+                ExprKind::List { items, .. } => {
+                    pending.push(Pending::FinishList(items.len()));
+                    pending.extend(items.iter().rev().map(Pending::Visit));
+                }
+            },
+            Pending::FinishList(child_count) => {
+                let first = values.len() - child_count;
+                let children = values.drain(first..).collect::<Vec<_>>();
+                values.push(SExpr::<(), ()>::list(children));
+            }
+        }
+    }
+    values
+}
+
 #[derive(Debug)]
 enum Pending<'a> {
     Expr(&'a Expr),
@@ -548,15 +660,20 @@ impl Iterator for Events<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         match self.pending.pop()? {
             Pending::Close(span) => Some(Event::Close { span }),
-            Pending::Expr(expression) => match expression.kind() {
-                ExprKind::Atom { value, span } => Some(Event::Atom {
+            Pending::Expr(expression) => match expression.node() {
+                ExprKind::Atom {
+                    value,
+                    metadata: span,
+                } => Some(Event::Atom {
                     value: value.clone(),
                     span: span.clone(),
                 }),
-                ExprKind::List { open, items, close } => {
-                    self.pending.push(Pending::Close(close.clone()));
+                ExprKind::List { metadata, items } => {
+                    self.pending.push(Pending::Close(metadata.close.clone()));
                     self.pending.extend(items.iter().rev().map(Pending::Expr));
-                    Some(Event::Open { span: open.clone() })
+                    Some(Event::Open {
+                        span: metadata.open.clone(),
+                    })
                 }
             },
         }

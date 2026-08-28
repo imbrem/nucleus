@@ -3,6 +3,8 @@
 from covalence._covalence import (
     Atom,
     Document,
+    ErasedDocument,
+    ErasedSExpr,
     Event,
     SExpr,
     sexpr_parse as parse,
@@ -10,4 +12,14 @@ from covalence._covalence import (
     sexpr_parse_one as parse_one,
 )
 
-__all__ = ["Atom", "Document", "Event", "SExpr", "parse", "parse_events", "parse_one"]
+__all__ = [
+    "Atom",
+    "Document",
+    "ErasedDocument",
+    "ErasedSExpr",
+    "Event",
+    "SExpr",
+    "parse",
+    "parse_events",
+    "parse_one",
+]

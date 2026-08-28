@@ -56,7 +56,9 @@ recursively converts those scalar types, lists, and dictionaries.
 stream `open`, `atom`, and `close` events or fold those events into immutable
 `Document` and `SExpr` objects. Symbols, strings, byte strings, exact number
 spellings, keywords, and directives remain distinct. The reader and both AST
-directions are iterative and impose no arbitrary nesting limit.
+directions are iterative and impose no arbitrary nesting limit. Parsed trees
+retain `u64` byte spans; `erase()` produces the distinct `ErasedDocument` and
+`ErasedSExpr` types, whose nodes carry no source-position fields.
 
 ```python
 >>> from covalence.data.cbor import Cbor
