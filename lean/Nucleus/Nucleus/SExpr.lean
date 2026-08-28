@@ -5,6 +5,7 @@ import Nucleus.SExpr.Proper
 import Nucleus.SExpr.Tagged
 import Nucleus.SExpr.Parser
 import Nucleus.SExpr.Literals
+import Nucleus.SExpr.Event
 import Nucleus.SExpr.Pose
 import Nucleus.SExpr.Rivest
 import Nucleus.SExpr.Printer

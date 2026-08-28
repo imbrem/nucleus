@@ -1,5 +1,5 @@
 """Immutable data models."""
 
-from . import cbor
+from . import cbor, sexpr
 
-__all__ = ["cbor"]
+__all__ = ["cbor", "sexpr"]

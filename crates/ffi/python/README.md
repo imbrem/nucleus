@@ -52,6 +52,14 @@ insertion-ordered dictionaries; no conversion call is required.
 The `Cbor(value)` constructor (also available as `Cbor.from_python(value)`)
 recursively converts those scalar types, lists, and dictionaries.
 
+`covalence.data.sexpr` exposes the reusable owned S-expression reader. It can
+stream `open`, `atom`, and `close` events or fold those events into immutable
+`Document` and `SExpr` objects. Symbols, strings, byte strings, exact number
+spellings, keywords, and directives remain distinct. The reader and both AST
+directions are iterative and impose no arbitrary nesting limit. Parsed trees
+retain `u64` byte spans; `erase()` produces the distinct `ErasedDocument` and
+`ErasedSExpr` types, whose nodes carry no source-position fields.
+
 ```python
 >>> from covalence.data.cbor import Cbor
 >>> value = Cbor.array([Cbor.integer(2**256), Cbor.text("large")])
