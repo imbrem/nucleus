@@ -22,6 +22,45 @@ changing what the arena proves. Consumers that need stable meaning should retain
 a checked descriptor such as `CoproductSchema`, `NaturalsDecl`, or
 `NaturalArithmeticDecl`, and may additionally pin the arena address.
 
+## Virtual source trees
+
+The example library under [`library/`](library/) is split into modules such as
+`logic/defs.cov`, `data/coprod/defs.cov`, `data/prod/defs.cov`, and
+`nat/defs.cov`. A module imports another by its dot-qualified path:
+
+```lisp
+(import logic.defs)
+```
+
+Imports are private by default. A module may publish an imported module as-is,
+rename that submodule, or publish its definitions directly while keeping the
+source module private:
+
+```lisp
+(export logic.defs)
+(export (logic.defs core))
+(include logic.defs)
+```
+
+[`library/logic.cov`](library/logic.cov) uses the third form, so clients import
+`logic` and see names such as `logic.and` and `logic.and.comm`; the physical
+`logic.defs` split is not part of that public namespace.
+
+`compile_tree("nat.defs", resources)` passes the logical name to the resolver
+unchanged, loads each transitive dependency once, and automatically places
+every file under its name-derived namespace. A folder-backed resolver may use
+the conventional `nat/defs.cov` location; a CAS-backed resolver may map the
+same name to an indexed hash anywhere in storage. The compiler cannot tell the
+difference. The resolver is SQLite's `ResourceVfs` subtrait: it
+returns `bytes::Bytes` for whole resources while retaining the full SQLite VFS
+API on the same mount. A tree may therefore carry `.cov` sources, `.wasm`
+tactics, binary constants, and `.sqlite` tactic state without giving the parser
+filesystem authority or inventing a format per tactic.
+
+Only `.cov` resources are decoded as UTF-8. Exact source hashes and dependency
+order remain userspace metadata; all combined definitions still pass through
+the checked kernel API.
+
 ## Small source language
 
 The initial grammar deliberately covers definitions rather than proofs:

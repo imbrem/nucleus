@@ -1289,7 +1289,9 @@ dependencies = [
 name = "covalence-nucleus-script"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "covalence-data-sexpr",
+ "covalence-data-sqlite",
  "covalence-lib-error",
  "covalence-lib-hash",
  "covalence-lib-json",

@@ -11,7 +11,9 @@ publish = false
 buck-test-fixtures = []
 
 [dependencies]
+bytes = "1"
 covalence-data-sexpr = { path = "../../data/sexpr" }
+covalence-data-sqlite = { path = "../../data/sqlite" }
 covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
 covalence-lib-json = { path = "../../lib/json" }

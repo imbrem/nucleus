@@ -34,7 +34,7 @@ fn flat_and_broken_layouts_are_width_sensitive_and_parse_back() {
 
 #[test]
 fn every_atom_kind_has_a_canonical_round_trip_spelling() {
-    let source = "symbol \"text\\nβ\" b\"A\\0\\xff\" 123x :key #define !(AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=)";
+    let source = "symbol \"text\\nβ\" b\"A\\0\\xff\" 123x :key #define !0000000000000000000000000000000000000000000000000000000000000000";
     let document = parse(source).unwrap();
     let printed = Printer::default().document(&document).unwrap();
     let reparsed = parse(&printed).unwrap();
@@ -65,4 +65,6 @@ fn arbitrary_bytes_print_readably_and_round_trip() {
 fn invalid_constructed_atom_kinds_are_rejected() {
     let expression = Expr::atom(Atom::Symbol("123".into()), 0..0);
     assert!(Printer::default().expression(&expression).is_err());
+    let reserved = Expr::atom(Atom::Symbol("!not-an-address".into()), 0..0);
+    assert!(Printer::default().expression(&reserved).is_err());
 }

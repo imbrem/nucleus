@@ -254,7 +254,7 @@ fn collect_definitions(
                 let local = items.get(1).ok_or_else(|| ModuleError::Invalid {
                     message: "define is missing its name".to_owned(),
                 })?;
-                let name = qualify(scope, atom(local)?)?;
+                let name = qualify_definition(scope, atom(local)?)?;
                 if !definitions.insert(name.clone()) {
                     return Err(ModuleError::Invalid {
                         message: format!("duplicate definition {name:?}"),
@@ -307,7 +307,7 @@ fn rewrite_define(
     if !matches!(items.len(), 4 | 5) {
         return module_invalid("expected (define name ('type ...) [type] term)");
     }
-    let name = qualify(scope, atom(&items[1])?)?;
+    let name = qualify_definition(scope, atom(&items[1])?)?;
     let parameters = list(&items[2], "a type-parameter list")?;
     let mut bound = parameters
         .iter()
@@ -391,13 +391,27 @@ fn address(expression: &SExpr, role: &str) -> Result<O256, ModuleError> {
     match expression {
         SExpr::O256(value) => Ok(*value),
         SExpr::Atom(_) | SExpr::List(_) => {
-            module_invalid(format!("import {role} must use the !(base64) O256 atom"))
+            module_invalid(format!("import {role} must use the !hex O256 atom"))
         }
     }
 }
 
 fn qualify(scope: &[String], local: &str) -> Result<String, ModuleError> {
     validate_part(local)?;
+    Ok(if scope.is_empty() {
+        local.to_owned()
+    } else {
+        format!("{}.{}", scope.join("."), local)
+    })
+}
+
+fn qualify_definition(scope: &[String], local: &str) -> Result<String, ModuleError> {
+    if local.is_empty() {
+        return module_invalid("definition names cannot be empty");
+    }
+    for part in local.split('.') {
+        validate_part(part)?;
+    }
     Ok(if scope.is_empty() {
         local.to_owned()
     } else {
@@ -434,7 +448,7 @@ fn is_builtin(name: &str) -> bool {
     )
 }
 
-fn render(forms: &[SExpr]) -> String {
+pub(super) fn render(forms: &[SExpr]) -> String {
     let mut output = String::new();
     for form in forms {
         render_expr(form, &mut output);

@@ -1,0 +1,20 @@
+; The product universal property as an open definition schema.
+(import logic)
+
+(define IsProd ('a 'b 't)
+  (exists fst (-> 't 'a)
+    (exists snd (-> 't 'b)
+      (ty.forall 'c
+        (forall f (-> 'c 'a)
+          (forall g (-> 'c 'b)
+            (exists pair (-> 'c 't)
+              ((logic.and
+                ((logic.and
+                  (forall x 'c (= (fst (pair x)) (f x))))
+                  (forall x 'c (= (snd (pair x)) (g x)))))
+                (forall candidate (-> 'c 't)
+                  (imp
+                    (and
+                      (forall x 'c (= (fst (candidate x)) (f x)))
+                      (forall x 'c (= (snd (candidate x)) (g x))))
+                    (= candidate pair)))))))))))

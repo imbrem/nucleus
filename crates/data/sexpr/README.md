@@ -10,7 +10,7 @@ keywords, and directives:
 
 ```lisp
 (symbol "decoded\nstring" 123exact :keyword #directive
-  !(AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=)
+  !0000000000000000000000000000000000000000000000000000000000000000
   b"printable\x00bytes")
 ```
 
@@ -23,9 +23,9 @@ Bytes use `b"..."`. Printable ASCII may appear directly; `\\`, `\"`, `\n`,
 Non-ASCII source characters and unescaped control bytes are rejected. In memory
 byte atoms use `bytes::Bytes`, making slices and clones cheap.
 
-An `O256` is written as `!(...)` around canonical padded standard Base64. Its
-payload is always 44 characters encoding exactly 32 bytes; it is stored as the
-typed `O256` value rather than retained as text.
+An `O256` is written as `!` followed immediately by exactly 64 lowercase
+hexadecimal digits, with no brackets. It is stored as the typed `O256` value
+rather than retained as text.
 
 The reader emits `Open`, `Atom`, and `Close` events without recursion or a
 nesting limit. Building an AST from events and traversing an AST back into

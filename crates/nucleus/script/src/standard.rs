@@ -49,7 +49,7 @@ pub const LOGICAL_INIT_TRIPLE: SegmentTriple = SegmentTriple {
 
 /// Pinned source, output-object, and kernel identities for natural init.
 pub const NATURAL_INIT_TRIPLE: SegmentTriple = SegmentTriple {
-    script: address("0e91f0615402bb9ed0e081aeafdb271ce5a56cb4896de409b3f7860c4ff1d7aa"),
+    script: address("7678eb034e81e7ff40845e48d66edff71b21f48ff16ba40ad43f3ab4f2d32c3a"),
     output: address("c140d7b08bd314beb49f2299a9027d695848868b726306fae1af6dd9c24eb7fa"),
     kernel: address("08b577109951887e8acca5a3039d7e0d1a324f1b0aad02da120993bceff18953"),
 };

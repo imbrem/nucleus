@@ -815,6 +815,12 @@
           "kinds": [
             "test"
           ]
+        },
+        {
+          "name": "tree",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     },
@@ -1557,6 +1563,13 @@
     {
       "source": "workspace#covalence-nucleus-script@0.0.0",
       "target": "workspace#covalence-data-sexpr@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-script@0.0.0",
+      "target": "workspace#covalence-data-sqlite@0.0.0",
       "kinds": [
         "normal"
       ]

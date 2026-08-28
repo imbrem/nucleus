@@ -11,6 +11,7 @@
 mod cas_vfs;
 mod connection;
 mod image;
+mod resource_vfs;
 pub mod sql;
 
 pub use bytes::Bytes;
@@ -19,4 +20,6 @@ pub use connection::{
     ATTACHED_DATABASES, ATTACHED_DATABASES_INTERPRETATION, CONNECTION_CATALOG,
     CONNECTION_CATALOG_INTERPRETATION, Connection, ConnectionError,
 };
+pub use covalence_lib_sqlite::vfs::ReadOnlyVfs;
 pub use image::ImageError;
+pub use resource_vfs::ResourceVfs;

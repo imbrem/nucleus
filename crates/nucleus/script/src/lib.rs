@@ -21,6 +21,7 @@ use covalence_logic_hol::{
 mod init_library;
 mod module;
 mod standard;
+mod tree;
 
 pub use covalence_logic_hol_derived::CoproductSchema;
 pub use init_library::{
@@ -34,6 +35,7 @@ pub use standard::{
     SegmentOutput, SegmentTriple, StandardSegment, StandardSegmentError, compile_standard_logical,
     compile_standard_natural,
 };
+pub use tree::{CompiledTree, SourceUnit, TreeError, compile_tree};
 
 /// Source of the first opcode-free init-library schemata.
 ///
