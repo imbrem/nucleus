@@ -7,7 +7,7 @@ use std::{
 use bytes::BytesMut;
 use covalence_lib_error::snafu::Snafu;
 
-use crate::{BlobRange, Bytes, FuseRange, O256};
+use crate::{BlobRange, BlobSpan, Bytes, FuseRange, O256};
 
 /// Returns a byte count as a `u64`.
 ///
@@ -258,6 +258,28 @@ impl<R: BlobRange> CasRangeFact<R> {
     #[must_use]
     pub fn into_assertion(self) -> CasRangeAssertion<R> {
         self.assertion
+    }
+
+    /// Forgets this fact's static range shape, keeping the claim itself.
+    ///
+    /// The result says exactly what this fact says, in the one range type able
+    /// to hold any shape. Use it at a boundary that cannot carry the type
+    /// parameter, such as a collection of facts about different ranges or a
+    /// dynamically typed language binding. Nothing is checked, because nothing
+    /// can fail: a [`BlobSpan`] holds any bounds a `BlobRange` can report.
+    ///
+    /// What is given up is decided-by-type, not truth. A `0..` fact and a
+    /// `..` fact erase to the same span, and both still know the blob's length
+    /// through [`Self::blob_len`]; the difference is that recovering a
+    /// whole-blob [`CasFact`] from the span now takes a checked
+    /// [`Self::slice`].
+    #[must_use]
+    pub fn erase(&self) -> CasRangeFact<BlobSpan> {
+        CasRangeFact::trust(CasRangeAssertion {
+            hash: self.assertion.hash,
+            range: self.assertion.range.span(),
+            bytes: self.assertion.bytes.clone(),
+        })
     }
 
     /// Narrows this fact to a sub-range of the bytes it already knows.
@@ -520,6 +542,7 @@ pub enum FuseError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::BlobSpan;
 
     fn whole() -> CasFact {
         CasFact::from_bytes(Bytes::from_static(b"0123456789"))
@@ -665,6 +688,54 @@ mod tests {
         let tail = fact.slice(2..5).unwrap().fuse(&suffix).unwrap();
         assert_eq!(tail.range(), &(2..));
         assert_eq!(tail.bytes(), &Bytes::from_static(b"23456789"));
+    }
+
+    #[test]
+    fn erasing_keeps_the_claim_and_gives_up_only_the_type() {
+        let fact = whole();
+        let middle = fact.slice(3..7).unwrap();
+        let erased = middle.erase();
+
+        assert_eq!(erased.hash(), middle.hash());
+        assert_eq!(erased.bytes(), middle.bytes());
+        assert_eq!(erased.extent(), middle.extent());
+        assert_eq!(erased.range(), &BlobSpan::new(3, Some(7)).unwrap());
+        // Erasure shares the buffer rather than copying it.
+        assert_eq!(erased.bytes().as_ptr(), middle.bytes().as_ptr());
+
+        // An open end still reports the length after erasure.
+        assert_eq!(fact.slice(4..).unwrap().erase().blob_len(), Some(10));
+        assert_eq!(fact.erase().blob_len(), Some(10));
+        assert_eq!(erased.blob_len(), None);
+
+        // `..` and `0..` erase alike; recovering the whole-blob type is a
+        // checked slice rather than something the type still remembers.
+        assert_eq!(fact.erase(), fact.slice(0..).unwrap().erase());
+        assert_eq!(
+            CasFact::try_from(fact.erase().slice(0..).unwrap()).unwrap(),
+            fact
+        );
+        assert!(erased.slice(..).is_err());
+    }
+
+    #[test]
+    fn fusing_an_erased_range_keeps_what_the_other_side_settles() {
+        let fact = whole();
+        let span = fact.slice(2..6).unwrap().erase();
+
+        // A span is open above only dynamically, so it drags the output back
+        // to a span.
+        let dynamic = span.fuse(&fact.slice(5..8).unwrap()).unwrap();
+        assert_eq!(dynamic.range(), &BlobSpan::new(2, Some(8)).unwrap());
+        assert_eq!(dynamic.bytes(), &Bytes::from_static(b"234567"));
+
+        // Unless the other side settles it: a suffix is open above whatever
+        // the span turns out to be, and the whole blob swallows anything.
+        let suffix: CasRangeFact<RangeFrom<u64>> = span.fuse(&fact.slice(5..).unwrap()).unwrap();
+        assert_eq!(suffix.range(), &(2..));
+        assert_eq!(suffix.blob_len(), Some(10));
+        let all: CasFact = span.fuse(&fact).unwrap();
+        assert_eq!(all, fact);
     }
 
     #[test]

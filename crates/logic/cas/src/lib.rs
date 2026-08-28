@@ -48,7 +48,7 @@ pub use fact::{
     CasAssertion, CasCheckError, CasFact, CasRangeAssertion, CasRangeFact, FuseError, SliceError,
 };
 pub use proof::{BLOCK_LEN, MAX_LEVEL, RangeProof, RangeProofError, block_len};
-pub use range::{BlobRange, FuseRange};
+pub use range::{BlobRange, BlobSpan, FuseRange};
 
 use std::ops::{Deref, DerefMut, Range};
 
