@@ -31,7 +31,7 @@ pub(crate) fn check(root: &Path) -> Result<Summary> {
     Ok(summary(&metadata))
 }
 
-fn load(root: &Path) -> Result<Metadata> {
+pub(crate) fn load(root: &Path) -> Result<Metadata> {
     load_manifest(root, &root.join("Cargo.toml"))
 }
 

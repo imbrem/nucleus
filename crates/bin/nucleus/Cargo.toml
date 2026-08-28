@@ -21,7 +21,6 @@ covalence-nucleus = { path = "../../nucleus" }
 
 [dev-dependencies]
 covalence-lib-sqlite = { path = "../../lib/sqlite" }
-covalence-neutron = { path = "../../neutron" }
 
 [lints]
 workspace = true

@@ -10,13 +10,13 @@ pub use sexpr::Value;
 use std::sync::Arc;
 
 use covalence_data_cas::{AdmissionError, CasStatistics, CasStats, SharedIndexCas};
+use covalence_data_sqlite::{CAS_VFS_NAME, register_cas, sql};
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite::Connection;
 use covalence_lib_sqlite::vfs::{
     ConnectionVfsExt, RegisterError, RegisteredVfs, VfsIdentity, VfsIdentityError,
 };
-use covalence_neutron::{CAS_VFS_NAME, register_cas, sql};
 
 /// Handle for one raw connection owned by a [`Repl`].
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
