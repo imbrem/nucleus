@@ -1219,9 +1219,9 @@ dependencies = [
 name = "covalence-logic-hol-script"
 version = "0.0.0"
 dependencies = [
+ "covalence-data-sexpr",
  "covalence-lib-error",
  "covalence-lib-json",
- "covalence-lib-parse",
  "covalence-logic-hol",
  "covalence-logic-hol-derived",
 ]

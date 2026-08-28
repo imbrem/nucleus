@@ -1366,6 +1366,13 @@
     },
     {
       "source": "workspace#covalence-logic-hol-script@0.0.0",
+      "target": "workspace#covalence-data-sexpr@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol-script@0.0.0",
       "target": "workspace#covalence-lib-error@0.0.0",
       "kinds": [
         "normal"
@@ -1376,13 +1383,6 @@
       "target": "workspace#covalence-lib-json@0.0.0",
       "kinds": [
         "dev"
-      ]
-    },
-    {
-      "source": "workspace#covalence-logic-hol-script@0.0.0",
-      "target": "workspace#covalence-lib-parse@0.0.0",
-      "kinds": [
-        "normal"
       ]
     },
     {

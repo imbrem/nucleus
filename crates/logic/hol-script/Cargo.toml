@@ -15,8 +15,8 @@ buck-test-mapped-srcs = { "nucleus//:hol_init_checked_manifest" = "theories/init
 buck-test-fixtures = []
 
 [dependencies]
+covalence-data-sexpr = { path = "../../data/sexpr" }
 covalence-lib-error = { path = "../../lib/error" }
-covalence-lib-parse = { path = "../../lib/parse" }
 covalence-logic-hol = { path = "../hol" }
 covalence-logic-hol-derived = { path = "../hol-derived" }
 

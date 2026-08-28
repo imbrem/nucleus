@@ -7,12 +7,10 @@
 
 use std::collections::BTreeMap;
 
-use covalence_lib_error::snafu::Snafu;
-use covalence_lib_parse::winnow::{
-    Parser,
-    combinator::{alt, repeat},
-    token::take_while,
+use covalence_data_sexpr::{
+    Atom as SyntaxAtom, Expr as SyntaxExpr, ExprKind, Repr, SpannedRepr, parse,
 };
+use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
     Kernel, KernelError, Ref,
     builtin::{Op1, Op2},
@@ -175,16 +173,9 @@ impl From<KernelError> for TheoryError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum SExpr<'a> {
-    Atom(&'a str),
+enum SExpr {
+    Atom(String),
     List(Vec<Self>),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Token<'a> {
-    Open,
-    Close,
-    Atom(&'a str),
 }
 
 /// Compiles a module of open, checked definition schemata.
@@ -293,90 +284,48 @@ pub fn compile_init(init: &LogicalInit) -> Result<CompiledTheory, TheoryError> {
     )
 }
 
-fn read(input: &str) -> Result<Vec<SExpr<'_>>, TheoryError> {
+fn read(input: &str) -> Result<Vec<SExpr>, TheoryError> {
     const MAX_DEPTH: usize = 256;
+    let document = parse(input).map_err(|error| TheoryError::Read {
+        message: error.to_string(),
+    })?;
+    document
+        .expressions()
+        .iter()
+        .map(|expression| lower_syntax(expression, 0, MAX_DEPTH))
+        .collect()
+}
 
-    let mut rest = input;
-    let tokens: Vec<Token<'_>> =
-        repeat(0.., token)
-            .parse_next(&mut rest)
-            .map_err(|error| TheoryError::Read {
-                message: error.to_string(),
-            })?;
-    trivia(&mut rest);
-    if !rest.is_empty() {
-        return Err(TheoryError::Read {
-            message: format!("unexpected input at {rest:?}"),
-        });
-    }
-
-    let mut roots = Vec::new();
-    let mut stack: Vec<Vec<SExpr<'_>>> = Vec::new();
-    for item in tokens {
-        match item {
-            Token::Open => {
-                if stack.len() == MAX_DEPTH {
-                    return Err(TheoryError::Read {
-                        message: format!("nesting exceeds {MAX_DEPTH}"),
-                    });
-                }
-                stack.push(Vec::new());
+fn lower_syntax(
+    expression: &SyntaxExpr,
+    depth: usize,
+    max_depth: usize,
+) -> Result<SExpr, TheoryError> {
+    match expression.node() {
+        ExprKind::Atom(node) => match SpannedRepr::atom(node) {
+            SyntaxAtom::Symbol(value) => Ok(SExpr::Atom(value.to_string())),
+            _ => invalid("the theory grammar only accepts symbol atoms"),
+        },
+        ExprKind::List(node) => {
+            if depth == max_depth {
+                return Err(TheoryError::Read {
+                    message: format!("nesting exceeds {max_depth}"),
+                });
             }
-            Token::Close => {
-                let list = stack.pop().ok_or_else(|| TheoryError::Read {
-                    message: "unexpected )".to_owned(),
-                })?;
-                push_expr(&mut roots, &mut stack, SExpr::List(list));
-            }
-            Token::Atom(atom) => push_expr(&mut roots, &mut stack, SExpr::Atom(atom)),
+            SpannedRepr::list_items(node)
+                .iter()
+                .map(|item| lower_syntax(item, depth + 1, max_depth))
+                .collect::<Result<Vec<_>, _>>()
+                .map(SExpr::List)
         }
-    }
-    if stack.is_empty() {
-        Ok(roots)
-    } else {
-        Err(TheoryError::Read {
-            message: "unterminated list".to_owned(),
-        })
-    }
-}
-
-fn push_expr<'a>(roots: &mut Vec<SExpr<'a>>, stack: &mut [Vec<SExpr<'a>>], value: SExpr<'a>) {
-    match stack.last_mut() {
-        Some(parent) => parent.push(value),
-        None => roots.push(value),
-    }
-}
-
-fn token<'a>(input: &mut &'a str) -> covalence_lib_parse::winnow::ModalResult<Token<'a>> {
-    trivia(input);
-    alt((
-        '('.value(Token::Open),
-        ')'.value(Token::Close),
-        take_while(1.., |character: char| {
-            !character.is_whitespace() && !matches!(character, '(' | ')')
-        })
-        .map(Token::Atom),
-    ))
-    .parse_next(input)
-}
-
-fn trivia(input: &mut &str) {
-    loop {
-        *input = input.trim_start_matches(char::is_whitespace);
-        let Some(comment) = input.strip_prefix(';') else {
-            return;
-        };
-        *input = comment
-            .find('\n')
-            .map_or("", |newline| &comment[newline + 1..]);
     }
 }
 
 #[derive(Clone, Copy)]
 struct Schema<'a> {
-    parameters: &'a [SExpr<'a>],
-    annotation: Option<&'a SExpr<'a>>,
-    body: &'a SExpr<'a>,
+    parameters: &'a [SExpr],
+    annotation: Option<&'a SExpr>,
+    body: &'a SExpr,
 }
 
 struct Compiler<'a> {
@@ -448,7 +397,7 @@ impl<'a> Compiler<'a> {
             })
     }
 
-    fn declaration(&mut self, form: &'a SExpr<'a>) -> Result<(), TheoryError> {
+    fn declaration(&mut self, form: &'a SExpr) -> Result<(), TheoryError> {
         let items = list(form, "a define form")?;
         if !matches!(items.len(), 4 | 5) || atom(&items[0])? != "define" {
             return invalid("expected (define name ('type ...) [type] term)");
@@ -510,19 +459,20 @@ impl<'a> Compiler<'a> {
 
     fn ty(
         &mut self,
-        expression: &SExpr<'_>,
+        expression: &SExpr,
         types: &BTreeMap<String, Ref>,
     ) -> Result<Ref, TheoryError> {
         match expression {
-            SExpr::Atom("bool") => Ok(self.bool_ty),
+            SExpr::Atom(name) if name == "bool" => Ok(self.bool_ty),
             SExpr::Atom(name) => types
-                .get(*name)
+                .get(name)
                 .copied()
                 .ok_or_else(|| TheoryError::Unknown {
-                    name: (*name).to_owned(),
+                    name: name.to_owned(),
                 }),
             SExpr::List(items)
-                if items.len() == 3 && matches!(items.first(), Some(SExpr::Atom("->"))) =>
+                if items.len() == 3
+                    && matches!(items.first(), Some(SExpr::Atom(name)) if name == "->") =>
             {
                 let domain = self.ty(&items[1], types)?;
                 let codomain = self.ty(&items[2], types)?;
@@ -534,23 +484,23 @@ impl<'a> Compiler<'a> {
 
     fn term(
         &mut self,
-        expression: &SExpr<'_>,
+        expression: &SExpr,
         types: &BTreeMap<String, Ref>,
         terms: &BTreeMap<String, Ref>,
     ) -> Result<Ref, TheoryError> {
         match expression {
-            SExpr::Atom("true") => Ok(self.kernel.bool(self.bool_ty, true)?),
-            SExpr::Atom("false") => Ok(self.kernel.bool(self.bool_ty, false)?),
+            SExpr::Atom(name) if name == "true" => Ok(self.kernel.bool(self.bool_ty, true)?),
+            SExpr::Atom(name) if name == "false" => Ok(self.kernel.bool(self.bool_ty, false)?),
             SExpr::Atom(name) => {
-                if let Some(reference) = terms.get(*name) {
+                if let Some(reference) = terms.get(name) {
                     return Ok(*reference);
                 }
                 let schema =
                     self.schemata
-                        .get(*name)
+                        .get(name)
                         .copied()
                         .ok_or_else(|| TheoryError::Unknown {
-                            name: (*name).to_owned(),
+                            name: name.to_owned(),
                         })?;
                 if !schema.parameters.is_empty() {
                     return invalid(format!(
@@ -558,10 +508,10 @@ impl<'a> Compiler<'a> {
                     ));
                 }
                 self.definitions
-                    .get(*name)
+                    .get(name)
                     .copied()
                     .ok_or_else(|| TheoryError::Unknown {
-                        name: (*name).to_owned(),
+                        name: name.to_owned(),
                     })
             }
             SExpr::List(items) => self.application(items, types, terms),
@@ -570,14 +520,14 @@ impl<'a> Compiler<'a> {
 
     fn term_at(
         &mut self,
-        expression: &SExpr<'_>,
+        expression: &SExpr,
         expected: Ref,
         types: &BTreeMap<String, Ref>,
         terms: &BTreeMap<String, Ref>,
         definition: &str,
     ) -> Result<Ref, TheoryError> {
         if let SExpr::List(items) = expression
-            && matches!(items.first(), Some(SExpr::Atom("lambda")))
+            && matches!(items.first(), Some(SExpr::Atom(name)) if name == "lambda")
         {
             if items.len() != 4 {
                 return invalid("lambda expects a name, type, and body");
@@ -636,7 +586,7 @@ impl<'a> Compiler<'a> {
 
     fn application(
         &mut self,
-        items: &[SExpr<'_>],
+        items: &[SExpr],
         types: &BTreeMap<String, Ref>,
         terms: &BTreeMap<String, Ref>,
     ) -> Result<Ref, TheoryError> {
@@ -644,7 +594,7 @@ impl<'a> Compiler<'a> {
             return invalid("the empty list is not a term");
         };
         if let SExpr::Atom(operator) = head {
-            match *operator {
+            match operator.as_str() {
                 "not" => return self.unary(items, types, terms, Self::not),
                 "and" => return self.binary(items, types, terms, Self::and),
                 "or" => return self.binary(items, types, terms, Self::or),
@@ -671,7 +621,7 @@ impl<'a> Compiler<'a> {
 
     fn unary(
         &mut self,
-        items: &[SExpr<'_>],
+        items: &[SExpr],
         types: &BTreeMap<String, Ref>,
         terms: &BTreeMap<String, Ref>,
         operation: fn(&mut Self, Ref) -> Result<Ref, TheoryError>,
@@ -685,7 +635,7 @@ impl<'a> Compiler<'a> {
 
     fn binary(
         &mut self,
-        items: &[SExpr<'_>],
+        items: &[SExpr],
         types: &BTreeMap<String, Ref>,
         terms: &BTreeMap<String, Ref>,
         operation: fn(&mut Self, Ref, Ref) -> Result<Ref, TheoryError>,
@@ -700,7 +650,7 @@ impl<'a> Compiler<'a> {
 
     fn quantifier(
         &mut self,
-        items: &[SExpr<'_>],
+        items: &[SExpr],
         types: &BTreeMap<String, Ref>,
         terms: &BTreeMap<String, Ref>,
         universal: bool,
@@ -729,7 +679,7 @@ impl<'a> Compiler<'a> {
 
     fn lambda(
         &mut self,
-        items: &[SExpr<'_>],
+        items: &[SExpr],
         types: &BTreeMap<String, Ref>,
         terms: &BTreeMap<String, Ref>,
     ) -> Result<Ref, TheoryError> {
@@ -753,7 +703,7 @@ impl<'a> Compiler<'a> {
 
     fn instantiate(
         &mut self,
-        items: &[SExpr<'_>],
+        items: &[SExpr],
         types: &BTreeMap<String, Ref>,
     ) -> Result<Ref, TheoryError> {
         let Some(name_expr) = items.get(1) else {
@@ -812,7 +762,7 @@ impl<'a> Compiler<'a> {
 
     fn type_quantifier(
         &mut self,
-        items: &[SExpr<'_>],
+        items: &[SExpr],
         types: &BTreeMap<String, Ref>,
         terms: &BTreeMap<String, Ref>,
         universal: bool,
@@ -923,14 +873,14 @@ impl<'a> Compiler<'a> {
     }
 }
 
-fn list<'a>(expression: &'a SExpr<'_>, expected: &str) -> Result<&'a [SExpr<'a>], TheoryError> {
+fn list<'a>(expression: &'a SExpr, expected: &str) -> Result<&'a [SExpr], TheoryError> {
     match expression {
         SExpr::List(items) => Ok(items),
         SExpr::Atom(_) => invalid(format!("expected {expected}")),
     }
 }
 
-fn atom<'a>(expression: &'a SExpr<'_>) -> Result<&'a str, TheoryError> {
+fn atom(expression: &SExpr) -> Result<&str, TheoryError> {
     match expression {
         SExpr::Atom(value) => Ok(value),
         SExpr::List(_) => invalid("expected a name"),

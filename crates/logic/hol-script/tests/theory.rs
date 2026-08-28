@@ -967,3 +967,19 @@ fn polymorphic_schemata_cannot_leak_their_original_free_type_rows() {
         Err(TheoryError::TypeMismatch { .. })
     ));
 }
+
+#[test]
+fn frontend_uses_shared_reader_and_rejects_non_symbol_atoms_semantically() {
+    for atom in ["\"bool\"", "b\"bool\"", ":bool", "#bool", "123"] {
+        let source = format!("(define value () {atom})");
+        assert!(matches!(
+            compile_theory(&source),
+            Err(TheoryError::Invalid { .. })
+        ));
+    }
+
+    assert!(matches!(
+        compile_theory("(define value () \"unterminated)"),
+        Err(TheoryError::Read { .. })
+    ));
+}
