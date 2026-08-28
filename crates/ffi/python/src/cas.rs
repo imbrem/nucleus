@@ -1,4 +1,4 @@
-//! Whole-object CAS facts and indexed userspace storage for Python.
+//! Whole-object and range CAS facts, and indexed userspace storage, for Python.
 
 #![allow(clippy::needless_pass_by_value)]
 
@@ -12,7 +12,10 @@ use covalence_lib_python::pyo3::{
     exceptions::PyLookupError,
     types::{PyBytes, PyType},
 };
-use covalence_logic_cas::{Bytes as CasBytes, CasAssertion, CasFact};
+use covalence_logic_cas::{
+    Blake3Cv, BlobSpan, Bytes as CasBytes, CasAssertion, CasFact, CasRangeAssertion, CasRangeFact,
+    RangeProof,
+};
 
 use crate::hash::PyO256;
 
@@ -27,6 +30,18 @@ create_exception!(
     CasDigestMismatchError,
     CasCheckError,
     "A whole-object CAS assertion carried the wrong content hash."
+);
+create_exception!(
+    covalence,
+    CasRangeError,
+    CasCheckError,
+    "A CAS range was not derivable from the facts at hand."
+);
+create_exception!(
+    covalence,
+    CasProofError,
+    CasCheckError,
+    "A CAS range proof was unusable."
 );
 create_exception!(
     covalence,
@@ -49,6 +64,33 @@ create_exception!(
 
 fn check_error(error: covalence_logic_cas::CasCheckError) -> PyErr {
     CasDigestMismatchError::new_err(error.to_string())
+}
+
+fn range_error(error: &impl std::fmt::Display) -> PyErr {
+    CasRangeError::new_err(error.to_string())
+}
+
+/// Maps a proof failure, keeping a wrong root a digest mismatch rather than
+/// flattening it into the malformed-proof case.
+fn proof_error(error: &covalence_logic_cas::RangeProofError) -> PyErr {
+    match error {
+        covalence_logic_cas::RangeProofError::Root { source } => check_error(*source),
+        other => CasProofError::new_err(other.to_string()),
+    }
+}
+
+/// Builds the one range shape Python sees.
+///
+/// Rust decides open-versus-closed by type; Python carries it as an `end` of
+/// `None`, which is why the binding exposes `BlobSpan` rather than the four
+/// static shapes.
+fn span(start: u64, end: Option<u64>) -> PyResult<BlobSpan> {
+    BlobSpan::new(start, end).ok_or_else(|| {
+        CasRangeError::new_err(format!(
+            "range start {start} is after range end {}",
+            end.unwrap_or_default()
+        ))
+    })
 }
 
 fn hash_value(value: &impl Hash) -> u64 {
@@ -195,6 +237,28 @@ impl PyCasFact {
         PyCasAssertion::wrap(CasAssertion::from(&self.0))
     }
 
+    /// Derives a checked range fact from this whole-blob fact.
+    ///
+    /// Offsets are absolute. An `end` of `None` runs to the end of the blob,
+    /// so the result also knows the blob's length.
+    ///
+    /// # Errors
+    ///
+    /// Raises `CasRangeError` when the range is not within this blob.
+    #[pyo3(signature = (start, end = None))]
+    fn range(
+        &self,
+        python: Python<'_>,
+        start: u64,
+        end: Option<u64>,
+    ) -> PyResult<Py<PyCasRangeFact>> {
+        let fact = self
+            .0
+            .slice(span(start, end)?)
+            .map_err(|error| range_error(&error))?;
+        PyCasRangeFact::wrap(python, fact)
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "CasFact(hash=O256.from_hex('{}'), blob_len={})",
@@ -209,6 +273,369 @@ impl PyCasFact {
 
     fn __hash__(&self) -> u64 {
         hash_value(&self.0)
+    }
+}
+
+/// An ordinary, unchecked claim about one byte range of a CAS blob.
+///
+/// `end` is `None` when the range runs to the end of the blob, which is the
+/// stronger claim: it also says how long the blob is. Rust decides that by
+/// type, with a separate range type per shape; Python carries the one erased
+/// shape, so the distinction lives in `end` rather than in the class.
+#[pyclass(frozen, module = "covalence.cas", name = "CasRangeAssertion")]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+pub struct PyCasRangeAssertion(CasRangeAssertion<BlobSpan>);
+
+impl PyCasRangeAssertion {
+    fn wrap(assertion: CasRangeAssertion<BlobSpan>) -> Self {
+        Self(assertion)
+    }
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyCasRangeAssertion {
+    /// Records a claim without checking it.
+    ///
+    /// # Errors
+    ///
+    /// Raises `CasRangeError` when `end` precedes `start`.
+    #[new]
+    #[pyo3(signature = (hash, start, end, bytes))]
+    fn new(hash: PyRef<'_, PyO256>, start: u64, end: Option<u64>, bytes: Bytes) -> PyResult<Self> {
+        Ok(Self(CasRangeAssertion::new(
+            PyO256::value(&hash),
+            span(start, end)?,
+            CasBytes::copy_from_slice(bytes.as_slice()),
+        )))
+    }
+
+    /// Claimed content address of the complete blob.
+    #[getter]
+    fn hash(&self, python: Python<'_>) -> PyResult<Py<PyO256>> {
+        PyO256::wrap(python, self.0.hash)
+    }
+
+    /// First byte offset the range covers.
+    #[getter]
+    const fn start(&self) -> u64 {
+        self.0.range.start()
+    }
+
+    /// One past the last byte, or `None` for the end of the blob.
+    #[getter]
+    const fn end(&self) -> Option<u64> {
+        self.0.range.end()
+    }
+
+    /// Claimed bytes at that range.
+    #[getter]
+    fn bytes<'py>(&self, python: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(python, &self.0.bytes)
+    }
+
+    /// Checks this claim against a range proof.
+    ///
+    /// There is deliberately no argument-free conversion: a range assertion
+    /// becomes a fact only by a proof, or by deriving it from a fact that
+    /// already covers those bytes.
+    ///
+    /// # Errors
+    ///
+    /// Raises `CasProofError` when the proof does not describe a tree above
+    /// the range, or `CasDigestMismatchError` when it reaches another address.
+    fn check(
+        &self,
+        python: Python<'_>,
+        proof: PyRef<'_, PyRangeProof>,
+    ) -> PyResult<Py<PyCasRangeFact>> {
+        let assertion = self.0.clone();
+        let proof = proof.0.clone();
+        let fact = python
+            .detach(|| proof.check(assertion.hash, assertion.range, assertion.bytes))
+            .map_err(|error| proof_error(&error))?;
+        PyCasRangeFact::wrap(python, fact)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CasRangeAssertion(hash=O256.from_hex('{}'), range={}, bytes_len={})",
+            self.0.hash,
+            self.0.range,
+            self.0.bytes.len()
+        )
+    }
+
+    fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
+        op.matches(self.0.cmp(&other.0))
+    }
+
+    fn __hash__(&self) -> u64 {
+        hash_value(&self.0)
+    }
+}
+
+/// An opaque checked fact about one byte range of a CAS blob.
+///
+/// Only this module's checking rules construct one: deriving it from a fact
+/// that already covers those bytes, joining two such facts, or checking a
+/// range proof.
+#[pyclass(frozen, module = "covalence.cas", name = "CasRangeFact")]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+pub struct PyCasRangeFact(CasRangeFact<BlobSpan>);
+
+impl PyCasRangeFact {
+    fn wrap(python: Python<'_>, fact: CasRangeFact<BlobSpan>) -> PyResult<Py<Self>> {
+        Py::new(python, Self(fact))
+    }
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyCasRangeFact {
+    /// Checked content address of the complete blob.
+    #[getter]
+    fn hash(&self, python: Python<'_>) -> PyResult<Py<PyO256>> {
+        PyO256::wrap(python, self.0.hash())
+    }
+
+    /// First byte offset the range covers.
+    #[getter]
+    const fn start(&self) -> u64 {
+        self.0.range().start()
+    }
+
+    /// One past the last byte, or `None` for the end of the blob.
+    #[getter]
+    const fn end(&self) -> Option<u64> {
+        self.0.range().end()
+    }
+
+    /// Checked bytes at that range.
+    #[getter]
+    fn bytes<'py>(&self, python: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(python, self.0.bytes())
+    }
+
+    /// The byte range these bytes occupy, as a `(start, end)` pair.
+    ///
+    /// This resolves an open upper bound, since the fact's bytes run to it.
+    #[getter]
+    fn extent(&self) -> (u64, u64) {
+        let extent = self.0.extent();
+        (extent.start, extent.end)
+    }
+
+    /// The blob's length, or `None` when this fact does not reach its end.
+    ///
+    /// A range with a closed end knows nothing about how long the blob is, so
+    /// this answers `None` rather than mistaking the range's end for it. The
+    /// data-free length claim is a fact whose `end` is `None` and whose bytes
+    /// are empty.
+    #[getter]
+    fn blob_len(&self) -> Option<u64> {
+        self.0.blob_len()
+    }
+
+    /// Narrows this fact to a sub-range of the bytes it already knows.
+    ///
+    /// Offsets are absolute, not relative to this fact. An `end` of `None`
+    /// asks for the end of the blob, which only a fact already reaching it
+    /// can answer.
+    ///
+    /// # Errors
+    ///
+    /// Raises `CasRangeError` when the request is not contained in this fact.
+    #[pyo3(signature = (start, end = None))]
+    fn slice(&self, python: Python<'_>, start: u64, end: Option<u64>) -> PyResult<Py<Self>> {
+        let fact = self
+            .0
+            .slice(span(start, end)?)
+            .map_err(|error| range_error(&error))?;
+        Self::wrap(python, fact)
+    }
+
+    /// Joins this fact with another about the same blob.
+    ///
+    /// The ranges must overlap or touch; a gap would leave bytes the union
+    /// claims to know but neither operand does.
+    ///
+    /// # Errors
+    ///
+    /// Raises `CasRangeError` when the facts are about different blobs or
+    /// their ranges leave a gap.
+    fn fuse(&self, python: Python<'_>, other: PyRef<'_, Self>) -> PyResult<Py<Self>> {
+        let fact = self.0.fuse(&other.0).map_err(|error| range_error(&error))?;
+        Self::wrap(python, fact)
+    }
+
+    /// Returns this fact as a whole-blob fact.
+    ///
+    /// # Errors
+    ///
+    /// Raises `CasRangeError` unless the range starts at zero and reaches the
+    /// end of the blob.
+    fn whole(&self, python: Python<'_>) -> PyResult<Py<PyCasFact>> {
+        let fact = self.0.slice(..).map_err(|error| range_error(&error))?;
+        PyCasFact::wrap(python, fact)
+    }
+
+    /// Returns the underlying assertion, forgetting checkedness.
+    #[getter]
+    fn assertion(&self) -> PyCasRangeAssertion {
+        PyCasRangeAssertion::wrap(CasRangeAssertion::from(&self.0))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CasRangeFact(hash=O256.from_hex('{}'), range={}, bytes_len={})",
+            self.0.hash(),
+            self.0.range(),
+            self.0.bytes().len()
+        )
+    }
+
+    fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
+        op.matches(self.0.cmp(&other.0))
+    }
+
+    fn __hash__(&self) -> u64 {
+        hash_value(&self.0)
+    }
+}
+
+/// The chaining values a byte range needs to reach its blob's root.
+///
+/// Ordinary unchecked data. Level `l` views the blob in blocks of
+/// `1024 << l` bytes; the spines are the siblings met while climbing from the
+/// range to the root, each a 32-byte chaining value.
+#[pyclass(frozen, module = "covalence.cas", name = "RangeProof")]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+pub struct PyRangeProof(RangeProof);
+
+fn chaining_values(values: &Bound<'_, PyAny>) -> PyResult<Vec<Blake3Cv>> {
+    values
+        .try_iter()?
+        .map(|value| {
+            let bytes = value?.extract::<Bytes>()?;
+            let array: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
+                CasProofError::new_err(format!(
+                    "chaining value must be 32 bytes, found {}",
+                    bytes.as_slice().len()
+                ))
+            })?;
+            Ok(Blake3Cv::from_array(array))
+        })
+        .collect()
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyRangeProof {
+    /// Assembles a proof object without validating it.
+    ///
+    /// # Errors
+    ///
+    /// Raises `CasProofError` when a chaining value is not 32 bytes.
+    #[new]
+    fn new(level: u32, left: &Bound<'_, PyAny>, right: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(RangeProof::new(
+            level,
+            chaining_values(left)?,
+            chaining_values(right)?,
+        )))
+    }
+
+    /// Derives the proof that a range of `blob` sits under `blob`'s root.
+    ///
+    /// This is untrusted userspace: what it produces still has to pass
+    /// `check`.
+    ///
+    /// # Errors
+    ///
+    /// Raises `CasProofError` when the level is too large, the range is not
+    /// aligned to that level's blocks, or the range is empty or past the end
+    /// of `blob`.
+    #[staticmethod]
+    #[pyo3(signature = (level, start, end, blob))]
+    fn prove(
+        python: Python<'_>,
+        level: u32,
+        start: u64,
+        end: Option<u64>,
+        blob: Bytes,
+    ) -> PyResult<Self> {
+        let range = span(start, end)?;
+        let proof = python
+            .detach(|| RangeProof::prove(level, &range, blob.as_slice()))
+            .map_err(|error| proof_error(&error))?;
+        Ok(Self(proof))
+    }
+
+    /// Tree level the spines are taken at.
+    #[getter]
+    const fn level(&self) -> u32 {
+        self.0.level()
+    }
+
+    /// Number of bytes in one block at this proof's level.
+    #[getter]
+    const fn block_len(&self) -> Option<u64> {
+        self.0.block_len()
+    }
+
+    /// Chaining values left of the range, widest first.
+    #[getter]
+    fn left<'py>(&self, python: Python<'py>) -> Vec<Bound<'py, PyBytes>> {
+        self.0
+            .left()
+            .iter()
+            .map(|cv| PyBytes::new(python, cv.as_bytes()))
+            .collect()
+    }
+
+    /// Chaining values right of the range, in climbing order.
+    #[getter]
+    fn right<'py>(&self, python: Python<'py>) -> Vec<Bound<'py, PyBytes>> {
+        self.0
+            .right()
+            .iter()
+            .map(|cv| PyBytes::new(python, cv.as_bytes()))
+            .collect()
+    }
+
+    /// Checks that `bytes` are the given range of the blob at `hash`.
+    ///
+    /// # Errors
+    ///
+    /// Raises `CasProofError` when the range is unusable at this level or the
+    /// spines do not describe a tree, and `CasDigestMismatchError` when the
+    /// rebuilt root is not `hash`.
+    #[pyo3(signature = (hash, start, end, bytes))]
+    fn check(
+        &self,
+        python: Python<'_>,
+        hash: PyRef<'_, PyO256>,
+        start: u64,
+        end: Option<u64>,
+        bytes: Bytes,
+    ) -> PyResult<Py<PyCasRangeFact>> {
+        let hash = PyO256::value(&hash);
+        let range = span(start, end)?;
+        let bytes = CasBytes::copy_from_slice(bytes.as_slice());
+        let fact = python
+            .detach(|| self.0.check(hash, range, bytes))
+            .map_err(|error| proof_error(&error))?;
+        PyCasRangeFact::wrap(python, fact)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "RangeProof(level={}, left={}, right={})",
+            self.0.level(),
+            self.0.left().len(),
+            self.0.right().len()
+        )
     }
 }
 
@@ -352,6 +779,9 @@ fn get_checked_python(
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyCasAssertion>()?;
     module.add_class::<PyCasFact>()?;
+    module.add_class::<PyCasRangeAssertion>()?;
+    module.add_class::<PyCasRangeFact>()?;
+    module.add_class::<PyRangeProof>()?;
     module.add_class::<PyIndexCas>()?;
 
     let python = module.py();
@@ -361,6 +791,8 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
             "CasDigestMismatchError",
             PyType::new::<CasDigestMismatchError>(python),
         ),
+        ("CasRangeError", PyType::new::<CasRangeError>(python)),
+        ("CasProofError", PyType::new::<CasProofError>(python)),
         ("CasLookupError", PyType::new::<CasLookupError>(python)),
         ("CasNotFoundError", PyType::new::<CasNotFoundError>(python)),
         (
