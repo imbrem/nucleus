@@ -29,6 +29,7 @@ rust_library(
     tests = [":covalence_logic_hol_script-unit-test"],
     named_deps = {
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_json": "nucleus//crates/lib/json:covalence_lib_json",
         "covalence_lib_parse": "nucleus//crates/lib/parse:covalence_lib_parse",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
         "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
@@ -61,6 +62,7 @@ rust_test(
     srcs = _RUST_SOURCES,
     mapped_srcs = {
         "nucleus//:hol_init_checked_manifest": "theories/init-boolean.checked.json",
+        "nucleus//crates/logic/hol-script:theories/init.dag.json": "theories/init.dag.json",
     },
     features = [
         "buck-test-fixtures",
@@ -100,6 +102,7 @@ rust_test(
     srcs = _RUST_SOURCES,
     mapped_srcs = {
         "nucleus//:hol_init_checked_manifest": "theories/init-boolean.checked.json",
+        "nucleus//crates/logic/hol-script:theories/init.dag.json": "theories/init.dag.json",
     },
     features = [
         "buck-test-fixtures",

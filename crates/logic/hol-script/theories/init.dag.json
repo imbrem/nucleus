@@ -1,0 +1,10712 @@
+{
+  "amb": {
+    "ax": [],
+    "ctx": [],
+    "pred": [],
+    "thm": []
+  },
+  "hol": {
+    "ax": [
+      "ax.inf",
+      "ax.sub"
+    ],
+    "ctx": [],
+    "defs": [
+      {
+        "name": "star",
+        "tag": "kind.star"
+      },
+      {
+        "name": "bool",
+        "tag": "ty.bool"
+      },
+      {
+        "ixs": [
+          "bool",
+          "bool"
+        ],
+        "name": "bool->bool",
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "bool",
+          "bool->bool"
+        ],
+        "name": "bool->bool->bool",
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "bool"
+        ],
+        "tag": "tm.fv",
+        "val": 0
+      },
+      {
+        "ixs": [
+          5,
+          5
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "bool->bool",
+          6,
+          6
+        ],
+        "name": "true",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "bool"
+        ],
+        "tag": "tm.fv",
+        "val": 1
+      },
+      {
+        "ixs": [
+          8,
+          8
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "bool"
+        ],
+        "tag": "tm.fv",
+        "val": 2
+      },
+      {
+        "ixs": [
+          10,
+          "true"
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "bool->bool",
+          9,
+          11
+        ],
+        "name": "false",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "bool"
+        ],
+        "tag": "tm.fv",
+        "val": 3
+      },
+      {
+        "ixs": [
+          "bool",
+          13,
+          "false"
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          13,
+          14
+        ],
+        "name": "not",
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "bool"
+        ],
+        "tag": "tm.fv",
+        "val": 4
+      },
+      {
+        "ixs": [
+          "bool"
+        ],
+        "tag": "tm.fv",
+        "val": 5
+      },
+      {
+        "ixs": [
+          "bool",
+          16,
+          17
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "bool",
+          18,
+          17
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          17,
+          19
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          16,
+          20
+        ],
+        "name": "and",
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "bool"
+        ],
+        "tag": "tm.fv",
+        "val": 6
+      },
+      {
+        "ixs": [
+          "bool"
+        ],
+        "tag": "tm.fv",
+        "val": 7
+      },
+      {
+        "ixs": [
+          "bool",
+          22,
+          23
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "bool",
+          24,
+          22
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          23,
+          25
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          22,
+          26
+        ],
+        "name": "or",
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "bool"
+        ],
+        "tag": "tm.fv",
+        "val": 8
+      },
+      {
+        "ixs": [
+          "bool"
+        ],
+        "tag": "tm.fv",
+        "val": 9
+      },
+      {
+        "ixs": [
+          "bool",
+          28,
+          "true"
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "bool",
+          30,
+          29
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          29,
+          31
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          28,
+          32
+        ],
+        "name": "imp",
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "star"
+        ],
+        "name": "IsCoprod/'a",
+        "tag": "ty.fv",
+        "val": 10
+      },
+      {
+        "ixs": [
+          "star"
+        ],
+        "name": "IsCoprod/'t",
+        "tag": "ty.fv",
+        "val": 12
+      },
+      {
+        "ixs": [
+          "IsCoprod/'a",
+          "IsCoprod/'t"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          36
+        ],
+        "tag": "tm.fv",
+        "val": 13
+      },
+      {
+        "ixs": [
+          "star"
+        ],
+        "name": "IsCoprod/'b",
+        "tag": "ty.fv",
+        "val": 11
+      },
+      {
+        "ixs": [
+          "IsCoprod/'b",
+          "IsCoprod/'t"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          39
+        ],
+        "tag": "tm.fv",
+        "val": 14
+      },
+      {
+        "ixs": [
+          "star"
+        ],
+        "tag": "ty.fv",
+        "val": 15
+      },
+      {
+        "ixs": [
+          "IsCoprod/'a",
+          41
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          42,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          42
+        ],
+        "tag": "tm.fv",
+        "val": 16
+      },
+      {
+        "ixs": [
+          "IsCoprod/'b",
+          41
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          45,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          45
+        ],
+        "tag": "tm.fv",
+        "val": 17
+      },
+      {
+        "ixs": [
+          "IsCoprod/'t",
+          41
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          48
+        ],
+        "tag": "tm.fv",
+        "val": 18
+      },
+      {
+        "ixs": [
+          "IsCoprod/'a",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "IsCoprod/'a"
+        ],
+        "tag": "tm.fv",
+        "val": 19
+      },
+      {
+        "ixs": [
+          37,
+          51
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          49,
+          52
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          44,
+          51
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          41,
+          53,
+          54
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          51,
+          55
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          51,
+          57
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          50,
+          56,
+          58
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "IsCoprod/'b",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "IsCoprod/'b"
+        ],
+        "tag": "tm.fv",
+        "val": 20
+      },
+      {
+        "ixs": [
+          40,
+          61
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          49,
+          62
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          47,
+          61
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          41,
+          63,
+          64
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          61,
+          65
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          61,
+          67
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          60,
+          66,
+          68
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          59
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          70,
+          69
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          48,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          48
+        ],
+        "tag": "tm.fv",
+        "val": 21
+      },
+      {
+        "ixs": [
+          "IsCoprod/'a",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "IsCoprod/'a"
+        ],
+        "tag": "tm.fv",
+        "val": 22
+      },
+      {
+        "ixs": [
+          37,
+          75
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          73,
+          76
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          44,
+          75
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          41,
+          77,
+          78
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          75,
+          79
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          75,
+          81
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          74,
+          80,
+          82
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "IsCoprod/'b",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "IsCoprod/'b"
+        ],
+        "tag": "tm.fv",
+        "val": 23
+      },
+      {
+        "ixs": [
+          40,
+          85
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          73,
+          86
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          47,
+          85
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          41,
+          87,
+          88
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          85,
+          89
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          85,
+          91
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          84,
+          90,
+          92
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          83
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          94,
+          93
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          48,
+          73,
+          49
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          95
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          97,
+          96
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          73,
+          98
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          73,
+          100
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          72,
+          99,
+          101
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          71
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          103,
+          102
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          48,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          49,
+          104
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          48,
+          106
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          106,
+          107
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          47,
+          108
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          47,
+          110
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          46,
+          109,
+          111
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          44,
+          112
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          44,
+          114
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          43,
+          113,
+          115
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          116
+        ],
+        "tag": "tm.ty_forall",
+        "val": 15
+      },
+      {
+        "ixs": [
+          39,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          40,
+          117
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          39,
+          119
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          119,
+          120
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          36,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          37,
+          121
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          36,
+          123
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          123,
+          124
+        ],
+        "name": "IsCoprod",
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "star"
+        ],
+        "name": "NatMember/'a",
+        "tag": "ty.fv",
+        "val": 24
+      },
+      {
+        "ixs": [
+          "NatMember/'a"
+        ],
+        "tag": "tm.fv",
+        "val": 25
+      },
+      {
+        "ixs": [
+          "NatMember/'a",
+          "NatMember/'a"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          128
+        ],
+        "tag": "tm.fv",
+        "val": 26
+      },
+      {
+        "ixs": [
+          "NatMember/'a"
+        ],
+        "tag": "tm.fv",
+        "val": 27
+      },
+      {
+        "ixs": [
+          "NatMember/'a",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          131,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          131
+        ],
+        "tag": "tm.fv",
+        "val": 28
+      },
+      {
+        "ixs": [
+          133,
+          127
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "NatMember/'a",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "NatMember/'a"
+        ],
+        "tag": "tm.fv",
+        "val": 29
+      },
+      {
+        "ixs": [
+          133,
+          136
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          129,
+          136
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          133,
+          138
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          137
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          140,
+          139
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          136,
+          141
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          136,
+          143
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          135,
+          142,
+          144
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          134
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          146,
+          145
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          133,
+          130
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          147
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          149,
+          148
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          133,
+          150
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          133,
+          152
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          132,
+          151,
+          153
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          130,
+          154
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          128,
+          131
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          129,
+          155
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "NatMember/'a",
+          156
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          127,
+          157
+        ],
+        "name": "NatMember",
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "star"
+        ],
+        "name": "NatRecGraph/'a",
+        "tag": "ty.fv",
+        "val": 38
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'a"
+        ],
+        "tag": "tm.fv",
+        "val": 40
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'a",
+          "NatRecGraph/'a"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          162
+        ],
+        "tag": "tm.fv",
+        "val": 41
+      },
+      {
+        "ixs": [
+          "star"
+        ],
+        "name": "NatRecGraph/'c",
+        "tag": "ty.fv",
+        "val": 39
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'c"
+        ],
+        "tag": "tm.fv",
+        "val": 42
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'c",
+          "NatRecGraph/'c"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'a",
+          166
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          167
+        ],
+        "tag": "tm.fv",
+        "val": 43
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'a"
+        ],
+        "tag": "tm.fv",
+        "val": 44
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'c"
+        ],
+        "tag": "tm.fv",
+        "val": 45
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'c",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'a",
+          171
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          172,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          172
+        ],
+        "tag": "tm.fv",
+        "val": 46
+      },
+      {
+        "ixs": [
+          174,
+          161
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          175,
+          165
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'a",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'a"
+        ],
+        "tag": "tm.fv",
+        "val": 47
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'c",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'c"
+        ],
+        "tag": "tm.fv",
+        "val": 48
+      },
+      {
+        "ixs": [
+          174,
+          178
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          181,
+          180
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          163,
+          178
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          174,
+          183
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          168,
+          178
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          185,
+          180
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          184,
+          186
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          182
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          188,
+          187
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          180,
+          189
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          180,
+          191
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          179,
+          190,
+          192
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          178,
+          193
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          178,
+          195
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          177,
+          194,
+          196
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          176
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          198,
+          197
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          174,
+          169
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          200,
+          170
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          199
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          202,
+          201
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          174,
+          203
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          174,
+          205
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          173,
+          204,
+          206
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          170,
+          207
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          169,
+          208
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          167,
+          172
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          168,
+          209
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'c",
+          210
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          165,
+          211
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          162,
+          212
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          163,
+          213
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "NatRecGraph/'a",
+          214
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          161,
+          215
+        ],
+        "name": "NatRecGraph",
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "star"
+        ],
+        "name": "NatRecSpec/'a",
+        "tag": "ty.fv",
+        "val": 30
+      },
+      {
+        "ixs": [
+          "NatRecSpec/'a"
+        ],
+        "tag": "tm.fv",
+        "val": 32
+      },
+      {
+        "ixs": [
+          "NatRecSpec/'a",
+          "NatRecSpec/'a"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          220
+        ],
+        "tag": "tm.fv",
+        "val": 33
+      },
+      {
+        "ixs": [
+          "star"
+        ],
+        "name": "NatRecSpec/'c",
+        "tag": "ty.fv",
+        "val": 31
+      },
+      {
+        "ixs": [
+          "NatRecSpec/'c"
+        ],
+        "tag": "tm.fv",
+        "val": 34
+      },
+      {
+        "ixs": [
+          "NatRecSpec/'c",
+          "NatRecSpec/'c"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "NatRecSpec/'a",
+          224
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          225
+        ],
+        "tag": "tm.fv",
+        "val": 35
+      },
+      {
+        "ixs": [
+          "NatRecSpec/'a",
+          "NatRecSpec/'c"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          227
+        ],
+        "tag": "tm.fv",
+        "val": 36
+      },
+      {
+        "ixs": [
+          228,
+          219
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "NatRecSpec/'c",
+          229,
+          223
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "NatRecSpec/'a",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "NatRecSpec/'a"
+        ],
+        "tag": "tm.fv",
+        "val": 37
+      },
+      {
+        "ixs": [
+          221,
+          232
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          228,
+          233
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          226,
+          232
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          228,
+          232
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          235,
+          236
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "NatRecSpec/'c",
+          234,
+          237
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          232,
+          238
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          232,
+          240
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          231,
+          239,
+          241
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          230
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          243,
+          242
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          227,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          228,
+          244
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          225,
+          245
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          226,
+          246
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "NatRecSpec/'c",
+          247
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          223,
+          248
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          220,
+          249
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          221,
+          250
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "NatRecSpec/'a",
+          251
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          219,
+          252
+        ],
+        "name": "NatRecSpec",
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "star"
+        ],
+        "tag": "ty.fv",
+        "val": 1
+      },
+      {
+        "ixs": [
+          255,
+          255
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          256
+        ],
+        "tag": "tm.fv",
+        "val": 2
+      },
+      {
+        "ixs": [
+          255
+        ],
+        "tag": "tm.fv",
+        "val": 3
+      },
+      {
+        "ixs": [
+          255,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          255
+        ],
+        "tag": "tm.fv",
+        "val": 4
+      },
+      {
+        "ixs": [
+          255,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          255
+        ],
+        "tag": "tm.fv",
+        "val": 5
+      },
+      {
+        "ixs": [
+          257,
+          260
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          257,
+          262
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          255,
+          263,
+          264
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          255,
+          260,
+          262
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "bool",
+          265,
+          266
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          262,
+          267
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          262,
+          269
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          261,
+          268,
+          270
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          260,
+          271
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          260,
+          273
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          259,
+          272,
+          274
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          255,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          257,
+          260
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          255,
+          277,
+          258
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "tag": "tm.bool",
+        "val": false
+      },
+      {
+        "ixs": [
+          "bool",
+          278,
+          279
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          260,
+          280
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          260,
+          282
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          276,
+          281,
+          283
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          275
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          285,
+          284
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          255,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          258,
+          286
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          255,
+          288
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          288,
+          289
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          256,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          257,
+          290
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          256,
+          292
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          292,
+          293
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          294
+        ],
+        "name": "ind",
+        "tag": "ty.model",
+        "val": 1
+      },
+      {
+        "ixs": [
+          "ind",
+          "ind"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          296
+        ],
+        "tag": "tm.fv",
+        "val": 2
+      },
+      {
+        "ixs": [
+          "ind"
+        ],
+        "tag": "tm.fv",
+        "val": 3
+      },
+      {
+        "ixs": [
+          "ind",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "ind"
+        ],
+        "tag": "tm.fv",
+        "val": 4
+      },
+      {
+        "ixs": [
+          "ind",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "ind"
+        ],
+        "tag": "tm.fv",
+        "val": 5
+      },
+      {
+        "ixs": [
+          297,
+          300
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          297,
+          302
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind",
+          303,
+          304
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "ind",
+          300,
+          302
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "bool",
+          305,
+          306
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          302,
+          307
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          302,
+          269
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          301,
+          308,
+          309
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          300,
+          310
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          300,
+          273
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          299,
+          311,
+          312
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "ind",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          297,
+          300
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind",
+          315,
+          298
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "bool",
+          316,
+          279
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          300,
+          317
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          300,
+          282
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          314,
+          318,
+          319
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          313
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          321,
+          320
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          298,
+          322
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "ind",
+          324
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          324,
+          325
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          296,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          297,
+          326
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          296,
+          328
+        ],
+        "name": "ind.succ",
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          "ind.succ",
+          300
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind.succ",
+          302
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind",
+          330,
+          331
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "bool",
+          332,
+          306
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          302,
+          333
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          301,
+          334,
+          309
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          300,
+          335
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          299,
+          336,
+          312
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "ind.succ",
+          300
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind",
+          338,
+          298
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "bool",
+          339,
+          279
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          300,
+          340
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          314,
+          341,
+          319
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          337
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          343,
+          342
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          298,
+          344
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "ind",
+          345
+        ],
+        "name": "ind.zero",
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          "star"
+        ],
+        "tag": "ty.fv",
+        "val": 30
+      },
+      {
+        "ixs": [
+          347,
+          "ind"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          348
+        ],
+        "tag": "tm.fv",
+        "val": 31
+      },
+      {
+        "ixs": [
+          "ind",
+          347
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          350
+        ],
+        "tag": "tm.fv",
+        "val": 32
+      },
+      {
+        "ixs": [
+          347,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          347
+        ],
+        "tag": "tm.fv",
+        "val": 34
+      },
+      {
+        "ixs": [
+          349,
+          353
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          351,
+          354
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          347,
+          355,
+          353
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          353,
+          356
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          353,
+          358
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          352,
+          357,
+          359
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "ind",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "ind"
+        ],
+        "tag": "tm.fv",
+        "val": 33
+      },
+      {
+        "ixs": [
+          "ind"
+        ],
+        "tag": "tm.fv",
+        "val": 27
+      },
+      {
+        "ixs": [
+          "ind",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          364,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          364
+        ],
+        "tag": "tm.fv",
+        "val": 28
+      },
+      {
+        "ixs": [
+          366,
+          "ind.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "ind"
+        ],
+        "tag": "tm.fv",
+        "val": 29
+      },
+      {
+        "ixs": [
+          366,
+          369
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind.succ",
+          369
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          366,
+          371
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          370
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          373,
+          372
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          369,
+          374
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          369,
+          143
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          368,
+          375,
+          376
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          367
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          378,
+          377
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          366,
+          363
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          379
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          381,
+          380
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          366,
+          382
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          366,
+          152
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          365,
+          383,
+          384
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          363,
+          385
+        ],
+        "name": "nat.member",
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "nat.member",
+          362
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind"
+        ],
+        "tag": "tm.fv",
+        "val": 35
+      },
+      {
+        "ixs": [
+          "nat.member",
+          388
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          388,
+          389
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "ind",
+          391
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          391,
+          392
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "not",
+          393
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "or",
+          387
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          395,
+          394
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          351,
+          362
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          349,
+          397
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind",
+          398,
+          362
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          396
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          400,
+          399
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          362,
+          401
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          362,
+          403
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          361,
+          402,
+          404
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          347,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat.member",
+          354
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind"
+        ],
+        "tag": "tm.fv",
+        "val": 35
+      },
+      {
+        "ixs": [
+          "nat.member",
+          408
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          408,
+          409
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "ind",
+          411
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          411,
+          412
+        ],
+        "name": "nat.member_inhabited",
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "not",
+          "nat.member_inhabited"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "or",
+          407
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          415,
+          414
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          353,
+          416
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          353,
+          418
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          406,
+          417,
+          419
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          405
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          421,
+          420
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "and",
+          360
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          423,
+          422
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          350,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          351,
+          424
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          350,
+          426
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          426,
+          427
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          348,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          349,
+          428
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          348,
+          430
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          430,
+          431
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          432
+        ],
+        "name": "nat",
+        "tag": "ty.model",
+        "val": 30
+      },
+      {
+        "ixs": [
+          "ind",
+          "nat"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          434
+        ],
+        "tag": "tm.fv",
+        "val": 32
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 34
+      },
+      {
+        "ixs": [
+          "nat",
+          "ind"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          438
+        ],
+        "tag": "tm.fv",
+        "val": 31
+      },
+      {
+        "ixs": [
+          439,
+          437
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          435,
+          440
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          441,
+          437
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          437,
+          442
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          437,
+          358
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          436,
+          443,
+          444
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          435,
+          362
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          439,
+          446
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind",
+          447,
+          362
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          396
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          449,
+          448
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          362,
+          450
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          361,
+          451,
+          404
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat.member",
+          440
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "or",
+          454
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          455,
+          414
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          437,
+          456
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          437,
+          418
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          453,
+          457,
+          458
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          452
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          460,
+          459
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "and",
+          445
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          462,
+          461
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          434,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          435,
+          463
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          434,
+          465
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          465,
+          466
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          438,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          439,
+          467
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          438,
+          469
+        ],
+        "name": "nat.rep",
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          "nat.rep",
+          437
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          435,
+          471
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          472,
+          437
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          437,
+          473
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          436,
+          474,
+          444
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat.rep",
+          446
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind",
+          476,
+          362
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          396
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          478,
+          477
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          362,
+          479
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          361,
+          480,
+          404
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat.member",
+          471
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "or",
+          482
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          483,
+          414
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          437,
+          484
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          453,
+          485,
+          458
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          481
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          487,
+          486
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "and",
+          475
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          489,
+          488
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          435,
+          490
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          434,
+          491
+        ],
+        "name": "nat.abs",
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 38
+      },
+      {
+        "ixs": [
+          "nat",
+          "nat"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 56
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 44
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 45
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat",
+          498
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          499,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          499
+        ],
+        "tag": "tm.fv",
+        "val": 46
+      },
+      {
+        "ixs": [
+          "nat.abs",
+          "ind.zero"
+        ],
+        "name": "nat.zero",
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          501,
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 49
+      },
+      {
+        "ixs": [
+          504,
+          504
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          503,
+          505
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 47
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 48
+      },
+      {
+        "ixs": [
+          501,
+          508
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          511,
+          510
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 36
+      },
+      {
+        "ixs": [
+          "nat.rep",
+          513
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind.succ",
+          514
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.abs",
+          515
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          513,
+          516
+        ],
+        "name": "nat.succ",
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          508
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          501,
+          518
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 50
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 51
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 52
+      },
+      {
+        "ixs": [
+          521,
+          522
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          523
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          522,
+          524
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          494,
+          494
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          521,
+          525
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "nat",
+          526
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          520,
+          527
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          529,
+          508
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          530,
+          510
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          519,
+          531
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          512
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          533,
+          532
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          510,
+          534
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          510,
+          191
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          509,
+          535,
+          536
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          508,
+          537
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          508,
+          195
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          507,
+          538,
+          539
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          506
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          541,
+          540
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          501,
+          496
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          543,
+          497
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          542
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          545,
+          544
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          501,
+          546
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          501,
+          205
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          500,
+          547,
+          548
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          497,
+          549
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          496,
+          550
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          551,
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          552,
+          495
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          495,
+          553
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          494,
+          555
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          "nat",
+          494
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          493,
+          556
+        ],
+        "name": "nat.add",
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 126
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 127
+      },
+      {
+        "ixs": [
+          "nat.add",
+          562
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          563,
+          560
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.add",
+          560
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          565,
+          562
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          564,
+          566
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          562,
+          567
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          569,
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          493,
+          570
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          493,
+          572
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          561,
+          571,
+          573
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          560,
+          574
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          560,
+          576
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          559,
+          575,
+          577
+        ],
+        "name": "nat.add.commutative",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 124
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 125
+      },
+      {
+        "ixs": [
+          "nat.add",
+          581
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          580
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          582,
+          583
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          582,
+          580
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          585
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          584,
+          586
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          581,
+          587
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          588,
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          493,
+          589
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          561,
+          590,
+          573
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          580,
+          591
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          580,
+          593
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          579,
+          592,
+          594
+        ],
+        "name": "nat.add.right_successor",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 123
+      },
+      {
+        "ixs": [
+          "nat.add",
+          596
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          597,
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          598,
+          596
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          596,
+          599
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          600,
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          493,
+          601
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          561,
+          602,
+          573
+        ],
+        "name": "nat.add.right_zero",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 82
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 83
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          605
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.add",
+          608
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          609,
+          607
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.add",
+          605
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          611,
+          607
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          612
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          610,
+          613
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          607,
+          614
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          607,
+          616
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          606,
+          615,
+          617
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          605,
+          618
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          605,
+          620
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          604,
+          619,
+          621
+        ],
+        "name": "nat.add.successor",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 81
+      },
+      {
+        "ixs": [
+          "nat.add",
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          625,
+          624
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          626,
+          624
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          624,
+          627
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          624,
+          629
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          623,
+          628,
+          630
+        ],
+        "name": "nat.add.zero",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          568,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          568
+        ],
+        "tag": "tm.fv",
+        "val": 37
+      },
+      {
+        "ixs": [
+          633,
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          633,
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          633,
+          637
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          636
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          639,
+          638
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          493,
+          640
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          493,
+          642
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          635,
+          641,
+          643
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          634
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          645,
+          644
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          493,
+          636
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          561,
+          647,
+          573
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          646
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          649,
+          648
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          633,
+          650
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          633,
+          652
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          632,
+          651,
+          653
+        ],
+        "name": "nat.induction",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "ind",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "ind"
+        ],
+        "tag": "tm.fv",
+        "val": 30
+      },
+      {
+        "ixs": [
+          "nat.member",
+          656
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind.succ",
+          656
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.member",
+          658
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          657
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          660,
+          659
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          656,
+          661
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          656,
+          663
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          655,
+          662,
+          664
+        ],
+        "name": "nat.member_succ",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 92
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 44
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 45
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat",
+          669
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          670,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          670
+        ],
+        "tag": "tm.fv",
+        "val": 46
+      },
+      {
+        "ixs": [
+          672,
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 85
+      },
+      {
+        "ixs": [
+          674,
+          "nat.zero"
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          673,
+          675
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 47
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 48
+      },
+      {
+        "ixs": [
+          672,
+          678
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          681,
+          680
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          678
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          672,
+          683
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 86
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 87
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 88
+      },
+      {
+        "ixs": [
+          686,
+          687
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.add",
+          688
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          689,
+          687
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          687,
+          690
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          494,
+          494
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          686,
+          691
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "nat",
+          692
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          685,
+          693
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          695,
+          678
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          696,
+          680
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          684,
+          697
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          682
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          699,
+          698
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          680,
+          700
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          680,
+          191
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          679,
+          701,
+          702
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          678,
+          703
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          678,
+          195
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          677,
+          704,
+          705
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          676
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          707,
+          706
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          672,
+          667
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          709,
+          668
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          708
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          711,
+          710
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          672,
+          712
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          672,
+          205
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          671,
+          713,
+          714
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          668,
+          715
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          667,
+          716
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          717,
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          718,
+          666
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          666,
+          719
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          494,
+          721
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          "nat",
+          494
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          493,
+          722
+        ],
+        "name": "nat.mul",
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 121
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 122
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          726
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.mul",
+          729
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          730,
+          728
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.mul",
+          726
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          732,
+          728
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.add",
+          733
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          734,
+          728
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          731,
+          735
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          728,
+          736
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          728,
+          738
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          727,
+          737,
+          739
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          726,
+          740
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          726,
+          742
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          725,
+          741,
+          743
+        ],
+        "name": "nat.mul.successor",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 120
+      },
+      {
+        "ixs": [
+          "nat.mul",
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          747,
+          746
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          748,
+          "nat.zero"
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          746,
+          749
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          746,
+          751
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          745,
+          750,
+          752
+        ],
+        "name": "nat.mul.zero",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          "nat.zero"
+        ],
+        "name": "nat.one",
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.add",
+          "nat.one"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          755,
+          "nat.one"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          "nat.one"
+        ],
+        "name": "nat.two",
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          756,
+          "nat.two"
+        ],
+        "name": "nat.one_plus_one",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat.rep",
+          513
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.member",
+          760
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          513,
+          761
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          513,
+          763
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          759,
+          762,
+          764
+        ],
+        "name": "nat.rep_member",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 37
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 38
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          767
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          769
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          770,
+          771
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          767,
+          769
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          772
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          774,
+          773
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          769,
+          775
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          769,
+          777
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          768,
+          776,
+          778
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          767,
+          779
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          767,
+          781
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          766,
+          780,
+          782
+        ],
+        "name": "nat.succ.injective",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat.member",
+          "ind.zero"
+        ],
+        "name": "nat.zero_member",
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 37
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          786
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          "nat.zero",
+          787
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "not",
+          788
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          786,
+          789
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          786,
+          791
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          785,
+          790,
+          792
+        ],
+        "name": "nat.zero_ne_succ",
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          294
+        ],
+        "tag": "tm.ty_exists",
+        "val": 1
+      },
+      {
+        "ixs": [
+          328,
+          "ind.succ"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          345,
+          "ind.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind",
+          338,
+          "ind.zero"
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "bool",
+          797,
+          279
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          300,
+          798
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          314,
+          799,
+          319
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          337
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          801,
+          800
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          491,
+          "nat.abs"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.abs",
+          471
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          804,
+          437
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          437,
+          805
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          436,
+          806,
+          444
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat.abs",
+          362
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.rep",
+          808
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "ind",
+          809,
+          362
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          396
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          811,
+          810
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          362,
+          812
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          361,
+          813,
+          404
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          814
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          815,
+          486
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "and",
+          807
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          817,
+          816
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          432
+        ],
+        "tag": "tm.ty_exists",
+        "val": 30
+      },
+      {
+        "ixs": [
+          469,
+          "nat.rep"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          551,
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          821,
+          505
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 53
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 54
+      },
+      {
+        "ixs": [
+          551,
+          824
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          827,
+          826
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          824
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          551,
+          829
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          529,
+          824
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          831,
+          826
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          830,
+          832
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          828
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          834,
+          833
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          826,
+          835
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          826,
+          837
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          825,
+          836,
+          838
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          824,
+          839
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          824,
+          841
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          823,
+          840,
+          842
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 55
+      },
+      {
+        "ixs": [
+          551,
+          844
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          845,
+          495
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          495,
+          846
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          494,
+          847
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          847,
+          848
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          844,
+          849
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          850,
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          493,
+          851
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          561,
+          852,
+          573
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 57
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 58
+      },
+      {
+        "ixs": [
+          "nat",
+          854,
+          "nat.zero"
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          494,
+          855,
+          505
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          856
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          858,
+          857
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 59
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 60
+      },
+      {
+        "ixs": [
+          551,
+          860
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          862,
+          861
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          860
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          854,
+          864
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          529,
+          860
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          866,
+          861
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          855,
+          867
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          865
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          869,
+          868
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "and",
+          863
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          871,
+          870
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          861,
+          872
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          494,
+          874
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          874,
+          875
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          860,
+          876
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "nat",
+          878
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          878,
+          879
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "or",
+          859
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          881,
+          880
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          855,
+          882
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "nat",
+          883
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          854,
+          884
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 65
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 66
+      },
+      {
+        "ixs": [
+          551,
+          888
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          891,
+          890
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          886,
+          888
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          893,
+          890
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          892
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          895,
+          894
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          890,
+          896
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          890,
+          898
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          889,
+          897,
+          899
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          888,
+          900
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          888,
+          902
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          887,
+          901,
+          903
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 67
+      },
+      {
+        "ixs": [
+          551,
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          907,
+          906
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          906,
+          505
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          908
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          910,
+          909
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          906,
+          911
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          906,
+          913
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          905,
+          912,
+          914
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 68
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 69
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          917
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          551,
+          920
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          921,
+          919
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 70
+      },
+      {
+        "ixs": [
+          551,
+          917
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          924,
+          923
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          529,
+          917
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          926,
+          923
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          919,
+          927
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          925
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          929,
+          928
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          923,
+          930
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          494,
+          932
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          932,
+          933
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          922
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          935,
+          934
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          919,
+          936
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          919,
+          938
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          918,
+          937,
+          939
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          917,
+          940
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          917,
+          942
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          916,
+          941,
+          943
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 73
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 74
+      },
+      {
+        "ixs": [
+          907,
+          946
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          907,
+          948
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          946,
+          948
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          950
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          952,
+          951
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          949
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          954,
+          953
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          948,
+          955
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          948,
+          957
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          947,
+          956,
+          958
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          946,
+          959
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          946,
+          961
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          945,
+          960,
+          962
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 75
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 76
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 77
+      },
+      {
+        "ixs": [
+          551,
+          964
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          969,
+          966
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          551,
+          964
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          971,
+          968
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          966,
+          968
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          972
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          974,
+          973
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          970
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          976,
+          975
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          968,
+          977
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          968,
+          979
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          967,
+          978,
+          980
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          966,
+          981
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          966,
+          983
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          965,
+          982,
+          984
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          964,
+          985
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          986,
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          493,
+          987
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          561,
+          988,
+          573
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat.add",
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          552,
+          991
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          493,
+          992
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          493,
+          994
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          990,
+          993,
+          995
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          494,
+          625,
+          505
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 78
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          999
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.add",
+          1000
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          529,
+          999
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.add",
+          999
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1002,
+          1003
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1001,
+          1004
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          999,
+          1005
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          999,
+          1007
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          998,
+          1006,
+          1008
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          557
+        ],
+        "tag": "tm.fv",
+        "val": 36
+      },
+      {
+        "ixs": [
+          1010,
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1011,
+          505
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 37
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          1014
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1010,
+          1015
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          529,
+          1014
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1010,
+          1014
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1017,
+          1018
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1016,
+          1019
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1014,
+          1020
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1014,
+          240
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1013,
+          1021,
+          1022
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          1012
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1024,
+          1023
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          557,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          1010,
+          1025
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "nat.add",
+          1015
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.add",
+          1014
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1017,
+          1029
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1028,
+          1030
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1014,
+          1031
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1013,
+          1032,
+          1022
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          997
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1034,
+          1033
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          557,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          557
+        ],
+        "tag": "tm.fv",
+        "val": 79
+      },
+      {
+        "ixs": [
+          1037,
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1038,
+          505
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1037,
+          1015
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1037,
+          1014
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1017,
+          1041
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1040,
+          1042
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1014,
+          1043
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1013,
+          1044,
+          1022
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          1039
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1046,
+          1045
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 80
+      },
+      {
+        "ixs": [
+          1037,
+          1048
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.add",
+          1048
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1049,
+          1050
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1048,
+          1051
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1052,
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          493,
+          1053
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          561,
+          1054,
+          573
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          1047
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1056,
+          1055
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1037,
+          1057
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          1037,
+          1059
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1036,
+          1058,
+          1060
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          557
+        ],
+        "tag": "tm.fv",
+        "val": 84
+      },
+      {
+        "ixs": [
+          1062,
+          688
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1063,
+          687
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          687,
+          1064
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          686,
+          1065
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          685,
+          1066
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1067,
+          678
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1068,
+          680
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          684,
+          1069
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          682
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1071,
+          1070
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          680,
+          1072
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          679,
+          1073,
+          702
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          678,
+          1074
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          677,
+          1075,
+          705
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          676
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1077,
+          1076
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          1078
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1079,
+          710
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          672,
+          1080
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          671,
+          1081,
+          714
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          668,
+          1082
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          667,
+          1083
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1084,
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1085,
+          675
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 89
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 90
+      },
+      {
+        "ixs": [
+          1084,
+          1088
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1091,
+          1090
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          1088
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1084,
+          1093
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1067,
+          1088
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1095,
+          1090
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1094,
+          1096
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          1092
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1098,
+          1097
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1090,
+          1099
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          1090,
+          1101
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1089,
+          1100,
+          1102
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1088,
+          1103
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          1088,
+          1105
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1087,
+          1104,
+          1106
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 91
+      },
+      {
+        "ixs": [
+          1084,
+          1108
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1109,
+          666
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          666,
+          1110
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          494,
+          1111
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          1111,
+          1112
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1108,
+          1113
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1114,
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          493,
+          1115
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          561,
+          1116,
+          573
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 93
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 94
+      },
+      {
+        "ixs": [
+          "nat",
+          1118,
+          "nat.zero"
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          494,
+          1119,
+          675
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          1120
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1122,
+          1121
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 95
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 96
+      },
+      {
+        "ixs": [
+          1084,
+          1124
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1126,
+          1125
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          1124
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          1118,
+          1128
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1067,
+          1124
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1130,
+          1125
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1119,
+          1131
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          1129
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1133,
+          1132
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "and",
+          1127
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1135,
+          1134
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          1125,
+          1136
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          494,
+          1138
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          1138,
+          1139
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          1124,
+          1140
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "nat",
+          1142
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          1142,
+          1143
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "or",
+          1123
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1145,
+          1144
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          1119,
+          1146
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "nat",
+          1147
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          1118,
+          1148
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 101
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 102
+      },
+      {
+        "ixs": [
+          1084,
+          1152
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1155,
+          1154
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1150,
+          1152
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1157,
+          1154
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          1156
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1159,
+          1158
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1154,
+          1160
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          1154,
+          1162
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1153,
+          1161,
+          1163
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1152,
+          1164
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          1152,
+          1166
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1151,
+          1165,
+          1167
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 103
+      },
+      {
+        "ixs": [
+          1084,
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1171,
+          1170
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1170,
+          675
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          1172
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1174,
+          1173
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1170,
+          1175
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          1170,
+          1177
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1169,
+          1176,
+          1178
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 104
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 105
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          1181
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1084,
+          1184
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1185,
+          1183
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 106
+      },
+      {
+        "ixs": [
+          1084,
+          1181
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1188,
+          1187
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1067,
+          1181
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1190,
+          1187
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1183,
+          1191
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          1189
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1193,
+          1192
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          1187,
+          1194
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          494,
+          1196
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          1196,
+          1197
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          1186
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1199,
+          1198
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1183,
+          1200
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          1183,
+          1202
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1182,
+          1201,
+          1203
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1181,
+          1204
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          1181,
+          1206
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1180,
+          1205,
+          1207
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 109
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 110
+      },
+      {
+        "ixs": [
+          1171,
+          1210
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1171,
+          1212
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1210,
+          1212
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          1214
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1216,
+          1215
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          1213
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1218,
+          1217
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1212,
+          1219
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          1212,
+          1221
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1211,
+          1220,
+          1222
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1210,
+          1223
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          1210,
+          1225
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1209,
+          1224,
+          1226
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 111
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 112
+      },
+      {
+        "ixs": [
+          494,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          494
+        ],
+        "tag": "tm.fv",
+        "val": 113
+      },
+      {
+        "ixs": [
+          1084,
+          1228
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1233,
+          1230
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1084,
+          1228
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1235,
+          1232
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1230,
+          1232
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          1236
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1238,
+          1237
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "imp",
+          1234
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1240,
+          1239
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1232,
+          1241
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          1232,
+          1243
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1231,
+          1242,
+          1244
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1230,
+          1245
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          1230,
+          1247
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1229,
+          1246,
+          1248
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1228,
+          1249
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1250,
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          493,
+          1251
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          561,
+          1252,
+          573
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1084,
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1254,
+          666
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          666,
+          1255
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          494,
+          1256
+        ],
+        "tag": "tm.eps"
+      },
+      {
+        "ixs": [
+          493,
+          1257
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          1258,
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1254,
+          1260
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          493,
+          1261
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          493,
+          1263
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1259,
+          1262,
+          1264
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1258,
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1266,
+          675
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 114
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          1269
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1258,
+          1270
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1067,
+          1269
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1258,
+          1269
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1272,
+          1273
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1271,
+          1274
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1269,
+          1275
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          1269,
+          1277
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1268,
+          1276,
+          1278
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          723
+        ],
+        "tag": "tm.fv",
+        "val": 36
+      },
+      {
+        "ixs": [
+          1280,
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1281,
+          675
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "nat",
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 37
+      },
+      {
+        "ixs": [
+          "nat.succ",
+          1284
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1280,
+          1285
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1067,
+          1284
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1280,
+          1284
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1287,
+          1288
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1286,
+          1289
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1284,
+          1290
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1284,
+          240
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1283,
+          1291,
+          1292
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          1282
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1294,
+          1293
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          723,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          1280,
+          1295
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1258,
+          1285
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1258,
+          1284
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1287,
+          1299
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1298,
+          1300
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1284,
+          1301
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1283,
+          1302,
+          1292
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          1267
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1304,
+          1303
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          723,
+          "bool"
+        ],
+        "tag": "ty.arr"
+      },
+      {
+        "ixs": [
+          723
+        ],
+        "tag": "tm.fv",
+        "val": 115
+      },
+      {
+        "ixs": [
+          1307,
+          "nat.zero"
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1308,
+          675
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1307,
+          1285
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1307,
+          1284
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1287,
+          1311
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1310,
+          1312
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1284,
+          1313
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1283,
+          1314,
+          1292
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "and",
+          1309
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1316,
+          1315
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          "nat"
+        ],
+        "tag": "tm.fv",
+        "val": 116
+      },
+      {
+        "ixs": [
+          1307,
+          1318
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1258,
+          1318
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          494,
+          1319,
+          1320
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          1318,
+          1321
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1322,
+          493
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          493,
+          1323
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          561,
+          1324,
+          573
+        ],
+        "tag": "tm.eq"
+      },
+      {
+        "ixs": [
+          "imp",
+          1317
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1326,
+          1325
+        ],
+        "tag": "tm.app"
+      },
+      {
+        "ixs": [
+          1307,
+          1327
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "tag": "tm.bool",
+        "val": true
+      },
+      {
+        "ixs": [
+          1307,
+          1329
+        ],
+        "tag": "tm.lam"
+      },
+      {
+        "ixs": [
+          1306,
+          1328,
+          1330
+        ],
+        "tag": "tm.eq"
+      }
+    ],
+    "syn": {
+      "conv": [
+        null,
+        "star",
+        "star",
+        "star",
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool",
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool->bool->bool",
+        "bool",
+        "bool",
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool->bool->bool",
+        "bool",
+        "bool",
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool->bool->bool",
+        "star",
+        "star",
+        "star",
+        36,
+        "star",
+        "star",
+        39,
+        "star",
+        "star",
+        "star",
+        42,
+        "star",
+        "star",
+        45,
+        "star",
+        48,
+        "star",
+        "IsCoprod/'a",
+        "IsCoprod/'t",
+        41,
+        41,
+        "bool",
+        50,
+        "bool",
+        50,
+        "bool",
+        "star",
+        "IsCoprod/'b",
+        "IsCoprod/'t",
+        41,
+        41,
+        "bool",
+        60,
+        "bool",
+        60,
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        48,
+        "star",
+        "IsCoprod/'a",
+        "IsCoprod/'t",
+        41,
+        41,
+        "bool",
+        74,
+        "bool",
+        74,
+        "bool",
+        "star",
+        "IsCoprod/'b",
+        "IsCoprod/'t",
+        41,
+        41,
+        "bool",
+        84,
+        "bool",
+        84,
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        72,
+        "bool",
+        72,
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        105,
+        48,
+        "bool",
+        46,
+        "bool",
+        46,
+        "bool",
+        43,
+        "bool",
+        43,
+        "bool",
+        "bool",
+        "star",
+        118,
+        39,
+        "bool",
+        "star",
+        122,
+        36,
+        "bool",
+        "star",
+        "NatMember/'a",
+        "star",
+        128,
+        "NatMember/'a",
+        "star",
+        "star",
+        131,
+        "bool",
+        "star",
+        "NatMember/'a",
+        "bool",
+        "NatMember/'a",
+        "bool",
+        "bool->bool",
+        "bool",
+        135,
+        "bool",
+        135,
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        132,
+        "bool",
+        132,
+        "bool",
+        131,
+        "star",
+        156,
+        "star",
+        158,
+        "star",
+        "NatRecGraph/'a",
+        "star",
+        162,
+        "star",
+        "NatRecGraph/'c",
+        "star",
+        "star",
+        167,
+        "NatRecGraph/'a",
+        "NatRecGraph/'c",
+        "star",
+        "star",
+        "star",
+        172,
+        171,
+        "bool",
+        "star",
+        "NatRecGraph/'a",
+        "star",
+        "NatRecGraph/'c",
+        171,
+        "bool",
+        "NatRecGraph/'a",
+        171,
+        166,
+        "NatRecGraph/'c",
+        "bool",
+        "bool->bool",
+        "bool",
+        179,
+        "bool",
+        179,
+        "bool",
+        177,
+        "bool",
+        177,
+        "bool",
+        "bool->bool",
+        "bool",
+        171,
+        "bool",
+        "bool->bool",
+        "bool",
+        173,
+        "bool",
+        173,
+        "bool",
+        171,
+        172,
+        "star",
+        210,
+        "star",
+        212,
+        "star",
+        214,
+        "star",
+        216,
+        "star",
+        "NatRecSpec/'a",
+        "star",
+        220,
+        "star",
+        "NatRecSpec/'c",
+        "star",
+        "star",
+        225,
+        "star",
+        227,
+        "NatRecSpec/'c",
+        "bool",
+        "star",
+        "NatRecSpec/'a",
+        "NatRecSpec/'a",
+        "NatRecSpec/'c",
+        224,
+        "NatRecSpec/'c",
+        "NatRecSpec/'c",
+        "bool",
+        231,
+        "bool",
+        231,
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        245,
+        "star",
+        247,
+        "star",
+        249,
+        "star",
+        251,
+        "star",
+        253,
+        "star",
+        "star",
+        256,
+        255,
+        "star",
+        255,
+        "star",
+        255,
+        255,
+        255,
+        "bool",
+        "bool",
+        "bool",
+        261,
+        "bool",
+        261,
+        "bool",
+        259,
+        "bool",
+        259,
+        "bool",
+        "star",
+        255,
+        "bool",
+        "bool",
+        "bool",
+        276,
+        "bool",
+        276,
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        287,
+        255,
+        "bool",
+        "star",
+        291,
+        256,
+        "bool",
+        "star",
+        "star",
+        296,
+        "ind",
+        "star",
+        "ind",
+        "star",
+        "ind",
+        "ind",
+        "ind",
+        "bool",
+        "bool",
+        "bool",
+        301,
+        301,
+        "bool",
+        299,
+        299,
+        "bool",
+        "star",
+        "ind",
+        "bool",
+        "bool",
+        314,
+        314,
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        323,
+        "ind",
+        "bool",
+        "star",
+        327,
+        296,
+        "ind",
+        "ind",
+        "bool",
+        "bool",
+        301,
+        "bool",
+        299,
+        "bool",
+        "ind",
+        "bool",
+        "bool",
+        314,
+        "bool",
+        "bool->bool",
+        "bool",
+        323,
+        "ind",
+        "star",
+        "star",
+        348,
+        "star",
+        350,
+        "star",
+        347,
+        "ind",
+        347,
+        "bool",
+        352,
+        "bool",
+        352,
+        "bool",
+        "star",
+        "ind",
+        "ind",
+        "star",
+        "star",
+        364,
+        "bool",
+        "star",
+        "ind",
+        "bool",
+        "ind",
+        "bool",
+        "bool->bool",
+        "bool",
+        368,
+        368,
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        365,
+        365,
+        "bool",
+        364,
+        "bool",
+        "ind",
+        "bool",
+        "star",
+        390,
+        "ind",
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        347,
+        "ind",
+        "bool",
+        "bool->bool",
+        "bool",
+        361,
+        "bool",
+        361,
+        "bool",
+        "star",
+        "bool",
+        "ind",
+        "bool",
+        "star",
+        410,
+        "ind",
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        406,
+        "bool",
+        406,
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        425,
+        350,
+        "bool",
+        "star",
+        429,
+        348,
+        "bool",
+        "star",
+        "star",
+        434,
+        "star",
+        "nat",
+        "star",
+        438,
+        "ind",
+        "nat",
+        "bool",
+        436,
+        436,
+        "bool",
+        "nat",
+        "ind",
+        "bool",
+        "bool->bool",
+        "bool",
+        361,
+        "bool",
+        "star",
+        "bool",
+        "bool->bool",
+        "bool",
+        453,
+        453,
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        464,
+        434,
+        "bool",
+        "star",
+        468,
+        438,
+        "ind",
+        "nat",
+        "bool",
+        436,
+        "bool",
+        "ind",
+        "bool",
+        "bool->bool",
+        "bool",
+        361,
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        453,
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        464,
+        434,
+        "nat",
+        "star",
+        494,
+        "nat",
+        494,
+        "star",
+        "star",
+        "star",
+        499,
+        "nat",
+        498,
+        "nat",
+        494,
+        "bool",
+        "star",
+        "nat",
+        "star",
+        494,
+        498,
+        "bool",
+        "nat",
+        "ind",
+        "ind",
+        "nat",
+        494,
+        "nat",
+        498,
+        "nat",
+        494,
+        "nat",
+        "nat",
+        "nat",
+        494,
+        "star",
+        526,
+        "star",
+        528,
+        526,
+        494,
+        "bool",
+        "bool->bool",
+        "bool",
+        509,
+        509,
+        "bool",
+        507,
+        507,
+        "bool",
+        "bool->bool",
+        "bool",
+        498,
+        "bool",
+        "bool->bool",
+        "bool",
+        500,
+        500,
+        "bool",
+        498,
+        499,
+        498,
+        "bool",
+        "star",
+        554,
+        494,
+        "star",
+        557,
+        "star",
+        "nat",
+        "star",
+        "nat",
+        494,
+        "nat",
+        494,
+        "nat",
+        "bool",
+        "star",
+        568,
+        "bool",
+        561,
+        "bool",
+        561,
+        "bool",
+        559,
+        "bool",
+        559,
+        "bool",
+        "star",
+        "nat",
+        "nat",
+        494,
+        "nat",
+        "nat",
+        "nat",
+        "nat",
+        "bool",
+        568,
+        "bool",
+        561,
+        "bool",
+        579,
+        "bool",
+        579,
+        "bool",
+        "nat",
+        494,
+        "nat",
+        "bool",
+        568,
+        "bool",
+        561,
+        "bool",
+        "star",
+        "nat",
+        "star",
+        "nat",
+        "nat",
+        494,
+        "nat",
+        494,
+        "nat",
+        "nat",
+        "bool",
+        606,
+        "bool",
+        606,
+        "bool",
+        604,
+        "bool",
+        604,
+        "bool",
+        "star",
+        "nat",
+        494,
+        "nat",
+        "bool",
+        623,
+        "bool",
+        623,
+        "bool",
+        "star",
+        568,
+        "bool",
+        "star",
+        "bool",
+        "nat",
+        "bool",
+        "bool->bool",
+        "bool",
+        635,
+        "bool",
+        635,
+        "bool",
+        "bool->bool",
+        "bool",
+        561,
+        "bool",
+        "bool->bool",
+        "bool",
+        632,
+        "bool",
+        632,
+        "bool",
+        "star",
+        "ind",
+        "bool",
+        "ind",
+        "bool",
+        "bool->bool",
+        "bool",
+        655,
+        "bool",
+        655,
+        "bool",
+        494,
+        "nat",
+        494,
+        "star",
+        "star",
+        "star",
+        670,
+        669,
+        "nat",
+        494,
+        "bool",
+        "star",
+        "nat",
+        "star",
+        494,
+        669,
+        "bool",
+        "nat",
+        669,
+        "nat",
+        494,
+        "nat",
+        "nat",
+        494,
+        "nat",
+        494,
+        "star",
+        692,
+        "star",
+        694,
+        692,
+        494,
+        "bool",
+        "bool->bool",
+        "bool",
+        679,
+        679,
+        "bool",
+        677,
+        677,
+        "bool",
+        "bool->bool",
+        "bool",
+        669,
+        "bool",
+        "bool->bool",
+        "bool",
+        671,
+        671,
+        "bool",
+        669,
+        670,
+        669,
+        "bool",
+        "star",
+        720,
+        494,
+        "star",
+        723,
+        "star",
+        "nat",
+        "star",
+        "nat",
+        "nat",
+        494,
+        "nat",
+        494,
+        "nat",
+        494,
+        "nat",
+        "bool",
+        727,
+        "bool",
+        727,
+        "bool",
+        725,
+        "bool",
+        725,
+        "bool",
+        "star",
+        "nat",
+        494,
+        "nat",
+        "bool",
+        745,
+        "bool",
+        745,
+        "bool",
+        "nat",
+        494,
+        "nat",
+        "nat",
+        "bool",
+        "star",
+        "ind",
+        "bool",
+        759,
+        "bool",
+        759,
+        "bool",
+        "star",
+        "nat",
+        "star",
+        "nat",
+        "nat",
+        "nat",
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        768,
+        "bool",
+        768,
+        "bool",
+        766,
+        "bool",
+        766,
+        "bool",
+        "bool",
+        "star",
+        "nat",
+        "nat",
+        "bool",
+        "bool",
+        785,
+        "bool",
+        785,
+        "bool",
+        "bool",
+        "bool",
+        "bool",
+        "bool",
+        "bool",
+        314,
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool",
+        "nat",
+        "bool",
+        436,
+        "bool",
+        "nat",
+        "ind",
+        "bool",
+        "bool->bool",
+        "bool",
+        361,
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool",
+        "bool",
+        498,
+        "bool",
+        "star",
+        "nat",
+        "star",
+        494,
+        498,
+        "bool",
+        "nat",
+        498,
+        526,
+        494,
+        "bool",
+        "bool->bool",
+        "bool",
+        825,
+        "bool",
+        825,
+        "bool",
+        823,
+        "bool",
+        823,
+        "bool",
+        "nat",
+        498,
+        "bool",
+        554,
+        494,
+        "bool",
+        568,
+        "bool",
+        561,
+        "bool",
+        "nat",
+        494,
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        "nat",
+        494,
+        498,
+        "bool",
+        "nat",
+        "bool",
+        526,
+        494,
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        873,
+        494,
+        "bool",
+        "star",
+        877,
+        "nat",
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        883,
+        "star",
+        885,
+        "star",
+        "nat",
+        "star",
+        494,
+        498,
+        "bool",
+        883,
+        "bool",
+        "bool->bool",
+        "bool",
+        889,
+        "bool",
+        889,
+        "bool",
+        887,
+        "bool",
+        887,
+        "bool",
+        "star",
+        494,
+        498,
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        905,
+        "bool",
+        905,
+        "bool",
+        "star",
+        "nat",
+        "star",
+        494,
+        "nat",
+        498,
+        "bool",
+        494,
+        498,
+        "bool",
+        526,
+        494,
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        931,
+        494,
+        "bool",
+        "bool->bool",
+        "bool",
+        918,
+        "bool",
+        918,
+        "bool",
+        916,
+        "bool",
+        916,
+        "bool",
+        "star",
+        494,
+        "star",
+        494,
+        "bool",
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        947,
+        "bool",
+        947,
+        "bool",
+        945,
+        "bool",
+        945,
+        "bool",
+        "nat",
+        "star",
+        494,
+        "star",
+        494,
+        498,
+        "bool",
+        498,
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        967,
+        "bool",
+        967,
+        "bool",
+        965,
+        "bool",
+        965,
+        "bool",
+        568,
+        "bool",
+        561,
+        "bool",
+        "star",
+        494,
+        "bool",
+        990,
+        "bool",
+        990,
+        "bool",
+        "bool",
+        "star",
+        "nat",
+        "nat",
+        494,
+        526,
+        494,
+        494,
+        "bool",
+        998,
+        "bool",
+        998,
+        "bool",
+        557,
+        494,
+        "bool",
+        "star",
+        "nat",
+        "nat",
+        494,
+        526,
+        494,
+        494,
+        "bool",
+        1013,
+        1013,
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        1026,
+        494,
+        494,
+        494,
+        "bool",
+        1013,
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        557,
+        494,
+        "bool",
+        494,
+        494,
+        494,
+        "bool",
+        1013,
+        "bool",
+        "bool->bool",
+        "bool",
+        "nat",
+        494,
+        494,
+        "bool",
+        568,
+        "bool",
+        561,
+        "bool",
+        "bool->bool",
+        "bool",
+        1036,
+        "bool",
+        1036,
+        "bool",
+        557,
+        494,
+        "nat",
+        494,
+        692,
+        694,
+        692,
+        494,
+        "bool",
+        "bool->bool",
+        "bool",
+        679,
+        "bool",
+        677,
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        671,
+        "bool",
+        669,
+        670,
+        669,
+        "bool",
+        "star",
+        "nat",
+        "star",
+        494,
+        669,
+        "bool",
+        "nat",
+        669,
+        692,
+        494,
+        "bool",
+        "bool->bool",
+        "bool",
+        1089,
+        "bool",
+        1089,
+        "bool",
+        1087,
+        "bool",
+        1087,
+        "bool",
+        "nat",
+        669,
+        "bool",
+        720,
+        494,
+        "bool",
+        568,
+        "bool",
+        561,
+        "bool",
+        "nat",
+        494,
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        "nat",
+        494,
+        669,
+        "bool",
+        "nat",
+        "bool",
+        692,
+        494,
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        1137,
+        494,
+        "bool",
+        "star",
+        1141,
+        "nat",
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        1147,
+        "star",
+        1149,
+        "star",
+        "nat",
+        "star",
+        494,
+        669,
+        "bool",
+        1147,
+        "bool",
+        "bool->bool",
+        "bool",
+        1153,
+        "bool",
+        1153,
+        "bool",
+        1151,
+        "bool",
+        1151,
+        "bool",
+        "star",
+        494,
+        669,
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        1169,
+        "bool",
+        1169,
+        "bool",
+        "star",
+        "nat",
+        "star",
+        494,
+        "nat",
+        669,
+        "bool",
+        494,
+        669,
+        "bool",
+        692,
+        494,
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        1195,
+        494,
+        "bool",
+        "bool->bool",
+        "bool",
+        1182,
+        "bool",
+        1182,
+        "bool",
+        1180,
+        "bool",
+        1180,
+        "bool",
+        "star",
+        494,
+        "star",
+        494,
+        "bool",
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        1211,
+        "bool",
+        1211,
+        "bool",
+        1209,
+        "bool",
+        1209,
+        "bool",
+        "nat",
+        "star",
+        494,
+        "star",
+        494,
+        669,
+        "bool",
+        669,
+        "bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        "bool->bool",
+        "bool",
+        1231,
+        "bool",
+        1231,
+        "bool",
+        1229,
+        "bool",
+        1229,
+        "bool",
+        568,
+        "bool",
+        561,
+        "bool",
+        669,
+        "bool",
+        720,
+        494,
+        723,
+        "star",
+        494,
+        "bool",
+        1259,
+        "bool",
+        1259,
+        "bool",
+        494,
+        "bool",
+        "star",
+        "nat",
+        "nat",
+        494,
+        692,
+        494,
+        494,
+        "bool",
+        1268,
+        "bool",
+        1268,
+        "bool",
+        723,
+        494,
+        "bool",
+        "star",
+        "nat",
+        "nat",
+        494,
+        692,
+        494,
+        494,
+        "bool",
+        1283,
+        1283,
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        1296,
+        494,
+        494,
+        494,
+        "bool",
+        1283,
+        "bool",
+        "bool->bool",
+        "bool",
+        "star",
+        723,
+        494,
+        "bool",
+        494,
+        494,
+        494,
+        "bool",
+        1283,
+        "bool",
+        "bool->bool",
+        "bool",
+        "nat",
+        494,
+        494,
+        "bool",
+        568,
+        "bool",
+        561,
+        "bool",
+        "bool->bool",
+        "bool",
+        1306,
+        "bool",
+        1306,
+        "bool"
+      ]
+    },
+    "thm": []
+  },
+  "import": [],
+  "pred": {
+    "syl": []
+  },
+  "tag": "arena"
+}

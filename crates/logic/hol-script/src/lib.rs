@@ -19,6 +19,7 @@ use covalence_logic_hol::{
     init::Compiled as LogicalInit,
 };
 
+pub mod dag_json;
 mod init_library;
 
 pub use covalence_logic_hol_derived::CoproductSchema;

@@ -1312,7 +1312,7 @@
       "source": "workspace#covalence-logic-hol-script@0.0.0",
       "target": "workspace#covalence-lib-json@0.0.0",
       "kinds": [
-        "dev"
+        "normal"
       ]
     },
     {
