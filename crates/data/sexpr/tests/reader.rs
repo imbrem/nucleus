@@ -1,32 +1,30 @@
 use covalence_data_sexpr::{
-    Atom, Document, Event, ExprKind, OneError, ParseError, Parser, SExprNode, StructureError,
-    parse, parse_one,
+    Atom, Document, ErasedRepr, Event, Expr, ExprKind, OneError, ParseError, Parser, Repr, SExpr,
+    SExprNode, SharedRepr, SpannedRepr, StructureError, parse, parse_one,
 };
+
+fn atom(expression: &Expr) -> &Atom {
+    let ExprKind::Atom(node) = expression.node() else {
+        panic!("expected atom");
+    };
+    SpannedRepr::atom(node)
+}
 
 #[test]
 fn reads_every_atom_kind_and_preserves_spans() {
     let source = "(sym \"a\\nβ\" b\"\\0\\x01\\x02\\xff\" 123abc :key #define 'a)";
     let document = parse(source).unwrap();
-    let ExprKind::List { items, .. } = document.expressions()[0].node() else {
+    let ExprKind::List(node) = document.expressions()[0].node() else {
         panic!("expected list");
     };
-    assert!(matches!(items[0].node(), ExprKind::Atom { value: Atom::Symbol(v), .. } if v == "sym"));
-    assert!(
-        matches!(items[1].node(), ExprKind::Atom { value: Atom::String(v), .. } if v == "a\nβ")
-    );
-    assert!(
-        matches!(items[2].node(), ExprKind::Atom { value: Atom::Bytes(v), .. } if v[..] == [0, 1, 2, 255])
-    );
-    assert!(
-        matches!(items[3].node(), ExprKind::Atom { value: Atom::Number(v), .. } if v == "123abc")
-    );
-    assert!(
-        matches!(items[4].node(), ExprKind::Atom { value: Atom::Keyword(v), .. } if v == "key")
-    );
-    assert!(
-        matches!(items[5].node(), ExprKind::Atom { value: Atom::Directive(v), .. } if v == "define")
-    );
-    assert!(matches!(items[6].node(), ExprKind::Atom { value: Atom::Symbol(v), .. } if v == "'a"));
+    let items = SpannedRepr::list_items(node);
+    assert!(matches!(atom(&items[0]), Atom::Symbol(v) if v == "sym"));
+    assert!(matches!(atom(&items[1]), Atom::String(v) if v == "a\nβ"));
+    assert!(matches!(atom(&items[2]), Atom::Bytes(v) if v[..] == [0, 1, 2, 255]));
+    assert!(matches!(atom(&items[3]), Atom::Number(v) if v == "123abc"));
+    assert!(matches!(atom(&items[4]), Atom::Keyword(v) if v == "key"));
+    assert!(matches!(atom(&items[5]), Atom::Directive(v) if v == "define"));
+    assert!(matches!(atom(&items[6]), Atom::Symbol(v) if v == "'a"));
     assert_eq!(
         document.events().collect::<Vec<_>>(),
         Parser::new(source).collect::<Result<Vec<_>, _>>().unwrap()
@@ -37,15 +35,11 @@ fn reads_every_atom_kind_and_preserves_spans() {
 fn comments_and_multiple_roots_are_documents() {
     let document = parse("; first\nalpha () ; last\n :answer").unwrap();
     assert_eq!(document.expressions().len(), 3);
+    assert!(matches!(atom(&document.expressions()[0]), Atom::Symbol(v) if v == "alpha"));
     assert!(
-        matches!(document.expressions()[0].node(), ExprKind::Atom { value: Atom::Symbol(v), .. } if v == "alpha")
+        matches!(document.expressions()[1].node(), ExprKind::List(node) if SpannedRepr::list_items(node).is_empty())
     );
-    assert!(
-        matches!(document.expressions()[1].node(), ExprKind::List { items, .. } if items.is_empty())
-    );
-    assert!(
-        matches!(document.expressions()[2].node(), ExprKind::Atom { value: Atom::Keyword(v), .. } if v == "answer")
-    );
+    assert!(matches!(atom(&document.expressions()[2]), Atom::Keyword(v) if v == "answer"));
 }
 
 #[test]
@@ -69,13 +63,11 @@ fn byte_literals_cover_all_bytes_and_reject_malformed_source() {
         ));
     }
     assert!(
-        matches!(parse_one("b\"\""), Ok(expression) if matches!(expression.node(), ExprKind::Atom { value: Atom::Bytes(value), .. } if value.is_empty()))
+        matches!(parse_one("b\"\""), Ok(expression) if matches!(atom(&expression), Atom::Bytes(value) if value.is_empty()))
     );
     let all = (0..=u8::MAX).collect::<Vec<_>>();
     let expression = parse_one(&Atom::encode_bytes(&all)).unwrap();
-    assert!(
-        matches!(expression.node(), ExprKind::Atom { value: Atom::Bytes(value), .. } if value[..] == all)
-    );
+    assert!(matches!(atom(&expression), Atom::Bytes(value) if value[..] == all));
 }
 
 #[test]
@@ -114,18 +106,33 @@ fn external_event_streams_are_checked() {
 fn spans_erase_into_the_spanless_template() {
     let document = parse("(alpha (beta))").unwrap();
     let erased = document.erase();
-    let SExprNode::List { items, metadata } = erased.expressions()[0].node() else {
+    let SExprNode::List(node) = erased.expressions()[0].node() else {
         panic!("expected erased list");
     };
-    assert_eq!(*metadata, ());
-    assert!(matches!(
-        items[0].node(),
-        SExprNode::Atom {
-            value: Atom::Symbol(value),
-            metadata: ()
-        } if value == "alpha"
-    ));
+    assert_eq!(*ErasedRepr::list_meta(node), ());
+    let SExprNode::Atom(atom_node) = ErasedRepr::list_items(node)[0].node() else {
+        panic!("expected erased atom");
+    };
+    assert_eq!(*ErasedRepr::atom_meta(atom_node), ());
+    assert!(matches!(ErasedRepr::atom(atom_node), Atom::Symbol(value) if value == "alpha"));
     assert_eq!(document.expressions()[0].erase(), erased.expressions()[0]);
+}
+
+#[test]
+fn shared_representation_configures_atom_type_and_node_metadata() {
+    type Strings = SharedRepr<String, u8, &'static str>;
+
+    let atom = SExpr::<Strings>::from_atom("custom".to_owned(), 7);
+    let list = SExpr::<Strings>::from_list("list metadata", [atom]);
+    let SExprNode::List(node) = list.node() else {
+        panic!("expected list");
+    };
+    assert_eq!(Strings::list_meta(node), &"list metadata");
+    let SExprNode::Atom(node) = Strings::list_items(node)[0].node() else {
+        panic!("expected atom");
+    };
+    assert_eq!(Strings::atom(node), "custom");
+    assert_eq!(Strings::atom_meta(node), &7);
 }
 
 #[test]

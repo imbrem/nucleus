@@ -4,8 +4,13 @@
 //! data until a userspace interpreter assigns them meaning.
 
 use std::iter::FusedIterator;
+use std::marker::PhantomData;
 use std::ops::Range;
 use std::sync::Arc;
+use std::{
+    fmt::Debug,
+    hash::{Hash, Hasher},
+};
 
 use bytes::Bytes;
 use covalence_lib_error::snafu::Snafu;
@@ -392,36 +397,172 @@ pub struct ListSpan {
     pub close: Span,
 }
 
-/// An immutable, cheaply cloned S-expression template.
-///
-/// `AtomMeta` and `ListMeta` configure data carried by each node. The default
-/// is the spanless form; [`Expr`] selects source spans for parsed syntax.
+/// Storage and payload choices for an [`SExpr`].
+pub trait Repr: Sized {
+    /// Atomic payload exposed by this representation.
+    type Atom;
+    /// Metadata attached to an atom node.
+    type AtomMeta;
+    /// Metadata attached to a list node.
+    type ListMeta;
+    /// Concrete atom-node storage.
+    type AtomNode: Clone + Debug + Eq + Hash + PartialEq;
+    /// Concrete list-node storage.
+    type ListNode: Clone + Debug + Eq + Hash + PartialEq;
+
+    /// Borrows an atom node's payload.
+    fn atom(node: &Self::AtomNode) -> &Self::Atom;
+    /// Borrows an atom node's metadata.
+    fn atom_meta(node: &Self::AtomNode) -> &Self::AtomMeta;
+    /// Borrows a list node's metadata.
+    fn list_meta(node: &Self::ListNode) -> &Self::ListMeta;
+    /// Borrows a list node's children.
+    fn list_items(node: &Self::ListNode) -> &[SExpr<Self>];
+}
+
+/// Arc-backed immutable representation parameterized by its payloads.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct SharedRepr<AtomValue = Atom, AtomMeta = (), ListMeta = ()>(
+    PhantomData<fn() -> AtomValue>,
+    PhantomData<fn() -> AtomMeta>,
+    PhantomData<fn() -> ListMeta>,
+);
+
+/// Atom node used by [`SharedRepr`].
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct SExpr<AtomMeta = (), ListMeta = ()>(Arc<SExprNode<AtomMeta, ListMeta>>);
+pub struct SharedAtomNode<AtomValue, Meta> {
+    value: AtomValue,
+    metadata: Meta,
+}
+
+/// List node used by [`SharedRepr`].
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SharedListNode<R: Repr> {
+    metadata: R::ListMeta,
+    items: Arc<[SExpr<R>]>,
+}
+
+impl<AtomValue, AtomMeta, ListMeta> Repr for SharedRepr<AtomValue, AtomMeta, ListMeta>
+where
+    AtomValue: Clone + Debug + Eq + Hash,
+    AtomMeta: Clone + Debug + Eq + Hash,
+    ListMeta: Clone + Debug + Eq + Hash,
+{
+    type Atom = AtomValue;
+    type AtomMeta = AtomMeta;
+    type ListMeta = ListMeta;
+    type AtomNode = SharedAtomNode<AtomValue, AtomMeta>;
+    type ListNode = SharedListNode<Self>;
+
+    fn atom(node: &Self::AtomNode) -> &Self::Atom {
+        &node.value
+    }
+
+    fn atom_meta(node: &Self::AtomNode) -> &Self::AtomMeta {
+        &node.metadata
+    }
+
+    fn list_meta(node: &Self::ListNode) -> &Self::ListMeta {
+        &node.metadata
+    }
+
+    fn list_items(node: &Self::ListNode) -> &[SExpr<Self>] {
+        &node.items
+    }
+}
+
+/// An immutable, cheaply cloned S-expression in representation `R`.
+pub struct SExpr<R: Repr = SharedRepr>(Arc<SExprNode<R>>);
 
 /// One layer of an [`SExpr`] template.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum SExprNode<AtomMeta = (), ListMeta = ()> {
-    /// An atomic value and its configured node data.
-    Atom { value: Atom, metadata: AtomMeta },
-    /// A proper list and its configured node data.
-    List {
-        metadata: ListMeta,
-        items: Arc<[SExpr<AtomMeta, ListMeta>]>,
-    },
+pub enum SExprNode<R: Repr = SharedRepr> {
+    /// An atomic node.
+    Atom(R::AtomNode),
+    /// A proper-list node.
+    List(R::ListNode),
+}
+
+impl<R: Repr> Clone for SExpr<R> {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+impl<R: Repr> Debug for SExpr<R>
+where
+    SExprNode<R>: Debug,
+{
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl<R: Repr> PartialEq for SExpr<R>
+where
+    SExprNode<R>: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<R: Repr> Eq for SExpr<R> where SExprNode<R>: Eq {}
+
+impl<R: Repr> Hash for SExpr<R>
+where
+    SExprNode<R>: Hash,
+{
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
 }
 
 /// A parsed S-expression carrying source spans.
-pub type Expr = SExpr<Span, ListSpan>;
+pub type SpannedRepr = SharedRepr<Atom, Span, ListSpan>;
+
+/// The default shared representation without source metadata.
+pub type ErasedRepr = SharedRepr<Atom, (), ()>;
+
+/// A parsed S-expression carrying source spans.
+pub type Expr = SExpr<SpannedRepr>;
 
 /// The contents of a parsed [`Expr`].
-pub type ExprKind = SExprNode<Span, ListSpan>;
+pub type ExprKind = SExprNode<SpannedRepr>;
 
-impl<AtomMeta, ListMeta> SExpr<AtomMeta, ListMeta> {
+impl<R: Repr> SExpr<R> {
+    /// Wraps one representation-specific node.
+    #[must_use]
+    pub fn from_node(node: SExprNode<R>) -> Self {
+        Self(Arc::new(node))
+    }
+
     /// Returns this expression's immutable contents.
     #[must_use]
-    pub fn node(&self) -> &SExprNode<AtomMeta, ListMeta> {
+    pub fn node(&self) -> &SExprNode<R> {
         &self.0
+    }
+}
+
+impl<AtomValue, AtomMeta, ListMeta> SExpr<SharedRepr<AtomValue, AtomMeta, ListMeta>>
+where
+    AtomValue: Clone + Debug + Eq + Hash,
+    AtomMeta: Clone + Debug + Eq + Hash,
+    ListMeta: Clone + Debug + Eq + Hash,
+{
+    /// Creates an atom in the configurable shared representation.
+    #[must_use]
+    pub fn from_atom(value: AtomValue, metadata: AtomMeta) -> Self {
+        Self::from_node(SExprNode::Atom(SharedAtomNode { value, metadata }))
+    }
+
+    /// Creates a list in the configurable shared representation.
+    #[must_use]
+    pub fn from_list(metadata: ListMeta, items: impl Into<Arc<[Self]>>) -> Self {
+        Self::from_node(SExprNode::List(SharedListNode {
+            metadata,
+            items: items.into(),
+        }))
     }
 }
 
@@ -429,19 +570,13 @@ impl SExpr {
     /// Creates a spanless atomic expression.
     #[must_use]
     pub fn atom(value: Atom) -> Self {
-        Self(Arc::new(SExprNode::Atom {
-            value,
-            metadata: (),
-        }))
+        Self::from_atom(value, ())
     }
 
     /// Creates a spanless proper-list expression.
     #[must_use]
     pub fn list(items: impl Into<Arc<[Self]>>) -> Self {
-        Self(Arc::new(SExprNode::List {
-            metadata: (),
-            items: items.into(),
-        }))
+        Self::from_list((), items)
     }
 }
 
@@ -449,19 +584,13 @@ impl Expr {
     /// Creates an atomic expression.
     #[must_use]
     pub fn atom(value: Atom, span: Span) -> Self {
-        Self(Arc::new(ExprKind::Atom {
-            value,
-            metadata: span,
-        }))
+        Self::from_atom(value, span)
     }
 
     /// Creates a proper-list expression.
     #[must_use]
     pub fn list(open: Span, items: impl Into<Arc<[Self]>>, close: Span) -> Self {
-        Self(Arc::new(ExprKind::List {
-            metadata: ListSpan { open, close },
-            items: items.into(),
-        }))
+        Self::from_list(ListSpan { open, close }, items)
     }
 
     /// Erases all source spans, preserving atoms and tree shape.
@@ -610,10 +739,11 @@ fn erase_expressions(expressions: &[Expr]) -> Vec<SExpr> {
     while let Some(item) = pending.pop() {
         match item {
             Pending::Visit(expression) => match expression.node() {
-                ExprKind::Atom { value, .. } => {
-                    values.push(SExpr::<(), ()>::atom(value.clone()));
+                ExprKind::Atom(node) => {
+                    values.push(SExpr::<ErasedRepr>::atom(SpannedRepr::atom(node).clone()));
                 }
-                ExprKind::List { items, .. } => {
+                ExprKind::List(node) => {
+                    let items = SpannedRepr::list_items(node);
                     pending.push(Pending::FinishList(items.len()));
                     pending.extend(items.iter().rev().map(Pending::Visit));
                 }
@@ -621,7 +751,7 @@ fn erase_expressions(expressions: &[Expr]) -> Vec<SExpr> {
             Pending::FinishList(child_count) => {
                 let first = values.len() - child_count;
                 let children = values.drain(first..).collect::<Vec<_>>();
-                values.push(SExpr::<(), ()>::list(children));
+                values.push(SExpr::<ErasedRepr>::list(children));
             }
         }
     }
@@ -661,14 +791,13 @@ impl Iterator for Events<'_> {
         match self.pending.pop()? {
             Pending::Close(span) => Some(Event::Close { span }),
             Pending::Expr(expression) => match expression.node() {
-                ExprKind::Atom {
-                    value,
-                    metadata: span,
-                } => Some(Event::Atom {
-                    value: value.clone(),
-                    span: span.clone(),
+                ExprKind::Atom(node) => Some(Event::Atom {
+                    value: SpannedRepr::atom(node).clone(),
+                    span: SpannedRepr::atom_meta(node).clone(),
                 }),
-                ExprKind::List { metadata, items } => {
+                ExprKind::List(node) => {
+                    let metadata = SpannedRepr::list_meta(node);
+                    let items = SpannedRepr::list_items(node);
                     self.pending.push(Pending::Close(metadata.close.clone()));
                     self.pending.extend(items.iter().rev().map(Pending::Expr));
                     Some(Event::Open {

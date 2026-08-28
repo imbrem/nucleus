@@ -5,7 +5,8 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use covalence_data_sexpr::{
-    Atom, Document, Event, Expr, ExprKind, SDocument, SExpr, SExprNode, parse, parse_one,
+    Atom, Document, ErasedRepr, Event, Expr, ExprKind, Repr, SDocument, SExpr, SExprNode,
+    SpannedRepr, parse, parse_one,
 };
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::types::{PyBytes, PyString, PyTuple};
@@ -220,53 +221,65 @@ impl PySExpr {
     #[getter]
     fn kind(&self) -> &'static str {
         match self.expression.node() {
-            ExprKind::Atom { .. } => "atom",
-            ExprKind::List { .. } => "list",
+            ExprKind::Atom(_) => "atom",
+            ExprKind::List(_) => "list",
         }
     }
 
     #[getter]
     fn atom_value(&self) -> Option<PySExprAtom> {
         match self.expression.node() {
-            ExprKind::Atom { value, .. } => Some(PySExprAtom::wrap(value.clone())),
-            ExprKind::List { .. } => None,
+            ExprKind::Atom(node) => Some(PySExprAtom::wrap(SpannedRepr::atom(node).clone())),
+            ExprKind::List(_) => None,
         }
     }
 
     #[getter]
     fn span(&self) -> (u64, u64) {
         match self.expression.node() {
-            ExprKind::Atom { metadata, .. } => (metadata.start, metadata.end),
-            ExprKind::List { metadata, .. } => (metadata.open.start, metadata.close.end),
+            ExprKind::Atom(node) => {
+                let span = SpannedRepr::atom_meta(node);
+                (span.start, span.end)
+            }
+            ExprKind::List(node) => {
+                let span = SpannedRepr::list_meta(node);
+                (span.open.start, span.close.end)
+            }
         }
     }
 
     #[getter]
     fn open_span(&self) -> Option<(u64, u64)> {
         match self.expression.node() {
-            ExprKind::List { metadata, .. } => Some((metadata.open.start, metadata.open.end)),
-            ExprKind::Atom { .. } => None,
+            ExprKind::List(node) => {
+                let span = SpannedRepr::list_meta(node);
+                Some((span.open.start, span.open.end))
+            }
+            ExprKind::Atom(_) => None,
         }
     }
 
     #[getter]
     fn close_span(&self) -> Option<(u64, u64)> {
         match self.expression.node() {
-            ExprKind::List { metadata, .. } => Some((metadata.close.start, metadata.close.end)),
-            ExprKind::Atom { .. } => None,
+            ExprKind::List(node) => {
+                let span = SpannedRepr::list_meta(node);
+                Some((span.close.start, span.close.end))
+            }
+            ExprKind::Atom(_) => None,
         }
     }
 
     #[getter]
     fn items(&self, python: Python<'_>) -> PyResult<Py<PyTuple>> {
         let values = match self.expression.node() {
-            ExprKind::List { items, .. } => items
+            ExprKind::List(node) => SpannedRepr::list_items(node)
                 .iter()
                 .cloned()
                 .map(PySExpr::wrap)
                 .map(|item| Py::new(python, item))
                 .collect::<PyResult<Vec<_>>>()?,
-            ExprKind::Atom { .. } => Vec::new(),
+            ExprKind::Atom(_) => Vec::new(),
         };
         Ok(PyTuple::new(python, values)?.unbind())
     }
@@ -309,12 +322,12 @@ impl PyErasedSExpr {
 impl PyErasedSExpr {
     #[staticmethod]
     fn atom(atom: PyRef<'_, PySExprAtom>) -> Self {
-        Self::wrap(SExpr::<(), ()>::atom(atom.atom.clone()))
+        Self::wrap(SExpr::<ErasedRepr>::atom(atom.atom.clone()))
     }
 
     #[staticmethod]
     fn list(items: Vec<PyRef<'_, Self>>) -> Self {
-        Self::wrap(SExpr::<(), ()>::list(
+        Self::wrap(SExpr::<ErasedRepr>::list(
             items
                 .iter()
                 .map(|item| item.expression.clone())
@@ -325,29 +338,29 @@ impl PyErasedSExpr {
     #[getter]
     fn kind(&self) -> &'static str {
         match self.expression.node() {
-            SExprNode::Atom { .. } => "atom",
-            SExprNode::List { .. } => "list",
+            SExprNode::Atom(_) => "atom",
+            SExprNode::List(_) => "list",
         }
     }
 
     #[getter]
     fn atom_value(&self) -> Option<PySExprAtom> {
         match self.expression.node() {
-            SExprNode::Atom { value, .. } => Some(PySExprAtom::wrap(value.clone())),
-            SExprNode::List { .. } => None,
+            SExprNode::Atom(node) => Some(PySExprAtom::wrap(ErasedRepr::atom(node).clone())),
+            SExprNode::List(_) => None,
         }
     }
 
     #[getter]
     fn items(&self, python: Python<'_>) -> PyResult<Py<PyTuple>> {
         let values = match self.expression.node() {
-            SExprNode::List { items, .. } => items
+            SExprNode::List(node) => ErasedRepr::list_items(node)
                 .iter()
                 .cloned()
                 .map(Self::wrap)
                 .map(|item| Py::new(python, item))
                 .collect::<PyResult<Vec<_>>>()?,
-            SExprNode::Atom { .. } => Vec::new(),
+            SExprNode::Atom(_) => Vec::new(),
         };
         Ok(PyTuple::new(python, values)?.unbind())
     }
