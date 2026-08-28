@@ -9,7 +9,8 @@ use axum::{
     routing::get,
 };
 use bytes::Bytes;
-use covalence_data_cas::{AsyncCas, get_exact_fact};
+use covalence_data_cas::{AsyncCas, ByteRange, CasService, get_exact_fact};
+use covalence_data_cas_http::{HttpCas, serve};
 use covalence_data_cas_s3::{S3Cas, S3CasConfig, S3CasError};
 use covalence_lib_hash::O256;
 use futures::stream;
@@ -212,4 +213,31 @@ async fn oversized_insert_is_rejected_without_uploading() {
         })
     ));
     assert!(objects.lock().await.is_empty());
+}
+
+#[test]
+fn s3_service_can_be_exposed_through_the_generic_http_adapter() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let objects = Objects::default();
+    let cas = Arc::new(runtime.block_on(fixture(Arc::clone(&objects))));
+    let serving = serve(Arc::clone(&cas), "127.0.0.1:0".parse().unwrap()).unwrap();
+    let client = HttpCas::new(&serving.base_url()).unwrap();
+    let bytes = Bytes::from_static(b"one S3 service, multiple transports");
+
+    let stored = runtime.block_on(client.upload(bytes.clone())).unwrap();
+    assert_eq!(stored.address, O256::from_bytes(&bytes));
+    assert_eq!(
+        runtime.block_on(cas.get_bytes(stored.address)).unwrap(),
+        Some(bytes)
+    );
+
+    let ranges = runtime
+        .block_on(client.get_ranges(
+            stored.address,
+            vec![ByteRange::Bounded(0..3), ByteRange::Suffix(10)],
+        ))
+        .unwrap()
+        .unwrap();
+    assert_eq!(ranges.parts[0].bytes, Bytes::from_static(b"one"));
+    assert_eq!(ranges.parts[1].bytes, Bytes::from_static(b"transports"));
 }

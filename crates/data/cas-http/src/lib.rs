@@ -4,7 +4,7 @@ mod client;
 mod server;
 
 pub use client::{HttpCas, HttpCasError};
-pub use server::{Serving, serve};
+pub use server::{Serving, router, serve};
 
 /// Compatibility path prefix for BLAKE3-addressed objects.
 pub const OBJECT_PREFIX: &str = "/cas/";
@@ -17,6 +17,9 @@ pub const UPLOAD_PATH: &str = "/cas/upload";
 
 /// Largest response this server will produce, whole or ranged.
 pub const MAX_RESPONSE_BYTES: u64 = 8 << 20;
+
+/// Largest number of byte ranges accepted in one HTTP request.
+pub const MAX_RANGES: usize = 256;
 
 /// Largest request body this transport accepts for admission.
 pub const MAX_UPLOAD_BYTES: usize = 64 << 20;

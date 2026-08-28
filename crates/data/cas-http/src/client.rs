@@ -10,7 +10,9 @@ use covalence_logic_cas::Bytes;
 use std::collections::TryReserveError;
 
 use crate::server::{PrefixChoicesDto, StoredObjectDto};
-use crate::{BLAKE3_PREFIX, MAX_RESPONSE_BYTES, MAX_UPLOAD_BYTES, UPLOAD_PATH};
+use crate::{BLAKE3_PREFIX, MAX_RANGES, MAX_RESPONSE_BYTES, MAX_UPLOAD_BYTES, UPLOAD_PATH};
+
+const MULTIPART_OVERHEAD_PER_RANGE: u64 = 1024;
 
 /// A bounded, read-only HTTP CAS client.
 ///
@@ -98,6 +100,28 @@ pub enum HttpCasError {
     PrefixStatus {
         /// Unexpected status.
         status: reqwest::StatusCode,
+    },
+    /// A batch contained more ranges than the transport permits.
+    #[snafu(display("HTTP CAS range batch contains {count} ranges, limit is {limit}"))]
+    TooManyRanges {
+        /// Requested range count.
+        count: usize,
+        /// Transport limit.
+        limit: usize,
+    },
+    /// A range could not be represented as an HTTP byte range.
+    #[snafu(display("invalid HTTP CAS range request: {message}"))]
+    InvalidRangeRequest {
+        /// Reason the range was rejected.
+        message: String,
+    },
+    /// A batched range response was malformed or inconsistent.
+    #[snafu(display("invalid HTTP CAS range response for {address}: {message}"))]
+    InvalidRangeResponse {
+        /// Requested content address.
+        address: O256,
+        /// Reason the response was rejected.
+        message: String,
     },
 }
 
@@ -316,43 +340,66 @@ impl HttpCas {
         Ok(Some(len))
     }
 
-    async fn get_one_range(
+    async fn get_range_batch(
         &self,
         address: O256,
-        range: std::ops::Range<u64>,
-    ) -> Result<Bytes, HttpCasError> {
-        if range.end - range.start > self.max_object_bytes {
-            return Err(HttpCasError::TooLarge {
-                address,
-                limit: self.max_object_bytes,
+        ranges: &[ByteRange],
+    ) -> Result<Option<ObjectRanges>, HttpCasError> {
+        if ranges.len() > MAX_RANGES {
+            return Err(HttpCasError::TooManyRanges {
+                count: ranges.len(),
+                limit: MAX_RANGES,
             });
         }
+        let range_header = range_header(ranges)?;
         let response = self
             .client
             .get(self.object_url(address))
-            .header(
-                reqwest::header::RANGE,
-                format!("bytes={}-{}", range.start, range.end - 1),
-            )
+            .header(reqwest::header::RANGE, range_header)
             .send()
             .await
             .map_err(|source| HttpCasError::Request { address, source })?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         if response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
             return Err(HttpCasError::Status {
                 address,
                 status: response.status(),
             });
         }
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|source| HttpCasError::Request { address, source })?;
-        if bytes.len() as u64 != range.end - range.start {
-            return Err(HttpCasError::InvalidReceipt {
-                message: format!("range response has {} bytes", bytes.len()),
-            });
-        }
-        Ok(bytes)
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_owned();
+        let content_range = response
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let overhead = (ranges.len() as u64)
+            .saturating_mul(MULTIPART_OVERHEAD_PER_RANGE)
+            .saturating_add(1024);
+        let wire_limit = self.max_object_bytes.saturating_add(overhead);
+        let body = read_bounded(response, address, wire_limit).await?;
+        let parsed = if let Some(boundary) = multipart_boundary(&content_type) {
+            parse_multipart(&body, &boundary, address)?
+        } else {
+            let content_range =
+                content_range.ok_or_else(|| HttpCasError::InvalidRangeResponse {
+                    address,
+                    message: "single-part response omitted Content-Range".to_owned(),
+                })?;
+            let (range, len) = parse_content_range(&content_range, address)?;
+            vec![ParsedRange {
+                range,
+                len,
+                bytes: body,
+            }]
+        };
+        validate_range_batch(ranges, parsed, address, self.max_object_bytes).map(Some)
     }
 }
 
@@ -419,34 +466,21 @@ impl CasService for HttpCas {
         ranges: Vec<ByteRange>,
     ) -> CasServiceFuture<'_, Option<ObjectRanges>> {
         Box::pin(async move {
-            let Some(len) = self
-                .object_len(address)
-                .await
-                .map_err(CasServiceError::provider)?
-            else {
-                return Ok(None);
-            };
-            let mut parts = Vec::with_capacity(ranges.len());
-            for requested in ranges {
-                let range = match requested {
-                    ByteRange::Bounded(range) => range,
-                    ByteRange::From(start) => start..len,
-                    ByteRange::Suffix(count) => len.saturating_sub(count)..len,
-                };
-                if range.start >= range.end || range.end > len {
-                    return Err(CasServiceError::InvalidRange {
-                        start: range.start,
-                        end: range.end,
-                        len,
-                    });
-                }
-                let bytes = self
-                    .get_one_range(address, range.clone())
+            if ranges.is_empty() {
+                return self
+                    .object_len(address)
                     .await
-                    .map_err(CasServiceError::provider)?;
-                parts.push(RangePart { range, bytes });
+                    .map(|len| {
+                        len.map(|len| ObjectRanges {
+                            len,
+                            parts: Vec::new(),
+                        })
+                    })
+                    .map_err(CasServiceError::provider);
             }
-            Ok(Some(ObjectRanges { len, parts }))
+            self.get_range_batch(address, &ranges)
+                .await
+                .map_err(CasServiceError::provider)
         })
     }
 
@@ -516,6 +550,247 @@ impl CasService for HttpCas {
             }
         })
     }
+}
+
+#[derive(Debug)]
+struct ParsedRange {
+    range: std::ops::Range<u64>,
+    len: u64,
+    bytes: Bytes,
+}
+
+fn range_header(ranges: &[ByteRange]) -> Result<String, HttpCasError> {
+    let specs = ranges
+        .iter()
+        .map(|range| match range {
+            ByteRange::Bounded(range) if range.start < range.end => {
+                Ok(format!("{}-{}", range.start, range.end - 1))
+            }
+            ByteRange::From(start) => Ok(format!("{start}-")),
+            ByteRange::Suffix(count) if *count > 0 => Ok(format!("-{count}")),
+            ByteRange::Bounded(_) | ByteRange::Suffix(_) => {
+                Err(HttpCasError::InvalidRangeRequest {
+                    message: "byte ranges must be non-empty".to_owned(),
+                })
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(format!("bytes={}", specs.join(",")))
+}
+
+async fn read_bounded(
+    mut response: reqwest::Response,
+    address: O256,
+    limit: u64,
+) -> Result<Bytes, HttpCasError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit)
+    {
+        return Err(HttpCasError::TooLarge { address, limit });
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|source| HttpCasError::Request { address, source })?
+    {
+        if (bytes.len() as u64).saturating_add(chunk.len() as u64) > limit {
+            return Err(HttpCasError::TooLarge { address, limit });
+        }
+        reserve_response(&mut bytes, chunk.len(), address)?;
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(Bytes::from(bytes))
+}
+
+fn multipart_boundary(content_type: &str) -> Option<Vec<u8>> {
+    let mut pieces = content_type.split(';');
+    if !pieces
+        .next()?
+        .trim()
+        .eq_ignore_ascii_case("multipart/byteranges")
+    {
+        return None;
+    }
+    let value = pieces.find_map(|piece| {
+        let (name, value) = piece.trim().split_once('=')?;
+        name.trim()
+            .eq_ignore_ascii_case("boundary")
+            .then(|| value.trim())
+    })?;
+    let value = value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(value);
+    (!value.is_empty() && value.len() <= 70 && value.bytes().all(|byte| byte.is_ascii_graphic()))
+        .then(|| value.as_bytes().to_vec())
+}
+
+fn parse_multipart(
+    body: &Bytes,
+    boundary: &[u8],
+    address: O256,
+) -> Result<Vec<ParsedRange>, HttpCasError> {
+    let mut marker = Vec::with_capacity(boundary.len() + 2);
+    marker.extend_from_slice(b"--");
+    marker.extend_from_slice(boundary);
+    let mut cursor = 0;
+    let mut parsed = Vec::new();
+    loop {
+        if !body[cursor..].starts_with(&marker) {
+            return Err(range_response_error(
+                address,
+                "multipart boundary is missing",
+            ));
+        }
+        cursor += marker.len();
+        if body[cursor..].starts_with(b"--\r\n") {
+            cursor += 4;
+            if cursor != body.len() {
+                return Err(range_response_error(
+                    address,
+                    "bytes follow the final multipart boundary",
+                ));
+            }
+            return Ok(parsed);
+        }
+        if !body[cursor..].starts_with(b"\r\n") {
+            return Err(range_response_error(address, "invalid multipart boundary"));
+        }
+        cursor += 2;
+        let header_len = find_bytes(&body[cursor..], b"\r\n\r\n").ok_or_else(|| {
+            range_response_error(address, "multipart part has no header terminator")
+        })?;
+        let headers = std::str::from_utf8(&body[cursor..cursor + header_len])
+            .map_err(|_| range_response_error(address, "multipart headers are not ASCII"))?;
+        let content_range = headers
+            .split("\r\n")
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case("content-range")
+                    .then(|| value.trim())
+            })
+            .ok_or_else(|| range_response_error(address, "multipart part omitted Content-Range"))?;
+        let (range, len) = parse_content_range(content_range, address)?;
+        cursor += header_len + 4;
+        let mut delimiter = Vec::with_capacity(marker.len() + 2);
+        delimiter.extend_from_slice(b"\r\n");
+        delimiter.extend_from_slice(&marker);
+        let data_len = find_bytes(&body[cursor..], &delimiter)
+            .ok_or_else(|| range_response_error(address, "multipart part is not terminated"))?;
+        parsed.push(ParsedRange {
+            range,
+            len,
+            bytes: body.slice(cursor..cursor + data_len),
+        });
+        cursor += data_len + 2;
+    }
+}
+
+fn parse_content_range(
+    value: &str,
+    address: O256,
+) -> Result<(std::ops::Range<u64>, u64), HttpCasError> {
+    let value = value
+        .strip_prefix("bytes ")
+        .ok_or_else(|| range_response_error(address, "invalid Content-Range unit"))?;
+    let (range, len) = value
+        .split_once('/')
+        .ok_or_else(|| range_response_error(address, "invalid Content-Range shape"))?;
+    let (start, end) = range
+        .split_once('-')
+        .ok_or_else(|| range_response_error(address, "invalid Content-Range bounds"))?;
+    let start = start
+        .parse::<u64>()
+        .map_err(|_| range_response_error(address, "invalid Content-Range start"))?;
+    let end = end
+        .parse::<u64>()
+        .map_err(|_| range_response_error(address, "invalid Content-Range end"))?;
+    let len = len
+        .parse::<u64>()
+        .map_err(|_| range_response_error(address, "invalid Content-Range length"))?;
+    let end = end
+        .checked_add(1)
+        .ok_or_else(|| range_response_error(address, "Content-Range end overflows"))?;
+    if start >= end || end > len {
+        return Err(range_response_error(
+            address,
+            "Content-Range lies outside the object",
+        ));
+    }
+    Ok((start..end, len))
+}
+
+fn validate_range_batch(
+    requested: &[ByteRange],
+    parsed: Vec<ParsedRange>,
+    address: O256,
+    max_bytes: u64,
+) -> Result<ObjectRanges, HttpCasError> {
+    if parsed.len() != requested.len() {
+        return Err(range_response_error(
+            address,
+            "response part count does not match the request",
+        ));
+    }
+    let len = parsed
+        .first()
+        .map(|part| part.len)
+        .ok_or_else(|| range_response_error(address, "range response contains no parts"))?;
+    let mut total = 0u64;
+    let mut parts = Vec::with_capacity(parsed.len());
+    for (requested, parsed) in requested.iter().zip(parsed) {
+        if parsed.len != len {
+            return Err(range_response_error(
+                address,
+                "range parts report different object lengths",
+            ));
+        }
+        let expected = match requested {
+            ByteRange::Bounded(range) => range.clone(),
+            ByteRange::From(start) => *start..len,
+            ByteRange::Suffix(count) => len.saturating_sub(*count)..len,
+        };
+        if expected.start >= expected.end || expected.end > len || parsed.range != expected {
+            return Err(range_response_error(
+                address,
+                "response part does not match the requested range",
+            ));
+        }
+        if parsed.bytes.len() as u64 != parsed.range.end - parsed.range.start {
+            return Err(range_response_error(
+                address,
+                "response part length does not match Content-Range",
+            ));
+        }
+        total = total.saturating_add(parsed.bytes.len() as u64);
+        if total > max_bytes {
+            return Err(HttpCasError::TooLarge {
+                address,
+                limit: max_bytes,
+            });
+        }
+        parts.push(RangePart {
+            range: parsed.range,
+            bytes: parsed.bytes,
+        });
+    }
+    Ok(ObjectRanges { len, parts })
+}
+
+fn range_response_error(address: O256, message: &str) -> HttpCasError {
+    HttpCasError::InvalidRangeResponse {
+        address,
+        message: message.to_owned(),
+    }
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn reserve_response(
