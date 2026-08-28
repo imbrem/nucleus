@@ -1,12 +1,16 @@
 //! Async HTTP client for whole-object CAS reads.
 
-use covalence_data_cas::{AsyncCas, AsyncCasError, CasFuture};
+use covalence_data_cas::{
+    AsyncCas, AsyncCasError, ByteRange, CasFuture, CasService, CasServiceError, CasServiceFuture,
+    CasUpload, ObjectRanges, PrefixHints, PrefixResolution, RangePart, StoredObject,
+};
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_logic_cas::Bytes;
 use std::collections::TryReserveError;
 
-use crate::{MAX_RESPONSE_BYTES, OBJECT_PREFIX};
+use crate::server::{PrefixChoicesDto, StoredObjectDto};
+use crate::{BLAKE3_PREFIX, MAX_RESPONSE_BYTES, MAX_UPLOAD_BYTES, UPLOAD_PATH};
 
 /// A bounded, read-only HTTP CAS client.
 ///
@@ -18,6 +22,7 @@ pub struct HttpCas {
     client: reqwest::Client,
     base: reqwest::Url,
     max_object_bytes: u64,
+    max_upload_bytes: u64,
 }
 
 /// Failure to configure or query an [`HttpCas`].
@@ -70,6 +75,30 @@ pub enum HttpCasError {
         /// Allocation failure.
         source: TryReserveError,
     },
+    /// An upload request failed before a complete response was available.
+    #[snafu(display("could not upload HTTP CAS object: {source}"))]
+    UploadRequest {
+        /// Transport failure.
+        source: reqwest::Error,
+    },
+    /// An upload returned an unexpected status.
+    #[snafu(display("HTTP CAS upload returned status {status}"))]
+    UploadStatus {
+        /// Unexpected status.
+        status: reqwest::StatusCode,
+    },
+    /// An upload receipt was malformed or inconsistent.
+    #[snafu(display("invalid HTTP CAS upload receipt: {message}"))]
+    InvalidReceipt {
+        /// Reason the receipt was rejected.
+        message: String,
+    },
+    /// A prefix lookup returned an unexpected status.
+    #[snafu(display("HTTP CAS prefix lookup returned status {status}"))]
+    PrefixStatus {
+        /// Unexpected status.
+        status: reqwest::StatusCode,
+    },
 }
 
 impl HttpCas {
@@ -108,6 +137,7 @@ impl HttpCas {
             client,
             base,
             max_object_bytes: MAX_RESPONSE_BYTES,
+            max_upload_bytes: MAX_UPLOAD_BYTES as u64,
         })
     }
 
@@ -115,6 +145,13 @@ impl HttpCas {
     #[must_use]
     pub const fn with_max_object_bytes(mut self, max_object_bytes: u64) -> Self {
         self.max_object_bytes = max_object_bytes;
+        self
+    }
+
+    /// Sets the largest object this client will buffer for upload.
+    #[must_use]
+    pub const fn with_max_upload_bytes(mut self, max_upload_bytes: u64) -> Self {
+        self.max_upload_bytes = max_upload_bytes;
         self
     }
 
@@ -186,10 +223,298 @@ impl HttpCas {
 
     fn object_url(&self, address: O256) -> reqwest::Url {
         let mut url = self.base.clone();
-        url.set_path(&format!("{OBJECT_PREFIX}{}", address.hex()));
+        url.set_path(&format!("{BLAKE3_PREFIX}{}", address.hex()));
         url.set_query(None);
         url.set_fragment(None);
         url
+    }
+}
+
+impl HttpCas {
+    async fn upload_bytes(
+        &self,
+        expected: Option<O256>,
+        bytes: Bytes,
+    ) -> Result<StoredObject, HttpCasError> {
+        let mut url = self.base.clone();
+        let request = if let Some(address) = expected {
+            url.set_path(&format!("{BLAKE3_PREFIX}{}", address.hex()));
+            self.client.put(url)
+        } else {
+            url.set_path(UPLOAD_PATH);
+            self.client.put(url)
+        };
+        let response = request
+            .body(bytes.clone())
+            .send()
+            .await
+            .map_err(|source| HttpCasError::UploadRequest { source })?;
+        if !response.status().is_success() {
+            return Err(HttpCasError::UploadStatus {
+                status: response.status(),
+            });
+        }
+        let receipt = response
+            .json::<StoredObjectDto>()
+            .await
+            .map_err(|source| HttpCasError::UploadRequest { source })?;
+        if receipt.algorithm != "blake3" {
+            return Err(HttpCasError::InvalidReceipt {
+                message: format!("unsupported algorithm {:?}", receipt.algorithm),
+            });
+        }
+        let address =
+            receipt
+                .hash
+                .parse::<O256>()
+                .map_err(|source| HttpCasError::InvalidReceipt {
+                    message: source.to_string(),
+                })?;
+        let computed = O256::from_bytes(&bytes);
+        if address != computed || expected.is_some_and(|expected| expected != address) {
+            return Err(HttpCasError::InvalidReceipt {
+                message: format!("receipt address {address} does not match uploaded bytes"),
+            });
+        }
+        if receipt.bytes != bytes.len() as u64 {
+            return Err(HttpCasError::InvalidReceipt {
+                message: format!(
+                    "receipt length {} does not match {} uploaded bytes",
+                    receipt.bytes,
+                    bytes.len()
+                ),
+            });
+        }
+        Ok(StoredObject {
+            address,
+            len: receipt.bytes,
+            index: receipt.index,
+        })
+    }
+
+    async fn object_len(&self, address: O256) -> Result<Option<u64>, HttpCasError> {
+        let response = self
+            .client
+            .head(self.object_url(address))
+            .send()
+            .await
+            .map_err(|source| HttpCasError::Request { address, source })?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(HttpCasError::Status {
+                address,
+                status: response.status(),
+            });
+        }
+        let len = response
+            .content_length()
+            .ok_or_else(|| HttpCasError::InvalidReceipt {
+                message: "HEAD response omitted Content-Length".to_owned(),
+            })?;
+        Ok(Some(len))
+    }
+
+    async fn get_one_range(
+        &self,
+        address: O256,
+        range: std::ops::Range<u64>,
+    ) -> Result<Bytes, HttpCasError> {
+        if range.end - range.start > self.max_object_bytes {
+            return Err(HttpCasError::TooLarge {
+                address,
+                limit: self.max_object_bytes,
+            });
+        }
+        let response = self
+            .client
+            .get(self.object_url(address))
+            .header(
+                reqwest::header::RANGE,
+                format!("bytes={}-{}", range.start, range.end - 1),
+            )
+            .send()
+            .await
+            .map_err(|source| HttpCasError::Request { address, source })?;
+        if response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Err(HttpCasError::Status {
+                address,
+                status: response.status(),
+            });
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|source| HttpCasError::Request { address, source })?;
+        if bytes.len() as u64 != range.end - range.start {
+            return Err(HttpCasError::InvalidReceipt {
+                message: format!("range response has {} bytes", bytes.len()),
+            });
+        }
+        Ok(bytes)
+    }
+}
+
+struct HttpUpload<'a> {
+    cas: &'a HttpCas,
+    expected: Option<O256>,
+    bytes: Option<Vec<u8>>,
+}
+
+impl CasUpload for HttpUpload<'_> {
+    fn write(&mut self, chunk: Bytes) -> CasServiceFuture<'_, ()> {
+        Box::pin(async move {
+            let Some(bytes) = self.bytes.as_mut() else {
+                return Err(CasServiceError::UploadFinished);
+            };
+            let new_len = (bytes.len() as u64).saturating_add(chunk.len() as u64);
+            if new_len > self.cas.max_upload_bytes {
+                return Err(CasServiceError::ObjectTooLarge {
+                    len: new_len,
+                    limit: self.cas.max_upload_bytes,
+                });
+            }
+            bytes.extend_from_slice(&chunk);
+            Ok(())
+        })
+    }
+
+    fn finish(&mut self) -> CasServiceFuture<'_, StoredObject> {
+        Box::pin(async move {
+            let bytes = self.bytes.take().ok_or(CasServiceError::UploadFinished)?;
+            self.cas
+                .upload_bytes(self.expected, Bytes::from(bytes))
+                .await
+                .map_err(CasServiceError::provider)
+        })
+    }
+}
+
+impl CasService for HttpCas {
+    fn begin_upload(
+        &self,
+        expected: Option<O256>,
+    ) -> CasServiceFuture<'_, Box<dyn CasUpload + '_>> {
+        Box::pin(async move {
+            Ok(Box::new(HttpUpload {
+                cas: self,
+                expected,
+                bytes: Some(Vec::new()),
+            }) as Box<dyn CasUpload>)
+        })
+    }
+
+    fn get(&self, address: O256) -> CasServiceFuture<'_, Option<Bytes>> {
+        Box::pin(async move {
+            self.get_bytes(address)
+                .await
+                .map_err(CasServiceError::provider)
+        })
+    }
+
+    fn get_ranges(
+        &self,
+        address: O256,
+        ranges: Vec<ByteRange>,
+    ) -> CasServiceFuture<'_, Option<ObjectRanges>> {
+        Box::pin(async move {
+            let Some(len) = self
+                .object_len(address)
+                .await
+                .map_err(CasServiceError::provider)?
+            else {
+                return Ok(None);
+            };
+            let mut parts = Vec::with_capacity(ranges.len());
+            for requested in ranges {
+                let range = match requested {
+                    ByteRange::Bounded(range) => range,
+                    ByteRange::From(start) => start..len,
+                    ByteRange::Suffix(count) => len.saturating_sub(count)..len,
+                };
+                if range.start >= range.end || range.end > len {
+                    return Err(CasServiceError::InvalidRange {
+                        start: range.start,
+                        end: range.end,
+                        len,
+                    });
+                }
+                let bytes = self
+                    .get_one_range(address, range.clone())
+                    .await
+                    .map_err(CasServiceError::provider)?;
+                parts.push(RangePart { range, bytes });
+            }
+            Ok(Some(ObjectRanges { len, parts }))
+        })
+    }
+
+    fn resolve_blake3_prefix(&self, prefix: String) -> CasServiceFuture<'_, PrefixResolution> {
+        Box::pin(async move {
+            let mut url = self.base.clone();
+            url.set_path(&format!("{BLAKE3_PREFIX}{prefix}"));
+            let response = self
+                .client
+                .get(url)
+                .send()
+                .await
+                .map_err(|source| HttpCasError::UploadRequest { source })
+                .map_err(CasServiceError::provider)?;
+            match response.status() {
+                reqwest::StatusCode::TEMPORARY_REDIRECT => {
+                    let address = response
+                        .headers()
+                        .get(reqwest::header::LOCATION)
+                        .and_then(|location| location.to_str().ok())
+                        .and_then(|location| location.rsplit('/').next())
+                        .and_then(|address| address.parse::<O256>().ok())
+                        .ok_or_else(|| {
+                            CasServiceError::provider(HttpCasError::InvalidReceipt {
+                                message: "prefix redirect omitted a canonical BLAKE3 location"
+                                    .to_owned(),
+                            })
+                        })?;
+                    Ok(PrefixResolution::Unique(address))
+                }
+                reqwest::StatusCode::NOT_FOUND => Ok(PrefixResolution::Missing),
+                reqwest::StatusCode::MULTIPLE_CHOICES => {
+                    let choices = response
+                        .json::<PrefixChoicesDto>()
+                        .await
+                        .map_err(|source| {
+                            CasServiceError::provider(HttpCasError::UploadRequest { source })
+                        })?;
+                    if choices.algorithm != "blake3" || choices.prefix != prefix {
+                        return Err(CasServiceError::provider(HttpCasError::InvalidReceipt {
+                            message: "prefix choices do not describe the request".to_owned(),
+                        }));
+                    }
+                    if choices.hints.as_ref().is_some_and(|hints| {
+                        hints.prefixes.iter().any(|candidate| {
+                            candidate.len() > 64
+                                || !candidate.starts_with(&prefix)
+                                || !candidate.bytes().all(|byte| byte.is_ascii_hexdigit())
+                        })
+                    }) {
+                        return Err(CasServiceError::provider(HttpCasError::InvalidReceipt {
+                            message: "prefix choices contain an invalid refinement".to_owned(),
+                        }));
+                    }
+                    Ok(PrefixResolution::Ambiguous {
+                        hints: choices.hints.map(|hints| PrefixHints {
+                            prefixes: hints.prefixes,
+                            covers_all_matches: hints.covers_all_matches,
+                            all_prefixes_match: hints.all_prefixes_match,
+                        }),
+                    })
+                }
+                reqwest::StatusCode::NOT_IMPLEMENTED => Ok(PrefixResolution::Unsupported),
+                status => Err(CasServiceError::provider(HttpCasError::PrefixStatus {
+                    status,
+                })),
+            }
+        })
     }
 }
 

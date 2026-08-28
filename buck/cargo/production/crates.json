@@ -1093,6 +1093,13 @@
     },
     {
       "source": "workspace#covalence-data-cas-http@0.0.0",
+      "target": "workspace#covalence-lib-serde@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-http@0.0.0",
       "target": "workspace#covalence-logic-cas@0.0.0",
       "kinds": [
         "normal"
