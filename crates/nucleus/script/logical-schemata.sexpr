@@ -1,6 +1,6 @@
 ; Untrusted source for the first named init-library schemata.
 ;
-; This file is compiled by covalence-logic-hol-script.  It is source code and
+; This file is compiled by covalence-nucleus-script.  It is source code and
 ; external naming metadata, not part of the trusted kernel or its wire format.
 
 (define IsCoprod ('a 'b 't)

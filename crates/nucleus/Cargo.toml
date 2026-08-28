@@ -4,8 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Portable trusted core for Nucleus"
+description = "Portable Nucleus facade with an explicit trusted-core assembly"
 publish = false
+
+[features]
+buck-test-fixtures = []
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -20,8 +23,9 @@ covalence-lib-rand = { path = "../lib/rand" }
 covalence-lib-sqlite = { path = "../lib/sqlite" }
 covalence-logic-cas = { path = "../logic/cas" }
 covalence-logic-hol = { path = "../logic/hol" }
-covalence-logic-hol-derived = { path = "../logic/hol-derived" }
 covalence-neutron = { path = "../neutron" }
+covalence-nucleus-core = { path = "core" }
+covalence-nucleus-script = { path = "script" }
 futures = "0.3"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -40,6 +44,7 @@ package = "nucleus:smoke"
 
 [package.metadata.glu]
 buck-manifest-mapped-srcs = { "nucleus//:proof_wit" = "wit/proof/proof.wit" }
+buck-test-features = ["buck-test-fixtures"]
 
 [lints]
 workspace = true

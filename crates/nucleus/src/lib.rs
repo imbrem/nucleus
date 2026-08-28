@@ -1,10 +1,20 @@
-//! Portable trusted core for Nucleus.
+//! Portable Nucleus facade with an explicit trusted-core assembly.
 
-/// The Ethane HOL trusted computing base.
-pub use covalence_logic_hol as hol;
+/// Auditable assembly of the checked Nucleus authority surface.
+pub use covalence_nucleus_core as core;
 
-/// LCF content-addressed facts used by Nucleus.
-pub use covalence_logic_cas as cas;
+/// Untrusted S-expression parsing, elaboration, metadata, and init tooling.
+pub use covalence_nucleus_script as script;
+
+/// Compatibility name for the formerly HOL-specific frontend module.
+pub use covalence_nucleus_script as hol_script;
+
+// Preserve the existing facade while making `core` the single assembly site.
+pub use core::{
+    ChosenModel, ExistsError, Infinity, InfinityError, InfinityExt, ModelError, ModelExt,
+    NaturalError, NaturalExt, Naturals, OpenedExists, Substitution, Subtype, SubtypeError,
+    SubtypeExt, cas, hol, open_exists, substitute,
+};
 
 /// The first in-memory CAS utility exposed by the Nucleus facade.
 pub use covalence_data_cas::IndexCas;
@@ -15,12 +25,6 @@ mod proof;
 #[cfg(not(target_arch = "wasm32"))]
 pub use proof::{
     ProofError, load_standard_proof, load_standard_proof_async, load_standard_proof_with_cas_async,
-};
-
-pub use covalence_logic_hol_derived::{
-    ChosenModel, ExistsError, Infinity, InfinityError, InfinityExt, ModelError, ModelExt,
-    NaturalError, NaturalExt, Naturals, OpenedExists, Substitution, Subtype, SubtypeError,
-    SubtypeExt, open_exists, substitute,
 };
 
 mod connection;

@@ -7,8 +7,14 @@ from covalence._covalence import (
     ErasedSExpr,
     Event,
     SExpr,
+)
+from covalence._covalence import (
     sexpr_parse as parse,
+)
+from covalence._covalence import (
     sexpr_parse_events as parse_events,
+)
+from covalence._covalence import (
     sexpr_parse_one as parse_one,
 )
 

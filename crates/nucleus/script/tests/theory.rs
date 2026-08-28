@@ -6,7 +6,7 @@ use covalence_logic_hol_derived::{
     CoproductExt, NaturalArithmeticExt, NaturalExt, NaturalRecExt, NaturalRecSchemas,
     join_alpha_equivalent, join_same_syntax,
 };
-use covalence_logic_hol_script::{
+use covalence_nucleus_script::{
     INIT_SOURCE, LogicEncoding, TheoryError, TheoryOptions, compile_init, compile_init_library,
     compile_init_slice, compile_theory, compile_theory_with_init,
 };

@@ -1,0 +1,16 @@
+[package]
+name = "covalence-nucleus-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Auditable assembly of Nucleus checked authority"
+publish = false
+
+[dependencies]
+covalence-logic-cas = { path = "../../logic/cas" }
+covalence-logic-hol = { path = "../../logic/hol" }
+covalence-logic-hol-derived = { path = "../../logic/hol-derived" }
+
+[lints]
+workspace = true
