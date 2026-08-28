@@ -18,7 +18,8 @@ use futures::StreamExt;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::{
-    MAX_RESPONSE_BYTES, MAX_UPLOAD_BYTES, MIN_HASH_PREFIX_HEX, OBJECT_PREFIX, UPLOAD_PATH,
+    MAX_RANGES, MAX_RESPONSE_BYTES, MAX_UPLOAD_BYTES, MIN_HASH_PREFIX_HEX, OBJECT_PREFIX,
+    UPLOAD_PATH,
 };
 
 /// A running service.
@@ -85,7 +86,12 @@ where
     })
 }
 
-fn router<S>(service: Arc<S>) -> Router
+/// Builds the HTTP representation of a transport-neutral CAS service.
+///
+/// The returned router does not bind a socket or select HTTP, TLS, or QUIC
+/// listener policy. CAS-only servers and larger applications can mount the
+/// same router under their own endpoint runtime.
+pub fn router<S>(service: Arc<S>) -> Router
 where
     S: CasService + ?Sized + 'static,
 {
@@ -373,6 +379,13 @@ where
             "expected a byte Range header".to_owned(),
         );
     };
+    if range.len() > MAX_RANGES {
+        return api_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "too_many_ranges",
+            format!("range requests are limited to {MAX_RANGES} parts"),
+        );
+    }
     match service.get_ranges(address, range).await {
         Ok(Some(object)) if object.parts.is_empty() => unsatisfiable(object.len),
         Ok(Some(object)) if object.parts.len() == 1 => single_range(object, &canonical, legacy),

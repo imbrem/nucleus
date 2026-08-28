@@ -979,6 +979,7 @@ dependencies = [
  "axum",
  "bytes",
  "covalence-data-cas",
+ "covalence-data-cas-http",
  "covalence-lib-error",
  "covalence-lib-hash",
  "covalence-lib-s3",

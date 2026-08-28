@@ -10,7 +10,10 @@
 //! response before it can introduce a checked whole-object CAS fact.
 
 use bytes::Bytes;
-use covalence_data_cas::{AsyncCas, AsyncCasError, CasFuture};
+use covalence_data_cas::{
+    AsyncCas, AsyncCasError, ByteRange, CasFuture, CasService, CasServiceError, CasServiceFuture,
+    CasUpload, ObjectRanges, RangePart, StoredObject,
+};
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_lib_s3::{S3Client, S3Config, S3Error};
@@ -203,6 +206,116 @@ impl AsyncCas for S3Cas {
             S3Cas::get_bytes(self, address)
                 .await
                 .map_err(AsyncCasError::provider)
+        })
+    }
+}
+
+struct S3Upload<'a> {
+    cas: &'a S3Cas,
+    expected: Option<O256>,
+    bytes: Option<Vec<u8>>,
+}
+
+impl CasUpload for S3Upload<'_> {
+    fn write(&mut self, chunk: Bytes) -> CasServiceFuture<'_, ()> {
+        Box::pin(async move {
+            let Some(bytes) = self.bytes.as_mut() else {
+                return Err(CasServiceError::UploadFinished);
+            };
+            let new_len = bytes.len().saturating_add(chunk.len()) as u64;
+            if new_len > self.cas.max_object_bytes {
+                return Err(CasServiceError::ObjectTooLarge {
+                    len: new_len,
+                    limit: self.cas.max_object_bytes,
+                });
+            }
+            bytes.extend_from_slice(&chunk);
+            Ok(())
+        })
+    }
+
+    fn finish(&mut self) -> CasServiceFuture<'_, StoredObject> {
+        Box::pin(async move {
+            let bytes = Bytes::from(self.bytes.take().ok_or(CasServiceError::UploadFinished)?);
+            let computed = O256::from_bytes(&bytes);
+            if let Some(expected) = self.expected
+                && expected != computed
+            {
+                return Err(CasServiceError::AddressMismatch { expected, computed });
+            }
+            let len = bytes.len() as u64;
+            let address = self
+                .cas
+                .insert(bytes)
+                .await
+                .map_err(CasServiceError::provider)?;
+            Ok(StoredObject {
+                address,
+                len,
+                index: None,
+            })
+        })
+    }
+}
+
+impl CasService for S3Cas {
+    fn begin_upload(
+        &self,
+        expected: Option<O256>,
+    ) -> CasServiceFuture<'_, Box<dyn CasUpload + '_>> {
+        Box::pin(async move {
+            Ok(Box::new(S3Upload {
+                cas: self,
+                expected,
+                bytes: Some(Vec::new()),
+            }) as Box<dyn CasUpload>)
+        })
+    }
+
+    fn get(&self, address: O256) -> CasServiceFuture<'_, Option<Bytes>> {
+        Box::pin(async move {
+            self.get_bytes(address)
+                .await
+                .map_err(CasServiceError::provider)
+        })
+    }
+
+    fn get_ranges(
+        &self,
+        address: O256,
+        ranges: Vec<ByteRange>,
+    ) -> CasServiceFuture<'_, Option<ObjectRanges>> {
+        Box::pin(async move {
+            let Some(bytes) = self
+                .get_bytes(address)
+                .await
+                .map_err(CasServiceError::provider)?
+            else {
+                return Ok(None);
+            };
+            let len = bytes.len() as u64;
+            let mut parts = Vec::with_capacity(ranges.len());
+            for requested in ranges {
+                let range = match requested {
+                    ByteRange::Bounded(range) => range,
+                    ByteRange::From(start) => start..len,
+                    ByteRange::Suffix(count) => len.saturating_sub(count)..len,
+                };
+                if range.start >= range.end || range.end > len {
+                    return Err(CasServiceError::InvalidRange {
+                        start: range.start,
+                        end: range.end,
+                        len,
+                    });
+                }
+                let start = usize::try_from(range.start).unwrap_or_else(|_| unreachable!());
+                let end = usize::try_from(range.end).unwrap_or_else(|_| unreachable!());
+                parts.push(RangePart {
+                    range,
+                    bytes: bytes.slice(start..end),
+                });
+            }
+            Ok(Some(ObjectRanges { len, parts }))
         })
     }
 }

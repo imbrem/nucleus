@@ -4,7 +4,9 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
 
-use covalence_data_cas::{AsyncCas, AsyncCasError, SharedIndexCas};
+use covalence_data_cas::{
+    AsyncCas, AsyncCasError, ByteRange, CasService, RangePart, SharedIndexCas,
+};
 use covalence_data_cas_http::{HttpCas, HttpCasError, serve};
 use covalence_lib_hash::O256;
 
@@ -148,6 +150,43 @@ fn server_failures_are_not_reported_as_absence() {
     server.join().unwrap();
 }
 
+#[test]
+fn multiple_ranges_use_one_http_request() {
+    let address = O256::from_bytes(b"batch address");
+    let boundary = "batch-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Type: application/octet-stream\r\nContent-Range: bytes 0-1/8\r\n\r\nab\r\n--{boundary}\r\nContent-Type: application/octet-stream\r\nContent-Range: bytes 5-7/8\r\n\r\nfgh\r\n--{boundary}--\r\n"
+    );
+    let (base, server) = range_server(boundary, body.into_bytes());
+    let client = HttpCas::new(&base).unwrap();
+
+    run(async {
+        let result = client
+            .get_ranges(
+                address,
+                vec![ByteRange::Bounded(0..2), ByteRange::Bounded(5..8)],
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.len, 8);
+        assert_eq!(
+            result.parts,
+            [
+                RangePart {
+                    range: 0..2,
+                    bytes: b"ab".as_slice().into(),
+                },
+                RangePart {
+                    range: 5..8,
+                    bytes: b"fgh".as_slice().into(),
+                },
+            ]
+        );
+    });
+    server.join().unwrap();
+}
+
 fn run(future: impl Future<Output = ()>) {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -195,6 +234,26 @@ fn declared_server(
         )
         .unwrap();
         stream.write_all(body).unwrap();
+    });
+    (format!("http://{address}"), task)
+}
+
+fn range_server(boundary: &'static str, body: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0; 4096];
+        let count = stream.read(&mut request).unwrap();
+        let request = String::from_utf8_lossy(&request[..count]).to_ascii_lowercase();
+        assert!(request.contains("range: bytes=0-1,5-7\r\n"), "{request}");
+        write!(
+            stream,
+            "HTTP/1.1 206 Partial Content\r\nContent-Type: multipart/byteranges; boundary={boundary}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        stream.write_all(&body).unwrap();
     });
     (format!("http://{address}"), task)
 }
