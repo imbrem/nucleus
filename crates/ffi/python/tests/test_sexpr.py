@@ -34,7 +34,9 @@ def test_documents_and_events_round_trip() -> None:
     assert len(document) == 2
     assert [event.kind for event in events] == ["open", "atom", "close", "atom"]
     rebuilt = Document.from_events(events)
-    assert [event.span for event in rebuilt.events()] == [event.span for event in events]
+    assert [event.span for event in rebuilt.events()] == [
+        event.span for event in events
+    ]
     assert rebuilt.expressions[0].items[0].atom_value.value == "a"
 
 
@@ -46,7 +48,13 @@ def test_python_can_construct_ast_and_events() -> None:
         ("atom", (0, 0)),
         ("close", (3, 4)),
     ]
-    assert Document.from_events(expression.events()).expressions[0].items[0].atom_value.value == "x"
+    assert (
+        Document.from_events(expression.events())
+        .expressions[0]
+        .items[0]
+        .atom_value.value
+        == "x"
+    )
 
 
 def test_spans_erase_to_distinct_spanless_types() -> None:
@@ -58,12 +66,14 @@ def test_spans_erase_to_distinct_spanless_types() -> None:
     assert not hasattr(erased.expressions[0], "span")
     assert spanned.expressions[0].erase().items[0].atom_value.value == "x"
 
-    constructed = ErasedDocument([ErasedSExpr.list([ErasedSExpr.atom(Atom.symbol("y"))])])
+    constructed = ErasedDocument(
+        [ErasedSExpr.list([ErasedSExpr.atom(Atom.symbol("y"))])]
+    )
     assert constructed.expressions[0].items[0].atom_value.value == "y"
 
 
 def test_malformed_source_and_event_streams_raise_value_error() -> None:
-    for source in (')', '(', '"bad', 'b"β"', 'b"\\x0"', ':', '#'):
+    for source in (")", "(", '"bad', 'b"β"', 'b"\\x0"', ":", "#"):
         with pytest.raises(ValueError):
             parse(source)
     with pytest.raises(ValueError):

@@ -13,6 +13,7 @@ __version__: str
 
 class Atom:
     """An immutable atomic S-expression value."""
+
     kind: str
     value: str | bytes
     @staticmethod
@@ -31,6 +32,7 @@ class Atom:
 
 class Event:
     """An immutable structural S-expression event."""
+
     kind: str
     span: tuple[int, int]
     value: Atom | None
@@ -44,6 +46,7 @@ class Event:
 
 class SExpr:
     """An immutable S-expression carrying source positions."""
+
     kind: str
     atom_value: Atom | None
     items: tuple[SExpr, ...]
@@ -64,6 +67,7 @@ class SExpr:
 
 class ErasedSExpr:
     """An immutable S-expression without source positions."""
+
     kind: str
     atom_value: Atom | None
     items: tuple[ErasedSExpr, ...]
@@ -75,6 +79,7 @@ class ErasedSExpr:
 
 class Document:
     """An immutable sequence of top-level S-expressions."""
+
     expressions: tuple[SExpr, ...]
     @staticmethod
     def from_events(events: Sequence[Event], /) -> Document: ...
@@ -85,6 +90,7 @@ class Document:
 
 class ErasedDocument:
     """An immutable sequence of spanless S-expressions."""
+
     expressions: tuple[ErasedSExpr, ...]
     def __init__(self, expressions: Sequence[ErasedSExpr], /) -> None: ...
     def __len__(self) -> int: ...
