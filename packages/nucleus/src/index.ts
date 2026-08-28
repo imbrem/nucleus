@@ -14,8 +14,8 @@ export interface Line {
   quit: boolean;
 }
 
-/** Everything the host must supply that a session cannot do itself. */
-export interface Host {
+/** Browser-specific effect adapters used while driving a session. */
+export interface DriveOptions {
   /** Optional alternate store for `(sqlite …)`; the local REPL is the default. */
   vfs?: import("./vfs-host.js").ReadOnlyVfs;
 }
@@ -23,14 +23,13 @@ export interface Host {
 /**
  * Reads and evaluates one line, carrying out whatever the session asks for.
  *
- * This is the browser's half of the arrangement in `covalence_repl::session`:
- * the session decides *what* should happen and this decides *how*, because
- * fetching over the network and instantiating a wasm module are things only a
- * host can do.
+ * The transport-neutral session decides *what* should happen. This frontend
+ * adapter decides *how* to perform browser effects such as fetch, component
+ * instantiation, and the separately hosted SQLite shell.
  */
 export async function drive(
   repl: Repl,
-  host: Host,
+  options: DriveOptions,
   line: string,
 ): Promise<Line> {
   let step: Step;
@@ -95,7 +94,7 @@ export async function drive(
       try {
         const result = await runShell(repl, {
           args: step.arguments,
-          vfs: host.vfs,
+          vfs: options.vfs,
         });
         const trailer =
           result.status === 0

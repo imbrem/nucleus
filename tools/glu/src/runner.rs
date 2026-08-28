@@ -912,7 +912,7 @@ impl Runner {
         Ok(arguments)
     }
 
-    /// Builds and serves the browser demo with an HTTP kernel.
+    /// Builds and serves the browser demo with an HTTP CAS backend.
     ///
     /// # Errors
     ///
@@ -941,7 +941,7 @@ impl Runner {
                 &["--dir", "packages/nucleus", "build"],
             )?;
             self.cargo(
-                "build demo kernel",
+                "build demo CAS backend",
                 &["build", "-p", "covalence-bin-cas-serve"],
             )?;
             self.run(
@@ -974,14 +974,14 @@ impl Runner {
             }
         }
 
-        let mut kernel = self.start_kernel(&files, kernel_port)?;
+        let mut backend = self.start_cas_backend(&files, kernel_port)?;
         let scheme = if tls { "https" } else { "http" };
         let host = if tls { "localhost" } else { "127.0.0.1" };
         let page = format!("{scheme}://{host}:{port}/");
 
         eprintln!();
         eprintln!("  demo      {page}");
-        eprintln!("  kernel    http://127.0.0.1:{kernel_port}");
+        eprintln!("  CAS       http://127.0.0.1:{kernel_port}");
         eprintln!();
         eprintln!("  The page is a REPL. Try:");
         eprintln!("    (help)");
@@ -1012,9 +1012,9 @@ impl Runner {
             &environment,
         );
 
-        // Do not leave the kernel running.
-        let _ = kernel.kill();
-        let _ = kernel.wait();
+        // Do not leave the CAS backend running.
+        let _ = backend.kill();
+        let _ = backend.wait();
         served
     }
 
@@ -1041,8 +1041,8 @@ impl Runner {
         )
     }
 
-    /// Starts the HTTP kernel and collects its admitted addresses.
-    fn start_kernel(&self, files: &[PathBuf], port: u16) -> Result<Child> {
+    /// Starts the HTTP CAS backend and collects its admitted addresses.
+    fn start_cas_backend(&self, files: &[PathBuf], port: u16) -> Result<Child> {
         let binary = self.root.join("target/debug/covalence-cas-serve");
         let mut child = Command::new(&binary)
             .arg("--port")
@@ -1056,14 +1056,14 @@ impl Runner {
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| eyre!("demo kernel produced no output"))?;
+            .ok_or_else(|| eyre!("demo CAS backend produced no output"))?;
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
         loop {
             line.clear();
             if reader.read_line(&mut line)? == 0 {
                 let _ = child.kill();
-                bail!("demo kernel exited before it started listening");
+                bail!("demo CAS backend exited before it started listening");
             }
             let line = line.trim_end();
             if line.starts_with("http://") {
