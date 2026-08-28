@@ -21,6 +21,11 @@ impl Namespace for Blake3Merkle {
 pub type Blake3Cv = Obj<Blake3Merkle>;
 
 impl Blake3Cv {
+    /// The BLAKE3 chunk length in bytes.
+    ///
+    /// Subtree offsets and complete subtree lengths are multiples of this.
+    pub const CHUNK_LEN: u64 = blake3::CHUNK_LEN as u64;
+
     /// Hashes a non-empty chunk or subtree starting at `input_offset`.
     ///
     /// The offset is measured in bytes from the start of the complete input.

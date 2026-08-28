@@ -76,6 +76,7 @@ impl PyCasAssertion {
     fn new(hash: PyRef<'_, PyO256>, blob: Bytes) -> Self {
         Self(CasAssertion::new(
             PyO256::value(&hash),
+            ..,
             CasBytes::copy_from_slice(blob.as_slice()),
         ))
     }
@@ -89,7 +90,7 @@ impl PyCasAssertion {
     /// Complete claimed bytes.
     #[getter]
     fn blob<'py>(&self, python: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new(python, &self.0.blob)
+        PyBytes::new(python, &self.0.bytes)
     }
 
     /// Checks every byte and introduces a fact on success.
@@ -107,7 +108,7 @@ impl PyCasAssertion {
         format!(
             "CasAssertion(hash=O256.from_hex('{}'), blob_len={})",
             self.0.hash,
-            self.0.blob.len()
+            self.0.bytes.len()
         )
     }
 
