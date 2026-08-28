@@ -825,6 +825,27 @@
       ]
     },
     {
+      "id": "workspace#covalence-nucleus-server@0.0.0",
+      "name": "covalence-nucleus-server",
+      "version": "0.0.0",
+      "path": "crates/nucleus/server",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_nucleus_server",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "http",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-proof-c-demo-test@0.0.0",
       "name": "covalence-proof-c-demo-test",
       "version": "0.0.0",
@@ -1584,6 +1605,41 @@
     {
       "source": "workspace#covalence-nucleus-script@0.0.0",
       "target": "workspace#covalence-logic-hol@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-server@0.0.0",
+      "target": "workspace#covalence-data-cas-http@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-server@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-server@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "dev"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-server@0.0.0",
+      "target": "workspace#covalence-lib-serde@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-server@0.0.0",
+      "target": "workspace#covalence-nucleus-core@0.0.0",
       "kinds": [
         "normal"
       ]

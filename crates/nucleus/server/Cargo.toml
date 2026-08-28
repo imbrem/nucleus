@@ -1,0 +1,22 @@
+[package]
+name = "covalence-nucleus-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Untrusted HTTP server assembly around Nucleus core"
+publish = false
+
+[dependencies]
+axum = "0.8"
+covalence-data-cas = { path = "../../data/cas" }
+covalence-data-cas-http = { path = "../../data/cas-http" }
+covalence-lib-serde = { path = "../../lib/serde" }
+covalence-nucleus-core = { path = "../core" }
+tokio = { version = "1", features = ["net", "rt-multi-thread", "sync"] }
+
+[dev-dependencies]
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+
+[lints]
+workspace = true
