@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 bytes = "1"
 covalence-lib-error = { path = "../../lib/error" }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false }
 covalence-lib-pretty = { path = "../../lib/pretty" }
 smol_str = "0.3"
 

@@ -684,6 +684,12 @@
           ]
         },
         {
+          "name": "module",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "theory",
           "kinds": [
             "test"
@@ -1212,6 +1218,13 @@
     },
     {
       "source": "workspace#covalence-data-sexpr@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-sexpr@0.0.0",
       "target": "workspace#covalence-lib-pretty@0.0.0",
       "kinds": [
         "normal"
@@ -1374,6 +1387,13 @@
     {
       "source": "workspace#covalence-logic-hol-script@0.0.0",
       "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol-script@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
       "kinds": [
         "normal"
       ]

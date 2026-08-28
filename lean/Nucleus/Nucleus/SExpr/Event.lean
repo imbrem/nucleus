@@ -1,4 +1,5 @@
 import Nucleus.Bytes
+import Nucleus.O256.Basic
 
 /-! # Owned S-expression syntax and structural events -/
 
@@ -8,6 +9,7 @@ namespace Nucleus.SExprEvent
 inductive Atom where
   | symbol (value : String) | string (value : String) | bytes (value : Bytes)
   | number (spelling : String) | keyword (name : String) | directive (name : String)
+  | o256 (value : O256)
   deriving DecidableEq
 
 mutual

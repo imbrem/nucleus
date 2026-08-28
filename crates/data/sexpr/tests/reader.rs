@@ -12,7 +12,7 @@ fn atom(expression: &Expr) -> &Atom {
 
 #[test]
 fn reads_every_atom_kind_and_preserves_spans() {
-    let source = "(sym \"a\\nβ\" b\"\\0\\x01\\x02\\xff\" 123abc :key #define 'a)";
+    let source = "(sym \"a\\nβ\" b\"\\0\\x01\\x02\\xff\" 123abc :key #define !(q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=) 'a)";
     let document = parse(source).unwrap();
     let ExprKind::List(node) = document.expressions()[0].node() else {
         panic!("expected list");
@@ -24,7 +24,8 @@ fn reads_every_atom_kind_and_preserves_spans() {
     assert!(matches!(atom(&items[3]), Atom::Number(v) if v == "123abc"));
     assert!(matches!(atom(&items[4]), Atom::Keyword(v) if v == "key"));
     assert!(matches!(atom(&items[5]), Atom::Directive(v) if v == "define"));
-    assert!(matches!(atom(&items[6]), Atom::Symbol(v) if v == "'a"));
+    assert!(matches!(atom(&items[6]), Atom::O256(v) if v.as_ref() == [0xab; 32]));
+    assert!(matches!(atom(&items[7]), Atom::Symbol(v) if v == "'a"));
     assert_eq!(
         document.events().collect::<Vec<_>>(),
         Parser::new(source).collect::<Result<Vec<_>, _>>().unwrap()
@@ -68,6 +69,30 @@ fn byte_literals_cover_all_bytes_and_reject_malformed_source() {
     let all = (0..=u8::MAX).collect::<Vec<_>>();
     let expression = parse_one(&Atom::encode_bytes(&all)).unwrap();
     assert!(matches!(atom(&expression), Atom::Bytes(value) if value[..] == all));
+}
+
+#[test]
+fn o256_literals_require_exact_canonical_padded_base64() {
+    let canonical = "!(q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=)";
+    let parsed = parse_one(canonical).unwrap();
+    let Atom::O256(value) = atom(&parsed) else {
+        panic!("expected O256 atom");
+    };
+    assert_eq!(value.as_ref(), &[0xab; 32]);
+    assert_eq!(Atom::encode_o256(*value), canonical);
+    for invalid in [
+        "!()",
+        "!(q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s)",
+        "!(q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s!)",
+        "!(q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=",
+    ] {
+        assert!(matches!(
+            parse_one(invalid),
+            Err(OneError::Parse {
+                source: ParseError::InvalidO256 { .. }
+            })
+        ));
+    }
 }
 
 #[test]

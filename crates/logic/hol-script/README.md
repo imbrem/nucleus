@@ -47,6 +47,48 @@ universal property `IsCoprod`, the induction predicate used to carve naturals
 from infinity, and the graph/specification of primitive recursion. None of those
 forms asserts its body.
 
+## Modules and namespaces
+
+`compile_module` adds a deliberately small module layer without adding kernel
+authority or changing the arena encoding:
+
+```scheme
+(import prelude
+  !(ASNFZ4mrze8BI0VniavN7wEjRWeJq83vASNFZ4mrze8=)
+  !(EjRWeJq83vASNFZ4mrze8BI0VniavN7wEjRWeJq83vA=))
+
+(namespace example
+  (define truth () bool true)
+  (namespace laws
+    (define truth-again () bool truth)))
+```
+
+The two import addresses identify the dependency's kernel arena and its
+separate namespace metadata. Imports are declarations only in this first
+version: resolution and friendly-name-to-address policy remain caller-owned,
+and adding or changing an import cannot change the compiled kernel.
+Addresses use `!(...)`, containing exactly 32 bytes as canonical padded
+standard Base64. This is a distinct `O256` atom kind rather than a symbol.
+
+Nested definitions have dot-qualified identities (`example.truth`,
+`example.laws.truth-again`). Unqualified references search the current
+namespace and then its parents; names containing a dot start at the module
+root. The returned `Namespace` is a tree of local names to `Ref` values. It is
+navigation metadata and can be freely edited or discarded.
+
+`delaborate_module` is the intentionally basic inverse view. It prints the
+kernel address and row count, imports, namespace tree, and `%n` for every
+anonymous local row. It is an audit view rather than a claim to recover the
+proof program which produced an arena: elaboration discards macro choices,
+binder spellings, and sharing decisions. A later expression delaborator can
+replace `(anonymous %n)` with Scheme forms while retaining `%n` as the stable
+fallback for rows it does not know how to raise.
+
+This split leaves room for Scheme-defined derived forms such as `ind`, with
+Rust or Wasm accelerators implementing the same userspace expansion protocol.
+Neither a macro nor an accelerator can mint theorem facts; expanded work still
+passes through the existing public `Kernel` operations.
+
 ## Standard init path
 
 `compile_init_slice` performs the current userspace assembly:

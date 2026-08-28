@@ -11,6 +11,7 @@ use covalence_data_sexpr::{
     Atom as SyntaxAtom, Expr as SyntaxExpr, ExprKind, Repr, SpannedRepr, parse,
 };
 use covalence_lib_error::snafu::Snafu;
+use covalence_lib_hash::O256;
 use covalence_logic_hol::{
     Kernel, KernelError, Ref,
     builtin::{Op1, Op2},
@@ -18,10 +19,14 @@ use covalence_logic_hol::{
 };
 
 mod init_library;
+mod module;
 
 pub use covalence_logic_hol_derived::CoproductSchema;
 pub use init_library::{
     InitLibrary, InitLibraryError, InitSlice, compile_init_library, compile_init_slice,
+};
+pub use module::{
+    CompiledModule, ImportDecl, ModuleError, Namespace, compile_module, delaborate_module,
 };
 
 /// Source of the first opcode-free init-library schemata.
@@ -175,6 +180,7 @@ impl From<KernelError> for TheoryError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum SExpr {
     Atom(String),
+    O256(O256),
     List(Vec<Self>),
 }
 
@@ -285,6 +291,14 @@ pub fn compile_init(init: &LogicalInit) -> Result<CompiledTheory, TheoryError> {
 }
 
 fn read(input: &str) -> Result<Vec<SExpr>, TheoryError> {
+    read_with_o256(input, false)
+}
+
+fn read_module(input: &str) -> Result<Vec<SExpr>, TheoryError> {
+    read_with_o256(input, true)
+}
+
+fn read_with_o256(input: &str, o256: bool) -> Result<Vec<SExpr>, TheoryError> {
     const MAX_DEPTH: usize = 256;
     let document = parse(input).map_err(|error| TheoryError::Read {
         message: error.to_string(),
@@ -292,7 +306,7 @@ fn read(input: &str) -> Result<Vec<SExpr>, TheoryError> {
     document
         .expressions()
         .iter()
-        .map(|expression| lower_syntax(expression, 0, MAX_DEPTH))
+        .map(|expression| lower_syntax(expression, 0, MAX_DEPTH, o256))
         .collect()
 }
 
@@ -300,10 +314,12 @@ fn lower_syntax(
     expression: &SyntaxExpr,
     depth: usize,
     max_depth: usize,
+    o256: bool,
 ) -> Result<SExpr, TheoryError> {
     match expression.node() {
         ExprKind::Atom(node) => match SpannedRepr::atom(node) {
             SyntaxAtom::Symbol(value) => Ok(SExpr::Atom(value.to_string())),
+            SyntaxAtom::O256(value) if o256 => Ok(SExpr::O256(*value)),
             _ => invalid("the theory grammar only accepts symbol atoms"),
         },
         ExprKind::List(node) => {
@@ -314,7 +330,7 @@ fn lower_syntax(
             }
             SpannedRepr::list_items(node)
                 .iter()
-                .map(|item| lower_syntax(item, depth + 1, max_depth))
+                .map(|item| lower_syntax(item, depth + 1, max_depth, o256))
                 .collect::<Result<Vec<_>, _>>()
                 .map(SExpr::List)
         }
@@ -479,6 +495,7 @@ impl<'a> Compiler<'a> {
                 self.arrow(domain, codomain)
             }
             SExpr::List(_) => invalid("expected a type"),
+            SExpr::O256(_) => invalid("an O256 atom cannot be used as a type"),
         }
     }
 
@@ -515,6 +532,7 @@ impl<'a> Compiler<'a> {
                     })
             }
             SExpr::List(items) => self.application(items, types, terms),
+            SExpr::O256(_) => invalid("an O256 atom cannot be used as a term"),
         }
     }
 
@@ -876,14 +894,14 @@ impl<'a> Compiler<'a> {
 fn list<'a>(expression: &'a SExpr, expected: &str) -> Result<&'a [SExpr], TheoryError> {
     match expression {
         SExpr::List(items) => Ok(items),
-        SExpr::Atom(_) => invalid(format!("expected {expected}")),
+        SExpr::Atom(_) | SExpr::O256(_) => invalid(format!("expected {expected}")),
     }
 }
 
 fn atom(expression: &SExpr) -> Result<&str, TheoryError> {
     match expression {
         SExpr::Atom(value) => Ok(value),
-        SExpr::List(_) => invalid("expected a name"),
+        SExpr::O256(_) | SExpr::List(_) => invalid("expected a name"),
     }
 }
 
