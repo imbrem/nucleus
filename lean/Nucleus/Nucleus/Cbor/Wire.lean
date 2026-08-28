@@ -205,7 +205,9 @@ def parse? (bytes : Bytes) : Option Cbor := do
   let (value, rest) ← parseItem (2 * input.length) input
   if rest.isEmpty then some value else none
 
-private def beBytes (count : Nat) (n : UInt64) : List UInt8 :=
+/-- The low `count` bytes of a wire argument in network order.  This is public
+so generated ordering certificates can reduce primitive map-key encodings. -/
+def beBytes (count : Nat) (n : UInt64) : List UInt8 :=
   (List.range count).map fun i =>
     (n >>> UInt64.ofNat (8 * (count - 1 - i))).toUInt8
 
@@ -264,7 +266,8 @@ private theorem argument?_beBytes_eight (value : UInt64) (suffix : List UInt8) :
     argument? 27 (beBytes 8 value ++ suffix) = some (some value, suffix) := by
   simp [argument?, readNat_beBytes_eight]
 
-private def head (major : Nat) (n : UInt64) : List UInt8 :=
+/-- Preferred definite-length CBOR head for one major type and argument. -/
+def head (major : Nat) (n : UInt64) : List UInt8 :=
   if n < 24 then [UInt8.ofNat (32 * major + n.toNat)]
   else if n ≤ 0xff then UInt8.ofNat (32 * major + 24) :: beBytes 1 n
   else if n ≤ 0xffff then UInt8.ofNat (32 * major + 25) :: beBytes 2 n
@@ -330,7 +333,8 @@ private theorem parseHead?_head (major : Nat) (value : UInt64)
     rw [split.1, split.2, argument?_beBytes_eight value suffix]
     rfl
 
-private def lexLt (a b : List UInt8) : Bool :=
+/-- RFC deterministic map-key order: encoded length first, then bytewise order. -/
+def lexLt (a b : List UInt8) : Bool :=
   if a.length != b.length then a.length < b.length else a < b
 
 private def insertEntry (entry : List UInt8 × List UInt8) :
@@ -343,7 +347,9 @@ private def sortEntries : List (List UInt8 × List UInt8) → List (List UInt8 �
   | x :: xs => insertEntry x (sortEntries xs)
 
 mutual
-  private def encodeSyn : {i : CborIx} → CborSyn i → List UInt8
+  /-- Deterministic definite-length bytes for structural CBOR syntax.
+  Map entries are sorted by their encoded keys. -/
+  def encodeSyn : {i : CborIx} → CborSyn i → List UInt8
     | _, .primitive (.integer (.unsigned n)) => head 0 n
     | _, .primitive (.integer (.negative n)) => head 1 n
     | _, .primitive (.bytes b) => head 2 (UInt64.ofNat b.length) ++ listOfBytes b
@@ -886,6 +892,38 @@ end
 
 namespace WireNormal
 
+/-- One CBOR value paired with structural deterministic-wire evidence. -/
+abbrev Certified := {value : Cbor // WireNormal value}
+
+namespace Certified
+
+/-- A certified nonnegative CBOR integer. -/
+def unsigned (value : UInt64) : Certified :=
+  ⟨.primitive (.integer (.unsigned value)), .unsigned value⟩
+
+/-- A certified negative CBOR integer argument. -/
+def negative (value : UInt64) : Certified :=
+  ⟨.primitive (.integer (.negative value)), .negative value⟩
+
+/-- A certified bounded CBOR byte string. -/
+def bytes (value : Bytes) (fits : value.length ≤ Bytes.maxDefiniteLength) : Certified :=
+  ⟨.primitive (.bytes value), .bytes value fits⟩
+
+/-- A certified bounded CBOR text string. -/
+def text (value : String)
+    (fits : value.toUTF8.size ≤ Bytes.maxDefiniteLength) : Certified :=
+  ⟨.primitive (.text value), .text value fits⟩
+
+/-- A certified CBOR simple value. -/
+def simple (value : UInt8) : Certified :=
+  ⟨.primitive (.simple value), .simple value⟩
+
+/-- Pair an already named container with its separately checked evidence. -/
+def ofNormal (value : Cbor) (normal : WireNormal value) : Certified :=
+  ⟨value, normal⟩
+
+end Certified
+
 /-- Structural wire-normal evidence for a list of CBOR values.
 
 Unlike a proposition quantified over list membership, this representation can
@@ -898,6 +936,15 @@ inductive ValueList : List Cbor → Prop where
       ValueList (head :: tail)
 
 namespace ValueList
+
+/-- Project a list of individually certified values into one structural list
+certificate.  Generated artifacts can store each value and its evidence once,
+rather than duplicating the value in separate data and proof declarations. -/
+theorem ofCertified (values : List Certified) :
+    ValueList (values.map Subtype.val) :=
+  match values with
+  | [] => .nil
+  | head :: tail => .cons head.property (ofCertified tail)
 
 /-- Concatenate two independently checked value-list certificates. -/
 theorem append {left right : List Cbor}
@@ -951,6 +998,54 @@ theorem all {entries : List (Cbor × Cbor)} (normal : EntryList entries) :
       · exact ih member
 
 end EntryList
+
+/-- Adjacent deterministic key ordering for a CBOR map entry list.
+
+The values are deliberately absent from the comparison.  This lets generated
+certificates prove map order without unfolding large, separately checked child
+containers merely to decide equality of the resulting entry pairs. -/
+def EntryLt (left right : Cbor × Cbor) : Prop :=
+  lexLt (encodeSyn left.1) (encodeSyn right.1) = true
+
+instance (left right : Cbor × Cbor) : Decidable (EntryLt left right) := by
+  unfold EntryLt
+  infer_instance
+
+/-- A list already arranged in the deterministic encoder's strict key order. -/
+inductive OrderedEntries : List (Cbor × Cbor) → Prop where
+  | nil : OrderedEntries []
+  | one (entry : Cbor × Cbor) : OrderedEntries [entry]
+  | cons {first second : Cbor × Cbor} {tail : List (Cbor × Cbor)}
+      (before : EntryLt first second)
+      (rest : OrderedEntries (second :: tail)) :
+      OrderedEntries (first :: second :: tail)
+
+private theorem OrderedEntries.sort_map_encodeEntry
+    {entries : List (Cbor × Cbor)} (ordered : OrderedEntries entries) :
+    sortEntries (entries.map encodeEntry) = entries.map encodeEntry := by
+  induction ordered with
+  | nil => rfl
+  | one entry => simp [sortEntries, insertEntry]
+  | @cons first second tail before rest ih =>
+      rw [List.map_cons, sortEntries]
+      rw [ih]
+      change (if lexLt (encodeEntry first).1 (encodeEntry second).1 then
+          encodeEntry first :: encodeEntry second :: tail.map encodeEntry
+        else encodeEntry second ::
+          insertEntry (encodeEntry first) (tail.map encodeEntry)) =
+        encodeEntry first :: encodeEntry second :: tail.map encodeEntry
+      rw [show lexLt (encodeEntry first).1 (encodeEntry second).1 = true by
+        simpa [EntryLt, encodeEntry] using before]
+      simp
+
+/-- Structural key-order evidence implies the opaque byte-pair ordering
+premise used by the deterministic encoder. -/
+theorem OrderedEntries.encoded {entries : List (Cbor × Cbor)}
+    (ordered : OrderedEntries entries) :
+    sortEntries (encodeEntries (CborSyn.mapOfList entries)) =
+      encodeEntries (CborSyn.mapOfList entries) := by
+  rw [encodeEntries_mapOfList]
+  exact ordered.sort_map_encodeEntry
 
 /-- Build wire-normal evidence for an array from its list representation.
 This keeps the private indexed-tail evidence out of generated certificates. -/
@@ -1022,6 +1117,15 @@ theorem mapOfListEntries (entries : List (Cbor × Cbor))
     (normal : EntryList entries) :
     WireNormal (.map (CborSyn.mapOfList entries)) :=
   mapOfList entries fits ordered normal.all
+
+/-- Build map evidence without unfolding child values during the ordering
+check: only the structurally certified adjacent keys are compared. -/
+theorem mapOfListOrdered (entries : List (Cbor × Cbor))
+    (fits : entries.length ≤ Bytes.maxDefiniteLength)
+    (ordered : OrderedEntries entries)
+    (normal : EntryList entries) :
+    WireNormal (.map (CborSyn.mapOfList entries)) :=
+  mapOfListEntries entries fits ordered.encoded normal
 
 end WireNormal
 
@@ -1548,6 +1652,23 @@ theorem wireNormal_chunked_array :
   exact WireNormal.ValueList.append
     (.cons (.unsigned 1) .nil)
     (.cons (.text "chunk" (by decide)) .nil)
+
+/-- Map ordering depends only on keys: independently certified opaque child
+values never need to be unfolded or compared. -/
+theorem wireNormal_ordered_opaque_values (left right : Cbor)
+    (leftNormal : WireNormal left) (rightNormal : WireNormal right) :
+    WireNormal (.map (CborSyn.mapOfList [
+      (.primitive (.text "a"), left),
+      (.primitive (.text "b"), right)])) := by
+  have keys : WireNormal.EntryLt (.primitive (.text "a"), left)
+      (.primitive (.text "b"), right) := by
+    change lexLt (encodeSyn (.primitive (.text "a")))
+      (encodeSyn (.primitive (.text "b"))) = true
+    decide +kernel
+  apply WireNormal.mapOfListOrdered _ (by simp [Bytes.maxDefiniteLength])
+    (.cons keys (.one _))
+  exact .cons (.text "a" (by decide)) leftNormal <|
+    .cons (.text "b" (by decide)) rightNormal .nil
 
 /-- The encoder's current insertion ordering retains duplicate entries but
 reverses an equal-key run. The byte-roundtrip theorem must preserve this exact
