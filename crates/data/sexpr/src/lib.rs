@@ -5,32 +5,18 @@
 
 use std::iter::FusedIterator;
 use std::ops::Range;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use covalence_lib_error::snafu::Snafu;
 use smol_str::SmolStr;
 
 /// A half-open UTF-8 byte range in the source document.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Span {
-    /// First byte in the range.
-    pub start: usize,
-    /// First byte after the range.
-    pub end: usize,
-}
+pub type Span = Range<u64>;
 
-impl Span {
-    /// Creates a span from a half-open byte range.
-    #[must_use]
-    pub const fn new(start: usize, end: usize) -> Self {
-        Self { start, end }
-    }
-
-    /// Returns the corresponding standard range.
-    #[must_use]
-    pub const fn range(self) -> Range<usize> {
-        self.start..self.end
-    }
+fn span(start: usize, end: usize) -> Span {
+    u64::try_from(start).expect("source offsets fit in u64")
+        ..u64::try_from(end).expect("source offsets fit in u64")
 }
 
 /// An owned atomic S-expression value.
@@ -192,17 +178,17 @@ impl<'a> Parser<'a> {
         loop {
             let Some(character) = self.input[self.offset..].chars().next() else {
                 return Err(ParseError::UnterminatedString {
-                    span: Span::new(start, self.input.len()),
+                    span: span(start, self.input.len()),
                 });
             };
             let character_start = self.offset;
             self.offset += character.len_utf8();
             match character {
-                '"' => return Ok((decoded.into(), Span::new(start, self.offset))),
+                '"' => return Ok((decoded.into(), span(start, self.offset))),
                 '\\' => {
                     let Some(escaped) = self.input[self.offset..].chars().next() else {
                         return Err(ParseError::InvalidEscape {
-                            span: Span::new(character_start, self.offset),
+                            span: span(character_start, self.offset),
                         });
                     };
                     self.offset += escaped.len_utf8();
@@ -215,7 +201,7 @@ impl<'a> Parser<'a> {
                         '0' => '\0',
                         _ => {
                             return Err(ParseError::InvalidEscape {
-                                span: Span::new(character_start, self.offset),
+                                span: span(character_start, self.offset),
                             });
                         }
                     });
@@ -232,20 +218,20 @@ impl<'a> Parser<'a> {
         loop {
             let Some(&byte) = self.input.as_bytes().get(self.offset) else {
                 return Err(ParseError::UnterminatedString {
-                    span: Span::new(start, self.input.len()),
+                    span: span(start, self.input.len()),
                 });
             };
             match byte {
                 b'"' => {
                     self.offset += 1;
-                    return Ok((Bytes::from(decoded), Span::new(start, self.offset)));
+                    return Ok((Bytes::from(decoded), span(start, self.offset)));
                 }
                 b'\\' => {
                     let escape_start = self.offset;
                     self.offset += 1;
                     let Some(&escaped) = self.input.as_bytes().get(self.offset) else {
                         return Err(ParseError::InvalidBytes {
-                            span: Span::new(escape_start, self.offset),
+                            span: span(escape_start, self.offset),
                         });
                     };
                     self.offset += 1;
@@ -261,24 +247,24 @@ impl<'a> Parser<'a> {
                             let hex_end = hex_start.saturating_add(2);
                             let Some(hex) = self.input.get(hex_start..hex_end) else {
                                 return Err(ParseError::InvalidBytes {
-                                    span: Span::new(escape_start, self.input.len()),
+                                    span: span(escape_start, self.input.len()),
                                 });
                             };
                             if !hex.as_bytes().iter().all(u8::is_ascii_hexdigit) {
                                 return Err(ParseError::InvalidBytes {
-                                    span: Span::new(escape_start, hex_end),
+                                    span: span(escape_start, hex_end),
                                 });
                             }
                             decoded.push(u8::from_str_radix(hex, 16).map_err(|_| {
                                 ParseError::InvalidBytes {
-                                    span: Span::new(escape_start, hex_end),
+                                    span: span(escape_start, hex_end),
                                 }
                             })?);
                             self.offset = hex_end;
                         }
                         _ => {
                             return Err(ParseError::InvalidBytes {
-                                span: Span::new(escape_start, self.offset),
+                                span: span(escape_start, self.offset),
                             });
                         }
                     }
@@ -294,7 +280,7 @@ impl<'a> Parser<'a> {
                             .next()
                             .map_or(1, char::len_utf8);
                     return Err(ParseError::InvalidBytes {
-                        span: Span::new(self.offset, end),
+                        span: span(self.offset, end),
                     });
                 }
             }
@@ -330,7 +316,7 @@ impl<'a> Parser<'a> {
         let end = self.bare_end();
         self.offset = end;
         let spelling = &self.input[start..end];
-        let span = Span::new(start, end);
+        let span = span(start, end);
         let value = if let Some(name) = spelling.strip_prefix(':') {
             if name.is_empty() {
                 return Err(ParseError::EmptyKeyword { span });
@@ -362,24 +348,24 @@ impl Iterator for Parser<'_> {
             self.done = true;
             return (self.depth != 0).then(|| {
                 Err(ParseError::UnterminatedList {
-                    span: Span::new(self.offset, self.offset),
+                    span: span(self.offset, self.offset),
                 })
             });
         };
         match byte {
             b'(' => {
-                let span = Span::new(self.offset, self.offset + 1);
+                let span = span(self.offset, self.offset + 1);
                 self.offset += 1;
                 self.depth += 1;
                 Some(Ok(Event::Open { span }))
             }
             b')' if self.depth == 0 => {
-                let span = Span::new(self.offset, self.offset + 1);
+                let span = span(self.offset, self.offset + 1);
                 self.done = true;
                 Some(Err(ParseError::UnexpectedClose { span }))
             }
             b')' => {
-                let span = Span::new(self.offset, self.offset + 1);
+                let span = span(self.offset, self.offset + 1);
                 self.offset += 1;
                 self.depth -= 1;
                 Some(Ok(Event::Close { span }))
@@ -397,20 +383,46 @@ impl Iterator for Parser<'_> {
 
 impl FusedIterator for Parser<'_> {}
 
-/// An owned S-expression.
+/// An immutable, cheaply cloned S-expression.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum Expr {
+pub struct Expr(Arc<ExprKind>);
+
+/// The contents of an [`Expr`].
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum ExprKind {
     /// An atomic value and its source span.
     Atom { value: Atom, span: Span },
     /// A proper list. Delimiter spans are retained independently.
     List {
         open: Span,
-        items: Box<[Self]>,
+        items: Arc<[Expr]>,
         close: Span,
     },
 }
 
 impl Expr {
+    /// Creates an atomic expression.
+    #[must_use]
+    pub fn atom(value: Atom, span: Span) -> Self {
+        Self(Arc::new(ExprKind::Atom { value, span }))
+    }
+
+    /// Creates a proper-list expression.
+    #[must_use]
+    pub fn list(open: Span, items: impl Into<Arc<[Self]>>, close: Span) -> Self {
+        Self(Arc::new(ExprKind::List {
+            open,
+            items: items.into(),
+            close,
+        }))
+    }
+
+    /// Returns this expression's immutable contents.
+    #[must_use]
+    pub fn kind(&self) -> &ExprKind {
+        &self.0
+    }
+
     /// Traverses this expression as a balanced event stream without recursion.
     #[must_use]
     pub fn events(&self) -> Events<'_> {
@@ -418,25 +430,21 @@ impl Expr {
     }
 }
 
-/// An owned sequence of top-level expressions.
+/// An immutable, cheaply cloned sequence of top-level expressions.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Document {
-    expressions: Box<[Expr]>,
-}
+pub struct Document(Arc<[Expr]>);
 
 impl Document {
     /// Creates a document from top-level expressions.
     #[must_use]
-    pub fn new(expressions: impl Into<Box<[Expr]>>) -> Self {
-        Self {
-            expressions: expressions.into(),
-        }
+    pub fn new(expressions: impl Into<Arc<[Expr]>>) -> Self {
+        Self(expressions.into())
     }
 
     /// Returns the top-level expressions.
     #[must_use]
-    pub const fn expressions(&self) -> &[Expr] {
-        &self.expressions
+    pub fn expressions(&self) -> &[Expr] {
+        &self.0
     }
 
     /// Traverses this document as an event stream without recursion.
@@ -467,16 +475,12 @@ impl Document {
                     });
                     continue;
                 }
-                Event::Atom { value, span } => Expr::Atom { value, span },
+                Event::Atom { value, span } => Expr::atom(value, span),
                 Event::Close { span } => {
                     let Some(frame) = frames.pop() else {
                         return Err(StructureError::UnexpectedCloseEvent { span });
                     };
-                    Expr::List {
-                        open: frame.open,
-                        items: frame.items.into_boxed_slice(),
-                        close: span,
-                    }
+                    Expr::list(frame.open, frame.items, span)
                 }
             };
             if let Some(frame) = frames.last_mut() {
@@ -486,7 +490,9 @@ impl Document {
             }
         }
         if let Some(frame) = frames.first() {
-            return Err(StructureError::UnterminatedListEvents { open: frame.open });
+            return Err(StructureError::UnterminatedListEvents {
+                open: frame.open.clone(),
+            });
         }
         Ok(Self::new(roots))
     }
@@ -531,12 +537,7 @@ impl<'a> Events<'a> {
 
     fn document(document: &'a Document) -> Self {
         Self {
-            pending: document
-                .expressions
-                .iter()
-                .rev()
-                .map(Pending::Expr)
-                .collect(),
+            pending: document.0.iter().rev().map(Pending::Expr).collect(),
         }
     }
 }
@@ -547,15 +548,17 @@ impl Iterator for Events<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         match self.pending.pop()? {
             Pending::Close(span) => Some(Event::Close { span }),
-            Pending::Expr(Expr::Atom { value, span }) => Some(Event::Atom {
-                value: value.clone(),
-                span: *span,
-            }),
-            Pending::Expr(Expr::List { open, items, close }) => {
-                self.pending.push(Pending::Close(*close));
-                self.pending.extend(items.iter().rev().map(Pending::Expr));
-                Some(Event::Open { span: *open })
-            }
+            Pending::Expr(expression) => match expression.kind() {
+                ExprKind::Atom { value, span } => Some(Event::Atom {
+                    value: value.clone(),
+                    span: span.clone(),
+                }),
+                ExprKind::List { open, items, close } => {
+                    self.pending.push(Pending::Close(close.clone()));
+                    self.pending.extend(items.iter().rev().map(Pending::Expr));
+                    Some(Event::Open { span: open.clone() })
+                }
+            },
         }
     }
 }
@@ -581,14 +584,14 @@ pub fn parse(input: &str) -> Result<Document, ParseError> {
 /// the document does not contain exactly one expression.
 pub fn parse_one(input: &str) -> Result<Expr, OneError> {
     let document = parse(input).map_err(|source| OneError::Parse { source })?;
-    let expressions = document.expressions.into_vec();
-    let actual = expressions.len();
+    let actual = document.expressions().len();
     if actual != 1 {
         return Err(OneError::Count { actual });
     }
-    expressions
-        .into_iter()
-        .next()
+    document
+        .expressions()
+        .first()
+        .cloned()
         .ok_or(OneError::Count { actual })
 }
 

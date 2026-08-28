@@ -4,7 +4,7 @@
 // thin boundary only reads them.
 #![allow(clippy::needless_pass_by_value)]
 
-use covalence_data_sexpr::{Atom, Document, Event, Expr, Span, parse, parse_one};
+use covalence_data_sexpr::{Atom, Document, Event, Expr, ExprKind, parse, parse_one};
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::types::{PyBytes, PyString, PyTuple};
 
@@ -127,25 +127,21 @@ impl PySExprEvent {
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PySExprEvent {
     #[staticmethod]
-    fn open(start: usize, end: usize) -> Self {
-        Self::wrap(Event::Open {
-            span: Span::new(start, end),
-        })
+    fn open(start: u64, end: u64) -> Self {
+        Self::wrap(Event::Open { span: start..end })
     }
 
     #[staticmethod]
-    fn atom(atom: PyRef<'_, PySExprAtom>, start: usize, end: usize) -> Self {
+    fn atom(atom: PyRef<'_, PySExprAtom>, start: u64, end: u64) -> Self {
         Self::wrap(Event::Atom {
             value: atom.atom.clone(),
-            span: Span::new(start, end),
+            span: start..end,
         })
     }
 
     #[staticmethod]
-    fn close(start: usize, end: usize) -> Self {
-        Self::wrap(Event::Close {
-            span: Span::new(start, end),
-        })
+    fn close(start: u64, end: u64) -> Self {
+        Self::wrap(Event::Close { span: start..end })
     }
 
     #[getter]
@@ -158,8 +154,8 @@ impl PySExprEvent {
     }
 
     #[getter]
-    fn span(&self) -> (usize, usize) {
-        let span = match self.event {
+    fn span(&self) -> (u64, u64) {
+        let span = match &self.event {
             Event::Open { span } | Event::Atom { span, .. } | Event::Close { span } => span,
         };
         (span.start, span.end)
@@ -202,73 +198,73 @@ impl PySExpr {
 impl PySExpr {
     #[staticmethod]
     #[pyo3(signature = (atom, start=0, end=0))]
-    fn atom(atom: PyRef<'_, PySExprAtom>, start: usize, end: usize) -> Self {
-        Self::wrap(Expr::Atom {
-            value: atom.atom.clone(),
-            span: Span::new(start, end),
-        })
+    fn atom(atom: PyRef<'_, PySExprAtom>, start: u64, end: u64) -> Self {
+        Self::wrap(Expr::atom(atom.atom.clone(), start..end))
     }
 
     #[staticmethod]
     #[pyo3(signature = (items, open=(0, 0), close=(0, 0)))]
-    fn list(items: Vec<PyRef<'_, Self>>, open: (usize, usize), close: (usize, usize)) -> Self {
-        Self::wrap(Expr::List {
-            open: Span::new(open.0, open.1),
-            items: items.iter().map(|item| item.expression.clone()).collect(),
-            close: Span::new(close.0, close.1),
-        })
+    fn list(items: Vec<PyRef<'_, Self>>, open: (u64, u64), close: (u64, u64)) -> Self {
+        Self::wrap(Expr::list(
+            open.0..open.1,
+            items
+                .iter()
+                .map(|item| item.expression.clone())
+                .collect::<Vec<_>>(),
+            close.0..close.1,
+        ))
     }
 
     #[getter]
     fn kind(&self) -> &'static str {
-        match self.expression {
-            Expr::Atom { .. } => "atom",
-            Expr::List { .. } => "list",
+        match self.expression.kind() {
+            ExprKind::Atom { .. } => "atom",
+            ExprKind::List { .. } => "list",
         }
     }
 
     #[getter]
     fn atom_value(&self) -> Option<PySExprAtom> {
-        match &self.expression {
-            Expr::Atom { value, .. } => Some(PySExprAtom::wrap(value.clone())),
-            Expr::List { .. } => None,
+        match self.expression.kind() {
+            ExprKind::Atom { value, .. } => Some(PySExprAtom::wrap(value.clone())),
+            ExprKind::List { .. } => None,
         }
     }
 
     #[getter]
-    fn span(&self) -> (usize, usize) {
-        match self.expression {
-            Expr::Atom { span, .. } => (span.start, span.end),
-            Expr::List { open, close, .. } => (open.start, close.end),
+    fn span(&self) -> (u64, u64) {
+        match self.expression.kind() {
+            ExprKind::Atom { span, .. } => (span.start, span.end),
+            ExprKind::List { open, close, .. } => (open.start, close.end),
         }
     }
 
     #[getter]
-    fn open_span(&self) -> Option<(usize, usize)> {
-        match self.expression {
-            Expr::List { open, .. } => Some((open.start, open.end)),
-            Expr::Atom { .. } => None,
+    fn open_span(&self) -> Option<(u64, u64)> {
+        match self.expression.kind() {
+            ExprKind::List { open, .. } => Some((open.start, open.end)),
+            ExprKind::Atom { .. } => None,
         }
     }
 
     #[getter]
-    fn close_span(&self) -> Option<(usize, usize)> {
-        match self.expression {
-            Expr::List { close, .. } => Some((close.start, close.end)),
-            Expr::Atom { .. } => None,
+    fn close_span(&self) -> Option<(u64, u64)> {
+        match self.expression.kind() {
+            ExprKind::List { close, .. } => Some((close.start, close.end)),
+            ExprKind::Atom { .. } => None,
         }
     }
 
     #[getter]
     fn items(&self, python: Python<'_>) -> PyResult<Py<PyTuple>> {
-        let values = match &self.expression {
-            Expr::List { items, .. } => items
+        let values = match self.expression.kind() {
+            ExprKind::List { items, .. } => items
                 .iter()
                 .cloned()
                 .map(PySExpr::wrap)
                 .map(|item| Py::new(python, item))
                 .collect::<PyResult<Vec<_>>>()?,
-            Expr::Atom { .. } => Vec::new(),
+            ExprKind::Atom { .. } => Vec::new(),
         };
         Ok(PyTuple::new(python, values)?.unbind())
     }
