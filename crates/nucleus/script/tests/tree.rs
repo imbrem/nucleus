@@ -1,37 +1,53 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
-use covalence_data_sqlite::{ReadOnlyVfs, ResourceVfs};
+use covalence_data_vfs::{Bytes, MemoryVfs, ResourceVfs};
 use covalence_nucleus_script::{TreeError, compile_tree};
 
-fn library(extra: &[(&str, &[u8])]) -> ReadOnlyVfs<bytes::Bytes> {
-    let mut files = HashMap::from([
+fn library(extra: &[(&str, &[u8])]) -> MemoryVfs {
+    let mut files = BTreeMap::from([
         (
             "logic.defs".to_owned(),
-            bytes::Bytes::from_static(include_bytes!("../library/logic/defs.cov")),
+            Bytes::from_static(include_bytes!("../library/logic/defs.cov")),
         ),
         (
             "logic".to_owned(),
-            bytes::Bytes::from_static(include_bytes!("../library/logic.cov")),
+            Bytes::from_static(include_bytes!("../library/logic.cov")),
+        ),
+        (
+            "logic.basic".to_owned(),
+            Bytes::from_static(include_bytes!("../library/logic/basic.cov")),
         ),
         (
             "data.coprod.defs".to_owned(),
-            bytes::Bytes::from_static(include_bytes!("../library/data/coprod/defs.cov")),
+            Bytes::from_static(include_bytes!("../library/data/coprod/defs.cov")),
         ),
         (
             "data.prod.defs".to_owned(),
-            bytes::Bytes::from_static(include_bytes!("../library/data/prod/defs.cov")),
+            Bytes::from_static(include_bytes!("../library/data/prod/defs.cov")),
         ),
         (
             "nat.defs".to_owned(),
-            bytes::Bytes::from_static(include_bytes!("../library/nat/defs.cov")),
+            Bytes::from_static(include_bytes!("../library/nat/defs.cov")),
+        ),
+        (
+            "nat.spec".to_owned(),
+            Bytes::from_static(include_bytes!("../library/nat/spec.cov")),
+        ),
+        (
+            "nat.rec".to_owned(),
+            Bytes::from_static(include_bytes!("../library/nat/rec.cov")),
+        ),
+        (
+            "nat.arithmetic".to_owned(),
+            Bytes::from_static(include_bytes!("../library/nat/arithmetic.cov")),
         ),
     ]);
     files.extend(
         extra
             .iter()
-            .map(|(path, data)| ((*path).to_owned(), bytes::Bytes::copy_from_slice(data))),
+            .map(|(path, data)| ((*path).to_owned(), Bytes::copy_from_slice(data))),
     );
-    ReadOnlyVfs::new(files)
+    MemoryVfs::new(files)
 }
 
 #[test]
@@ -46,36 +62,45 @@ fn library_tree_compiles_once_in_dependency_order() {
             .collect::<Vec<_>>(),
         [
             "logic.defs",
+            "logic.basic",
             "logic",
-            "data.coprod.defs",
-            "data.prod.defs",
+            "nat.spec",
+            "nat.rec",
+            "nat.arithmetic",
             "nat.defs",
         ]
     );
     assert!(tree.module().namespace().get("logic.defs.and").is_some());
+    assert!(tree.namespace().get("nat.defs.NatRecSpec").is_some());
+    assert!(tree.namespace().get("nat.defs.NatSpec").is_some());
+    assert!(tree.namespace().get("nat.defs.AddSpec").is_some());
+    assert!(tree.namespace().get("nat.defs.DivModSpec").is_some());
     assert!(
         tree.module()
             .namespace()
-            .get("data.coprod.defs.IsCoprod")
+            .get("logic.basic.and.comm")
             .is_some()
     );
-    assert!(tree.namespace().get("nat.defs.NatRecSpec").is_some());
     assert!(tree.namespace().get("logic.and").is_none());
     assert!(
         tree.module()
             .namespace()
-            .get("data.prod.defs.IsProd")
-            .is_some()
-    );
-    assert!(
-        tree.module()
-            .namespace()
-            .get("nat.defs.NatRecSpec")
+            .get("nat.rec.NatRecSpec")
             .is_some()
     );
 
     let whole = ResourceVfs::read(&resources, "tactics/cache.sqlite").expect("resource bytes");
     assert_eq!(&whole[..6], b"SQLite");
+
+    let coproduct = compile_tree("data.coprod.defs", &resources).expect("coproduct theory");
+    assert!(
+        coproduct
+            .namespace()
+            .get("data.coprod.defs.IsCoprod")
+            .is_some()
+    );
+    let product = compile_tree("data.prod.defs", &resources).expect("product theory");
+    assert!(product.namespace().get("data.prod.defs.IsProd").is_some());
 }
 
 #[test]

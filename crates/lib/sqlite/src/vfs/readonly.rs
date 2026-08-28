@@ -125,12 +125,6 @@ impl<T> ReadOnlyVfs<T> {
     pub fn new(files: HashMap<String, T>) -> Self {
         Self { files }
     }
-
-    /// Borrows the immutable buffer stored under `path`.
-    #[must_use]
-    pub fn get(&self, path: &str) -> Option<&T> {
-        self.files.get(path)
-    }
 }
 
 impl<T: AsRef<[u8]> + Clone + Send + Sync> Vfs for ReadOnlyVfs<T> {

@@ -1,4 +1,6 @@
 ; Publish the logical definitions directly as `logic.*` while retaining
 ; `logic.defs` as the private source-module boundary.
 (import logic.defs)
+(import logic.basic)
 (include logic.defs)
+(include logic.basic)

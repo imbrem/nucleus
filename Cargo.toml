@@ -27,6 +27,7 @@ members = [
   "crates/data/cbor",
   "crates/data/num",
   "crates/data/sexpr",
+  "crates/data/vfs",
   "crates/data/sqlite",
   "crates/data/cas",
   "crates/data/cas-sqlite",

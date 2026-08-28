@@ -1,0 +1,21 @@
+; The abstract natural-number structure: zero, successor, separation, and
+; induction. This states a proposition; it does not choose a carrier or assert
+; that a model exists.
+(import logic)
+
+(define NatSpec ('n)
+  (-> 'n (-> (-> 'n 'n) bool))
+  (lambda zero 'n
+    (lambda succ (-> 'n 'n)
+      ((logic.and
+        (forall n 'n (not (= zero (succ n)))))
+        ((logic.and
+          (forall m 'n
+            (forall n 'n
+              (imp (= (succ m) (succ n)) (= m n)))))
+          (forall P (-> 'n bool)
+            (imp
+              ((logic.and
+                (P zero))
+                (forall n 'n (imp (P n) (P (succ n)))))
+              (forall n 'n (P n)))))))))

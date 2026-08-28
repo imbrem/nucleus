@@ -20,6 +20,5 @@ pub use connection::{
     ATTACHED_DATABASES, ATTACHED_DATABASES_INTERPRETATION, CONNECTION_CATALOG,
     CONNECTION_CATALOG_INTERPRETATION, Connection, ConnectionError,
 };
-pub use covalence_lib_sqlite::vfs::ReadOnlyVfs;
 pub use image::ImageError;
-pub use resource_vfs::ResourceVfs;
+pub use resource_vfs::ResourceVfsAdapter;

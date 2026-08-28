@@ -6,8 +6,8 @@
 - a permeable connection wrapper with connection-local catalog metadata;
 - typed query, parameter, transaction, and database-image helpers;
 - a read-only SQLite VFS which opens immutable CAS objects by O256 address;
-- a `ResourceVfs` subtrait for reading a complete immutable byte resource from
-  the same resolver used for SQLite's random-access file interface.
+- an adapter exposing a format-neutral `covalence-data-vfs` resolver through
+  SQLite's random-access file interface.
 
 The resource interface deliberately does not interpret names as paths or
 bytes as source text. Script trees can therefore resolve logical module names,

@@ -51,11 +51,24 @@ unchanged, loads each transitive dependency once, and automatically places
 every file under its name-derived namespace. A folder-backed resolver may use
 the conventional `nat/defs.cov` location; a CAS-backed resolver may map the
 same name to an indexed hash anywhere in storage. The compiler cannot tell the
-difference. The resolver is SQLite's `ResourceVfs` subtrait: it
-returns `bytes::Bytes` for whole resources while retaining the full SQLite VFS
-API on the same mount. A tree may therefore carry `.cov` sources, `.wasm`
-tactics, binary constants, and `.sqlite` tactic state without giving the parser
-filesystem authority or inventing a format per tactic.
+difference. The resolver is the format-neutral `ResourceVfs` from
+`covalence-data-vfs`, returning shared `Bytes` without depending on SQLite.
+`covalence-data-sqlite` can adapt the same mount to SQLite's random-access VFS.
+A tree may therefore carry `.cov` sources, `.wasm` tactics, binary constants,
+and `.sqlite` tactic state without giving the parser filesystem authority or
+inventing a format per tactic.
+
+The compiled namespace is a separate immutable navigation object with direct
+binding, child, and dotted-path access. It is shaped for straightforward WIT
+and Python wrappers and remains disposable metadata rather than kernel state.
+
+Library `defs.cov` modules describe abstract public theories rather than a
+preferred construction. For example, `nat/defs.cov` publishes the natural
+structure, recursion, and arithmetic specifications. A future
+`nat/concrete.cov` can select witnesses from a model, while private construction
+modules contain the infinity-subtype proof. The same convention allows a
+future `real/defs.cov` to expose a small axiomatization while a Dedekind-cut
+construction remains an implementation and consistency proof.
 
 Only `.cov` resources are decoded as UTF-8. Exact source hashes and dependency
 order remain userspace metadata; all combined definitions still pass through

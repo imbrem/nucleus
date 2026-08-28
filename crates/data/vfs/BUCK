@@ -21,27 +21,22 @@ filegroup(
 )
 
 rust_library(
-    name = "covalence_data_sqlite",
-    crate = "covalence_data_sqlite",
+    name = "covalence_data_vfs",
+    crate = "covalence_data_vfs",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    tests = [":covalence_data_sqlite-unit-test"],
+    tests = [":covalence_data_vfs-unit-test"],
     named_deps = {
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
-        "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
-        "covalence_data_vfs": "nucleus//crates/data/vfs:covalence_data_vfs",
-        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
-        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
-        "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Untrusted SQLite data helpers and CAS-backed VFS support",
+        "CARGO_PKG_DESCRIPTION": "Untrusted virtual resource resolution for Covalence data",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-data-sqlite",
+        "CARGO_PKG_NAME": "covalence-data-vfs",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
@@ -56,26 +51,21 @@ rust_library(
 )
 
 rust_test(
-    name = "covalence_data_sqlite-unit-test",
-    crate = "covalence_data_sqlite",
+    name = "covalence_data_vfs-unit-test",
+    crate = "covalence_data_vfs",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
-        "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
-        "covalence_data_vfs": "nucleus//crates/data/vfs:covalence_data_vfs",
-        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
-        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
-        "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Untrusted SQLite data helpers and CAS-backed VFS support",
+        "CARGO_PKG_DESCRIPTION": "Untrusted virtual resource resolution for Covalence data",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-data-sqlite",
+        "CARGO_PKG_NAME": "covalence-data-vfs",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",

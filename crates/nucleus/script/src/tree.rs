@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use covalence_data_sqlite::ResourceVfs;
+use covalence_data_vfs::ResourceVfs;
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 

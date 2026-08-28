@@ -1,33 +1,7 @@
-; Natural-number membership and recursion schemata.
-(import logic)
-(import data.coprod.defs)
-(import data.prod.defs)
-
-(define NatMember ('a)
-  (-> 'a (-> (-> 'a 'a) (-> 'a bool)))
-  (lambda zero 'a
-    (lambda succ (-> 'a 'a)
-      (lambda n 'a
-        (forall P (-> 'a bool)
-          (imp
-            ((logic.and
-              (P zero))
-              (forall k 'a (imp (P k) (P (succ k)))))
-            (P n)))))))
-
-(define NatRecSpec ('a 'c)
-  (-> 'a
-    (-> (-> 'a 'a)
-      (-> 'c
-        (-> (-> 'a (-> 'c 'c))
-          (-> (-> 'a 'c) bool)))))
-  (lambda zero 'a
-    (lambda succ (-> 'a 'a)
-      (lambda base 'c
-        (lambda step (-> 'a (-> 'c 'c))
-          (lambda candidate (-> 'a 'c)
-            ((logic.and
-              (= (candidate zero) base))
-              (forall n 'a
-                (= (candidate (succ n))
-                   ((step n) (candidate n)))))))))))
+; Public abstract natural-number theory assembled from focused specifications.
+(import nat.spec)
+(import nat.rec)
+(import nat.arithmetic)
+(include nat.spec)
+(include nat.rec)
+(include nat.arithmetic)

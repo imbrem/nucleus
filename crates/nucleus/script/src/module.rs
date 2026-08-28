@@ -1,16 +1,15 @@
 //! Tree-shaped module metadata around the checked theory compiler.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt::Write,
-};
+use std::{collections::BTreeSet, fmt::Write};
 
 use covalence_data_sexpr::Atom;
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_logic_hol::{Kernel, Ref};
 
-use super::{CompiledTheory, SExpr, TheoryError, atom, compile_theory, list, read_module};
+use super::{
+    CompiledTheory, Namespace, SExpr, TheoryError, atom, compile_theory, list, read_module,
+};
 
 /// One content-addressed dependency declared by a source module.
 ///
@@ -49,57 +48,6 @@ impl ImportDecl {
     #[must_use]
     pub const fn metadata(&self) -> O256 {
         self.metadata
-    }
-}
-
-/// An immutable-by-convention tree mapping source names to local HOL rows.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Namespace {
-    bindings: BTreeMap<String, Ref>,
-    children: BTreeMap<String, Self>,
-}
-
-impl Namespace {
-    /// Resolves a dot-separated name from this namespace root.
-    #[must_use]
-    pub fn get(&self, path: &str) -> Option<Ref> {
-        let mut parts = path.split('.').peekable();
-        let mut namespace = self;
-        while let Some(part) = parts.next() {
-            if parts.peek().is_none() {
-                return namespace.bindings.get(part).copied();
-            }
-            namespace = namespace.children.get(part)?;
-        }
-        None
-    }
-
-    /// Iterates bindings directly contained in this namespace.
-    #[must_use]
-    pub fn bindings(&self) -> impl ExactSizeIterator<Item = (&str, Ref)> {
-        self.bindings
-            .iter()
-            .map(|(name, reference)| (name.as_str(), *reference))
-    }
-
-    /// Iterates immediate child namespaces.
-    #[must_use]
-    pub fn children(&self) -> impl ExactSizeIterator<Item = (&str, &Self)> {
-        self.children
-            .iter()
-            .map(|(name, namespace)| (name.as_str(), namespace))
-    }
-
-    pub(super) fn insert(&mut self, path: &str, reference: Ref) {
-        let mut parts = path.split('.').peekable();
-        let mut namespace = self;
-        while let Some(part) = parts.next() {
-            if parts.peek().is_none() {
-                namespace.bindings.insert(part.to_owned(), reference);
-                return;
-            }
-            namespace = namespace.children.entry(part.to_owned()).or_default();
-        }
     }
 }
 
@@ -236,8 +184,8 @@ pub fn delaborate_module(kernel: &Kernel, namespace: &Namespace, imports: &[Impo
 }
 
 fn collect_references(namespace: &Namespace, output: &mut BTreeSet<Ref>) {
-    output.extend(namespace.bindings.values().copied());
-    for child in namespace.children.values() {
+    output.extend(namespace.bindings().map(|(_, reference)| reference));
+    for (_, child) in namespace.children() {
         collect_references(child, output);
     }
 }

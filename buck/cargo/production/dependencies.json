@@ -9406,6 +9406,14 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-vfs@0.0.0",
+      "name": "covalence-data-vfs",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
+      ]
+    },
+    {
       "id": "workspace#covalence-ffi-python@0.0.0",
       "name": "covalence-ffi-python",
       "category": "tcb",
@@ -9590,14 +9598,6 @@
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.34"
-      ]
-    },
-    {
-      "id": "workspace#covalence-nucleus-script@0.0.0",
-      "name": "covalence-nucleus-script",
-      "category": "tcb",
-      "dependencies": [
-        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
       ]
     },
     {
