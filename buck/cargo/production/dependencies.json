@@ -5831,6 +5831,7 @@
         "__rustls",
         "__rustls-ring",
         "__tls",
+        "json",
         "rustls-tls",
         "rustls-tls-webpki-roots",
         "rustls-tls-webpki-roots-no-provider"
@@ -5860,6 +5861,7 @@
             "rustls": ":rustls-0.23.43",
             "rustls_pki_types": ":rustls-pki-types-1.15.1",
             "serde": ":serde-1.0.229",
+            "serde_json": ":serde_json-1.0.151",
             "serde_urlencoded": ":serde_urlencoded-0.7.1",
             "sync_wrapper": ":sync_wrapper-1.0.2",
             "tokio": ":tokio-1.53.1",
@@ -9360,6 +9362,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#axum-extra@0.10.3",
         "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+        "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.34",
         "registry+https://github.com/rust-lang/crates.io-index#headers@0.4.1",
         "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
@@ -14990,6 +14993,14 @@
       "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
       "kinds": [
         "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+      "kinds": [
+        "normal",
+        "normal (cfg(target_arch = \"wasm32\"))"
       ]
     },
     {

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Read-only HTTP access to a content-addressed store"
+description = "HTTP transport for composable content-addressed storage"
 publish = false
 
 [dependencies]
@@ -14,9 +14,11 @@ bytes = "1"
 covalence-data-cas = { path = "../cas" }
 covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+covalence-lib-serde = { path = "../../lib/serde" }
 covalence-logic-cas = { path = "../../logic/cas" }
+futures = "0.3"
 headers = "0.4"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["net", "rt-multi-thread"] }
 tower-http = { version = "0.6", features = ["cors"] }
 

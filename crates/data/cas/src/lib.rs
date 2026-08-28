@@ -2,11 +2,16 @@
 
 mod r#async;
 mod index;
+mod service;
 
 pub use bytes::Bytes;
 
 pub use r#async::{AsyncCas, AsyncCasError, CasFuture, get_exact_fact};
 pub use index::{AdmissionError, CasStats, IndexCas, InvalidRange, ResidentObject, SharedIndexCas};
+pub use service::{
+    ByteRange, CasService, CasServiceError, CasServiceFuture, CasUpload, ObjectRanges, PrefixHints,
+    PrefixResolution, RangePart, StoredObject,
+};
 
 pub use covalence_logic_cas::{Cas, CasMut, CasShared};
 

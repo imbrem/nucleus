@@ -9,7 +9,7 @@ use std::net::TcpStream;
 use std::sync::Arc;
 
 use covalence_data_cas::SharedIndexCas;
-use covalence_data_cas_http::{Serving, serve};
+use covalence_data_cas_http::{HttpCas, Serving, serve};
 use covalence_lib_hash::O256;
 
 /// Starts a service holding `objects`, returning it and their addresses.
@@ -25,10 +25,19 @@ fn started(objects: &[&'static [u8]]) -> (Serving, Vec<O256>) {
 
 /// Sends a raw request and returns (head, body).
 fn request(serving: &Serving, lines: &[String]) -> (String, Vec<u8>) {
+    request_with_body(serving, lines, &[])
+}
+
+fn request_with_body(
+    serving: &Serving,
+    lines: &[String],
+    request_body: &[u8],
+) -> (String, Vec<u8>) {
     let mut stream = TcpStream::connect(serving.address()).unwrap();
     let mut text = lines.join("\r\n");
     text.push_str("\r\n\r\n");
     stream.write_all(text.as_bytes()).unwrap();
+    stream.write_all(request_body).unwrap();
     stream.flush().unwrap();
 
     let mut response = Vec::new();
@@ -106,20 +115,21 @@ fn a_range_past_the_end_is_unsatisfiable() {
     );
     // The client is told how long the object actually is.
     assert!(head.contains("content-range: bytes */5"), "{head}");
-    assert!(body.is_empty());
+    assert!(String::from_utf8_lossy(&body).contains("range_not_satisfiable"));
 }
 
 #[test]
-fn a_multi_range_request_is_refused_rather_than_half_answered() {
+fn a_multi_range_request_returns_standard_multipart_bytes() {
     let (serving, addresses) = started(&[b"hello world"]);
-    let (head, _) = get(&serving, addresses[0], &["Range: bytes=0-1,4-5"]);
+    let (head, body) = get(&serving, addresses[0], &["Range: bytes=0-1,4-5"]);
 
-    // Answering only the first range would give a client bytes it did not ask
-    // for while looking like success.
-    assert!(
-        head.starts_with("HTTP/1.1 416 Range Not Satisfiable"),
-        "{head}"
-    );
+    assert!(head.starts_with("HTTP/1.1 206 Partial Content"), "{head}");
+    assert!(head.contains("multipart/byteranges"), "{head}");
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains("Content-Range: bytes 0-1/11"), "{body}");
+    assert!(body.contains("\r\nhe\r\n"), "{body}");
+    assert!(body.contains("Content-Range: bytes 4-5/11"), "{body}");
+    assert!(body.contains("\r\no \r\n"), "{body}");
 }
 
 #[test]
@@ -130,7 +140,7 @@ fn an_absent_address_is_not_found() {
 }
 
 #[test]
-fn a_malformed_address_is_not_found() {
+fn a_malformed_address_is_a_clear_client_error() {
     let (serving, _) = started(&[]);
     let (head, _) = request(
         &serving,
@@ -140,7 +150,7 @@ fn a_malformed_address_is_not_found() {
             "Connection: close".to_owned(),
         ],
     );
-    assert!(head.starts_with("HTTP/1.1 404 Not Found"), "{head}");
+    assert!(head.starts_with("HTTP/1.1 400 Bad Request"), "{head}");
 }
 
 #[test]
@@ -173,6 +183,180 @@ fn writes_are_refused() {
         ],
     );
     assert!(head.starts_with("HTTP/1.1 405"), "{head}");
+}
+
+#[test]
+fn put_upload_hashes_and_admits_streamed_bytes() {
+    let (serving, _) = started(&[]);
+    let payload = b"uploaded through the service";
+    let (head, body) = request_with_body(
+        &serving,
+        &[
+            "PUT /cas/upload HTTP/1.1".to_owned(),
+            "Host: localhost".to_owned(),
+            format!("Content-Length: {}", payload.len()),
+            "Connection: close".to_owned(),
+        ],
+        payload,
+    );
+    let address = O256::from_bytes(payload);
+    assert!(head.starts_with("HTTP/1.1 201 Created"), "{head}");
+    assert!(
+        head.contains(&format!("location: /cas/blake3/{}", address.hex())),
+        "{head}"
+    );
+    assert!(String::from_utf8_lossy(&body).contains(&address.hex().to_string()));
+    assert_eq!(get(&serving, address, &[]).1, payload);
+}
+
+#[test]
+fn post_upload_is_the_conventional_alias() {
+    let (serving, _) = started(&[]);
+    let payload = b"post upload";
+    let (head, _) = request_with_body(
+        &serving,
+        &[
+            "POST /cas/upload HTTP/1.1".to_owned(),
+            "Host: localhost".to_owned(),
+            format!("Content-Length: {}", payload.len()),
+            "Connection: close".to_owned(),
+        ],
+        payload,
+    );
+    assert!(head.starts_with("HTTP/1.1 201 Created"), "{head}");
+}
+
+#[test]
+fn verified_put_accepts_only_the_addressed_bytes() {
+    let (serving, _) = started(&[]);
+    let payload = b"verified upload";
+    let address = O256::from_bytes(payload);
+    let path = format!("/cas/blake3/{}", address.hex());
+    let (head, _) = request_with_body(
+        &serving,
+        &[
+            format!("PUT {path} HTTP/1.1"),
+            "Host: localhost".to_owned(),
+            format!("Content-Length: {}", payload.len()),
+            "Connection: close".to_owned(),
+        ],
+        payload,
+    );
+    assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+
+    let wrong = O256::from_bytes(b"another object");
+    let (head, body) = request_with_body(
+        &serving,
+        &[
+            format!("PUT /cas/blake3/{} HTTP/1.1", wrong.hex()),
+            "Host: localhost".to_owned(),
+            format!("Content-Length: {}", payload.len()),
+            "Connection: close".to_owned(),
+        ],
+        payload,
+    );
+    assert!(
+        head.starts_with("HTTP/1.1 422 Unprocessable Entity"),
+        "{head}"
+    );
+    assert!(String::from_utf8_lossy(&body).contains("hash_mismatch"));
+}
+
+#[test]
+fn unsupported_hash_algorithms_are_explicit() {
+    let (serving, _) = started(&[]);
+    let (head, body) = request(
+        &serving,
+        &[
+            "GET /cas/sha256/00 HTTP/1.1".to_owned(),
+            "Host: localhost".to_owned(),
+            "Connection: close".to_owned(),
+        ],
+    );
+    assert!(head.starts_with("HTTP/1.1 501 Not Implemented"), "{head}");
+    assert!(String::from_utf8_lossy(&body).contains("unsupported_hash_algorithm"));
+}
+
+#[test]
+fn a_unique_hash_prefix_redirects_to_the_canonical_full_address() {
+    let (serving, addresses) = started(&[b"prefix-addressed object"]);
+    let full = addresses[0].hex().to_string();
+    let prefix = &full[..12];
+    let (head, body) = request(
+        &serving,
+        &[
+            format!("GET /cas/blake3/{prefix} HTTP/1.1"),
+            "Host: localhost".to_owned(),
+            "Connection: close".to_owned(),
+        ],
+    );
+    assert!(
+        head.starts_with("HTTP/1.1 307 Temporary Redirect"),
+        "{head}"
+    );
+    assert!(
+        head.contains(&format!("location: /cas/blake3/{full}")),
+        "{head}"
+    );
+    assert!(head.contains("cache-control: no-store"), "{head}");
+    assert!(body.is_empty());
+}
+
+#[test]
+fn address_prefixes_have_a_minimum_length() {
+    let (serving, _) = started(&[]);
+    let (head, body) = request(
+        &serving,
+        &[
+            "GET /cas/blake3/abcd HTTP/1.1".to_owned(),
+            "Host: localhost".to_owned(),
+            "Connection: close".to_owned(),
+        ],
+    );
+    assert!(head.starts_with("HTTP/1.1 400 Bad Request"), "{head}");
+    assert!(String::from_utf8_lossy(&body).contains("hash_prefix_too_short"));
+}
+
+#[test]
+fn an_http_cas_can_be_reexposed_as_a_proxy_without_special_code() {
+    let upstream_cas = Arc::new(SharedIndexCas::new());
+    let upstream = serve(Arc::clone(&upstream_cas), "127.0.0.1:0".parse().unwrap()).unwrap();
+    let remote = Arc::new(HttpCas::new(&upstream.base_url()).unwrap());
+    let proxy = serve(remote, "127.0.0.1:0".parse().unwrap()).unwrap();
+    let payload = b"composed through an HTTP CAS";
+
+    let (head, _) = request_with_body(
+        &proxy,
+        &[
+            "PUT /cas/upload HTTP/1.1".to_owned(),
+            "Host: localhost".to_owned(),
+            format!("Content-Length: {}", payload.len()),
+            "Connection: close".to_owned(),
+        ],
+        payload,
+    );
+    assert!(head.starts_with("HTTP/1.1 201 Created"), "{head}");
+    let address = O256::from_bytes(payload);
+    assert!(upstream_cas.contains(address));
+    assert_eq!(get(&proxy, address, &[]).1, payload);
+
+    let full = address.hex().to_string();
+    let (head, _) = request(
+        &proxy,
+        &[
+            format!("GET /cas/blake3/{} HTTP/1.1", &full[..12]),
+            "Host: localhost".to_owned(),
+            "Connection: close".to_owned(),
+        ],
+    );
+    assert!(
+        head.starts_with("HTTP/1.1 307 Temporary Redirect"),
+        "{head}"
+    );
+    assert!(
+        head.contains(&format!("location: /cas/blake3/{full}")),
+        "{head}"
+    );
 }
 
 #[test]
