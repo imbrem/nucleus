@@ -84,3 +84,13 @@ def test_event_reader_has_no_arbitrary_nesting_limit() -> None:
     depth = 20_000
     events = parse_events("(" * depth + "x" + ")" * depth)
     assert len(events) == depth * 2 + 1
+
+
+def test_width_aware_formatting_round_trips() -> None:
+    expression = parse_one("(define option (lambda x (some x)))")
+    assert expression.format() == "(define option (lambda x (some x)))"
+    broken = expression.format(width=18)
+    assert broken == "(define\n  option\n  (lambda\n    x\n    (some x)))"
+    assert [event.kind for event in parse_one(broken).events()] == [
+        event.kind for event in expression.events()
+    ]

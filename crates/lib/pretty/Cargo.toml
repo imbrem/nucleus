@@ -1,0 +1,14 @@
+[package]
+name = "covalence-lib-pretty"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Width-aware document layout for Nucleus user surfaces"
+publish = false
+
+[dependencies]
+pretty = "0.12.5"
+
+[lints]
+workspace = true

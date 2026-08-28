@@ -248,6 +248,12 @@
           ]
         },
         {
+          "name": "printer",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "reader",
           "kinds": [
             "test"
@@ -376,6 +382,21 @@
       "targets": [
         {
           "name": "covalence_lib_parse",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-pretty@0.0.0",
+      "name": "covalence-lib-pretty",
+      "version": "0.0.0",
+      "path": "crates/lib/pretty",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_pretty",
           "kinds": [
             "lib"
           ]
@@ -1185,6 +1206,13 @@
     {
       "source": "workspace#covalence-data-sexpr@0.0.0",
       "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-sexpr@0.0.0",
+      "target": "workspace#covalence-lib-pretty@0.0.0",
       "kinds": [
         "normal"
       ]
