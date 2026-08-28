@@ -235,6 +235,27 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-sexpr@0.0.0",
+      "name": "covalence-data-sexpr",
+      "version": "0.0.0",
+      "path": "crates/data/sexpr",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_sexpr",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "reader",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-ffi-python@0.0.0",
       "name": "covalence-ffi-python",
       "version": "0.0.0",
@@ -1162,6 +1183,13 @@
       ]
     },
     {
+      "source": "workspace#covalence-data-sexpr@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-data-cas@0.0.0",
       "kinds": [
@@ -1171,6 +1199,13 @@
     {
       "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-data-cbor@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-data-sexpr@0.0.0",
       "kinds": [
         "normal"
       ]

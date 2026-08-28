@@ -23,6 +23,7 @@ mod hol;
 mod lrat;
 mod metamath;
 mod sat;
+mod sexpr;
 
 /// `covalence._covalence`.
 #[pymodule]
@@ -35,5 +36,6 @@ fn _covalence(module: &Bound<'_, PyModule>) -> PyResult<()> {
     hol::register(module)?;
     sat::register(module)?;
     lrat::register(module)?;
-    metamath::register(module)
+    metamath::register(module)?;
+    sexpr::register(module)
 }
