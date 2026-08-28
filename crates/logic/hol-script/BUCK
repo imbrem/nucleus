@@ -62,7 +62,7 @@ rust_test(
     srcs = _RUST_SOURCES,
     mapped_srcs = {
         "nucleus//:hol_init_checked_manifest": "theories/init-boolean.checked.json",
-        "nucleus//:hol_init_dag_json": "theories/init.dag.json",
+        "nucleus//crates/logic/hol-script:theories/init.dag.json": "theories/init.dag.json",
     },
     features = [
         "buck-test-fixtures",
@@ -102,7 +102,7 @@ rust_test(
     srcs = _RUST_SOURCES,
     mapped_srcs = {
         "nucleus//:hol_init_checked_manifest": "theories/init-boolean.checked.json",
-        "nucleus//:hol_init_dag_json": "theories/init.dag.json",
+        "nucleus//crates/logic/hol-script:theories/init.dag.json": "theories/init.dag.json",
     },
     features = [
         "buck-test-fixtures",

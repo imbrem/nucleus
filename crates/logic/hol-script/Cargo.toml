@@ -9,7 +9,7 @@ publish = false
 
 [package.metadata.glu]
 buck-test-features = ["buck-test-fixtures"]
-buck-test-mapped-srcs = { "nucleus//:hol_init_checked_manifest" = "theories/init-boolean.checked.json", "nucleus//:hol_init_dag_json" = "theories/init.dag.json" }
+buck-test-mapped-srcs = { "nucleus//:hol_init_checked_manifest" = "theories/init-boolean.checked.json", "nucleus//crates/logic/hol-script:theories/init.dag.json" = "theories/init.dag.json" }
 
 [features]
 buck-test-fixtures = []

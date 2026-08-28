@@ -41,12 +41,6 @@ export_file(
 )
 
 export_file(
-    name = "hol_init_dag_json",
-    src = "crates/logic/hol-script/theories/init.dag.json",
-    visibility = ["PUBLIC"],
-)
-
-export_file(
     name = "hol_init_checked_schema",
     src = "theories/init-boolean.checked.schema.json",
     visibility = ["PUBLIC"],
