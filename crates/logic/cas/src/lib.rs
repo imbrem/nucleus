@@ -34,7 +34,153 @@
 //! issue #875. This crate erases the Lean proof while preserving the same LCF
 //! constructor boundary in safe Rust. The range rules have no Lean counterpart
 //! yet.
+//!
+//! # Blob expressions
+//!
+//! [`BlobExpr`] is a second, more general layer: a little algebra of
+//! expressions — a content address, literal bytes, a run of zeros, a
+//! concatenation, a sub-range — together with [`BlobEq`], the proposition that
+//! two of them denote the same byte string.
+//!
+//! ## Models
+//!
+//! An expression is *syntax* and means nothing on its own. It is interpreted
+//! in a **model**: a map
+//!
+//! ```text
+//! σ : O256 -> Bytes
+//! ```
+//!
+//! that is TOTAL, INJECTIVE, and EXTENDS THE CAS — `σ h = b` for every checked
+//! pair `(h, b)`, and, for a [`CasRangeFact`] covering only part of a blob,
+//! agreement with `σ h` on just that range. The checked facts of this crate
+//! *are* the CAS as far as this definition is concerned; nothing else pins
+//! `σ`. Interpretation is then the partial function
+//!
+//! | Expression | `denote σ` |
+//! | ---------- | ---------- |
+//! | `Blake3(h)` | `Some(σ h)` — always defined |
+//! | `Bytes(v)` | `Some(v)` |
+//! | `Zero(n)` | `Some` of `n` zero bytes |
+//! | `Cat(x, y)` | the two denotations concatenated, when both are defined |
+//! | `Slice(e, s)` | the `s` sub-range of `denote σ e`, when `s` is in range |
+//!
+//! **Totality** is why a digest is never undefined. `σ` reads *some* byte
+//! string at every hash, pinned or not, and different models read different
+//! ones; what varies with the model is *which* bytes, never *whether* there
+//! are any. Undefinedness has exactly two sources: a slice whose span runs
+//! past its subject, and a concatenation with an undefined side.
+//!
+//! **Injectivity** is the other half of the definition, and it is load-bearing:
+//! it is what licenses [`BlobProp::decide`] to REFUTE an equality between two
+//! different digests. It is the right condition because `σ h` is *the* blob
+//! that `h` names, and two different hashes cannot name one blob — naming is a
+//! function, so `name b` determines `h` uniquely.
+//!
+//! *Considered, not adopted:* the stronger SECTION property, `name (σ h) = h`
+//! for every `h`. It implies injectivity, so it would license the digest
+//! refutation too, and it would buy one branch this calculus does not have:
+//! `Blake3(h)` against literal `Bytes(v)` could be refuted whenever
+//! `name v != h`, since `name (σ h) = h != name v` forces `σ h != v` in every
+//! model. It is not adopted because the digest refutation is already two lines
+//! from injectivity alone, and because a section exists only if `name` is
+//! *surjective* onto the hashes anyone writes down — a strictly stronger
+//! existence assumption than the one below, for a completeness gain nothing
+//! yet needs.
+//!
+//! ## Standing assumption: the CAS is collision-free
+//!
+//! Everything in this layer is sound RELATIVE TO THE EXISTENCE OF AT LEAST ONE
+//! MODEL, and that existence is exactly collision-freedom.
+//!
+//! A `σ` extending the CAS exists iff no hash is pinned to two different
+//! blobs. The pinned part is finite, and it is automatically injective: `name`
+//! is a function, so no blob is pinned to two hashes. A finite injective
+//! partial map always extends to a total injection, there being infinitely
+//! many byte strings. So the sole obstruction is a single hash pinned to two
+//! different blobs — precisely a collision.
+//!
+//! Under a collision there are NO models, every proposition is vacuously
+//! valid, and the calculus is unsound. That is the standing hypothesis of the
+//! WHOLE calculus. It is stated here once: no rule repeats it, no rule's name
+//! carries it, and no rule has a side condition standing in for it.
+//!
+//! ## Validity
+//!
+//! [`BlobEq`] `l r` is VALID when `denote σ l = denote σ r` for EVERY model
+//! `σ`. The comparison is of two `Option`s, so two expressions undefined in
+//! every model count as EQUAL: this is the weak, Kleene reading.
+//!
+//! It is what keeps [`BlobFact::refl`] unconditional — an out-of-range slice
+//! is equal to itself — and the junk stays junk, because undefinedness
+//! propagates outward through `Cat` and `Slice` rather than escaping into a
+//! byte string.
+//!
+//! *Considered, not adopted:* the STRONG reading, requiring both sides to be
+//! defined as well as equal. It would cost a total `refl`: reflexivity would
+//! carry a definedness side condition that [`BlobExpr::len`] can only sometimes
+//! discharge, and never for a `Cat` measuring past `u64`. The strong claim
+//! remains expressible as a `BlobEq` alongside a definedness certificate.
+//!
+//! ## Observations
+//!
+//! [`BlobExpr::len`] answers `Option<u64>`, where `Some(n)` certifies that the
+//! expression is defined in EVERY model and is `n` bytes long in every one of
+//! them; that certificate is what makes length disagreement a sound
+//! refutation. `Blake3(h)` is `None`: always defined, but `σ h` varies with
+//! the model, so no single `n` answers. Unknown lengths compare like SQL
+//! `NULL` — none agrees with anything, not even itself — so they are compared
+//! only through [`cmp_length`], never with `==`. [`BlobExpr::eval`] is the
+//! stronger certificate: `Some(v)` says the expression denotes exactly `v` in
+//! every model.
+//!
+//! [`BlobLike::size`] is the third observation, and the only one that is not
+//! about denotation at all. It counts the expression as a TREE — `Cat` shares
+//! its children through an [`Arc`](std::sync::Arc), so a DAG of `n + 1` nodes
+//! can denote a tree of `2^n`, and every traversal walks the tree. Every
+//! constructor here is nonetheless TOTAL: such an expression is a DEGENERATE
+//! INPUT, and dying on one is acceptable where a WRONG ANSWER is not, so the
+//! measurements are made not to lie — saturating for the size, `checked_add`
+//! for the length — and the observations that would have to walk the tree
+//! DECLINE past [`MAX_TREE_NODES`], [`BlobExpr::len`], [`BlobExpr::eval`] and
+//! [`BlobProp::decide`] among them. Declining proves nothing false: `None`
+//! means "the rules do not settle it", which costs completeness only. `==` and
+//! `Drop` are deliberately left unlimited, the first because a limit would
+//! change what equality means and the second because it cannot decline at all.
+//!
+//! [`BlobFact`] is the LCF wrapper over that layer, the counterpart of
+//! [`CasRangeFact`] one level up. Its rules are evaluation ([`BlobFact::check`],
+//! which turns a decided proposition into a fact), [`BlobFact::refl`],
+//! [`BlobFact::symm`], [`BlobFact::trans`], and congruence for the two
+//! operators ([`BlobFact::cat`] and [`BlobFact::slice`]). Congruence yields
+//! equality and never disequality, so the sound partial converse — cancelling
+//! a `Cat` operand that is defined in every model — is a separate rule,
+//! deferred at a named seam, as is n-ary distinctness. Every rule but
+//! [`BlobFact::check`] and [`BlobFact::trans`] is TOTAL, including the two
+//! congruence rules: they build a bigger expression, and what happens past
+//! [`MAX_TREE_NODES`] is that [`BlobProp::decide`] stops answering about it,
+//! not that the rule stops applying.
+//!
+//! ## `CasFact` is not a blob-expression fact
+//!
+//! The two layers are still not unified, but the reason is now shape rather
+//! than strength. A [`CasRangeFact`] is a checked pair carrying its bytes; a
+//! [`BlobEq`] is a claim about two expressions, and only some equalities have
+//! a range fact's shape. Their *content* agrees: a model extends the CAS by
+//! definition, so a checked pair makes its equality valid, and conversely an
+//! equality `Blake3(h) = Bytes(v)` can only be valid if the CAS pins `h` — an
+//! unpinned `h` is free, and some model reads other bytes there.
+//!
+//! Both directions of the bridge are therefore ORDINARY rules with no
+//! hypothesis of their own beyond the standing one.
+//! [`CasRangeFact::to_blob_fact`] goes up and [`BlobFact::to_range_fact`]
+//! comes back down; the latter is partial only in the shapes it can express,
+//! never in what it believes. Neither is decidable from within the calculus,
+//! because [`BlobProp::decide`] cannot read a store, which is what makes
+//! going up a genuine introduction rule.
 
+mod blob;
+mod eq;
 mod fact;
 pub mod proof;
 #[cfg(feature = "prove")]
@@ -44,6 +190,10 @@ pub mod range;
 pub use bytes::Bytes;
 pub use covalence_lib_hash::{O256, blake3::Blake3Cv};
 
+pub use blob::{
+    BlobCat, BlobExpr, BlobLike, BlobSlice, MAX_EVAL_BYTES, MAX_TREE_NODES, cmp_length,
+};
+pub use eq::{BlobEq, BlobFact, BlobProp};
 pub use fact::{
     CasAssertion, CasCheckError, CasFact, CasRangeAssertion, CasRangeFact, FuseError, SliceError,
 };
