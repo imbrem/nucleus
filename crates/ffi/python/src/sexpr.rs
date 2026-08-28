@@ -5,7 +5,7 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use covalence_data_sexpr::{
-    Atom, Document, ErasedRepr, Event, Expr, ExprKind, Repr, SDocument, SExpr, SExprNode,
+    Atom, Document, ErasedRepr, Event, Expr, ExprKind, Printer, Repr, SDocument, SExpr, SExprNode,
     SpannedRepr, parse, parse_one,
 };
 use covalence_lib_python::prelude::*;
@@ -13,6 +13,14 @@ use covalence_lib_python::pyo3::types::{PyBytes, PyString, PyTuple};
 
 fn value_error(error: impl ToString) -> PyErr {
     PyValueError::new_err(error.to_string())
+}
+
+fn printer(width: usize, indent: usize) -> PyResult<Printer> {
+    Ok(Printer {
+        width,
+        indent: isize::try_from(indent)
+            .map_err(|_| PyValueError::new_err("indent exceeds the supported range"))?,
+    })
 }
 
 /// An immutable atomic S-expression value.
@@ -293,6 +301,13 @@ impl PySExpr {
         PyErasedSExpr::wrap(self.expression.erase())
     }
 
+    #[pyo3(signature = (width=80, indent=2))]
+    fn format(&self, width: usize, indent: usize) -> PyResult<String> {
+        printer(width, indent)?
+            .expression(&self.expression)
+            .map_err(value_error)
+    }
+
     fn __repr__(&self) -> String {
         format!("SExpr(kind='{}')", self.kind())
     }
@@ -416,6 +431,13 @@ impl PySExprDocument {
         PyErasedSExprDocument {
             document: self.document.erase(),
         }
+    }
+
+    #[pyo3(signature = (width=80, indent=2))]
+    fn format(&self, width: usize, indent: usize) -> PyResult<String> {
+        printer(width, indent)?
+            .document(&self.document)
+            .map_err(value_error)
     }
 
     fn __len__(&self) -> usize {

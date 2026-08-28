@@ -25,3 +25,8 @@ byte atoms use `bytes::Bytes`, making slices and clones cheap.
 The reader emits `Open`, `Atom`, and `Close` events without recursion or a
 nesting limit. Building an AST from events and traversing an AST back into
 events are also iterative. Resource limits belong to callers.
+
+`Printer` renders the same event traversal through a width-aware Wadler-style
+document. Lists stay flat when they fit and break with two-space indentation
+by default. Printing validates externally constructed atom spellings so that
+parsing the result retains every atom kind.

@@ -14,6 +14,7 @@ use std::{
 
 use bytes::Bytes;
 use covalence_lib_error::snafu::Snafu;
+use covalence_lib_pretty::RcDoc;
 use smol_str::SmolStr;
 
 /// A half-open UTF-8 byte range in the source document.
@@ -810,6 +811,150 @@ impl Iterator for Events<'_> {
 }
 
 impl FusedIterator for Events<'_> {}
+
+/// Opinionated width-aware S-expression layout.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Printer {
+    /// Preferred maximum line width.
+    pub width: usize,
+    /// Spaces used when a list breaks across lines.
+    pub indent: isize,
+}
+
+impl Default for Printer {
+    fn default() -> Self {
+        Self {
+            width: 80,
+            indent: 2,
+        }
+    }
+}
+
+impl Printer {
+    /// Formats one expression, choosing flat or broken list layouts by width.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if an externally constructed atom cannot be represented
+    /// by the fixed concrete grammar while retaining its atom kind.
+    pub fn expression(self, expression: &Expr) -> Result<String, PrintError> {
+        self.events(expression.events())
+    }
+
+    /// Formats every expression in a document, one root per line.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if an externally constructed atom cannot be represented
+    /// by the fixed concrete grammar while retaining its atom kind.
+    pub fn document(self, document: &Document) -> Result<String, PrintError> {
+        self.events(document.events())
+    }
+
+    fn events(self, events: impl IntoIterator<Item = Event>) -> Result<String, PrintError> {
+        let mut frames: Vec<Vec<RcDoc<'static>>> = Vec::new();
+        let mut roots = Vec::new();
+        for event in events {
+            let document = match event {
+                Event::Open { .. } => {
+                    frames.push(Vec::new());
+                    continue;
+                }
+                Event::Atom { value, .. } => RcDoc::text(atom_text(&value)?),
+                Event::Close { .. } => {
+                    let children = frames
+                        .pop()
+                        .expect("AST traversal always emits balanced events");
+                    if children.is_empty() {
+                        RcDoc::text("()")
+                    } else {
+                        RcDoc::text("(")
+                            .append(RcDoc::intersperse(children, RcDoc::line()).nest(self.indent))
+                            .append(")")
+                            .group()
+                    }
+                }
+            };
+            match frames.last_mut() {
+                Some(frame) => frame.push(document),
+                None => roots.push(document),
+            }
+        }
+        let document = RcDoc::intersperse(roots, RcDoc::hardline());
+        let mut output = String::new();
+        document
+            .render_fmt(self.width, &mut output)
+            .expect("rendering into a String cannot fail");
+        Ok(output)
+    }
+}
+
+/// Why an owned atom cannot be printed without changing its lexical kind.
+#[derive(Clone, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+#[snafu(display("{kind} value {value:?} is not representable in S-expression syntax"))]
+pub struct PrintError {
+    /// Atom kind being rendered.
+    pub kind: &'static str,
+    /// Invalid in-memory spelling.
+    pub value: SmolStr,
+}
+
+fn bare(value: &str) -> bool {
+    !value.is_empty()
+        && !value
+            .chars()
+            .any(|character| character.is_whitespace() || matches!(character, '(' | ')' | ';'))
+}
+
+fn atom_text(atom: &Atom) -> Result<String, PrintError> {
+    let checked = |kind, value: &SmolStr, valid: bool| {
+        valid.then(|| value.to_string()).ok_or_else(|| PrintError {
+            kind,
+            value: value.clone(),
+        })
+    };
+    match atom {
+        Atom::Symbol(value) => checked(
+            "symbol",
+            value,
+            bare(value)
+                && !value.starts_with([':', '#', '"'])
+                && !value.starts_with("b\"")
+                && !value.as_bytes()[0].is_ascii_digit(),
+        ),
+        Atom::String(value) => Ok(encode_string(value)),
+        Atom::Bytes(value) => Ok(Atom::encode_bytes(value)),
+        Atom::Number(value) => checked(
+            "number",
+            value,
+            bare(value) && value.as_bytes().first().is_some_and(u8::is_ascii_digit),
+        ),
+        Atom::Keyword(value) => {
+            checked("keyword", value, bare(value)).map(|value| format!(":{value}"))
+        }
+        Atom::Directive(value) => {
+            checked("directive", value, bare(value)).map(|value| format!("#{value}"))
+        }
+    }
+}
+
+fn encode_string(value: &str) -> String {
+    let mut encoded = String::from("\"");
+    for character in value.chars() {
+        match character {
+            '\\' => encoded.push_str("\\\\"),
+            '"' => encoded.push_str("\\\""),
+            '\n' => encoded.push_str("\\n"),
+            '\r' => encoded.push_str("\\r"),
+            '\t' => encoded.push_str("\\t"),
+            '\0' => encoded.push_str("\\0"),
+            other => encoded.push(other),
+        }
+    }
+    encoded.push('"');
+    encoded
+}
 
 /// Parses a complete document into an owned AST.
 ///

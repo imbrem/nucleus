@@ -59,6 +59,8 @@ spellings, keywords, and directives remain distinct. The reader and both AST
 directions are iterative and impose no arbitrary nesting limit. Parsed trees
 retain `u64` byte spans; `erase()` produces the distinct `ErasedDocument` and
 `ErasedSExpr` types, whose nodes carry no source-position fields.
+`SExpr.format()` and `Document.format()` choose flat or indented layouts from a
+requested width while retaining atom kinds and binary values.
 
 ```python
 >>> from covalence.data.cbor import Cbor
