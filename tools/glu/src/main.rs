@@ -88,16 +88,16 @@ enum Task {
     Loc,
     /// Show the project status headline.
     Status,
-    /// Build and serve the browser demo with an HTTP kernel.
+    /// Build and serve the browser demo with an HTTP CAS backend.
     Demo {
-        /// Additional objects the HTTP kernel should serve.
+        /// Additional objects the HTTP CAS backend should serve.
         files: Vec<PathBuf>,
 
         /// Loopback port for the demo page.
         #[arg(long, default_value_t = 8000)]
         port: u16,
 
-        /// Loopback port for the HTTP kernel.
+        /// Loopback port for the HTTP CAS backend.
         #[arg(long, default_value_t = 8080)]
         kernel_port: u16,
 

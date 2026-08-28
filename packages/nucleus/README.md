@@ -1,6 +1,28 @@
-# Browser SQLite shell
+# Browser hosts and component demos
 
-The package also includes `proof.html`, a browser host for standard Nucleus
+This package contains three demonstrations with deliberately separate roles:
+
+- `demo.html` is a frontend over the transport-neutral REPL command/outcome
+  model. `src/index.ts` performs browser-only effects requested by that model.
+- `src/shell.ts` hosts the upstream SQLite shell as a separate Wasm component.
+  It receives a read-only VFS; SQLite and the VFS have no Nucleus authority.
+- `proof.html` and `src/proof.ts` host standard proof components and display
+  the checked kernel returned by the proof host.
+
+`glu demo` additionally starts `covalence-cas-serve`. That process is a CAS
+backend for the page, not a Nucleus kernel server. The page verifies fetched
+bytes against their requested address before admitting them.
+
+These are examples of frontend adapters, not the final shared runtime API.
+The native CLI, browser, CAS-only server, and full Nucleus server should
+eventually wrap the same transport-neutral runtime instance; issue #1119 tracks
+that work.
+
+## SQLite shell
+
+## Proof component host
+
+The package includes `proof.html`, a browser host for standard Nucleus
 proof components. It accepts a component URL or local `.wasm` file, runs the
 proof, and reports the checked kernel's CBOR address and row statistics.
 

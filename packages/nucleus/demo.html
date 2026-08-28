@@ -150,7 +150,9 @@
 
       await init();
       const repl = new Repl();
-      const host = {};
+      // Browser-only effect policy passed to the transport-neutral session
+      // driver. The default SQLite VFS reads this REPL's local CAS.
+      const options = {};
 
       const transcript = document.getElementById("transcript");
       const line = document.getElementById("line");
@@ -169,7 +171,7 @@
       // A page has no filesystem, so an empty store means nothing to try.
       // `(samples)` is a REPL form, not a page feature: the terminal has the
       // same one, and both get their databases from the same place.
-      const samples = (await drive(repl, host, "(samples)")).output;
+      const samples = (await drive(repl, options, "(samples)")).output;
       const demos = [...samples.matchAll(/\((\w+) ([0-9a-f]{64})\)/g)].map(
         ([, name, address]) => ({ name, address }),
       );
@@ -214,7 +216,7 @@
           cursor = history.length;
           write(`nucleus> ${text}`, "echo");
 
-          const result = await drive(repl, host, text);
+          const result = await drive(repl, options, text);
           write(
             result.output,
             result.output.startsWith("error:") ? "bad" : undefined,
