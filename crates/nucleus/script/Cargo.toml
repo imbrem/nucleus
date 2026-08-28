@@ -1,0 +1,27 @@
+[package]
+name = "covalence-nucleus-script"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Untrusted S-expression language and init tooling for Nucleus"
+publish = false
+
+[features]
+buck-test-fixtures = []
+
+[dependencies]
+covalence-data-sexpr = { path = "../../data/sexpr" }
+covalence-lib-error = { path = "../../lib/error" }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+covalence-lib-json = { path = "../../lib/json" }
+covalence-logic-hol = { path = "../../logic/hol" }
+covalence-logic-hol-derived = { path = "../../logic/hol-derived" }
+
+[package.metadata.glu]
+buck-manifest-mapped-srcs = { "nucleus//:hol_init_checked_manifest" = "theories/init-boolean.checked.json" }
+buck-test-features = ["buck-test-fixtures"]
+buck-test-mapped-srcs = { "nucleus//:hol_init_checked_manifest" = "theories/init-boolean.checked.json" }
+
+[lints]
+workspace = true

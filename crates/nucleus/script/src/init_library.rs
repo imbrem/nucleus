@@ -16,7 +16,7 @@ use covalence_logic_hol_derived::{
     join_alpha_equivalents, open_exists_at,
 };
 
-use crate::{
+use super::{
     CompiledTheory, INIT_SOURCE, LogicEncoding, TheoryError, TheoryOptions,
     compile_theory_with_init,
 };
@@ -1116,7 +1116,7 @@ pub enum InitLibraryError {
 /// Compiles and assembles the standard checked init-library workspace.
 ///
 /// The caller supplies the authoritative opcode-free logical prefix. This
-/// routine compiles [`crate::INIT_SOURCE`] with compact logical macros for the
+/// routine compiles [`super::INIT_SOURCE`] with compact logical macros for the
 /// userspace proof automation, installs the two explicit HOL capabilities
 /// needed by the standard model construction, and derives the natural-number
 /// and primitive-arithmetic packages. It returns the checked construction

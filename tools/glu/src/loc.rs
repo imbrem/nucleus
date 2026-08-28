@@ -14,7 +14,9 @@ const TCB: &[&str] = &[
     "crates/data/basic",
     "crates/proton",
     "crates/neutron",
-    "crates/nucleus",
+    // `nucleus` also contains explicitly untrusted frontends. Its core is a
+    // separate package so the authority boundary is visible to build tooling.
+    "crates/nucleus/core",
 ];
 
 #[derive(Debug, PartialEq, Eq, Serialize)]

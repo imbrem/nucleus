@@ -1,0 +1,4 @@
+; Untrusted entry point for the exact checked Boolean logical prefix.
+; The accelerator parses the canonical manifest and submits every row through
+; the existing checked kernel constructors.
+(#accelerator nucleus.logical.init.checked-boolean-v0)

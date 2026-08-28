@@ -1,6 +1,6 @@
-# HOL script frontend
+# Nucleus script frontend
 
-`covalence-logic-hol-script` is an untrusted, userspace S-expression frontend
+`covalence-nucleus-script` is an untrusted, userspace S-expression frontend
 for the checked HOL API. It is intentionally not part of the trusted computing
 base.
 
@@ -42,12 +42,31 @@ Type parameters are explicit free variables. They do not silently assert a
 polymorphic theorem. `inst` recompiles an open definition under an explicit type
 substitution, through ordinary checked construction.
 
-For example, [`theories/init.sexpr`](theories/init.sexpr) defines the open
+For example, [`logical-schemata.sexpr`](logical-schemata.sexpr) defines the open
 universal property `IsCoprod`, the induction predicate used to carve naturals
 from infinity, and the graph/specification of primitive recursion. None of those
 forms asserts its body.
 
 ## Standard init path
+
+The standard init build is split into two small scripts:
+
+- [`logical-init.sexpr`](logical-init.sexpr) invokes the checked-Boolean-v0
+  accelerator. Its kernel hash is the existing canonical logical-prefix hash.
+- [`natural-init.sexpr`](natural-init.sexpr) imports that logical kernel and
+  its namespace metadata by typed `O256` atoms, then invokes the natural-v0
+  userspace accelerator.
+
+Accelerators are versioned elaborator entry points, not kernel capabilities.
+The logical accelerator submits the canonical manifest through its checked
+compiler. The natural accelerator compiles the source schemata and performs
+the existing derived infinity, subtype, recursion, and arithmetic proof
+orchestration through public checked operations.
+
+Each build pins `(script hash, output-object hash, kernel hash)`. The output
+object contains the kernel hash and a hash of canonical namespace/import
+metadata. Keeping the kernel identity separate means names can evolve without
+silently changing the logical artifact.
 
 `compile_init_slice` performs the current userspace assembly:
 

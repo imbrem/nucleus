@@ -1217,17 +1217,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "covalence-logic-hol-script"
-version = "0.0.0"
-dependencies = [
- "covalence-data-sexpr",
- "covalence-lib-error",
- "covalence-lib-json",
- "covalence-logic-hol",
- "covalence-logic-hol-derived",
-]
-
-[[package]]
 name = "covalence-logic-lrat"
 version = "0.0.0"
 dependencies = [
@@ -1279,11 +1268,33 @@ dependencies = [
  "covalence-lib-wasm",
  "covalence-logic-cas",
  "covalence-logic-hol",
- "covalence-logic-hol-derived",
  "covalence-neutron",
+ "covalence-nucleus-core",
+ "covalence-nucleus-script",
  "futures",
  "wasm-bindgen",
  "wit-bindgen-rt",
+]
+
+[[package]]
+name = "covalence-nucleus-core"
+version = "0.0.0"
+dependencies = [
+ "covalence-logic-cas",
+ "covalence-logic-hol",
+ "covalence-logic-hol-derived",
+]
+
+[[package]]
+name = "covalence-nucleus-script"
+version = "0.0.0"
+dependencies = [
+ "covalence-data-sexpr",
+ "covalence-lib-error",
+ "covalence-lib-hash",
+ "covalence-lib-json",
+ "covalence-logic-hol",
+ "covalence-logic-hol-derived",
 ]
 
 [[package]]

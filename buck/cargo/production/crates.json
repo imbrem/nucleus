@@ -671,27 +671,6 @@
       ]
     },
     {
-      "id": "workspace#covalence-logic-hol-script@0.0.0",
-      "name": "covalence-logic-hol-script",
-      "version": "0.0.0",
-      "path": "crates/logic/hol-script",
-      "category": "tcb",
-      "targets": [
-        {
-          "name": "covalence_logic_hol_script",
-          "kinds": [
-            "lib"
-          ]
-        },
-        {
-          "name": "theory",
-          "kinds": [
-            "test"
-          ]
-        }
-      ]
-    },
-    {
       "id": "workspace#covalence-logic-lrat@0.0.0",
       "name": "covalence-logic-lrat",
       "version": "0.0.0",
@@ -797,6 +776,48 @@
         },
         {
           "name": "sqlite",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-nucleus-core@0.0.0",
+      "name": "covalence-nucleus-core",
+      "version": "0.0.0",
+      "path": "crates/nucleus/core",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_nucleus_core",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-nucleus-script@0.0.0",
+      "name": "covalence-nucleus-script",
+      "version": "0.0.0",
+      "path": "crates/nucleus/script",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_nucleus_script",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "module",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "theory",
           "kinds": [
             "test"
           ]
@@ -1372,41 +1393,6 @@
       ]
     },
     {
-      "source": "workspace#covalence-logic-hol-script@0.0.0",
-      "target": "workspace#covalence-data-sexpr@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "workspace#covalence-logic-hol-script@0.0.0",
-      "target": "workspace#covalence-lib-error@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "workspace#covalence-logic-hol-script@0.0.0",
-      "target": "workspace#covalence-lib-json@0.0.0",
-      "kinds": [
-        "dev"
-      ]
-    },
-    {
-      "source": "workspace#covalence-logic-hol-script@0.0.0",
-      "target": "workspace#covalence-logic-hol-derived@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "workspace#covalence-logic-hol-script@0.0.0",
-      "target": "workspace#covalence-logic-hol@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
       "source": "workspace#covalence-logic-hol@0.0.0",
       "target": "workspace#covalence-lib-cbor@0.0.0",
       "kinds": [
@@ -1526,6 +1512,69 @@
       ]
     },
     {
+      "source": "workspace#covalence-nucleus-core@0.0.0",
+      "target": "workspace#covalence-logic-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-core@0.0.0",
+      "target": "workspace#covalence-logic-hol-derived@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-core@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-script@0.0.0",
+      "target": "workspace#covalence-data-sexpr@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-script@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-script@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-script@0.0.0",
+      "target": "workspace#covalence-lib-json@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-script@0.0.0",
+      "target": "workspace#covalence-logic-hol-derived@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-script@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-data-cas@0.0.0",
       "kinds": [
@@ -1583,13 +1632,6 @@
     },
     {
       "source": "workspace#covalence-nucleus@0.0.0",
-      "target": "workspace#covalence-logic-hol-derived@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-logic-hol@0.0.0",
       "kinds": [
         "normal"
@@ -1598,6 +1640,20 @@
     {
       "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-neutron@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-nucleus-core@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-nucleus-script@0.0.0",
       "kinds": [
         "normal"
       ]
