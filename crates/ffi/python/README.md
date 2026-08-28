@@ -95,6 +95,14 @@ layers retain the low-level integer-index API. A kernel can additionally
 return opaque `Kind`, `Ty`, and `Tm` handles, while `SynFact` snapshots prevent
 evidence from being reused after its slot is overwritten or across kernels.
 
+`covalence.logic.expr` is an immutable userspace convenience layer over those
+opaque handles. Its `Context` keeps terms kernel-affine, converts Python
+Booleans through a pluggable untrusted `ConstructionHandler`, and overloads
+`&` and `==` to request checked conjunction and equality terms. Python's
+non-overloadable `and` remains ordinary control flow, and attempting to use an
+HOL expression as a Python truth value is an error. Additional handlers may
+interpret integers, floats, lists, or domain objects without gaining authority.
+
 ```python
 >>> from covalence.logic.hol import Kernel
 >>> kernel = Kernel()
