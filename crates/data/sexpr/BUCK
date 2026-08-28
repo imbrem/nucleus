@@ -30,6 +30,7 @@ rust_library(
     named_deps = {
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_lib_pretty": "nucleus//crates/lib/pretty:covalence_lib_pretty",
         "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
     },
@@ -62,6 +63,7 @@ rust_test(
     named_deps = {
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_lib_pretty": "nucleus//crates/lib/pretty:covalence_lib_pretty",
         "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
     },
@@ -95,6 +97,7 @@ rust_test(
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_data_sexpr": ":covalence_data_sexpr",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_lib_pretty": "nucleus//crates/lib/pretty:covalence_lib_pretty",
         "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
     },
@@ -128,6 +131,7 @@ rust_test(
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_data_sexpr": ":covalence_data_sexpr",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_lib_pretty": "nucleus//crates/lib/pretty:covalence_lib_pretty",
         "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
     },

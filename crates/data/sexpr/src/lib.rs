@@ -14,6 +14,7 @@ use std::{
 
 use bytes::Bytes;
 use covalence_lib_error::snafu::Snafu;
+use covalence_lib_hash::O256;
 use covalence_lib_pretty::RcDoc;
 use smol_str::SmolStr;
 
@@ -40,6 +41,8 @@ pub enum Atom {
     Keyword(SmolStr),
     /// A hash-prefixed primitive name, stored without its hash.
     Directive(SmolStr),
+    /// A canonical 256-bit object address.
+    O256(O256),
 }
 
 impl Atom {
@@ -63,6 +66,36 @@ impl Atom {
             }
         }
         encoded.push('"');
+        encoded
+    }
+
+    /// Encodes an address as a parenthesized, canonical padded Base64 atom.
+    #[must_use]
+    pub fn encode_o256(value: O256) -> String {
+        const ALPHABET: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let bytes = value.as_ref();
+        let mut encoded = String::with_capacity(47);
+        encoded.push_str("!(");
+        for chunk in bytes.chunks_exact(3) {
+            encoded.push(char::from(ALPHABET[usize::from(chunk[0] >> 2)]));
+            encoded.push(char::from(
+                ALPHABET[usize::from((chunk[0] & 0x03) << 4 | chunk[1] >> 4)],
+            ));
+            encoded.push(char::from(
+                ALPHABET[usize::from((chunk[1] & 0x0f) << 2 | chunk[2] >> 6)],
+            ));
+            encoded.push(char::from(ALPHABET[usize::from(chunk[2] & 0x3f)]));
+        }
+        let tail = bytes.chunks_exact(3).remainder();
+        debug_assert_eq!(tail.len(), 2);
+        encoded.push(char::from(ALPHABET[usize::from(tail[0] >> 2)]));
+        encoded.push(char::from(
+            ALPHABET[usize::from((tail[0] & 0x03) << 4 | tail[1] >> 4)],
+        ));
+        encoded.push(char::from(ALPHABET[usize::from((tail[1] & 0x0f) << 2)]));
+        encoded.push('=');
+        encoded.push(')');
         encoded
     }
 }
@@ -122,6 +155,12 @@ pub enum ParseError {
     #[snafu(display("invalid byte literal at byte {}", span.start))]
     InvalidBytes {
         /// Location of the complete literal, or its remaining input.
+        span: Span,
+    },
+    /// An address atom was not canonical padded Base64 for exactly 32 bytes.
+    #[snafu(display("invalid O256 literal at byte {}", span.start))]
+    InvalidO256 {
+        /// Location of the complete address atom, or its remaining input.
         span: Span,
     },
     /// A parser implementation produced an unbalanced event stream.
@@ -305,6 +344,24 @@ impl<'a> Parser<'a> {
 
     fn atom(&mut self) -> Result<Event, ParseError> {
         let start = self.offset;
+        if self.input[start..].starts_with("!(") {
+            let Some(relative_end) = self.input[start + 2..].find(')') else {
+                self.offset = self.input.len();
+                return Err(ParseError::InvalidO256 {
+                    span: span(start, self.input.len()),
+                });
+            };
+            let end = start + 2 + relative_end + 1;
+            let encoded = &self.input[start + 2..end - 1];
+            let value = O256::from_base64(encoded).map_err(|_| ParseError::InvalidO256 {
+                span: span(start, end),
+            })?;
+            self.offset = end;
+            return Ok(Event::Atom {
+                value: Atom::O256(value),
+                span: span(start, end),
+            });
+        }
         if self.input[start..].starts_with("b\"") {
             let (value, span) = self.bytes(start)?;
             return Ok(Event::Atom {
@@ -936,6 +993,7 @@ fn atom_text(atom: &Atom) -> Result<String, PrintError> {
         Atom::Directive(value) => {
             checked("directive", value, bare(value)).map(|value| format!("#{value}"))
         }
+        Atom::O256(value) => Ok(Atom::encode_o256(*value)),
     }
 }
 

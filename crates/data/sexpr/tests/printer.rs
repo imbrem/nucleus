@@ -34,7 +34,7 @@ fn flat_and_broken_layouts_are_width_sensitive_and_parse_back() {
 
 #[test]
 fn every_atom_kind_has_a_canonical_round_trip_spelling() {
-    let source = "symbol \"text\\nβ\" b\"A\\0\\xff\" 123x :key #define";
+    let source = "symbol \"text\\nβ\" b\"A\\0\\xff\" 123x :key #define !(AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=)";
     let document = parse(source).unwrap();
     let printed = Printer::default().document(&document).unwrap();
     let reparsed = parse(&printed).unwrap();
