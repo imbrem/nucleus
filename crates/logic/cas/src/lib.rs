@@ -1,74 +1,103 @@
-//! LCF-style checked facts about whole content-addressed blobs.
+//! LCF-style checked facts about content-addressed blobs.
 //!
-//! [`CasAssertion`] is ordinary, unchecked data. [`CasFact`] is an opaque
-//! wrapper introduced only after hashing every byte or by hashing bytes to
-//! choose the address. The wrapper, rather than a map, cache, database, or
-//! transport, is the trusted object. This keeps concrete storage policy out of
-//! the logic layer.
+//! [`CasRangeAssertion`] is ordinary, unchecked data. [`CasRangeFact`] is an
+//! opaque wrapper introduced only by this crate's checking rules. The wrapper,
+//! rather than a map, cache, database, or transport, is the trusted object.
+//! This keeps concrete storage policy out of the logic layer.
 //!
-//! Only whole objects are represented here. Range and length assertions
-//! require their own derivation or proof-checking rules.
+//! A fact is parameterized by the byte range it covers, and a whole-blob fact
+//! is the `RangeFull` case: [`CasFact`] is `CasRangeFact<RangeFull>` and
+//! [`CasAssertion`] is `CasRangeAssertion<RangeFull>`. See [`range`] for what
+//! the four range shapes claim.
 //!
-//! The corresponding Lean theory names the unchecked proposition
+//! The rules that introduce a fact are
+//!
+//! - [`CasFact::from_bytes`] and [`CasAssertion::check`], which hash every
+//!   byte of a complete blob;
+//! - [`CasRangeFact::slice`], which cuts a fact down to a sub-range, so that a
+//!   whole-blob fact yields range facts and a `0..` fact yields a whole-blob
+//!   one;
+//! - [`CasRangeFact::fuse`], which joins two overlapping or touching facts
+//!   about the same blob, so that a prefix and a suffix yield a whole-blob
+//!   fact;
+//! - [`RangeProof::check`], which validates a byte range against the BLAKE3
+//!   chaining values around it without holding the rest of the blob.
+//!
+//! There is no separate length fact. A length claim is the empty case of an
+//! open-ended range: a fact about `n..` whose bytes are empty says only that
+//! the blob is `n` bytes long, which is what a `CasLengthFact` would carry.
+//! [`CasRangeFact::blob_len`] reads it back, and answers `None` for a bounded
+//! range, so a range's end is never mistaken for the blob's.
+//!
+//! The corresponding Lean theory names the unchecked whole-blob proposition
 //! `Nucleus.CasAssertion.Valid` and the checked atom `Nucleus.CasPair`; see
 //! issue #875. This crate erases the Lean proof while preserving the same LCF
-//! constructor boundary in safe Rust.
+//! constructor boundary in safe Rust. The range rules have no Lean counterpart
+//! yet.
 
 mod fact;
+pub mod proof;
+#[cfg(feature = "prove")]
+pub mod prove;
+pub mod range;
 
 pub use bytes::Bytes;
-pub use covalence_lib_hash::O256;
+pub use covalence_lib_hash::{O256, blake3::Blake3Cv};
 
-pub use fact::{CasAssertion, CasCheckError, CasFact};
+pub use fact::{
+    CasAssertion, CasCheckError, CasFact, CasRangeAssertion, CasRangeFact, FuseError, SliceError,
+};
+pub use proof::{BLOCK_LEN, MAX_LEVEL, RangeProof, RangeProofError, block_len};
+pub use range::{BlobRange, FuseRange};
 
 use std::ops::{Deref, DerefMut, Range};
 
 use covalence_lib_error::snafu::Snafu;
 
-impl Deref for CasFact {
-    type Target = CasAssertion;
+impl<R: BlobRange> Deref for CasRangeFact<R> {
+    type Target = CasRangeAssertion<R>;
 
     fn deref(&self) -> &Self::Target {
         self.as_assertion()
     }
 }
 
-impl Deref for CasAssertion {
+impl<R: BlobRange> Deref for CasRangeAssertion<R> {
     type Target = Bytes;
 
     fn deref(&self) -> &Self::Target {
-        &self.blob
+        &self.bytes
     }
 }
 
 // An assertion is unchecked data. Mutating its `Bytes` view deliberately does
-// not recompute the claimed hash; a later `check()` validates the new pair.
-impl DerefMut for CasAssertion {
+// not recompute the claimed hash; a later check validates the new claim.
+impl<R: BlobRange> DerefMut for CasRangeAssertion<R> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.blob
+        &mut self.bytes
     }
 }
 
-impl AsRef<[u8]> for CasAssertion {
+impl<R: BlobRange> AsRef<[u8]> for CasRangeAssertion<R> {
     fn as_ref(&self) -> &[u8] {
-        self.blob.as_ref()
+        self.bytes.as_ref()
     }
 }
 
-impl AsRef<[u8]> for CasFact {
+impl<R: BlobRange> AsRef<[u8]> for CasRangeFact<R> {
     fn as_ref(&self) -> &[u8] {
         self.bytes().as_ref()
     }
 }
 
-impl From<CasFact> for CasAssertion {
-    fn from(fact: CasFact) -> Self {
+impl<R: BlobRange> From<CasRangeFact<R>> for CasRangeAssertion<R> {
+    fn from(fact: CasRangeFact<R>) -> Self {
         fact.into_assertion()
     }
 }
 
-impl From<&CasFact> for CasAssertion {
-    fn from(fact: &CasFact) -> Self {
+impl<R: BlobRange> From<&CasRangeFact<R>> for CasRangeAssertion<R> {
+    fn from(fact: &CasRangeFact<R>) -> Self {
         fact.as_assertion().clone()
     }
 }
@@ -269,7 +298,8 @@ mod tests {
         let hash = O256::from_bytes(&blob);
         let fact = CasAssertion {
             hash,
-            blob: blob.clone(),
+            range: ..,
+            bytes: blob.clone(),
         }
         .check()
         .unwrap();
@@ -281,7 +311,8 @@ mod tests {
         *changed.last_mut().unwrap() ^= 1;
         let error = CasAssertion {
             hash,
-            blob: Bytes::from(changed),
+            range: ..,
+            bytes: Bytes::from(changed),
         }
         .check()
         .unwrap_err();
@@ -293,7 +324,8 @@ mod tests {
     fn wrong_claimed_hash_is_rejected() {
         let assertion = CasAssertion {
             hash: O256::from_bytes(b"other"),
-            blob: Bytes::from_static(b"blob"),
+            range: ..,
+            bytes: Bytes::from_static(b"blob"),
         };
         let error = assertion.check().unwrap_err();
 
@@ -314,7 +346,8 @@ mod tests {
         let fact = CasFact::from_bytes(Bytes::from_static(b"round trip"));
         let expected = CasAssertion {
             hash: fact.hash(),
-            blob: fact.bytes().clone(),
+            range: ..,
+            bytes: fact.bytes().clone(),
         };
 
         assert_eq!(CasAssertion::from(&fact), expected);
@@ -323,12 +356,15 @@ mod tests {
 
     #[test]
     fn assertions_and_facts_borrow_their_blob_bytes() {
-        let mut assertion =
-            CasAssertion::new(O256::from_bytes(b"claimed"), Bytes::from_static(b"blob"));
+        let mut assertion = CasAssertion::new(
+            O256::from_bytes(b"claimed"),
+            ..,
+            Bytes::from_static(b"blob"),
+        );
         assert_eq!(AsRef::<[u8]>::as_ref(&assertion), b"blob");
 
         assertion.clear();
-        assert!(assertion.blob.is_empty());
+        assert!(assertion.bytes.is_empty());
         assert!(assertion.check().is_err());
 
         let fact = CasFact::from_bytes(Bytes::from_static(b"checked"));
@@ -357,7 +393,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             assertion_set
                 .iter()
-                .map(|assertion| (assertion.hash, assertion.blob.clone()))
+                .map(|assertion| (assertion.hash, assertion.bytes.clone()))
                 .collect::<Vec<_>>()
         );
     }

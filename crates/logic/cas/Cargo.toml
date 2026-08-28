@@ -4,8 +4,14 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Opaque checked whole-object CAS facts"
+description = "Opaque checked CAS facts over whole blobs and byte ranges"
 publish = false
+
+[features]
+default = ["prove"]
+# Deriving proofs is untrusted userspace: the verifier and the checked-fact
+# constructor are the trusted parts. Turn this off to compile only those.
+prove = []
 
 [dependencies]
 bytes = "1"
