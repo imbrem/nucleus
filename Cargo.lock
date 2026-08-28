@@ -1301,6 +1301,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-nucleus-server"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "covalence-data-cas",
+ "covalence-data-cas-http",
+ "covalence-lib-hash",
+ "covalence-lib-serde",
+ "covalence-nucleus-core",
+ "tokio",
+]
+
+[[package]]
 name = "covalence-proof-c-demo-test"
 version = "0.0.0"
 dependencies = [

@@ -37,6 +37,7 @@ members = [
   "crates/neutron",
   "crates/nucleus/core",
   "crates/nucleus/script",
+  "crates/nucleus/server",
   "crates/nucleus",
   "crates/proof/c-demo",
   "crates/proof/demo",

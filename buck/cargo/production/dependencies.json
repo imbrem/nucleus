@@ -9593,6 +9593,15 @@
       ]
     },
     {
+      "id": "workspace#covalence-nucleus-server@0.0.0",
+      "name": "covalence-nucleus-server",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
+        "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1"
+      ]
+    },
+    {
       "id": "workspace#covalence-proof-demo@0.0.0",
       "name": "covalence-proof-demo",
       "category": "tcb",
