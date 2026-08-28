@@ -15,7 +15,10 @@ from covalence.data.sexpr import (
 
 
 def test_atoms_keep_fixed_kinds_and_python_values() -> None:
-    expression = parse_one('(name "text\\n" b"A\\x00\\xff" 123x :key #define)')
+    expression = parse_one(
+        '(name "text\\n" b"A\\x00\\xff" 123x :key #define '
+        '!(AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=))'
+    )
     values = expression.items
     assert [(value.atom_value.kind, value.atom_value.value) for value in values] == [
         ("symbol", "name"),
@@ -24,7 +27,12 @@ def test_atoms_keep_fixed_kinds_and_python_values() -> None:
         ("number", "123x"),
         ("keyword", "key"),
         ("directive", "define"),
+        ("o256", bytes(32)),
     ]
+
+    assert Atom.o256(bytes(32)).value == bytes(32)
+    with pytest.raises(ValueError):
+        Atom.o256(bytes(31))
 
 
 def test_documents_and_events_round_trip() -> None:

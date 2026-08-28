@@ -1212,6 +1212,13 @@
     },
     {
       "source": "workspace#covalence-data-sexpr@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-sexpr@0.0.0",
       "target": "workspace#covalence-lib-pretty@0.0.0",
       "kinds": [
         "normal"

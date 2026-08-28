@@ -8,6 +8,7 @@ use covalence_data_sexpr::{
     Atom, Document, ErasedRepr, Event, Expr, ExprKind, Printer, Repr, SDocument, SExpr, SExprNode,
     SpannedRepr, parse, parse_one,
 };
+use covalence_lib_hash::O256;
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::types::{PyBytes, PyString, PyTuple};
 
@@ -86,6 +87,15 @@ impl PySExprAtom {
         Ok(Self::wrap(Atom::Directive(value.into())))
     }
 
+    #[staticmethod]
+    fn o256(value: Bytes) -> PyResult<Self> {
+        let bytes: [u8; 32] = value
+            .as_slice()
+            .try_into()
+            .map_err(|_| PyValueError::new_err("O256 value must contain exactly 32 bytes"))?;
+        Ok(Self::wrap(Atom::O256(O256::from_array(bytes))))
+    }
+
     #[getter]
     fn kind(&self) -> &'static str {
         match self.atom {
@@ -95,6 +105,7 @@ impl PySExprAtom {
             Atom::Number(_) => "number",
             Atom::Keyword(_) => "keyword",
             Atom::Directive(_) => "directive",
+            Atom::O256(_) => "o256",
         }
     }
 
@@ -102,6 +113,7 @@ impl PySExprAtom {
     fn value(&self, python: Python<'_>) -> Py<PyAny> {
         match &self.atom {
             Atom::Bytes(value) => PyBytes::new(python, value).into_any().unbind(),
+            Atom::O256(value) => PyBytes::new(python, value.as_ref()).into_any().unbind(),
             Atom::Symbol(value)
             | Atom::String(value)
             | Atom::Number(value)
