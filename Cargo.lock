@@ -1304,6 +1304,7 @@ dependencies = [
  "covalence-lib-json",
  "covalence-logic-hol",
  "covalence-logic-hol-derived",
+ "smol_str",
 ]
 
 [[package]]

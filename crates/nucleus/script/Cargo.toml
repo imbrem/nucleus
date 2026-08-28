@@ -18,6 +18,7 @@ covalence-lib-hash = { path = "../../lib/hash", default-features = false, featur
 covalence-lib-json = { path = "../../lib/json" }
 covalence-logic-hol = { path = "../../logic/hol" }
 covalence-logic-hol-derived = { path = "../../logic/hol-derived" }
+smol_str = "0.3"
 
 [package.metadata.glu]
 buck-manifest-mapped-srcs = { "nucleus//:hol_init_checked_manifest" = "theories/init-boolean.checked.json" }

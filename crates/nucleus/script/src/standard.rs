@@ -7,7 +7,7 @@ use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_logic_hol::{Kernel, init};
 
-use super::{ImportDecl, InitLibraryError, Namespace, compile_init_slice};
+use super::{ImportDecl, InitLibraryError, Namespace, NamespaceChild, compile_init_slice};
 
 /// Exact source of the logical init segment.
 pub const LOGICAL_INIT_SCRIPT: &str = include_str!("../logical-init.sexpr");
@@ -243,13 +243,14 @@ fn metadata_addr(namespace: &Namespace, imports: &[ImportDecl]) -> O256 {
 }
 
 fn write_namespace(namespace: &Namespace, prefix: &str, output: &mut String) {
-    for (name, reference) in namespace.bindings() {
+    for binding in namespace.bindings() {
+        let name = binding.name();
         let qualified = if prefix.is_empty() {
             name.to_owned()
         } else {
             format!("{prefix}.{name}")
         };
-        writeln!(output, "name\t{qualified}\t{}", reference.get())
+        writeln!(output, "name\t{qualified}\t{}", binding.reference().get())
             .expect("writing to a String cannot fail");
     }
     for (name, child) in namespace.children() {
@@ -258,7 +259,13 @@ fn write_namespace(namespace: &Namespace, prefix: &str, output: &mut String) {
         } else {
             format!("{prefix}.{name}")
         };
-        write_namespace(child, &qualified, output);
+        match child {
+            NamespaceChild::Resident(child) => write_namespace(&child, &qualified, output),
+            NamespaceChild::Foreign(address) => {
+                writeln!(output, "foreign\t{qualified}\t{address}")
+                    .expect("writing to a String cannot fail");
+            }
+        }
     }
 }
 

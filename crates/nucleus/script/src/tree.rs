@@ -1,10 +1,14 @@
 //! Dependency-ordered compilation from a virtual resource tree.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use covalence_data_vfs::ResourceVfs;
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
+use smol_str::SmolStr;
 
 use super::{
     CompiledModule, ModuleError, Namespace, SExpr, TheoryError, compile_module, read_module,
@@ -17,6 +21,43 @@ pub struct SourceUnit {
     resource: String,
     address: O256,
     length: u64,
+}
+
+/// Source of a portable proof component declared by a `.cov` module.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProofSource {
+    /// Opaque VFS resource key, resolved only when the proof is run.
+    Resource(SmolStr),
+    /// Content address resolved through an explicit CAS.
+    Address(O256),
+}
+
+/// One untrusted request to a portable proof component.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofDecl {
+    name: SmolStr,
+    source: ProofSource,
+    target: Option<O256>,
+}
+
+impl ProofDecl {
+    /// Returns the module-qualified result name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the component resource or content address.
+    #[must_use]
+    pub const fn source(&self) -> &ProofSource {
+        &self.source
+    }
+
+    /// Returns the prover-local request, or `None` for the zero selector.
+    #[must_use]
+    pub const fn target(&self) -> Option<O256> {
+        self.target
+    }
 }
 
 impl SourceUnit {
@@ -52,6 +93,7 @@ pub struct CompiledTree {
     module: CompiledModule,
     namespace: Namespace,
     sources: Vec<SourceUnit>,
+    proofs: Vec<ProofDecl>,
 }
 
 impl CompiledTree {
@@ -79,10 +121,16 @@ impl CompiledTree {
         &self.sources
     }
 
+    /// Returns dependency-first proof requests without executing them.
+    #[must_use]
+    pub fn proofs(&self) -> &[ProofDecl] {
+        &self.proofs
+    }
+
     /// Splits the checked module from its untrusted source manifest.
     #[must_use]
-    pub fn into_parts(self) -> (CompiledModule, Namespace, Vec<SourceUnit>) {
-        (self.module, self.namespace, self.sources)
+    pub fn into_parts(self) -> (CompiledModule, Namespace, Vec<SourceUnit>, Vec<ProofDecl>) {
+        (self.module, self.namespace, self.sources, self.proofs)
     }
 }
 
@@ -168,6 +216,7 @@ struct Pending {
     dependencies: Vec<String>,
     definitions: Vec<String>,
     exports: Vec<Export>,
+    proofs: Vec<ProofDecl>,
 }
 
 struct Export {
@@ -179,6 +228,103 @@ enum ExportMode {
     Module,
     Rename(String),
     Open,
+}
+
+#[derive(Debug, Default)]
+struct Publication {
+    bindings: BTreeMap<String, String>,
+    mounts: Vec<PublicationMount>,
+}
+
+#[derive(Debug)]
+struct PublicationMount {
+    target: String,
+    source: String,
+    publication: Arc<Publication>,
+}
+
+impl Publication {
+    fn resolve(&self, name: &str) -> Option<&str> {
+        if let Some(origin) = self.bindings.get(name) {
+            return Some(origin);
+        }
+        self.mounts.iter().rev().find_map(|mount| {
+            let suffix = strip_namespace_prefix(name, &mount.target)?;
+            let source = format!("{}{}", mount.source, suffix);
+            mount.publication.resolve(&source)
+        })
+    }
+
+    fn visit(&self, visitor: &mut dyn FnMut(&str, &str)) {
+        for (public, origin) in &self.bindings {
+            visitor(public, origin);
+        }
+        for mount in &self.mounts {
+            mount.publication.visit(&mut |public, origin| {
+                if let Some(suffix) = strip_namespace_prefix(public, &mount.source) {
+                    visitor(&format!("{}{}", mount.target, suffix), origin);
+                }
+            });
+        }
+    }
+
+    fn publish(
+        &mut self,
+        owner: &str,
+        dependency_name: &str,
+        mode: &ExportMode,
+        dependency: Arc<Self>,
+    ) -> Result<(), TreeError> {
+        match mode {
+            ExportMode::Module => self.mounts.push(PublicationMount {
+                target: dependency_name.to_owned(),
+                source: dependency_name.to_owned(),
+                publication: dependency,
+            }),
+            ExportMode::Rename(alias) => self.mounts.push(PublicationMount {
+                target: format!("{owner}.{alias}"),
+                source: dependency_name.to_owned(),
+                publication: dependency,
+            }),
+            ExportMode::Open => {
+                let mut invalid = false;
+                dependency.visit(&mut |public, origin| {
+                    let Some(suffix) = strip_namespace_prefix(public, dependency_name) else {
+                        invalid = true;
+                        return;
+                    };
+                    self.bindings
+                        .insert(format!("{owner}{suffix}"), origin.to_owned());
+                });
+                if invalid {
+                    return Err(TreeError::Inconsistent {
+                        module: dependency_name.to_owned(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn strip_namespace_prefix<'a>(name: &'a str, prefix: &str) -> Option<&'a str> {
+    let suffix = name.strip_prefix(prefix)?;
+    (suffix.is_empty() || suffix.starts_with('.')).then_some(suffix)
+}
+
+struct ImportSurface<'a> {
+    dependencies: &'a [String],
+    published: &'a BTreeMap<String, Arc<Publication>>,
+}
+
+impl ImportSurface<'_> {
+    fn resolve(&self, name: &str) -> Option<&str> {
+        self.dependencies
+            .iter()
+            .rev()
+            .filter_map(|dependency| self.published.get(dependency))
+            .find_map(|publication| publication.resolve(name))
+    }
 }
 
 /// Compiles one module and its transitive `(import module.name)` dependencies.
@@ -246,6 +392,7 @@ fn load_tree(
             body: forms,
             dependencies,
             exports,
+            proofs,
         } = split_directives(&module, parsed)?;
         let definitions = definition_names(&module, &forms)?;
         let length = u64::try_from(bytes.len()).map_err(|_| TreeError::TooLarge {
@@ -266,6 +413,7 @@ fn load_tree(
                 dependencies: dependencies.clone(),
                 definitions,
                 exports,
+                proofs,
             },
         );
         stack.push((module, true));
@@ -283,7 +431,8 @@ fn assemble_tree(
 ) -> Result<CompiledTree, TreeError> {
     let mut combined = Vec::new();
     let mut sources = Vec::new();
-    let mut published = BTreeMap::<String, BTreeMap<String, String>>::new();
+    let mut proofs = Vec::new();
+    let mut published = BTreeMap::<String, Arc<Publication>>::new();
     let all_definitions = pending
         .values()
         .flat_map(|entry| entry.definitions.iter().cloned())
@@ -294,86 +443,110 @@ fn assemble_tree(
             .ok_or_else(|| TreeError::Inconsistent {
                 module: name.clone(),
             })?;
-        let aliases = entry
-            .dependencies
-            .iter()
-            .filter_map(|dependency| published.get(dependency))
-            .flat_map(|exports| exports.iter())
-            .map(|(public, origin)| (public.clone(), origin.clone()))
-            .collect::<BTreeMap<_, _>>();
+        let imports = ImportSurface {
+            dependencies: &entry.dependencies,
+            published: &published,
+        };
         let forms = entry
             .forms
             .into_iter()
             .map(|form| {
-                validate_visibility(&name, &form, &all_definitions, &entry.definitions, &aliases)?;
-                Ok(rewrite_aliases(form, &aliases))
+                validate_visibility(&name, &form, &all_definitions, &entry.definitions, &imports)?;
+                Ok(rewrite_aliases(form, &imports))
             })
             .collect::<Result<Vec<_>, TreeError>>()?;
         combined.push(wrap_module(&name, forms)?);
-        let mut exports = entry
-            .definitions
-            .iter()
-            .map(|definition| (definition.clone(), definition.clone()))
-            .collect::<BTreeMap<_, _>>();
+        proofs.extend(entry.proofs);
+        let mut publication = Publication {
+            bindings: entry
+                .definitions
+                .iter()
+                .map(|definition| (definition.clone(), definition.clone()))
+                .collect(),
+            mounts: Vec::new(),
+        };
         for export in &entry.exports {
-            let dependency =
-                published
-                    .get(&export.dependency)
-                    .ok_or_else(|| TreeError::Inconsistent {
-                        module: export.dependency.clone(),
-                    })?;
-            for (public, origin) in dependency {
-                let suffix = public.strip_prefix(&export.dependency).ok_or_else(|| {
-                    TreeError::Inconsistent {
-                        module: export.dependency.clone(),
-                    }
-                })?;
-                let alias = match &export.mode {
-                    ExportMode::Module => public.clone(),
-                    ExportMode::Rename(alias) => format!("{name}.{alias}{suffix}"),
-                    ExportMode::Open => format!("{name}{suffix}"),
-                };
-                exports.insert(alias, origin.clone());
-            }
+            let dependency = published.get(&export.dependency).cloned().ok_or_else(|| {
+                TreeError::Inconsistent {
+                    module: export.dependency.clone(),
+                }
+            })?;
+            publication.publish(&name, &export.dependency, &export.mode, dependency)?;
         }
-        published.insert(name, exports);
+        published.insert(name, Arc::new(publication));
         sources.push(entry.unit);
     }
     let source = super::module::render(&combined);
     let module = compile_module(&source).map_err(|source| TreeError::Compile { source })?;
-    let mut namespace = Namespace::default();
     let root_exports = published
         .remove(root)
         .ok_or_else(|| TreeError::Inconsistent {
             module: root.to_owned(),
         })?;
-    for (public, origin) in root_exports {
-        let reference = module
-            .namespace()
-            .get(&origin)
-            .ok_or_else(|| TreeError::Inconsistent {
-                module: origin.clone(),
-            })?;
-        namespace.insert(&public, reference);
-    }
+    let namespace = materialize_publication(&root_exports, &module, &mut HashMap::new())?;
     Ok(CompiledTree {
         root: root.to_owned(),
         module,
         namespace,
         sources,
+        proofs,
     })
+}
+
+fn materialize_publication(
+    publication: &Arc<Publication>,
+    module: &CompiledModule,
+    cache: &mut HashMap<usize, Namespace>,
+) -> Result<Namespace, TreeError> {
+    let key = Arc::as_ptr(publication) as usize;
+    if let Some(namespace) = cache.get(&key) {
+        return Ok(namespace.clone());
+    }
+    let mut namespace = Namespace::default();
+    for (public, origin) in &publication.bindings {
+        let reference = module
+            .namespace()
+            .get(origin)
+            .ok_or_else(|| TreeError::Inconsistent {
+                module: origin.clone(),
+            })?;
+        namespace.insert(public, reference);
+    }
+    for mount in &publication.mounts {
+        let child = materialize_publication(&mount.publication, module, cache)?;
+        let subtree =
+            namespace_at(&child, &mount.source).ok_or_else(|| TreeError::Inconsistent {
+                module: mount.source.clone(),
+            })?;
+        namespace.mount(&mount.target, subtree);
+    }
+    cache.insert(key, namespace.clone());
+    Ok(namespace)
+}
+
+fn namespace_at(namespace: &Namespace, path: &str) -> Option<Namespace> {
+    let mut namespace = namespace.clone();
+    for part in path.split('.') {
+        let super::NamespaceChild::Resident(child) = namespace.child(part)? else {
+            return None;
+        };
+        namespace = child;
+    }
+    Some(namespace)
 }
 
 struct Directives {
     body: Vec<SExpr>,
     dependencies: Vec<String>,
     exports: Vec<Export>,
+    proofs: Vec<ProofDecl>,
 }
 
 fn split_directives(owner: &str, forms: Vec<SExpr>) -> Result<Directives, TreeError> {
     let mut body = Vec::new();
     let mut dependencies = Vec::new();
     let mut exports = Vec::new();
+    let mut proofs = Vec::new();
     let mut seen = BTreeSet::new();
     for form in forms {
         let dependency = match &form {
@@ -397,6 +570,8 @@ fn split_directives(owner: &str, forms: Vec<SExpr>) -> Result<Directives, TreeEr
             if seen.insert(dependency.clone()) {
                 dependencies.push(dependency);
             }
+        } else if let Some(proof) = parse_proof(owner, &form)? {
+            proofs.push(proof);
         } else if let Some(export) = parse_export(owner, &form)? {
             exports.push(export);
         } else {
@@ -415,7 +590,59 @@ fn split_directives(owner: &str, forms: Vec<SExpr>) -> Result<Directives, TreeEr
         body,
         dependencies,
         exports,
+        proofs,
     })
+}
+
+fn parse_proof(owner: &str, form: &SExpr) -> Result<Option<ProofDecl>, TreeError> {
+    let SExpr::List(items) = form else {
+        return Ok(None);
+    };
+    let [
+        SExpr::Atom(head),
+        SExpr::Atom(name),
+        SExpr::List(component),
+        tail @ ..,
+    ] = items.as_slice()
+    else {
+        return Ok(None);
+    };
+    if head != "proof" {
+        return Ok(None);
+    }
+    if name.contains('.') {
+        return Err(TreeError::InvalidModule {
+            module: format!("{owner} proof name {name}"),
+        });
+    }
+    validate_module(name)?;
+    let source = match component.as_slice() {
+        [SExpr::Atom(wasm), SExpr::Atom(resource)] if wasm == "wasm" => {
+            ProofSource::Resource(SmolStr::new(resource))
+        }
+        [SExpr::Atom(wasm), SExpr::O256(address)] if wasm == "wasm" => {
+            ProofSource::Address(*address)
+        }
+        _ => {
+            return Err(TreeError::InvalidModule {
+                module: format!("{owner} proof component"),
+            });
+        }
+    };
+    let target = match tail {
+        [] => None,
+        [SExpr::O256(target)] => Some(*target),
+        _ => {
+            return Err(TreeError::InvalidModule {
+                module: format!("{owner} proof target"),
+            });
+        }
+    };
+    Ok(Some(ProofDecl {
+        name: SmolStr::new(format!("{owner}.{name}")),
+        source,
+        target,
+    }))
 }
 
 fn parse_export(owner: &str, form: &SExpr) -> Result<Option<Export>, TreeError> {
@@ -488,11 +715,11 @@ fn collect_definition_names(
     Ok(())
 }
 
-fn rewrite_aliases(expression: SExpr, aliases: &BTreeMap<String, String>) -> SExpr {
+fn rewrite_aliases(expression: SExpr, aliases: &ImportSurface<'_>) -> SExpr {
     match expression {
         SExpr::Atom(name) => aliases
-            .get(&name)
-            .cloned()
+            .resolve(&name)
+            .map(str::to_owned)
             .map_or(SExpr::Atom(name), SExpr::Atom),
         SExpr::O256(value) => SExpr::O256(value),
         SExpr::List(items) => SExpr::List(
@@ -509,13 +736,13 @@ fn validate_visibility(
     expression: &SExpr,
     all_definitions: &BTreeSet<String>,
     local_definitions: &[String],
-    aliases: &BTreeMap<String, String>,
+    aliases: &ImportSurface<'_>,
 ) -> Result<(), TreeError> {
     match expression {
         SExpr::Atom(name) => {
             if all_definitions.contains(name)
                 && !local_definitions.contains(name)
-                && !aliases.contains_key(name)
+                && aliases.resolve(name).is_none()
             {
                 return Err(TreeError::PrivateName {
                     module: module.to_owned(),
@@ -561,4 +788,72 @@ fn wrap_module(module: &str, forms: Vec<SExpr>) -> Result<SExpr, TreeError> {
     body.pop().ok_or_else(|| TreeError::Inconsistent {
         module: module.to_owned(),
     })
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+
+    fn large_dependency() -> Arc<Publication> {
+        Arc::new(Publication {
+            bindings: (0..10_000)
+                .map(|index| {
+                    let name = format!("large.library.value{index}");
+                    (name.clone(), name)
+                })
+                .collect(),
+            mounts: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn export_and_rename_share_large_publications_without_flattening() {
+        let dependency = large_dependency();
+        let mut exported = Publication::default();
+        exported
+            .publish(
+                "consumer",
+                "large.library",
+                &ExportMode::Module,
+                dependency.clone(),
+            )
+            .expect("module export");
+        exported
+            .publish(
+                "consumer",
+                "large.library",
+                &ExportMode::Rename("renamed".to_owned()),
+                dependency.clone(),
+            )
+            .expect("renamed export");
+
+        assert!(exported.bindings.is_empty());
+        assert_eq!(exported.mounts.len(), 2);
+        assert!(Arc::ptr_eq(&exported.mounts[0].publication, &dependency));
+        assert!(Arc::ptr_eq(&exported.mounts[1].publication, &dependency));
+        assert_eq!(
+            exported.resolve("large.library.value9999"),
+            Some("large.library.value9999")
+        );
+        assert_eq!(
+            exported.resolve("consumer.renamed.value9999"),
+            Some("large.library.value9999")
+        );
+    }
+
+    #[test]
+    fn include_deliberately_flattens_large_publications() {
+        let dependency = large_dependency();
+        let mut included = Publication::default();
+        included
+            .publish("consumer", "large.library", &ExportMode::Open, dependency)
+            .expect("include");
+
+        assert!(included.mounts.is_empty());
+        assert_eq!(included.bindings.len(), 10_000);
+        assert_eq!(
+            included.resolve("consumer.value9999"),
+            Some("large.library.value9999")
+        );
+    }
 }

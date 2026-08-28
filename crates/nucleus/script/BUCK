@@ -52,6 +52,7 @@ rust_library(
         "covalence_lib_json": "nucleus//crates/lib/json:covalence_lib_json",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
         "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
+        "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -93,6 +94,7 @@ rust_test(
         "covalence_lib_json": "nucleus//crates/lib/json:covalence_lib_json",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
         "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
+        "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -135,6 +137,7 @@ rust_test(
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
         "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
         "covalence_nucleus_script": ":covalence_nucleus_script",
+        "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -177,6 +180,7 @@ rust_test(
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
         "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
         "covalence_nucleus_script": ":covalence_nucleus_script",
+        "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -219,6 +223,7 @@ rust_test(
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
         "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
         "covalence_nucleus_script": ":covalence_nucleus_script",
+        "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

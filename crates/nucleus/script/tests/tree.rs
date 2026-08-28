@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use covalence_data_vfs::{Bytes, MemoryVfs, ResourceVfs};
-use covalence_nucleus_script::{TreeError, compile_tree};
+use covalence_lib_hash::O256;
+use covalence_nucleus_script::{ProofSource, TreeError, compile_tree};
 
 fn library(extra: &[(&str, &[u8])]) -> MemoryVfs {
     let mut files = BTreeMap::from([
@@ -168,4 +169,27 @@ fn cycles_missing_files_and_binary_cov_sources_are_rejected() {
         compile_tree("binary.defs", &binary),
         Err(TreeError::Utf8 { .. })
     ));
+}
+
+#[test]
+fn proof_components_are_declared_by_resource_or_content_address() {
+    let component = O256::from_bytes(b"proof component");
+    let target = O256::from_bytes(b"target");
+    let source = format!(
+        "(proof local (wasm tactics/check.wasm))\n(proof cached (wasm !{} ) !{})",
+        component.hex(),
+        target.hex()
+    );
+    let resources = library(&[("proofs", source.as_bytes())]);
+    let tree = compile_tree("proofs", &resources).expect("proof declarations");
+    assert_eq!(tree.proofs().len(), 2);
+    assert_eq!(tree.proofs()[0].name(), "proofs.local");
+    assert_eq!(
+        tree.proofs()[0].source(),
+        &ProofSource::Resource("tactics/check.wasm".into())
+    );
+    assert_eq!(tree.proofs()[0].target(), None);
+    assert_eq!(tree.proofs()[1].name(), "proofs.cached");
+    assert_eq!(tree.proofs()[1].source(), &ProofSource::Address(component));
+    assert_eq!(tree.proofs()[1].target(), Some(target));
 }

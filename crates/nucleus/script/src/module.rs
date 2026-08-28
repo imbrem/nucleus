@@ -8,7 +8,8 @@ use covalence_lib_hash::O256;
 use covalence_logic_hol::{Kernel, Ref};
 
 use super::{
-    CompiledTheory, Namespace, SExpr, TheoryError, atom, compile_theory, list, read_module,
+    CompiledTheory, Namespace, NamespaceChild, SExpr, TheoryError, atom, compile_theory, list,
+    read_module,
 };
 
 /// One content-addressed dependency declared by a source module.
@@ -184,9 +185,11 @@ pub fn delaborate_module(kernel: &Kernel, namespace: &Namespace, imports: &[Impo
 }
 
 fn collect_references(namespace: &Namespace, output: &mut BTreeSet<Ref>) {
-    output.extend(namespace.bindings().map(|(_, reference)| reference));
+    output.extend(namespace.bindings().map(|binding| binding.reference()));
     for (_, child) in namespace.children() {
-        collect_references(child, output);
+        if let NamespaceChild::Resident(child) = child {
+            collect_references(&child, output);
+        }
     }
 }
 
@@ -424,14 +427,32 @@ fn render_expr(expression: &SExpr, output: &mut String) {
 
 fn render_namespace(namespace: &Namespace, depth: usize, output: &mut String) {
     let indent = "  ".repeat(depth);
-    for (name, reference) in namespace.bindings() {
-        writeln!(output, "{indent}(name {name} %{})", reference.get())
-            .expect("writing to a String cannot fail");
+    for binding in namespace.bindings() {
+        writeln!(
+            output,
+            "{indent}(name {} %{})",
+            binding.name(),
+            binding.reference().get()
+        )
+        .expect("writing to a String cannot fail");
     }
     for (name, child) in namespace.children() {
-        writeln!(output, "{indent}(namespace {name}").expect("writing to a String cannot fail");
-        render_namespace(child, depth + 1, output);
-        writeln!(output, "{indent})").expect("writing to a String cannot fail");
+        match child {
+            NamespaceChild::Resident(child) => {
+                writeln!(output, "{indent}(namespace {name}")
+                    .expect("writing to a String cannot fail");
+                render_namespace(&child, depth + 1, output);
+                writeln!(output, "{indent})").expect("writing to a String cannot fail");
+            }
+            NamespaceChild::Foreign(address) => {
+                writeln!(
+                    output,
+                    "{indent}(foreign {name} {})",
+                    Atom::encode_o256(address)
+                )
+                .expect("writing to a String cannot fail");
+            }
+        }
     }
 }
 

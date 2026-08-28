@@ -59,8 +59,27 @@ and `.sqlite` tactic state without giving the parser filesystem authority or
 inventing a format per tactic.
 
 The compiled namespace is a separate immutable navigation object with direct
-binding, child, and dotted-path access. It is shaped for straightforward WIT
-and Python wrappers and remains disposable metadata rather than kernel state.
+binding, child, and dotted-path access. Resident exports mount shared immutable
+subtrees without enumerating them. Opaque foreign mounts retain only an O256;
+ordinary lookup never loads them, while `resolve_with` accepts an explicit
+resolver and the default resolver rejects every foreign access. It is shaped
+for straightforward WIT and Python wrappers and remains disposable metadata
+rather than kernel state.
+
+A module may also declare a portable proof request without running it:
+
+```lisp
+(proof checked (wasm tactics/check.wasm))
+(proof cached (wasm !0123...cdef) !4567...cdef)
+```
+
+The component is selected by an opaque VFS resource or an O256; the optional
+final O256 is the prover-local request name and defaults to zero. `compile_tree`
+returns these declarations as metadata. The Nucleus facade's
+`run_script_proofs` resolves and instantiates them through the reusable proof
+API. Address-backed components are checked against their requested hash, and
+the same optional CAS is available to the running component. None of this adds
+a theorem constructor or parser to the trusted kernel.
 
 Library `defs.cov` modules describe abstract public theories rather than a
 preferred construction. For example, `nat/defs.cov` publishes the natural
@@ -76,7 +95,8 @@ the checked kernel API.
 
 ## Small source language
 
-The initial grammar deliberately covers definitions rather than proofs:
+The initial term grammar deliberately covers definitions rather than an
+object-language proof syntax:
 
 ```text
 declaration := (define name ('type-parameter ...) term)
