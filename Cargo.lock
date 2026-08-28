@@ -907,7 +907,6 @@ dependencies = [
  "covalence-lib-error",
  "covalence-lib-hash",
  "covalence-lib-sqlite",
- "covalence-neutron",
  "covalence-nucleus",
  "covalence-repl",
 ]
@@ -917,13 +916,13 @@ name = "covalence-browser"
 version = "0.0.0"
 dependencies = [
  "covalence-data-cas",
+ "covalence-data-sqlite",
  "covalence-lib-hash",
  "covalence-lib-json",
  "covalence-lib-sqlite",
  "covalence-logic-classical",
  "covalence-logic-hol",
  "covalence-logic-lrat",
- "covalence-neutron",
  "covalence-repl",
  "wasm-bindgen",
 ]
@@ -1029,6 +1028,17 @@ dependencies = [
  "covalence-lib-hash",
  "covalence-lib-pretty",
  "smol_str",
+]
+
+[[package]]
+name = "covalence-data-sqlite"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "covalence-data-cas",
+ "covalence-lib-error",
+ "covalence-lib-hash",
+ "covalence-lib-sqlite",
 ]
 
 [[package]]
@@ -1247,17 +1257,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "covalence-neutron"
-version = "0.0.0"
-dependencies = [
- "bytes",
- "covalence-data-cas",
- "covalence-lib-error",
- "covalence-lib-hash",
- "covalence-lib-sqlite",
-]
-
-[[package]]
 name = "covalence-nucleus"
 version = "0.0.0"
 dependencies = [
@@ -1267,11 +1266,9 @@ dependencies = [
  "covalence-lib-error",
  "covalence-lib-hash",
  "covalence-lib-rand",
- "covalence-lib-sqlite",
  "covalence-lib-wasm",
  "covalence-logic-cas",
  "covalence-logic-hol",
- "covalence-neutron",
  "covalence-nucleus-core",
  "covalence-nucleus-script",
  "futures",
@@ -1356,10 +1353,10 @@ version = "0.0.0"
 dependencies = [
  "bytes",
  "covalence-data-cas",
+ "covalence-data-sqlite",
  "covalence-lib-error",
  "covalence-lib-hash",
  "covalence-lib-sqlite",
- "covalence-neutron",
 ]
 
 [[package]]

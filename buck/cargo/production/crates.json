@@ -262,6 +262,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-sqlite@0.0.0",
+      "name": "covalence-data-sqlite",
+      "version": "0.0.0",
+      "path": "crates/data/sqlite",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_sqlite",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-ffi-python@0.0.0",
       "name": "covalence-ffi-python",
       "version": "0.0.0",
@@ -740,21 +755,6 @@
       ]
     },
     {
-      "id": "workspace#covalence-neutron@0.0.0",
-      "name": "covalence-neutron",
-      "version": "0.0.0",
-      "path": "crates/neutron",
-      "category": "tcb",
-      "targets": [
-        {
-          "name": "covalence_neutron",
-          "kinds": [
-            "lib"
-          ]
-        }
-      ]
-    },
-    {
       "id": "workspace#covalence-nucleus@0.0.0",
       "name": "covalence-nucleus",
       "version": "0.0.0",
@@ -770,12 +770,6 @@
         },
         {
           "name": "proof_subtype",
-          "kinds": [
-            "test"
-          ]
-        },
-        {
-          "name": "sqlite",
           "kinds": [
             "test"
           ]
@@ -995,13 +989,6 @@
     },
     {
       "source": "workspace#covalence-bin-nucleus@0.0.0",
-      "target": "workspace#covalence-neutron@0.0.0",
-      "kinds": [
-        "dev"
-      ]
-    },
-    {
-      "source": "workspace#covalence-bin-nucleus@0.0.0",
       "target": "workspace#covalence-nucleus@0.0.0",
       "kinds": [
         "normal (cfg(not(target_os = \"wasi\")))"
@@ -1017,6 +1004,13 @@
     {
       "source": "workspace#covalence-browser@0.0.0",
       "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-browser@0.0.0",
+      "target": "workspace#covalence-data-sqlite@0.0.0",
       "kinds": [
         "normal"
       ]
@@ -1059,13 +1053,6 @@
     {
       "source": "workspace#covalence-browser@0.0.0",
       "target": "workspace#covalence-logic-lrat@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "workspace#covalence-browser@0.0.0",
-      "target": "workspace#covalence-neutron@0.0.0",
       "kinds": [
         "normal"
       ]
@@ -1276,6 +1263,34 @@
     {
       "source": "workspace#covalence-data-sexpr@0.0.0",
       "target": "workspace#covalence-lib-pretty@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-sqlite@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-sqlite@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-sqlite@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-sqlite@0.0.0",
+      "target": "workspace#covalence-lib-sqlite@0.0.0",
       "kinds": [
         "normal"
       ]
@@ -1519,34 +1534,6 @@
       ]
     },
     {
-      "source": "workspace#covalence-neutron@0.0.0",
-      "target": "workspace#covalence-data-cas@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "workspace#covalence-neutron@0.0.0",
-      "target": "workspace#covalence-lib-error@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "workspace#covalence-neutron@0.0.0",
-      "target": "workspace#covalence-lib-hash@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "workspace#covalence-neutron@0.0.0",
-      "target": "workspace#covalence-lib-sqlite@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
       "source": "workspace#covalence-nucleus-core@0.0.0",
       "target": "workspace#covalence-logic-cas@0.0.0",
       "kinds": [
@@ -1681,13 +1668,6 @@
     },
     {
       "source": "workspace#covalence-nucleus@0.0.0",
-      "target": "workspace#covalence-lib-sqlite@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-lib-wasm@0.0.0",
       "kinds": [
         "normal (cfg(not(target_arch = \"wasm32\")))"
@@ -1703,13 +1683,6 @@
     {
       "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-logic-hol@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "workspace#covalence-nucleus@0.0.0",
-      "target": "workspace#covalence-neutron@0.0.0",
       "kinds": [
         "normal"
       ]
@@ -1772,6 +1745,13 @@
     },
     {
       "source": "workspace#covalence-repl@0.0.0",
+      "target": "workspace#covalence-data-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-repl@0.0.0",
       "target": "workspace#covalence-lib-error@0.0.0",
       "kinds": [
         "normal"
@@ -1787,13 +1767,6 @@
     {
       "source": "workspace#covalence-repl@0.0.0",
       "target": "workspace#covalence-lib-sqlite@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "workspace#covalence-repl@0.0.0",
-      "target": "workspace#covalence-neutron@0.0.0",
       "kinds": [
         "normal"
       ]

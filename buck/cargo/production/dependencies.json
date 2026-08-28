@@ -9398,6 +9398,14 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-sqlite@0.0.0",
+      "name": "covalence-data-sqlite",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
+      ]
+    },
+    {
       "id": "workspace#covalence-ffi-python@0.0.0",
       "name": "covalence-ffi-python",
       "category": "tcb",
@@ -9573,14 +9581,6 @@
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
         "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6"
-      ]
-    },
-    {
-      "id": "workspace#covalence-neutron@0.0.0",
-      "name": "covalence-neutron",
-      "category": "tcb",
-      "dependencies": [
-        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
       ]
     },
     {

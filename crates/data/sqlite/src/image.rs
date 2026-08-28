@@ -14,7 +14,7 @@ const DATABASE_IS_ATTACHED_SQL: &str =
 impl Connection {
     /// Serializes the `main` database as an owned `SQLite` database image.
     ///
-    /// Connection-local Neutron metadata lives in `temp` and is not included.
+    /// Connection-local metadata lives in `temp` and is not included.
     /// The returned bytes no longer borrow this connection.
     ///
     /// # Errors
@@ -25,11 +25,11 @@ impl Connection {
         Ok(Bytes::from(image.to_vec()))
     }
 
-    /// Creates an in-memory Neutron connection from an `SQLite` database image.
+    /// Creates an in-memory connection from an `SQLite` database image.
     ///
     /// The image is copied into `SQLite`'s allocator and handed over, so the
     /// returned connection does not borrow from the input and the database it
-    /// holds is writable. Neutron's connection-local metadata is rebuilt in
+    /// holds is writable. Connection-local metadata is rebuilt in
     /// `temp`.
     ///
     /// This is a low-level image operation, not content verification. Callers
@@ -38,7 +38,7 @@ impl Connection {
     /// # Errors
     ///
     /// Returns an error when the in-memory connection cannot be opened, the
-    /// image cannot be installed, or Neutron metadata cannot be initialized.
+    /// image cannot be installed, or connection metadata cannot be initialized.
     pub fn deserialize(bytes: &Bytes) -> Result<Self, ImageError> {
         let sqlite = sqlite::Connection::open_in_memory().context(OpenSnafu)?;
         let image = sqlite::SqlBytes::copy_from_slice(bytes.as_ref()).context(DeserializeSnafu)?;
@@ -51,7 +51,7 @@ impl Connection {
     /// Attaches `bytes` as a new, writable in-memory database.
     ///
     /// The attached database is private to this connection and registered in
-    /// Neutron's connection-local database catalog. The returned value is its
+    /// the connection-local database catalog. The returned value is its
     /// connection-local database identifier.
     ///
     /// # Errors
@@ -112,7 +112,7 @@ fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
-/// Failure to serialize or deserialize a Neutron database image.
+/// Failure to serialize or deserialize a `SQLite` database image.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum ImageError {
@@ -151,17 +151,17 @@ pub enum ImageError {
         schema_name: String,
     },
 
-    /// An attached database could not be recorded in Neutron's catalog.
-    #[snafu(display("could not register attached Neutron database: {source}"))]
+    /// An attached database could not be recorded in the connection catalog.
+    #[snafu(display("could not register attached SQLite database: {source}"))]
     Register {
         /// Underlying `SQLite` error.
         source: sqlite::Error,
     },
 
-    /// Neutron's connection-local metadata could not be initialized.
-    #[snafu(display("could not initialize deserialized Neutron database: {source}"))]
+    /// Connection-local metadata could not be initialized.
+    #[snafu(display("could not initialize deserialized SQLite database: {source}"))]
     Initialize {
-        /// Underlying Neutron connection error.
+        /// Underlying data-layer connection error.
         source: ConnectionError,
     },
 }
@@ -295,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn attach_rejects_an_existing_neutron_database() {
+    fn attach_rejects_an_existing_registered_database() {
         let source = Connection::open_in_memory().expect("open source");
         source
             .execute_batch("CREATE TABLE example (value INTEGER) STRICT;")
@@ -314,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn attach_rejects_a_database_attached_outside_neutron() {
+    fn attach_rejects_a_database_attached_outside_the_wrapper() {
         let source = Connection::open_in_memory().expect("open source");
         let bytes = source.serialize().expect("serialize");
         let mut connection = Connection::open_in_memory().expect("open destination");

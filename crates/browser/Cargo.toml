@@ -12,13 +12,13 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 covalence-data-cas = { path = "../data/cas" }
+covalence-data-sqlite = { path = "../data/sqlite" }
 covalence-lib-hash = { path = "../lib/hash", default-features = false, features = ["blake3"] }
 covalence-lib-json = { path = "../lib/json" }
 covalence-lib-sqlite = { path = "../lib/sqlite", features = ["vfs-register"] }
 covalence-logic-classical = { path = "../logic/classical" }
 covalence-logic-hol = { path = "../logic/hol" }
 covalence-logic-lrat = { path = "../logic/lrat" }
-covalence-neutron = { path = "../neutron" }
 covalence-repl = { path = "../repl" }
 wasm-bindgen = "=0.2.121"
 

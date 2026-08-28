@@ -21,12 +21,12 @@ filegroup(
 )
 
 rust_library(
-    name = "covalence_neutron",
-    crate = "covalence_neutron",
+    name = "covalence_data_sqlite",
+    crate = "covalence_data_sqlite",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    tests = [":covalence_neutron-unit-test"],
+    tests = [":covalence_data_sqlite-unit-test"],
     named_deps = {
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
@@ -36,11 +36,11 @@ rust_library(
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Relational state instances for Nucleus",
+        "CARGO_PKG_DESCRIPTION": "Untrusted SQLite data helpers and CAS-backed VFS support",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-neutron",
+        "CARGO_PKG_NAME": "covalence-data-sqlite",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
@@ -55,8 +55,8 @@ rust_library(
 )
 
 rust_test(
-    name = "covalence_neutron-unit-test",
-    crate = "covalence_neutron",
+    name = "covalence_data_sqlite-unit-test",
+    crate = "covalence_data_sqlite",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
@@ -69,11 +69,11 @@ rust_test(
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Relational state instances for Nucleus",
+        "CARGO_PKG_DESCRIPTION": "Untrusted SQLite data helpers and CAS-backed VFS support",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-neutron",
+        "CARGO_PKG_NAME": "covalence-data-sqlite",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",

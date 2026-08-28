@@ -10,10 +10,10 @@ const CREATE_ATTACHED_DATABASES_SQL: &str = include_str!("../sql/create_attached
 const REGISTER_TABLE_SQL: &str = include_str!("../sql/register_table.sql");
 const REGISTER_ATTACHED_DATABASE_SQL: &str = include_str!("../sql/register_attached_database.sql");
 
-/// Physical name of Neutron's connection catalog in `temp`.
+/// Physical name of the connection catalog in `temp`.
 pub const CONNECTION_CATALOG: &str = "cov_conn_catalog";
 
-/// Physical name of Neutron's registered-database table in `temp`.
+/// Physical name of the registered-database table in `temp`.
 pub const ATTACHED_DATABASES: &str = "cov_conn_attached";
 
 /// Uninterpreted symbol assigned to the connection catalog.
@@ -22,7 +22,7 @@ pub const CONNECTION_CATALOG_INTERPRETATION: &str = "cov.conn.catalog/v0";
 /// Uninterpreted symbol assigned to the attached-database registry.
 pub const ATTACHED_DATABASES_INTERPRETATION: &str = "cov.conn.attached/v0";
 
-/// A permeable `SQLite` connection with Neutron's connection-local metadata.
+/// A permeable `SQLite` connection with connection-local metadata.
 ///
 /// This type makes no claim that the database is valid Nucleus state. Direct
 /// access to the underlying connection is intentional.
@@ -32,7 +32,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    /// Opens a `SQLite` database and initializes its Neutron connection state.
+    /// Opens a `SQLite` database and initializes its connection metadata.
     ///
     /// # Errors
     ///
@@ -51,7 +51,7 @@ impl Connection {
         Self::from_sqlite(sqlite)
     }
 
-    /// Opens an in-memory `SQLite` database and initializes Neutron.
+    /// Opens an in-memory `SQLite` database and initializes its metadata.
     ///
     /// # Errors
     ///
@@ -61,9 +61,9 @@ impl Connection {
         Self::from_sqlite(sqlite)
     }
 
-    /// Adopts a raw connection and initializes Neutron's temporary metadata.
+    /// Adopts a raw connection and initializes temporary metadata.
     ///
-    /// Initialization is transactional. Existing objects using Neutron's
+    /// Initialization is transactional. Existing objects using the layer's
     /// reserved connection names cause initialization to fail.
     ///
     /// # Errors
@@ -92,7 +92,7 @@ impl Connection {
     }
 }
 
-/// Failure to open or initialize a Neutron connection.
+/// Failure to open or initialize a data-layer `SQLite` connection.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum ConnectionError {
@@ -103,8 +103,8 @@ pub enum ConnectionError {
         source: sqlite::Error,
     },
 
-    /// Neutron's connection-local schema could not be initialized.
-    #[snafu(display("could not initialize Neutron connection metadata: {source}"))]
+    /// The connection-local schema could not be initialized.
+    #[snafu(display("could not initialize SQLite connection metadata: {source}"))]
     Initialize {
         /// Underlying `SQLite` error.
         source: sqlite::Error,
@@ -123,9 +123,9 @@ pub enum ConnectionError {
 }
 
 impl Connection {
-    /// Installs Neutron's connection-local metadata.
+    /// Installs connection-local metadata.
     ///
-    /// Transactional: a connection which already holds objects under Neutron's
+    /// Transactional: a connection which already holds objects under the
     /// reserved names leaves nothing behind when this fails.
     fn initialize(&self) -> Result<(), ConnectionError> {
         let transaction = Transaction::begin(self).context(InitializeSnafu)?;
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn initializes_catalog_and_main_registration() {
-        let connection = Connection::open_in_memory().expect("initialize Neutron");
+        let connection = Connection::open_in_memory().expect("initialize metadata");
 
         let catalog = connection
             .query_all(
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn initialization_does_not_modify_main() {
-        let connection = Connection::open_in_memory().expect("initialize Neutron");
+        let connection = Connection::open_in_memory().expect("initialize metadata");
         let main_tables = connection
             .query_row(
                 "SELECT count(*) FROM main.sqlite_schema WHERE type = 'table'",
@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn exposes_underlying_connection() {
-        let connection = Connection::open_in_memory().expect("initialize Neutron");
+        let connection = Connection::open_in_memory().expect("initialize metadata");
         connection
             .execute_batch("CREATE TABLE application_data (value TEXT)")
             .expect("write through the wrapper");
