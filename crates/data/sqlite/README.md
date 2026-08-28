@@ -5,7 +5,14 @@
 
 - a permeable connection wrapper with connection-local catalog metadata;
 - typed query, parameter, transaction, and database-image helpers;
-- a read-only SQLite VFS which opens immutable CAS objects by O256 address.
+- a read-only SQLite VFS which opens immutable CAS objects by O256 address;
+- a `ResourceVfs` subtrait for reading a complete immutable byte resource from
+  the same resolver used for SQLite's random-access file interface.
+
+The resource interface deliberately does not interpret names as paths or
+bytes as source text. Script trees can therefore resolve logical module names,
+content addresses, SQLite databases, Wasm modules, and other resources through
+one virtual store while applying format-specific interpretation separately.
 
 This crate does not define valid Nucleus state and has no theorem or signing
 authority. Proof tactics and applications may use arbitrary SQL through it;
