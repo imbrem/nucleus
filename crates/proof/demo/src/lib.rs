@@ -14,7 +14,14 @@
 mod bindings;
 
 #[cfg(target_arch = "wasm32")]
-mod tactic;
+mod compiled_tactic {
+    use super::bindings::nucleus::proof::{
+        host::Kernel,
+        tactics::{RewriteDirection, RewriteResult, rewrite_proposition},
+    };
+
+    include!(concat!(env!("OUT_DIR"), "/tactic_program.rs"));
+}
 
 #[cfg(target_arch = "wasm32")]
 use bindings::{
@@ -86,7 +93,7 @@ impl Component {
         // the host tactic asks checked EQ_MP to transport that premise.
         let equality = kernel.refl(bool_ty, truth)?;
         let premise = kernel.eqt_elim(equality.theorem)?;
-        let rewritten = tactic::rewrite(&kernel, bool_ty, equality.theorem, premise)?;
+        let rewritten = compiled_tactic::run(&kernel, bool_ty, equality.theorem, premise)?;
         if rewritten.source != truth || rewritten.target != truth {
             return Err("userspace rewrite changed a reflexive proposition".to_owned());
         }
