@@ -45,6 +45,22 @@ end
     formulas mode (.cons head tail) = formula mode head :: formulas mode tail := by
   simp [formulas]
 
+@[simp] theorem formulas_ofList (mode : Alternating.Mode)
+    (children : List (Alternating.Expr Atom)) :
+    formulas mode (Alternating.Children.ofList children) =
+      children.map (formula mode) := by
+  induction children with
+  | nil => simp [Alternating.Children.ofList]
+  | cons head tail ih => simp [Alternating.Children.ofList, ih]
+
+@[simp] theorem formula_array (mode : Alternating.Mode) (negative : Bool)
+    (children : List (Alternating.Expr Atom)) :
+    formula mode (Alternating.Expr.array negative children) =
+      match mode with
+      | .all => .and negative (children.map (formula .any))
+      | .any => .or negative (children.map (formula .all)) := by
+  cases mode <;> simp [formula, Alternating.Expr.array]
+
 private theorem signed_iff (negative value : Bool) (claim : Prop)
     (equivalent : claim ↔ value = true) :
     Tagged.Signed negative claim ↔

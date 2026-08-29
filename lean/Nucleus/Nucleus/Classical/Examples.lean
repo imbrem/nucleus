@@ -191,4 +191,18 @@ example : Nucleus.Classical.Embedding.AlternatingToTagged.Packed.retag?
     Nucleus.Classical.Embedding.AlternatingToTagged.Packed.retagRef,
     literalArena, emptyLayout, literal0, literal1, ref8, word8, Word.tag]
 
+/-- The public concrete embedding performs the source check and retagging
+without a target-side equality oracle. -/
+example : Nucleus.Classical.Embedding.AlternatingToTagged.Packed.embed?
+    literalArena emptyLayout = some literalArena := by
+  simp [Nucleus.Classical.Embedding.AlternatingToTagged.Packed.embed?,
+    Nucleus.Classical.Alternating.Packed.decode?,
+    Nucleus.Classical.Alternating.Packed.decodeRoots,
+    Nucleus.Classical.Alternating.Packed.decodeRef,
+    Nucleus.Classical.Embedding.AlternatingToTagged.Packed.retag?,
+    Nucleus.Classical.Embedding.AlternatingToTagged.Packed.retagRoots,
+    Nucleus.Classical.Embedding.AlternatingToTagged.Packed.retagRef,
+    literalArena, emptyLayout, literal0, literal1, ref8, word8, Word.tag,
+    Word.base]
+
 end Nucleus.Classical.Examples

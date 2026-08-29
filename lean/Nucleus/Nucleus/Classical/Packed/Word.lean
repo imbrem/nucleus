@@ -181,6 +181,36 @@ theorem pointer?_not_literal {payloadWidth base tag : Nat} {negative : Bool}
     · rw [withTag?_tag encoded]
       exact notLiteral
 
+theorem pointer?_base {payloadWidth base tag : Nat} {negative : Bool}
+    {word : Word payloadWidth} (encoded : pointer? payloadWidth base tag negative = some word) :
+    word.base = base := by
+  unfold pointer? at encoded
+  split at encoded
+  · contradiction
+  · split at encoded
+    · contradiction
+    · exact withTag?_base encoded
+
+theorem pointer?_tag {payloadWidth base tag : Nat} {negative : Bool}
+    {word : Word payloadWidth} (encoded : pointer? payloadWidth base tag negative = some word) :
+    word.tag = tag := by
+  unfold pointer? at encoded
+  split at encoded
+  · contradiction
+  · split at encoded
+    · contradiction
+    · exact withTag?_tag encoded
+
+theorem pointer?_negative {payloadWidth base tag : Nat} {negative : Bool}
+    {word : Word payloadWidth} (encoded : pointer? payloadWidth base tag negative = some word) :
+    word.negative = negative := by
+  unfold pointer? at encoded
+  split at encoded
+  · contradiction
+  · split at encoded
+    · contradiction
+    · exact withTag?_negative encoded
+
 /-- A checked nonzero packed proposition reference. -/
 structure Ref (payloadWidth : Nat) where
   word : Word payloadWidth
