@@ -27,6 +27,10 @@ fn library(extra: &[(&str, &[u8])]) -> MemoryVfs {
             Bytes::from_static(include_bytes!("../library/data/prod/defs.cov")),
         ),
         (
+            "nat".to_owned(),
+            Bytes::from_static(include_bytes!("../library/nat.cov")),
+        ),
+        (
             "nat.defs".to_owned(),
             Bytes::from_static(include_bytes!("../library/nat/defs.cov")),
         ),
@@ -54,8 +58,8 @@ fn library(extra: &[(&str, &[u8])]) -> MemoryVfs {
 #[test]
 fn library_tree_compiles_once_in_dependency_order() {
     let resources = library(&[("tactics/cache.sqlite", b"SQLite format 3\0")]);
-    let tree = compile_tree("nat.defs", &resources).expect("compile source tree");
-    assert_eq!(tree.root(), "nat.defs");
+    let tree = compile_tree("nat", &resources).expect("compile source tree");
+    assert_eq!(tree.root(), "nat");
     assert_eq!(
         tree.sources()
             .iter()
@@ -69,13 +73,17 @@ fn library_tree_compiles_once_in_dependency_order() {
             "nat.rec",
             "nat.arithmetic",
             "nat.defs",
+            "nat",
         ]
     );
     assert!(tree.module().namespace().get("logic.defs.and").is_some());
-    assert!(tree.namespace().get("nat.defs.NatRecSpec").is_some());
-    assert!(tree.namespace().get("nat.defs.NatSpec").is_some());
-    assert!(tree.namespace().get("nat.defs.AddSpec").is_some());
-    assert!(tree.namespace().get("nat.defs.DivModSpec").is_some());
+    assert!(tree.namespace().get("nat.rec.spec").is_some());
+    assert!(tree.namespace().get("nat.spec").is_some());
+    assert!(tree.namespace().get("nat.add.spec").is_some());
+    assert!(tree.namespace().get("nat.sub.spec").is_some());
+    assert!(tree.namespace().get("nat.mul.spec").is_some());
+    assert!(tree.namespace().get("nat.divmod.spec").is_some());
+    assert!(tree.namespace().get("nat.defs.add.spec").is_none());
     assert!(
         tree.module()
             .namespace()
@@ -86,7 +94,7 @@ fn library_tree_compiles_once_in_dependency_order() {
     assert!(
         tree.module()
             .namespace()
-            .get("nat.rec.NatRecSpec")
+            .get("nat.rec.rec.spec")
             .is_some()
     );
 

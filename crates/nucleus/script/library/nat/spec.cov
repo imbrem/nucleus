@@ -3,7 +3,7 @@
 ; that a model exists.
 (import logic)
 
-(define NatSpec ('n)
+(define spec ('n)
   (-> 'n (-> (-> 'n 'n) bool))
   (lambda zero 'n
     (lambda succ (-> 'n 'n)

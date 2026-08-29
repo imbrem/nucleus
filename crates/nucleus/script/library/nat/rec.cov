@@ -2,7 +2,7 @@
 ; can state unique existence and concrete.cov can select the unique witness.
 (import logic)
 
-(define NatRecSpec ('n 'a)
+(define rec.spec ('n 'a)
   (-> 'n
     (-> (-> 'n 'n)
       (-> 'a

@@ -3,7 +3,7 @@
 ; not create the operations.
 (import logic)
 
-(define AddSpec ('n)
+(define add.spec ('n)
   (-> 'n
     (-> (-> 'n 'n)
       (-> (-> 'n (-> 'n 'n)) bool)))
@@ -16,7 +16,7 @@
             (forall n 'n
               (= ((add m) (succ n)) (succ ((add m) n))))))))))
 
-(define SubSpec ('n)
+(define sub.spec ('n)
   (-> 'n
     (-> (-> 'n 'n)
       (-> (-> 'n (-> 'n 'n)) bool)))
@@ -31,7 +31,7 @@
               (forall n 'n
                 (= ((sub (succ m)) (succ n)) ((sub m) n))))))))))
 
-(define MulSpec ('n)
+(define mul.spec ('n)
   (-> 'n
     (-> (-> 'n 'n)
       (-> (-> 'n (-> 'n 'n))
@@ -50,7 +50,7 @@
 ; Division by zero is totalized as quotient zero and remainder the dividend.
 ; For a nonzero divisor, quotient and remainder satisfy n = q*d+r and r<d,
 ; where r<d is witnessed by a positive difference.
-(define DivModSpec ('n)
+(define divmod.spec ('n)
   (-> 'n
     (-> (-> 'n 'n)
       (-> (-> 'n (-> 'n 'n))
