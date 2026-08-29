@@ -8,12 +8,12 @@ from .._covalence import HolDefinition as Definition
 from .._covalence import HolKernel as Kernel
 from .._covalence import HolKind as Kind
 from .._covalence import HolLink as Link
-from .._covalence import HolProver as _Prover
+from .._covalence import HolStrategy as _Strategy
 from .._covalence import HolRewriteResult as RewriteResult
 from .._covalence import HolSynFact as SynFact
 from .._covalence import HolTm as Tm
 from .._covalence import HolTy as Ty
-from ..lib.hash import O256, ZERO_O256
+from ..lib.hash import O256
 
 __all__ = [
     "Arena",
@@ -22,7 +22,7 @@ __all__ = [
     "RewriteResult",
     "Kind",
     "Link",
-    "Prover",
+    "Strategy",
     "AmbPred",
     "SynFact",
     "Tm",
@@ -47,7 +47,7 @@ def set_default_cas(cas: object | None) -> None:
     _default_cas = cas
 
 
-class Prover:
+class Strategy:
     """One live proof component which may serve any number of requests.
 
     Omitting ``cas`` uses :func:`get_default_cas`; explicitly passing ``None``
@@ -55,33 +55,28 @@ class Prover:
     in order to retrieve and validate the component bytes.
     """
 
-    __slots__ = ("_prover",)
+    __slots__ = ("_strategy",)
 
     def __init__(self, source: object, /, cas: object = _UNSET) -> None:
         selected = get_default_cas() if cas is _UNSET else cas
-        self._prover = _Prover(source, cas=selected)
+        self._strategy = _Strategy(source, cas=selected)
 
-    def prove(
+    def apply_tactic(
         self,
-        name: str | bytes | int | O256 | None = None,
+        tactic_id: int,
+        arguments: bytes = b"",
         kernel: Kernel | None = None,
     ) -> Kernel:
-        """Run one named request and atomically extend ``kernel`` on success."""
-        return self._prover.prove(name, kernel)
+        """Apply a compact strategy-local tactic atomically."""
+        return self._strategy.apply_tactic(tactic_id, arguments, kernel)
 
-    def prove_addr(self, name: O256, kernel: Kernel | None = None) -> Kernel:
-        return self._prover.prove_addr(name, kernel)
+    def apply_tactic_name(self, name: str, kernel: Kernel | None = None) -> Kernel:
+        return self._strategy.apply_tactic_name(name, kernel)
 
-    def prove_name(self, name: str, kernel: Kernel | None = None) -> Kernel:
-        return self._prover.prove_name(name, kernel)
-
-    def prove_bytes(self, name: bytes, kernel: Kernel | None = None) -> Kernel:
-        return self._prover.prove_bytes(name, kernel)
-
-    def prove_ix(self, ix: int, kernel: Kernel | None = None) -> Kernel:
-        return self._prover.prove_ix(ix, kernel)
+    def prove_addr(self, addr: O256) -> Kernel:
+        return self._strategy.prove_addr(addr)
 
 
 def load_proof(source: object, /, cas: object = _UNSET) -> Kernel:
-    """Instantiate ``source`` and request the all-zero default target."""
-    return Prover(source, cas=cas).prove(ZERO_O256, None)
+    """Instantiate ``source`` and request tactic zero with empty arguments."""
+    return Strategy(source, cas=cas).apply_tactic(0)

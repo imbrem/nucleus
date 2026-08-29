@@ -15,29 +15,20 @@ mod bindings;
 
 #[cfg(target_arch = "wasm32")]
 use bindings::{
-    exports::nucleus::proof::standard::Guest,
-    nucleus::proof::host::{Bytes, Kernel},
+    exports::nucleus::proof::strategy::Guest as StrategyGuest, nucleus::proof::host::Kernel,
 };
 
 #[cfg(target_arch = "wasm32")]
 struct Component;
 
 #[cfg(target_arch = "wasm32")]
-impl Guest for Component {
-    async fn prove_addr(_addr: Vec<u8>, kernel: Kernel) -> Result<Kernel, String> {
-        Self::reject(kernel)
-    }
-
-    async fn prove_name(_name: String, kernel: Kernel) -> Result<Kernel, String> {
-        Self::reject(kernel)
-    }
-
-    async fn prove_ix(_ix: u64, kernel: Kernel) -> Result<Kernel, String> {
-        Self::reject(kernel)
-    }
-
-    async fn prove_bytes(_bytes: Bytes, kernel: Kernel) -> Result<Kernel, String> {
-        Self::reject(kernel)
+impl StrategyGuest for Component {
+    async fn apply_tactic(
+        _tactic_id: u64,
+        _arguments: Vec<u8>,
+        kernel: Option<Kernel>,
+    ) -> Result<Kernel, String> {
+        Self::reject(kernel.unwrap_or_else(Kernel::new))
     }
 }
 

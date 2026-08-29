@@ -18,7 +18,7 @@ mod tactic;
 
 #[cfg(target_arch = "wasm32")]
 use bindings::{
-    exports::nucleus::proof::standard::Guest,
+    exports::nucleus::proof::strategy::Guest as StrategyGuest,
     nucleus::proof::host::{
         Bytes, IndexCas, Kernel, Sort, SynRel, cas_get, cas_get_bytes, cas_insert,
     },
@@ -29,6 +29,17 @@ struct Component;
 
 #[cfg(target_arch = "wasm32")]
 impl Component {
+    fn requested(arguments: &[u8]) -> Result<&[u8], String> {
+        if arguments.is_empty() || arguments.len() == 32 {
+            Ok(arguments)
+        } else {
+            Err(format!(
+                "proof arguments must be empty or contain a 32-byte address, got {} bytes",
+                arguments.len()
+            ))
+        }
+    }
+
     async fn prove_requested(requested: &[u8], kernel: Kernel) -> Result<Kernel, String> {
         // The zero selector conventionally requests this component's default
         // proof. Its input is independently addressed in the default CAS.
@@ -122,36 +133,22 @@ impl Component {
 }
 
 #[cfg(target_arch = "wasm32")]
-impl Guest for Component {
-    async fn prove_addr(addr: Vec<u8>, kernel: Kernel) -> Result<Kernel, String> {
-        if addr.len() != 32 {
-            return Err(format!(
-                "O256 proof selectors contain 32 bytes, got {}",
-                addr.len()
-            ));
-        }
-        Self::prove_requested(&addr, kernel).await
-    }
-
-    async fn prove_name(name: String, kernel: Kernel) -> Result<Kernel, String> {
-        if name != "default" {
-            return Err(format!("unknown textual proof name {name:?}"));
-        }
-        Self::prove_requested(&[], kernel).await
-    }
-
-    async fn prove_ix(ix: u64, kernel: Kernel) -> Result<Kernel, String> {
-        if ix != 0 {
-            return Err(format!("unknown proof mutation index {ix}"));
-        }
-        Self::prove_requested(&[], kernel).await
-    }
-
-    async fn prove_bytes(bytes: Bytes, kernel: Kernel) -> Result<Kernel, String> {
-        if bytes.to_list() != b"default" {
-            return Err(format!("unknown byte proof name of length {}", bytes.len()));
-        }
-        Self::prove_requested(&[], kernel).await
+impl StrategyGuest for Component {
+    async fn apply_tactic(
+        tactic_id: u64,
+        arguments: Vec<u8>,
+        kernel: Option<Kernel>,
+    ) -> Result<Kernel, String> {
+        let requested = match tactic_id {
+            0 => Self::requested(&arguments)?,
+            1 if arguments == b"default" => &[],
+            1 => {
+                let name = String::from_utf8_lossy(&arguments);
+                return Err(format!("unknown tactic name {name:?}"));
+            }
+            _ => return Err(format!("unknown tactic ID {tactic_id}")),
+        };
+        Self::prove_requested(requested, kernel.unwrap_or_else(Kernel::new)).await
     }
 }
 

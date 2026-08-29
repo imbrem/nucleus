@@ -499,34 +499,28 @@ interface tactics {
     ) -> result<rewrite-result, string>;
 }
 
-/// The conventional entry point understood by standard proof loaders.
-interface standard {
-    use host.{bytes, kernel};
+/// The minimal interface for a reusable kernel-transforming strategy.
+interface strategy {
+    use host.{kernel};
 
-    /// Resolves a prover-local name and extends a caller-supplied kernel.
+    /// Applies a compact strategy-local tactic to a supplied or fresh kernel.
     ///
-    /// Names are interpreted entirely by the prover. By convention an
-    /// all-zero `addr` requests its default proof. Ownership of `kernel`
-    /// crosses the component boundary and the returned resource is its
-    /// checked, extended successor.
-    prove-addr: async func(addr: list<u8>, kernel: kernel) -> result<kernel, string>;
-
-    /// Extends a kernel using a human-readable prover-local name.
-    prove-name: async func(name: string, kernel: kernel) -> result<kernel, string>;
-
-    /// Extends a kernel using a compact prover-local index.
-    prove-ix: async func(ix: u64, kernel: kernel) -> result<kernel, string>;
-
-    /// Extends a kernel using arbitrary prover-local bytes.
-    prove-bytes: async func(name: bytes, kernel: kernel) -> result<kernel, string>;
+    /// The strategy interprets `tactic-id`; it carries no ambient authority.
+    /// Ownership of a supplied kernel crosses the component boundary. `none`
+    /// asks the strategy to choose a checked starting kernel.
+    apply-tactic: async func(
+        tactic-id: u64,
+        arguments: list<u8>,
+        kernel: option<kernel>,
+    ) -> result<kernel, string>;
 }
 
-/// A portable standard proof component.
+/// A portable kernel-transforming strategy.
 world proof {
     import host;
     import capabilities;
     import tactics;
-    export standard;
+    export strategy;
 }
 
 /// A portable implementation of the complete proof host interface.

@@ -21,42 +21,40 @@ static const uint8_t EXPECTED_INPUT[] = "nucleus proof demo";
 
 struct proof_task {
   enum {
-    PROOF_ENTRY_ADDR,
-    PROOF_ENTRY_NAME,
-    PROOF_ENTRY_IX,
-    PROOF_ENTRY_BYTES,
+    PROOF_ENTRY_STRATEGY,
   } entry;
   uint8_t address[32];
-  exports_nucleus_proof_standard_own_kernel_t kernel;
+  nucleus_proof_host_own_kernel_t kernel;
   nucleus_proof_host_result_option_own_bytes_string_t fetch;
   proof_subtask_t subtask;
   proof_waitable_set_t wait_set;
 };
 
-static void return_result(
-    int entry, exports_nucleus_proof_standard_result_own_kernel_string_t result) {
+static void return_success(int entry, nucleus_proof_host_own_kernel_t kernel) {
   switch (entry) {
-  case PROOF_ENTRY_ADDR:
-    exports_nucleus_proof_standard_prove_addr_return(result);
+  case PROOF_ENTRY_STRATEGY: {
+    exports_nucleus_proof_strategy_result_own_kernel_string_t result = {
+        .is_err = false, .val.ok = kernel};
+    exports_nucleus_proof_strategy_apply_tactic_return(result);
     break;
-  case PROOF_ENTRY_NAME:
-    exports_nucleus_proof_standard_prove_name_return(result);
-    break;
-  case PROOF_ENTRY_IX:
-    exports_nucleus_proof_standard_prove_ix_return(result);
-    break;
-  case PROOF_ENTRY_BYTES:
-    exports_nucleus_proof_standard_prove_bytes_return(result);
-    break;
+  }
   }
 }
 
 static void return_error(int entry, const char *message) {
-  exports_nucleus_proof_standard_result_own_kernel_string_t result = {
-      .is_err = true,
-  };
-  proof_string_dup(&result.val.err, message);
-  return_result(entry, result);
+  switch (entry) {
+#define RETURN_ERROR(ENTRY, TYPE, FUNCTION)                                    \
+  case ENTRY: {                                                               \
+    TYPE result = {.is_err = true};                                           \
+    proof_string_dup(&result.val.err, message);                               \
+    FUNCTION(result);                                                         \
+    break;                                                                    \
+  }
+    RETURN_ERROR(PROOF_ENTRY_STRATEGY,
+                 exports_nucleus_proof_strategy_result_own_kernel_string_t,
+                 exports_nucleus_proof_strategy_apply_tactic_return)
+#undef RETURN_ERROR
+  }
 }
 
 static proof_callback_code_t return_task_error(struct proof_task *task,
@@ -91,18 +89,14 @@ static proof_callback_code_t finish_fetch(struct proof_task *task) {
     return return_task_error(task, "async CAS fetch changed the proof input");
   }
 
-  exports_nucleus_proof_standard_result_own_kernel_string_t result = {
-      .is_err = false,
-      .val.ok = task->kernel,
-  };
-  return_result(task->entry, result);
+  return_success(task->entry, task->kernel);
   free(task);
   return PROOF_CALLBACK_CODE_EXIT;
 }
 
 static proof_callback_code_t start_proof(
     int entry, const uint8_t *address_bytes, size_t address_len,
-    exports_nucleus_proof_standard_own_kernel_t kernel) {
+    nucleus_proof_host_own_kernel_t kernel) {
   if (address_len != 32) {
     nucleus_proof_host_kernel_drop_own(kernel);
     return_error(entry, "proof addresses must contain 32 bytes");
@@ -147,49 +141,38 @@ static proof_callback_code_t start_proof(
   }
 }
 
-proof_callback_code_t exports_nucleus_proof_standard_prove_addr(
-    proof_list_u8_t *addr,
-    exports_nucleus_proof_standard_own_kernel_t kernel) {
-  return start_proof(PROOF_ENTRY_ADDR, addr->ptr, addr->len, kernel);
+static nucleus_proof_host_own_kernel_t optional_kernel(
+    nucleus_proof_host_own_kernel_t *kernel) {
+  return kernel == NULL ? nucleus_proof_host_constructor_kernel() : *kernel;
 }
 
-proof_callback_code_t exports_nucleus_proof_standard_prove_name(
-    proof_string_t *name,
-    exports_nucleus_proof_standard_own_kernel_t kernel) {
-  if (name->len != 7 || memcmp(name->ptr, "default", 7) != 0) {
-    nucleus_proof_host_kernel_drop_own(kernel);
-    return_error(PROOF_ENTRY_NAME, "the C demo accepts the name `default` only");
+proof_callback_code_t exports_nucleus_proof_strategy_apply_tactic(
+    uint64_t tactic_id, proof_list_u8_t *arguments,
+    exports_nucleus_proof_strategy_own_kernel_t *kernel) {
+  nucleus_proof_host_own_kernel_t owned = optional_kernel(kernel);
+  if (tactic_id > 1) {
+    nucleus_proof_host_kernel_drop_own(owned);
+    return_error(PROOF_ENTRY_STRATEGY, "the C demo accepts tactics zero and one only");
     return PROOF_CALLBACK_CODE_EXIT;
   }
-  return start_proof(PROOF_ENTRY_NAME, DEFAULT_INPUT, sizeof(DEFAULT_INPUT), kernel);
-}
-
-proof_callback_code_t exports_nucleus_proof_standard_prove_ix(
-    uint64_t ix, exports_nucleus_proof_standard_own_kernel_t kernel) {
-  if (ix != 0) {
-    nucleus_proof_host_kernel_drop_own(kernel);
-    return_error(PROOF_ENTRY_IX, "the C demo accepts proof index zero only");
+  if (tactic_id == 1) {
+    if (arguments->len != 7 || memcmp(arguments->ptr, "default", 7) != 0) {
+      nucleus_proof_host_kernel_drop_own(owned);
+      return_error(PROOF_ENTRY_STRATEGY,
+                   "the C demo accepts the local name `default` only");
+      return PROOF_CALLBACK_CODE_EXIT;
+    }
+    return start_proof(PROOF_ENTRY_STRATEGY, DEFAULT_INPUT, 32, owned);
+  }
+  if (arguments->len != 0 && arguments->len != 32) {
+    nucleus_proof_host_kernel_drop_own(owned);
+    return_error(PROOF_ENTRY_STRATEGY,
+                 "proof arguments must be empty or contain 32 bytes");
     return PROOF_CALLBACK_CODE_EXIT;
   }
-  return start_proof(PROOF_ENTRY_IX, DEFAULT_INPUT, sizeof(DEFAULT_INPUT), kernel);
-}
-
-proof_callback_code_t exports_nucleus_proof_standard_prove_bytes(
-    exports_nucleus_proof_standard_own_bytes_t bytes,
-    exports_nucleus_proof_standard_own_kernel_t kernel) {
-  proof_list_u8_t value = {0};
-  nucleus_proof_host_method_bytes_to_list(
-      nucleus_proof_host_borrow_bytes(bytes), &value);
-  bool is_default = value.len == 7 && memcmp(value.ptr, "default", 7) == 0;
-  proof_list_u8_free(&value);
-  nucleus_proof_host_bytes_drop_own(bytes);
-  if (!is_default) {
-    nucleus_proof_host_kernel_drop_own(kernel);
-    return_error(PROOF_ENTRY_BYTES,
-                 "the C demo accepts the bytes `default` only");
-    return PROOF_CALLBACK_CODE_EXIT;
-  }
-  return start_proof(PROOF_ENTRY_BYTES, DEFAULT_INPUT, sizeof(DEFAULT_INPUT), kernel);
+  return start_proof(PROOF_ENTRY_STRATEGY,
+                     arguments->len == 0 ? DEFAULT_INPUT : arguments->ptr,
+                     32, owned);
 }
 
 static proof_callback_code_t resume_proof(proof_event_t *event, int entry) {
@@ -227,22 +210,7 @@ static proof_callback_code_t resume_proof(proof_event_t *event, int entry) {
 }
 
 
-proof_callback_code_t exports_nucleus_proof_standard_prove_addr_callback(
+proof_callback_code_t exports_nucleus_proof_strategy_apply_tactic_callback(
     proof_event_t *event) {
-  return resume_proof(event, PROOF_ENTRY_ADDR);
-}
-
-proof_callback_code_t exports_nucleus_proof_standard_prove_name_callback(
-    proof_event_t *event) {
-  return resume_proof(event, PROOF_ENTRY_NAME);
-}
-
-proof_callback_code_t exports_nucleus_proof_standard_prove_ix_callback(
-    proof_event_t *event) {
-  return resume_proof(event, PROOF_ENTRY_IX);
-}
-
-proof_callback_code_t exports_nucleus_proof_standard_prove_bytes_callback(
-    proof_event_t *event) {
-  return resume_proof(event, PROOF_ENTRY_BYTES);
+  return resume_proof(event, PROOF_ENTRY_STRATEGY);
 }

@@ -36,30 +36,33 @@ fn c_can_implement_the_async_proof_world() {
             .unwrap_or_else(|error| panic!("{} could not be read: {error}", path.display()))
     };
 
-    let mut proof = covalence_nucleus::ProofInstance::from_bytes(component.as_ref())
+    let mut proof = covalence_nucleus::Strategy::from_bytes(component.as_ref())
         .expect("the C proof should instantiate");
+    let zero = covalence_nucleus::core::cas::O256::from_array([0; 32]);
+    assert!(
+        proof
+            .apply_tactic(
+                99,
+                Vec::new(),
+                Some(covalence_nucleus::core::hol::Kernel::new()),
+            )
+            .is_err(),
+        "rejecting an unknown tactic must clean up its supplied kernel"
+    );
     let kernels = [
         proof
-            .prove(
-                covalence_nucleus::ProofName::default(),
-                covalence_nucleus::core::hol::Kernel::new(),
+            .apply_tactic(
+                0,
+                Vec::new(),
+                Some(covalence_nucleus::core::hol::Kernel::new()),
             )
-            .expect("address proof"),
+            .expect("indexed tactic with supplied kernel"),
         proof
-            .prove_name(
-                "default".to_owned(),
-                covalence_nucleus::core::hol::Kernel::new(),
-            )
-            .expect("text proof"),
+            .apply_tactic_name("default".to_owned(), None)
+            .expect("named tactic with fresh kernel"),
         proof
-            .prove_ix(0, covalence_nucleus::core::hol::Kernel::new())
-            .expect("index proof"),
-        proof
-            .prove_bytes(
-                covalence_nucleus::core::cas::Bytes::from_static(b"default"),
-                covalence_nucleus::core::hol::Kernel::new(),
-            )
-            .expect("byte-resource proof"),
+            .apply_tactic(0, zero.as_ref().to_vec(), None)
+            .expect("addressed tactic with fresh kernel"),
     ];
 
     for kernel in kernels {

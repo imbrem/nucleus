@@ -2447,32 +2447,13 @@ pub enum ProofError {
     },
 }
 
-/// A prover-local program, theorem, or mutation selector.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ProofName {
-    /// Human-readable name interpreted by the selected prover.
-    Text(String),
-    /// Shared opaque bytes interpreted by the selected prover.
-    Bytes(Bytes),
-    /// Fixed-width content or conventionally assigned name.
-    Address(O256),
-    /// Compact prover-local mutation ID.
-    Id(u64),
-}
-
-impl Default for ProofName {
-    fn default() -> Self {
-        Self::Address(O256::from_array([0; 32]))
-    }
-}
-
 /// A live, reusable instance of the portable `nucleus:proof/proof` world.
-pub struct ProofInstance {
+pub struct Strategy {
     store: wasmtime::Store<ProofState>,
     proof: Proof,
 }
 
-impl ProofInstance {
+impl Strategy {
     /// Compiles and instantiates component bytes without an external CAS.
     ///
     /// # Errors
@@ -2552,115 +2533,23 @@ impl ProofInstance {
         futures::executor::block_on(Self::from_address_async(address, provider))
     }
 
-    /// Runs one request against this already-instantiated component.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProofError::Component`] for runtime/resource failures and
-    /// [`ProofError::Guest`] when the component rejects the request.
-    pub fn prove(&mut self, name: ProofName, kernel: HolKernel) -> Result<HolKernel, ProofError> {
-        futures::executor::block_on(self.prove_async(name, kernel))
-    }
-
-    /// Runs one address-selected request against this instance.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same failures as [`Self::prove`].
-    pub fn prove_addr(&mut self, addr: O256, kernel: HolKernel) -> Result<HolKernel, ProofError> {
-        self.prove(ProofName::Address(addr), kernel)
-    }
-
-    /// Runs one text-selected request against this instance.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same failures as [`Self::prove`].
-    pub fn prove_name(&mut self, name: String, kernel: HolKernel) -> Result<HolKernel, ProofError> {
-        self.prove(ProofName::Text(name), kernel)
-    }
-
-    /// Runs one index-selected request against this instance.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same failures as [`Self::prove`].
-    pub fn prove_ix(&mut self, ix: u64, kernel: HolKernel) -> Result<HolKernel, ProofError> {
-        self.prove(ProofName::Id(ix), kernel)
-    }
-
-    /// Runs one byte-selected request against this instance.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same failures as [`Self::prove`].
-    pub fn prove_bytes(
+    fn insert_kernel(
         &mut self,
-        bytes: Bytes,
-        kernel: HolKernel,
-    ) -> Result<HolKernel, ProofError> {
-        self.prove(ProofName::Bytes(bytes), kernel)
-    }
-
-    /// Asynchronously runs one request against this instance.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProofError::Component`] for runtime/resource failures and
-    /// [`ProofError::Guest`] when the component rejects the request.
-    pub async fn prove_async(
-        &mut self,
-        name: ProofName,
-        kernel: HolKernel,
-    ) -> Result<HolKernel, ProofError> {
-        enum Request {
-            Name(String),
-            Bytes(Resource<HostBytes>),
-            Addr(O256),
-            Ix(u64),
-        }
-
-        let kernel = self
-            .store
-            .data_mut()
-            .table
-            .push(HostKernel(kernel))
+        kernel: Option<HolKernel>,
+    ) -> Result<Option<Resource<HostKernel>>, ProofError> {
+        kernel
+            .map(|kernel| self.store.data_mut().table.push(HostKernel(kernel)))
+            .transpose()
             .map_err(|source| ProofError::Component {
                 source: source.into(),
-            })?;
-        let request = match name {
-            ProofName::Text(value) => Request::Name(value),
-            ProofName::Bytes(value) => {
-                Request::Bytes(self.store.data_mut().table.push(HostBytes(value)).map_err(
-                    |source| ProofError::Component {
-                        source: source.into(),
-                    },
-                )?)
-            }
-            ProofName::Address(value) => Request::Addr(value),
-            ProofName::Id(value) => Request::Ix(value),
-        };
-        let result = self
-            .store
-            .run_concurrent(async |accessor| {
-                let standard = self.proof.nucleus_proof_standard();
-                match request {
-                    Request::Name(value) => standard.call_prove_name(accessor, value, kernel).await,
-                    Request::Bytes(value) => {
-                        standard.call_prove_bytes(accessor, value, kernel).await
-                    }
-                    Request::Addr(value) => {
-                        standard
-                            .call_prove_addr(accessor, value.as_bytes().to_vec(), kernel)
-                            .await
-                    }
-                    Request::Ix(value) => standard.call_prove_ix(accessor, value, kernel).await,
-                }
             })
-            .await
-            .map_err(|source| ProofError::Component { source })?;
-        let result = result.map_err(|source| ProofError::Component { source })?;
-        let kernel = result.map_err(|message| ProofError::Guest { message })?;
+    }
+
+    fn remove_kernel(
+        &mut self,
+        kernel: Result<Resource<HostKernel>, String>,
+    ) -> Result<HolKernel, ProofError> {
+        let kernel = kernel.map_err(|message| ProofError::Guest { message })?;
         self.store
             .data_mut()
             .table
@@ -2669,6 +2558,92 @@ impl ProofInstance {
             .map_err(|source| ProofError::Component {
                 source: source.into(),
             })
+    }
+
+    /// Applies a compact strategy-local tactic to a supplied or fresh kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProofError::Component`] for runtime/resource failures and
+    /// [`ProofError::Guest`] when the strategy rejects the request.
+    pub fn apply_tactic(
+        &mut self,
+        tactic_id: u64,
+        arguments: Vec<u8>,
+        kernel: Option<HolKernel>,
+    ) -> Result<HolKernel, ProofError> {
+        futures::executor::block_on(self.apply_tactic_async(tactic_id, arguments, kernel))
+    }
+
+    /// Asynchronously applies a compact strategy-local tactic.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::apply_tactic`].
+    pub async fn apply_tactic_async(
+        &mut self,
+        tactic_id: u64,
+        arguments: Vec<u8>,
+        kernel: Option<HolKernel>,
+    ) -> Result<HolKernel, ProofError> {
+        let kernel = self.insert_kernel(kernel)?;
+        let result = self
+            .store
+            .run_concurrent(async |accessor| {
+                self.proof
+                    .nucleus_proof_strategy()
+                    .call_apply_tactic(accessor, tactic_id, arguments, kernel)
+                    .await
+            })
+            .await
+            .map_err(|source| ProofError::Component { source })?
+            .map_err(|source| ProofError::Component { source })?;
+        self.remove_kernel(result)
+    }
+
+    /// Applies a human-readable strategy-local tactic.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::apply_tactic`].
+    pub fn apply_tactic_name(
+        &mut self,
+        name: String,
+        kernel: Option<HolKernel>,
+    ) -> Result<HolKernel, ProofError> {
+        futures::executor::block_on(self.apply_tactic_name_async(name, kernel))
+    }
+
+    /// Asynchronously applies a human-readable strategy-local tactic.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::apply_tactic`].
+    pub async fn apply_tactic_name_async(
+        &mut self,
+        name: String,
+        kernel: Option<HolKernel>,
+    ) -> Result<HolKernel, ProofError> {
+        self.apply_tactic_async(1, name.into_bytes(), kernel).await
+    }
+
+    /// Constructs a checked kernel for an addressed proof request.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::apply_tactic`].
+    pub fn prove_addr(&mut self, addr: O256) -> Result<HolKernel, ProofError> {
+        self.apply_tactic(0, addr.as_bytes().to_vec(), None)
+    }
+
+    /// Asynchronously constructs a checked kernel for an addressed proof request.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::apply_tactic`].
+    pub async fn prove_addr_async(&mut self, addr: O256) -> Result<HolKernel, ProofError> {
+        self.apply_tactic_async(0, addr.as_bytes().to_vec(), None)
+            .await
     }
 }
 
@@ -2683,9 +2658,9 @@ impl ProofInstance {
 ///
 /// Returns [`ProofError::Component`] for malformed components, missing imports
 /// or exports, traps, and resource failures. Returns [`ProofError::Guest`] when
-/// the component's standard `prove-addr` entry point returns an error.
+/// the component's tactic-zero default request returns an error.
 pub fn load_proof(component: &[u8]) -> Result<HolKernel, ProofError> {
-    ProofInstance::from_bytes(component)?.prove_addr(O256::from_array([0; 32]), HolKernel::new())
+    Strategy::from_bytes(component)?.apply_tactic(0, Vec::new(), None)
 }
 
 /// Runs one prover-local `o256` request through a native-async proof component.
@@ -2697,11 +2672,11 @@ pub fn load_proof(component: &[u8]) -> Result<HolKernel, ProofError> {
 ///
 /// Returns [`ProofError::Component`] for malformed components, missing imports
 /// or exports, traps, and resource failures. Returns [`ProofError::Guest`] when
-/// the component's `prove-addr` entry point rejects the request.
+/// the component's tactic-zero addressed request rejects the request.
 pub async fn load_proof_async(component: &[u8], target: O256) -> Result<HolKernel, ProofError> {
-    ProofInstance::from_bytes_async(component, None)
+    Strategy::from_bytes_async(component, None)
         .await?
-        .prove_async(ProofName::Address(target), HolKernel::new())
+        .prove_addr_async(target)
         .await
 }
 
@@ -2722,9 +2697,9 @@ pub async fn load_proof_with_cas_async(
     target: O256,
     provider: Arc<dyn AsyncCas>,
 ) -> Result<HolKernel, ProofError> {
-    ProofInstance::from_bytes_async(component, Some(provider))
+    Strategy::from_bytes_async(component, Some(provider))
         .await?
-        .prove_async(ProofName::Address(target), HolKernel::new())
+        .prove_addr_async(target)
         .await
 }
 

@@ -472,26 +472,20 @@ class HolKernel:
     def union_syn_fact(self, fact: HolSynFact, /) -> None: ...
     def __len__(self) -> int: ...
 
-class HolProver:
-    def __init__(
-        self, source: Buffer | O256, /, cas: object | None = None
-    ) -> None: ...
-    def prove(
+class HolStrategy:
+    def __init__(self, source: Buffer | O256, /, cas: object | None = None) -> None: ...
+    def apply_tactic(
         self,
-        name: str | Buffer | int | O256 | None = None,
+        tactic_id: int,
+        arguments: Buffer | None = None,
         kernel: HolKernel | None = None,
-        /,
     ) -> HolKernel: ...
-    def prove_addr(
-        self, name: O256, kernel: HolKernel | None = None
+    def apply_tactic_name(
+        self,
+        name: str,
+        kernel: HolKernel | None = None,
     ) -> HolKernel: ...
-    def prove_name(
-        self, name: str, kernel: HolKernel | None = None
-    ) -> HolKernel: ...
-    def prove_bytes(
-        self, name: Buffer, kernel: HolKernel | None = None
-    ) -> HolKernel: ...
-    def prove_ix(self, ix: int, kernel: HolKernel | None = None) -> HolKernel: ...
+    def prove_addr(self, addr: O256) -> HolKernel: ...
 
 COV: ContextKey
 COV_ROOT: O256

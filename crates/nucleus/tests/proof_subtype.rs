@@ -27,29 +27,17 @@ fn the_demo_component_takes_on_the_subtype_axiom() {
     let component = std::fs::read(&path)
         .unwrap_or_else(|error| panic!("{} could not be read: {error}", path.display()));
 
-    let mut proof = covalence_nucleus::ProofInstance::from_bytes(&component)
-        .expect("the demo proof should instantiate");
-    let kernel = proof
-        .prove_addr(
-            covalence_lib_hash::O256::from_array([0; 32]),
-            covalence_nucleus::core::hol::Kernel::new(),
-        )
+    let mut strategy = covalence_nucleus::Strategy::from_bytes(&component)
+        .expect("the demo strategy should instantiate");
+    let kernel = strategy
+        .prove_addr(covalence_lib_hash::O256::from_array([0; 32]))
         .expect("the demo proof should run to completion");
-    let repeated = proof
-        .prove_name(
-            "default".to_owned(),
-            covalence_nucleus::core::hol::Kernel::new(),
-        )
-        .expect("the same proof instance should accept another request");
-    let by_bytes = proof
-        .prove_bytes(
-            Bytes::from_static(b"default"),
-            covalence_nucleus::core::hol::Kernel::new(),
-        )
-        .expect("the proof should accept a shared byte-resource name");
-    let by_id = proof
-        .prove_ix(0, covalence_nucleus::core::hol::Kernel::new())
-        .expect("the proof should accept a compact mutation ID");
+    let repeated = strategy
+        .apply_tactic(0, Vec::new(), None)
+        .expect("the same strategy instance should accept another request");
+    let by_name = strategy
+        .apply_tactic_name("default".to_owned(), None)
+        .expect("the proof should accept a UTF-8 tactic name");
 
     assert!(
         kernel.axioms().any(|name| name == "ax.sub"),
@@ -60,8 +48,7 @@ fn the_demo_component_takes_on_the_subtype_axiom() {
         "the component built rows, so the arena is not empty"
     );
     assert_eq!(kernel.addr(), repeated.addr());
-    assert_eq!(kernel.addr(), by_bytes.addr());
-    assert_eq!(kernel.addr(), by_id.addr());
+    assert_eq!(kernel.addr(), by_name.addr());
 
     let resources = MemoryVfs::new(BTreeMap::from([
         (

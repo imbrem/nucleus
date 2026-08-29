@@ -5,24 +5,27 @@ Nucleus Ethane kernel. The interface is deliberately low-level: syntax rows,
 imports, and syntactic-fact slots are represented by integers, while ownership
 is reserved for the host objects that must cross the component boundary.
 
-The `proof` world imports `nucleus:proof/host` and exports four conventional
-entry points:
+The `proof` world imports `nucleus:proof/host` and exports one minimal strategy
+interface:
 
 ```wit
-prove-addr: async func(addr: list<u8>, kernel: kernel) -> result<kernel, string>;
-prove-name: async func(name: string, kernel: kernel) -> result<kernel, string>;
-prove-ix: async func(ix: u64, kernel: kernel) -> result<kernel, string>;
-prove-bytes: async func(name: bytes, kernel: kernel) -> result<kernel, string>;
+apply-tactic: async func(tactic-id: u64, arguments: list<u8>, kernel: option<kernel>)
+    -> result<kernel, string>;
 ```
 
-A loader calls the entry point matching its prover-local text, binary, address,
-or numeric selector, transferring ownership of a checked input kernel. Binary
-selectors use the shared `bytes` resource; there is no blob-selector case. The
-component extends the kernel through imported host operations and returns its
-checked successor. Names need not identify a kernel or component. An all-zero `addr`
-conventionally asks for the prover's default proof. A component may instead
-import the host interface under a different world and implement any
-higher-level protocol it needs.
+`strategy.apply-tactic` is the complete small stable kernel-transformer
+protocol. An omitted input asks the strategy to choose a checked starting
+kernel. Tactic arguments are a small copied `list<u8>`; larger inputs can travel
+through a CAS or a future separately reviewed resource-bearing extension.
+
+By convention tactic zero with empty arguments and no input kernel requests a
+strategy's default starting/proved kernel. Tactic zero with 32 argument bytes
+requests an addressed kernel. Tactic one conventionally interprets its
+arguments as a UTF-8 strategy-local name. Retrieving bytes from a CAS is
+insufficient: the strategy must reconstruct or independently validate its
+result. A future trusted or signed kernel-hash cache can accelerate this same
+operation without granting today's untrusted loader any theorem-producing
+authority.
 
 ## Host resources
 

@@ -6,25 +6,19 @@ import type { Kernel } from "../generated/proof-host/interfaces/nucleus-proof-ho
 
 type GeneratedFiles = Record<string, Uint8Array>;
 
+type OptionalKernel = Kernel | undefined;
+
+interface StrategyInterface {
+  applyTactic(
+    tacticId: bigint,
+    arguments_: Uint8Array,
+    kernel: OptionalKernel,
+  ): Promise<Kernel>;
+}
+
 interface ProofExports {
-  standard?: {
-    proveAddr(addr: Uint8Array, kernel: Kernel): Promise<Kernel>;
-    proveName(name: string, kernel: Kernel): Promise<Kernel>;
-    proveIx(ix: bigint, kernel: Kernel): Promise<Kernel>;
-    proveBytes(
-      name: InstanceType<typeof proofHost.Bytes>,
-      kernel: Kernel,
-    ): Promise<Kernel>;
-  };
-  "nucleus:proof/standard@0.1.0"?: {
-    proveAddr(addr: Uint8Array, kernel: Kernel): Promise<Kernel>;
-    proveName(name: string, kernel: Kernel): Promise<Kernel>;
-    proveIx(ix: bigint, kernel: Kernel): Promise<Kernel>;
-    proveBytes(
-      name: InstanceType<typeof proofHost.Bytes>,
-      kernel: Kernel,
-    ): Promise<Kernel>;
-  };
+  strategy?: StrategyInterface;
+  "nucleus:proof/strategy@0.1.0"?: StrategyInterface;
 }
 
 interface InstantiationModule {
@@ -43,76 +37,112 @@ export interface ProofStats {
 export { proofHost };
 export type { Kernel };
 
-/** Runs a standard proof component and returns its checked kernel. */
-export async function loadProof(
-  component: Uint8Array | ArrayBuffer,
-  name: Uint8Array = new Uint8Array(32),
-): Promise<Kernel> {
-  if (name.length !== 32) {
-    throw new Error(`proof names must contain 32 bytes, got ${name.length}`);
-  }
-  const { transpile } = await import("@bytecodealliance/jco");
-  const bytes =
-    component instanceof Uint8Array ? component : new Uint8Array(component);
-  const generated = await transpile(bytes, {
-    name: "proof",
-    noTypescript: true,
-    // The browser implementation consumes the component-model variant; its
-    // public declaration currently exposes the CLI spelling instead.
-    instantiation: { tag: "async" } as unknown as "async",
-    asyncMode: {
-      tag: "jspi",
-      val: { imports: [], exports: [] },
-    } as unknown as "jspi",
-  });
-  const rawFiles = generated.files as unknown;
-  const files: GeneratedFiles = Array.isArray(rawFiles)
-    ? Object.fromEntries(rawFiles as Array<[string, Uint8Array]>)
-    : (rawFiles as GeneratedFiles);
-  const source = files["proof.js"];
-  if (source === undefined) {
-    throw new Error("proof transpilation did not produce proof.js");
+/** A live reusable untrusted component which constructs checked kernels. */
+export class Strategy {
+  readonly #exports: ProofExports;
+
+  private constructor(exports: ProofExports) {
+    this.#exports = exports;
   }
 
-  const sourceBytes = Uint8Array.from(source);
-  const sourceUrl = URL.createObjectURL(
-    new globalThis.Blob([sourceBytes.buffer], { type: "text/javascript" }),
-  );
-  try {
-    const module = (await import(sourceUrl)) as InstantiationModule;
-    const instance = await module.instantiate(async (name) => {
-      const core = files[name];
-      if (core === undefined) {
-        throw new Error(`proof requested unknown core module ${name}`);
+  /** Compiles and instantiates a strategy component once. */
+  static async fromBytes(
+    component: Uint8Array | ArrayBuffer,
+  ): Promise<Strategy> {
+    const { transpile } = await import("@bytecodealliance/jco");
+    const bytes =
+      component instanceof Uint8Array ? component : new Uint8Array(component);
+    const generated = await transpile(bytes, {
+      name: "proof",
+      noTypescript: true,
+      // The browser implementation consumes the component-model variant; its
+      // public declaration currently exposes the CLI spelling instead.
+      instantiation: { tag: "async" } as unknown as "async",
+      asyncMode: {
+        tag: "jspi",
+        val: { imports: [], exports: [] },
+      } as unknown as "jspi",
+    });
+    const rawFiles = generated.files as unknown;
+    const files: GeneratedFiles = Array.isArray(rawFiles)
+      ? Object.fromEntries(rawFiles as Array<[string, Uint8Array]>)
+      : (rawFiles as GeneratedFiles);
+    const source = files["proof.js"];
+    if (source === undefined) {
+      throw new Error("strategy transpilation did not produce proof.js");
+    }
+
+    const sourceBytes = Uint8Array.from(source);
+    const sourceUrl = URL.createObjectURL(
+      new globalThis.Blob([sourceBytes.buffer], { type: "text/javascript" }),
+    );
+    try {
+      const module = (await import(sourceUrl)) as InstantiationModule;
+      const instance = await module.instantiate(async (name) => {
+        const core = files[name];
+        if (core === undefined) {
+          throw new Error(`strategy requested unknown core module ${name}`);
+        }
+        return WebAssembly.compile(Uint8Array.from(core).buffer);
+      }, componentImports());
+      if (
+        instance.strategy === undefined &&
+        instance["nucleus:proof/strategy@0.1.0"] === undefined
+      ) {
+        throw new Error(
+          "component does not export the base strategy interface",
+        );
       }
-      return WebAssembly.compile(Uint8Array.from(core).buffer);
-    }, componentImports());
-    const standard =
-      instance.standard ?? instance["nucleus:proof/standard@0.1.0"];
-    if (standard === undefined) {
-      throw new Error("component does not export the standard proof interface");
+      return new Strategy(instance);
+    } finally {
+      URL.revokeObjectURL(sourceUrl);
     }
-    const kernel = await standard.proveAddr(name, new proofHost.Kernel());
-    if (!(kernel instanceof proofHost.Kernel)) {
-      throw new Error("standard proof returned an unknown kernel resource");
-    }
-    return kernel;
-  } finally {
-    URL.revokeObjectURL(sourceUrl);
   }
+
+  /** Applies a compact strategy-local tactic to a supplied or fresh kernel. */
+  async applyTactic(
+    tacticId: bigint,
+    arguments_: Uint8Array = new Uint8Array(),
+    kernel?: Kernel,
+  ): Promise<Kernel> {
+    const api = requiredExport(
+      this.#exports.strategy ?? this.#exports["nucleus:proof/strategy@0.1.0"],
+      "strategy",
+    );
+    return checkedKernel(await api.applyTactic(tacticId, arguments_, kernel));
+  }
+
+  /** Applies an optional human-readable tactic extension. */
+  async applyTacticName(name: string, kernel?: Kernel): Promise<Kernel> {
+    return this.applyTactic(1n, new TextEncoder().encode(name), kernel);
+  }
+
+  /** Runs the conventional tactic-zero addressed proof request. */
+  async proveAddr(addr: Uint8Array): Promise<Kernel> {
+    checkAddress(addr);
+    return this.applyTactic(0n, addr);
+  }
+}
+
+/** Runs tactic zero through a fresh strategy instance. */
+export async function loadProof(
+  component: Uint8Array | ArrayBuffer,
+  arguments_: Uint8Array = new Uint8Array(),
+): Promise<Kernel> {
+  return (await Strategy.fromBytes(component)).applyTactic(0n, arguments_);
 }
 
 /** Fetches and runs a standard proof component. */
 export async function fetchProof(
   input: RequestInfo | URL,
   init?: RequestInit,
-  name?: Uint8Array,
+  arguments_?: Uint8Array,
 ): Promise<Kernel> {
   const response = await fetch(input, init);
   if (!response.ok) {
     throw new Error(`proof server returned ${response.status}`);
   }
-  return loadProof(await response.arrayBuffer(), name);
+  return loadProof(await response.arrayBuffer(), arguments_);
 }
 
 /** Formats the kernel's checked CBOR address as lowercase hexadecimal. */
@@ -184,4 +214,24 @@ function hex(value: Uint8Array): string {
   return Array.from(value, (byte) => byte.toString(16).padStart(2, "0")).join(
     "",
   );
+}
+
+function requiredExport<T>(value: T | undefined, name: string): T {
+  if (value === undefined) {
+    throw new Error(`strategy does not export the ${name} extension`);
+  }
+  return value;
+}
+
+function checkedKernel(kernel: Kernel): Kernel {
+  if (!(kernel instanceof proofHost.Kernel)) {
+    throw new Error("strategy returned an unknown kernel resource");
+  }
+  return kernel;
+}
+
+function checkAddress(addr: Uint8Array): void {
+  if (addr.length !== 32) {
+    throw new Error(`addresses must contain 32 bytes, got ${addr.length}`);
+  }
 }

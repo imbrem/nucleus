@@ -29,9 +29,7 @@ mod proof;
 mod script_proof;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use proof::{
-    ProofError, ProofInstance, ProofName, load_proof, load_proof_async, load_proof_with_cas_async,
-};
+pub use proof::{ProofError, Strategy, load_proof, load_proof_async, load_proof_with_cas_async};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use script_proof::{ScriptProofError, ScriptProofOutput, run_script_proofs};

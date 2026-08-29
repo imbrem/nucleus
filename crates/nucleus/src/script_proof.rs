@@ -9,7 +9,7 @@ use covalence_lib_hash::O256;
 use covalence_logic_hol::Kernel;
 use covalence_nucleus_script::{CompiledTree, ProofSource};
 
-use crate::{ProofError, ProofInstance, ProofName};
+use crate::{ProofError, Strategy};
 
 /// One checked kernel returned by a named script proof request.
 #[derive(Debug)]
@@ -102,7 +102,7 @@ pub fn run_script_proofs(
     let mut outputs = Vec::with_capacity(tree.proofs().len());
     for declaration in tree.proofs() {
         let name = declaration.name().to_owned();
-        let mut prover = match declaration.source() {
+        let mut strategy = match declaration.source() {
             ProofSource::Resource(resource) => {
                 let resources =
                     capabilities
@@ -121,10 +121,8 @@ pub fn run_script_proofs(
                             source,
                         })?;
                 match &capabilities.1 {
-                    Some(provider) => {
-                        ProofInstance::from_bytes_with_cas(&bytes, Arc::clone(provider))
-                    }
-                    None => ProofInstance::from_bytes(&bytes),
+                    Some(provider) => Strategy::from_bytes_with_cas(&bytes, Arc::clone(provider)),
+                    None => Strategy::from_bytes(&bytes),
                 }
             }
             ProofSource::Address(address) => {
@@ -136,18 +134,18 @@ pub fn run_script_proofs(
                             name: name.clone(),
                             address: *address,
                         })?;
-                ProofInstance::from_address(*address, Arc::clone(provider))
+                Strategy::from_address(*address, Arc::clone(provider))
             }
         }
         .map_err(|source| ScriptProofError::Proof {
             name: name.clone(),
             source: Box::new(source),
         })?;
-        let target = declaration
+        let arguments = declaration
             .target()
-            .unwrap_or_else(|| O256::from_array([0; 32]));
-        kernel = prover
-            .prove(ProofName::Address(target), kernel)
+            .map_or_else(Vec::new, |address| address.as_bytes().to_vec());
+        kernel = strategy
+            .apply_tactic(0, arguments, Some(kernel))
             .map_err(|source| ScriptProofError::Proof {
                 name: name.clone(),
                 source: Box::new(source),

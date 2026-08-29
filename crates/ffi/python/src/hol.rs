@@ -15,7 +15,7 @@ use covalence_lib_hash::O256;
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::{
     exceptions::PyRuntimeError,
-    types::{PyBool, PyBytes, PyType},
+    types::{PyBytes, PyType},
 };
 use covalence_logic_hol::{
     AmbPred, Arena, CnfId, DnfId, Import, ImportId, Kernel, Link, LinkFormat, Lit, LitVec, Ref,
@@ -566,11 +566,11 @@ impl PyKernel {
     }
 }
 
-/// A reusable portable proof component.
-#[pyclass(frozen, module = "covalence.logic.hol", name = "HolProver")]
+/// A reusable portable proof strategy.
+#[pyclass(frozen, module = "covalence.logic.hol", name = "HolStrategy")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
-struct PyProof {
-    instance: Mutex<covalence_nucleus::ProofInstance>,
+struct PyStrategy {
+    instance: Mutex<covalence_nucleus::Strategy>,
 }
 
 struct PythonCas {
@@ -594,33 +594,48 @@ impl AsyncCas for PythonCas {
     }
 }
 
-impl PyProof {
+enum StrategyRequest {
+    Tactic(u64, Vec<u8>),
+    Name(String),
+    Prove(O256),
+}
+
+impl PyStrategy {
     fn run(
         &self,
         python: Python<'_>,
-        name: covalence_nucleus::ProofName,
+        request: StrategyRequest,
         kernel: Option<Py<PyKernel>>,
     ) -> PyResult<Py<PyKernel>> {
-        let kernel = match kernel {
+        let input = kernel
+            .as_ref()
+            .map(|kernel| kernel.borrow(python).kernel.fork());
+        let result = match kernel {
             Some(kernel) => kernel,
             None => Py::new(python, PyKernel::new())?,
         };
-        let input = kernel.borrow(python).kernel.fork();
         let output = python
             .detach(|| {
-                self.instance
+                let mut strategy = self
+                    .instance
                     .lock()
-                    .map_err(|_| "proof instance lock is poisoned".to_owned())?
-                    .prove(name, input)
-                    .map_err(|error| error.to_string())
+                    .map_err(|_| "strategy instance lock is poisoned".to_owned())?;
+                match request {
+                    StrategyRequest::Tactic(id, arguments) => {
+                        strategy.apply_tactic(id, arguments, input)
+                    }
+                    StrategyRequest::Name(name) => strategy.apply_tactic_name(name, input),
+                    StrategyRequest::Prove(addr) => strategy.prove_addr(addr),
+                }
+                .map_err(|error| error.to_string())
             })
             .map_err(PyRuntimeError::new_err)?;
         {
-            let mut result = kernel.borrow_mut(python);
-            result.kernel = output;
-            result.id = KernelId::fresh();
+            let mut target = result.borrow_mut(python);
+            target.kernel = output;
+            target.id = KernelId::fresh();
         }
-        Ok(kernel)
+        Ok(result)
     }
 }
 
@@ -628,34 +643,9 @@ fn python_cas_error(error: PyErr) -> AsyncCasError {
     AsyncCasError::provider(std::io::Error::other(error.to_string()))
 }
 
-fn python_proof_name(name: Option<&Bound<'_, PyAny>>) -> PyResult<covalence_nucleus::ProofName> {
-    let Some(name) = name else {
-        return Ok(covalence_nucleus::ProofName::default());
-    };
-    if let Ok(value) = name.extract::<PyRef<'_, PyO256>>() {
-        return Ok(covalence_nucleus::ProofName::Address(PyO256::value(&value)));
-    }
-    if let Ok(value) = name.extract::<String>() {
-        return Ok(covalence_nucleus::ProofName::Text(value));
-    }
-    if !name.is_instance_of::<PyBool>()
-        && let Ok(value) = name.extract::<u64>()
-    {
-        return Ok(covalence_nucleus::ProofName::Id(value));
-    }
-    if let Ok(value) = name.extract::<Bytes>() {
-        return Ok(covalence_nucleus::ProofName::Bytes(
-            CasBytes::copy_from_slice(value.as_slice()),
-        ));
-    }
-    Err(PyTypeError::new_err(
-        "proof names must be str, bytes-like, non-negative int, O256, or None",
-    ))
-}
-
 #[pymethods]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
-impl PyProof {
+impl PyStrategy {
     #[new]
     #[pyo3(signature = (source, cas=None))]
     fn new(
@@ -669,15 +659,15 @@ impl PyProof {
                 PyValueError::new_err("loading a proof by O256 requires a CAS provider")
             })?;
             let address = PyO256::value(&address);
-            python.detach(|| covalence_nucleus::ProofInstance::from_address(address, provider))
+            python.detach(|| covalence_nucleus::Strategy::from_address(address, provider))
         } else {
             let component = source.extract::<Bytes>()?;
             let component = component.as_slice().to_vec();
             python.detach(|| match provider {
                 Some(provider) => {
-                    covalence_nucleus::ProofInstance::from_bytes_with_cas(&component, provider)
+                    covalence_nucleus::Strategy::from_bytes_with_cas(&component, provider)
                 }
-                None => covalence_nucleus::ProofInstance::from_bytes(&component),
+                None => covalence_nucleus::Strategy::from_bytes(&component),
             })
         }
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
@@ -686,63 +676,36 @@ impl PyProof {
         })
     }
 
-    /// Requests one prover-local name against an optional input kernel.
-    #[pyo3(signature = (name=None, kernel=None))]
-    fn prove(
+    #[pyo3(signature = (tactic_id, arguments=None, kernel=None))]
+    fn apply_tactic(
         &self,
         python: Python<'_>,
-        name: Option<&Bound<'_, PyAny>>,
-        kernel: Option<Py<PyKernel>>,
-    ) -> PyResult<Py<PyKernel>> {
-        self.run(python, python_proof_name(name)?, kernel)
-    }
-
-    #[pyo3(signature = (name, kernel=None))]
-    fn prove_addr(
-        &self,
-        python: Python<'_>,
-        name: PyRef<'_, PyO256>,
+        tactic_id: u64,
+        arguments: Option<Bytes>,
         kernel: Option<Py<PyKernel>>,
     ) -> PyResult<Py<PyKernel>> {
         self.run(
             python,
-            covalence_nucleus::ProofName::Address(PyO256::value(&name)),
+            StrategyRequest::Tactic(
+                tactic_id,
+                arguments.map_or_else(Vec::new, |value| value.as_slice().to_vec()),
+            ),
             kernel,
         )
     }
 
     #[pyo3(signature = (name, kernel=None))]
-    fn prove_name(
+    fn apply_tactic_name(
         &self,
         python: Python<'_>,
         name: String,
         kernel: Option<Py<PyKernel>>,
     ) -> PyResult<Py<PyKernel>> {
-        self.run(python, covalence_nucleus::ProofName::Text(name), kernel)
+        self.run(python, StrategyRequest::Name(name), kernel)
     }
 
-    #[pyo3(signature = (name, kernel=None))]
-    fn prove_bytes(
-        &self,
-        python: Python<'_>,
-        name: Bytes,
-        kernel: Option<Py<PyKernel>>,
-    ) -> PyResult<Py<PyKernel>> {
-        self.run(
-            python,
-            covalence_nucleus::ProofName::Bytes(CasBytes::copy_from_slice(name.as_slice())),
-            kernel,
-        )
-    }
-
-    #[pyo3(signature = (ix, kernel=None))]
-    fn prove_ix(
-        &self,
-        python: Python<'_>,
-        ix: u64,
-        kernel: Option<Py<PyKernel>>,
-    ) -> PyResult<Py<PyKernel>> {
-        self.run(python, covalence_nucleus::ProofName::Id(ix), kernel)
+    fn prove_addr(&self, python: Python<'_>, addr: PyRef<'_, PyO256>) -> PyResult<Py<PyKernel>> {
+        self.run(python, StrategyRequest::Prove(PyO256::value(&addr)), None)
     }
 }
 
@@ -1716,7 +1679,7 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PySynFact>()?;
     module.add_class::<PyKernel>()?;
     module.add_class::<PyRewriteResult>()?;
-    module.add_class::<PyProof>()?;
+    module.add_class::<PyStrategy>()?;
     Ok(())
 }
 

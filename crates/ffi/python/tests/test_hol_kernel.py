@@ -14,7 +14,7 @@ from covalence.logic.hol import (
     Kernel,
     Kind,
     Link,
-    Prover,
+    Strategy,
     SynFact,
     Tm,
     Ty,
@@ -30,16 +30,16 @@ def test_proof_loader_rejects_non_components() -> None:
         load_proof(b"not a WebAssembly component")
 
 
-def test_prover_instantiates_at_construction_time() -> None:
+def test_strategy_instantiates_at_construction_time() -> None:
     with pytest.raises(RuntimeError, match="proof component failed"):
-        Prover(b"not a WebAssembly component")
+        Strategy(b"not a WebAssembly component")
 
 
 def test_proof_source_address_requires_and_uses_a_cas() -> None:
     component = b"not a WebAssembly component"
     address = O256.hash(component)
     with pytest.raises(ValueError, match="requires a CAS"):
-        Prover(address)
+        Strategy(address)
 
     class Cas:
         def get(self, requested):
@@ -47,7 +47,7 @@ def test_proof_source_address_requires_and_uses_a_cas() -> None:
             return component
 
     with pytest.raises(RuntimeError, match="proof component failed"):
-        Prover(address, cas=Cas())
+        Strategy(address, cas=Cas())
 
     with pytest.raises(RuntimeError, match="proof component failed"):
         load_proof(address, cas=Cas())
@@ -70,11 +70,11 @@ def test_omitted_cas_uses_the_python_default_but_none_does_not() -> None:
     try:
         set_default_cas(cas)
         with pytest.raises(RuntimeError, match="proof component failed"):
-            Prover(address)
+            Strategy(address)
         assert cas.calls == 1
 
         with pytest.raises(ValueError, match="requires a CAS"):
-            Prover(address, cas=None)
+            Strategy(address, cas=None)
         assert cas.calls == 1
     finally:
         set_default_cas(previous)
