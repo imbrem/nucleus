@@ -168,9 +168,8 @@ test("the browser composes the full kernel host with a proof", async (context) =
   );
 
   const result = await page.evaluate(async (bytes) => {
-    const { kernelAddress, loadStandardProof, proofHost, proofStats } =
-      window.nucleus;
-    const kernel = await loadStandardProof(new Uint8Array(bytes));
+    const { kernelAddress, loadProof, proofHost, proofStats } = window.nucleus;
+    const kernel = await loadProof(new Uint8Array(bytes));
     const stats = proofStats(kernel);
 
     // Exercise methods outside the demo's original subset through the same
@@ -189,9 +188,9 @@ test("the browser composes the full kernel host with a proof", async (context) =
   }, Array.from(component));
 
   assert.match(result.address, /^[0-9a-f]{64}$/);
-  // The demo now exercises the full subtype package rather than stopping at
-  // the three-row Boolean prelude.
-  assert.equal(result.rows, "75");
+  // The demo exercises the full subtype package and a rewrite through the
+  // imported userspace tactics interface.
+  assert.equal(result.rows, "76");
   assert.equal(result.synFacts, "0");
   assert.equal(result.category, "kind");
   assert.equal(result.tableAddressBytes, 32);
@@ -223,7 +222,7 @@ test("the browser proof loader runs a proof component", async (context) => {
     await proofPage.locator("#address").textContent(),
     /^[0-9a-f]{64}$/,
   );
-  assert.equal(await proofPage.locator("#rows").textContent(), "75");
+  assert.equal(await proofPage.locator("#rows").textContent(), "76");
 });
 
 test("the REPL runs proofs from the selected kernel by content address", async (context) => {

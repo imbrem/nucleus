@@ -1,14 +1,29 @@
-import { host as proofHost } from "../generated/proof-host/host.js";
+import {
+  host as proofHost,
+  tactics as proofTactics,
+} from "../generated/proof-host/host.js";
 import type { Kernel } from "../generated/proof-host/interfaces/nucleus-proof-host.js";
 
 type GeneratedFiles = Record<string, Uint8Array>;
 
-interface StandardProofExports {
+interface ProofExports {
   standard?: {
-    prove(target: Uint8Array): Promise<Kernel>;
+    proveAddr(addr: Uint8Array, kernel: Kernel): Promise<Kernel>;
+    proveName(name: string, kernel: Kernel): Promise<Kernel>;
+    proveIx(ix: bigint, kernel: Kernel): Promise<Kernel>;
+    proveBytes(
+      name: InstanceType<typeof proofHost.Bytes>,
+      kernel: Kernel,
+    ): Promise<Kernel>;
   };
   "nucleus:proof/standard@0.1.0"?: {
-    prove(target: Uint8Array): Promise<Kernel>;
+    proveAddr(addr: Uint8Array, kernel: Kernel): Promise<Kernel>;
+    proveName(name: string, kernel: Kernel): Promise<Kernel>;
+    proveIx(ix: bigint, kernel: Kernel): Promise<Kernel>;
+    proveBytes(
+      name: InstanceType<typeof proofHost.Bytes>,
+      kernel: Kernel,
+    ): Promise<Kernel>;
   };
 }
 
@@ -16,7 +31,7 @@ interface InstantiationModule {
   instantiate(
     getCoreModule: (name: string) => Promise<WebAssembly.Module>,
     imports: Record<string, unknown>,
-  ): StandardProofExports | Promise<StandardProofExports>;
+  ): ProofExports | Promise<ProofExports>;
 }
 
 export interface ProofStats {
@@ -29,14 +44,12 @@ export { proofHost };
 export type { Kernel };
 
 /** Runs a standard proof component and returns its checked kernel. */
-export async function loadStandardProof(
+export async function loadProof(
   component: Uint8Array | ArrayBuffer,
-  target: Uint8Array = new Uint8Array(32),
+  name: Uint8Array = new Uint8Array(32),
 ): Promise<Kernel> {
-  if (target.length !== 32) {
-    throw new Error(
-      `proof targets must contain 32 bytes, got ${target.length}`,
-    );
+  if (name.length !== 32) {
+    throw new Error(`proof names must contain 32 bytes, got ${name.length}`);
   }
   const { transpile } = await import("@bytecodealliance/jco");
   const bytes =
@@ -79,7 +92,7 @@ export async function loadStandardProof(
     if (standard === undefined) {
       throw new Error("component does not export the standard proof interface");
     }
-    const kernel = await standard.prove(target);
+    const kernel = await standard.proveAddr(name, new proofHost.Kernel());
     if (!(kernel instanceof proofHost.Kernel)) {
       throw new Error("standard proof returned an unknown kernel resource");
     }
@@ -90,16 +103,16 @@ export async function loadStandardProof(
 }
 
 /** Fetches and runs a standard proof component. */
-export async function fetchStandardProof(
+export async function fetchProof(
   input: RequestInfo | URL,
   init?: RequestInit,
-  target?: Uint8Array,
+  name?: Uint8Array,
 ): Promise<Kernel> {
   const response = await fetch(input, init);
   if (!response.ok) {
     throw new Error(`proof server returned ${response.status}`);
   }
-  return loadStandardProof(await response.arrayBuffer(), target);
+  return loadProof(await response.arrayBuffer(), name);
 }
 
 /** Formats the kernel's checked CBOR address as lowercase hexadecimal. */
@@ -143,11 +156,13 @@ function componentImports(): Record<string, unknown> {
   const imports = {
     "nucleus:proof/host": host,
     "nucleus:proof/capabilities": capabilities,
+    "nucleus:proof/tactics": proofTactics,
   };
   return {
     ...imports,
     "nucleus:proof/host@0.1.0": host,
     "nucleus:proof/capabilities@0.1.0": capabilities,
+    "nucleus:proof/tactics@0.1.0": proofTactics,
   };
 }
 

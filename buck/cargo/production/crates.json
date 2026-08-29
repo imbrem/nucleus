@@ -861,6 +861,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-nucleus-tactics@0.0.0",
+      "name": "covalence-nucleus-tactics",
+      "version": "0.0.0",
+      "path": "crates/nucleus/tactics",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_nucleus_tactics",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-proof-c-demo-test@0.0.0",
       "name": "covalence-proof-c-demo-test",
       "version": "0.0.0",
@@ -1667,8 +1682,36 @@
       ]
     },
     {
+      "source": "workspace#covalence-nucleus-tactics@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-tactics@0.0.0",
+      "target": "workspace#covalence-logic-hol-derived@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-tactics@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-data-vfs@0.0.0",
       "kinds": [
         "normal"
       ]
@@ -1737,6 +1780,13 @@
       ]
     },
     {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-nucleus-tactics@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-proof-c-demo-test@0.0.0",
       "target": "workspace#covalence-nucleus@0.0.0",
       "kinds": [
@@ -1767,6 +1817,13 @@
     {
       "source": "workspace#covalence-proof-host@0.0.0",
       "target": "workspace#covalence-logic-hol@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-proof-host@0.0.0",
+      "target": "workspace#covalence-nucleus-tactics@0.0.0",
       "kinds": [
         "normal"
       ]

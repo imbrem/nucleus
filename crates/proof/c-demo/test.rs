@@ -36,11 +36,36 @@ fn c_can_implement_the_async_proof_world() {
             .unwrap_or_else(|error| panic!("{} could not be read: {error}", path.display()))
     };
 
-    let kernel = covalence_nucleus::load_standard_proof(component.as_ref())
-        .expect("the C proof should run to completion");
+    let mut proof = covalence_nucleus::ProofInstance::from_bytes(component.as_ref())
+        .expect("the C proof should instantiate");
+    let kernels = [
+        proof
+            .prove(
+                covalence_nucleus::ProofName::default(),
+                covalence_nucleus::core::hol::Kernel::new(),
+            )
+            .expect("address proof"),
+        proof
+            .prove_name(
+                "default".to_owned(),
+                covalence_nucleus::core::hol::Kernel::new(),
+            )
+            .expect("text proof"),
+        proof
+            .prove_ix(0, covalence_nucleus::core::hol::Kernel::new())
+            .expect("index proof"),
+        proof
+            .prove_bytes(
+                covalence_nucleus::core::cas::Bytes::from_static(b"default"),
+                covalence_nucleus::core::hol::Kernel::new(),
+            )
+            .expect("byte-resource proof"),
+    ];
 
-    assert!(
-        kernel.is_empty(),
-        "the micro-demo deliberately returns an empty checked kernel"
-    );
+    for kernel in kernels {
+        assert!(
+            kernel.is_empty(),
+            "the micro-demo deliberately returns an empty checked kernel"
+        );
+    }
 }

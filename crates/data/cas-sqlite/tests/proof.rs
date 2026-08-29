@@ -27,13 +27,12 @@ fn an_async_proof_fetches_its_input_from_sqlite() {
     cas.insert("nucleus proof demo".into())
         .expect("insert proof input");
 
-    let kernel =
-        futures::executor::block_on(covalence_nucleus::load_standard_proof_with_cas_async(
-            &component,
-            O256::from_array([0; 32]),
-            Arc::new(cas),
-        ))
-        .expect("run proof with SQLite CAS");
+    let kernel = futures::executor::block_on(covalence_nucleus::load_proof_with_cas_async(
+        &component,
+        O256::from_array([0; 32]),
+        Arc::new(cas),
+    ))
+    .expect("run proof with SQLite CAS");
 
     assert!(kernel.axioms().any(|name| name == "ax.sub"));
     assert!(!kernel.is_empty());

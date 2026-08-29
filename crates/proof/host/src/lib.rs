@@ -12,6 +12,7 @@ use covalence_logic_hol::{
     Arena as InnerArena, Import, ImportId, Kernel as InnerKernel, Link, LinkFormat, Ref, Resolver,
     Sort as InnerSort, SynFactId, SynRel, Table as InnerTable, wire,
 };
+use covalence_nucleus_tactics::{RewriteDirection, iterate_unary, rewrite_proposition};
 
 #[allow(
     unsafe_code,
@@ -27,6 +28,10 @@ use bindings::exports::nucleus::proof::host::{
     self as wit, Arena, ArenaBorrow, Blob, BlobBorrow, Bytes, BytesBorrow, Guest, GuestArena,
     GuestBlob, GuestBytes, GuestIndexCas, GuestKernel, GuestTable, Sort, SynRel as WitSynRel,
     Table,
+};
+use bindings::exports::nucleus::proof::tactics::{
+    Guest as GuestTactics, RewriteDirection as WitRewriteDirection,
+    RewriteResult as WitRewriteResult,
 };
 
 #[derive(Clone)]
@@ -103,6 +108,50 @@ impl Guest for Component {
                 .cloned()
                 .map(|fact| Blob::new(HostBlob(fact)))
         }))
+    }
+}
+
+impl GuestTactics for Component {
+    fn iterate_unary(
+        kernel: bindings::exports::nucleus::proof::host::KernelBorrow<'_>,
+        zero: u64,
+        successor: u64,
+        count: u64,
+    ) -> Result<u64, String> {
+        iterate_unary(
+            &mut kernel.get::<HostKernel>().0.borrow_mut(),
+            reference(zero)?,
+            reference(successor)?,
+            count,
+        )
+        .map(ref_index)
+        .map_err(|error| error.to_string())
+    }
+
+    fn rewrite_proposition(
+        kernel: bindings::exports::nucleus::proof::host::KernelBorrow<'_>,
+        bool_type: u64,
+        equality: u64,
+        premise: u64,
+        direction: WitRewriteDirection,
+    ) -> Result<WitRewriteResult, String> {
+        let direction = match direction {
+            WitRewriteDirection::Forward => RewriteDirection::Forward,
+            WitRewriteDirection::Backward => RewriteDirection::Backward,
+        };
+        let result = rewrite_proposition(
+            &mut kernel.get::<HostKernel>().0.borrow_mut(),
+            reference(bool_type)?,
+            theorem_id(equality)?,
+            theorem_id(premise)?,
+            direction,
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(WitRewriteResult {
+            source: ref_index(result.source()),
+            target: ref_index(result.target()),
+            theorem: u64::from(result.theorem().get().unsigned_abs()),
+        })
     }
 }
 

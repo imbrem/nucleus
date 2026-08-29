@@ -95,11 +95,7 @@
 
     <script type="module">
       import { init } from "./dist/index.js";
-      import {
-        kernelAddress,
-        loadStandardProof,
-        proofStats,
-      } from "./dist/proof.js";
+      import { kernelAddress, loadProof, proofStats } from "./dist/proof.js";
 
       await init();
       const form = document.getElementById("proof-form");
@@ -131,7 +127,7 @@
         result.hidden = true;
         try {
           kernel?.[Symbol.dispose]?.();
-          kernel = await loadStandardProof(await read());
+          kernel = await loadProof(await read());
           const stats = proofStats(kernel);
           document.getElementById("address").textContent =
             kernelAddress(kernel);

@@ -14,26 +14,43 @@
 mod bindings;
 
 #[cfg(target_arch = "wasm32")]
-use bindings::{exports::nucleus::proof::standard::Guest, nucleus::proof::host::Kernel};
+use bindings::{
+    exports::nucleus::proof::standard::Guest,
+    nucleus::proof::host::{Bytes, Kernel},
+};
 
 #[cfg(target_arch = "wasm32")]
 struct Component;
 
 #[cfg(target_arch = "wasm32")]
 impl Guest for Component {
-    async fn prove(target: Vec<u8>) -> Result<Kernel, String> {
-        if target.len() != 32 {
-            return Err(format!(
-                "proof targets contain 32 bytes, got {}",
-                target.len()
-            ));
-        }
-        let kernel = Kernel::new();
+    async fn prove_addr(_addr: Vec<u8>, kernel: Kernel) -> Result<Kernel, String> {
+        Self::reject(kernel)
+    }
+
+    async fn prove_name(_name: String, kernel: Kernel) -> Result<Kernel, String> {
+        Self::reject(kernel)
+    }
+
+    async fn prove_ix(_ix: u64, kernel: Kernel) -> Result<Kernel, String> {
+        Self::reject(kernel)
+    }
+
+    async fn prove_bytes(_bytes: Bytes, kernel: Kernel) -> Result<Kernel, String> {
+        Self::reject(kernel)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Component {
+    fn reject(kernel: Kernel) -> Result<Kernel, String> {
         let star = kernel.kind_star()?;
-        match kernel.bool_lit(star, true) {
-            Ok(_) => Err("kernel accepted a kind where a boolean type was required".to_owned()),
-            Err(error) => Err(format!("demo invalid proof was rejected: {error}")),
-        }
+        let message = match kernel.bool_lit(star, true) {
+            Ok(_) => "kernel accepted a kind where a boolean type was required".to_owned(),
+            Err(error) => format!("demo invalid proof was rejected: {error}"),
+        };
+        drop(kernel);
+        Err(message)
     }
 }
 

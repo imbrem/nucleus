@@ -460,7 +460,7 @@ impl Runner {
             [
                 "c",
                 "--world",
-                "standard-proof",
+                "proof",
                 "--out-dir",
                 as_utf8(&temp, "C binding output")?,
                 as_utf8(&wit, "proof WIT")?,
@@ -471,9 +471,9 @@ impl Runner {
             "compile C proof",
             as_utf8(wasi_cc, "WASI C compiler")?,
             [
-                as_utf8(&temp.join("standard_proof.c"), "generated C bindings")?,
+                as_utf8(&temp.join("proof.c"), "generated C bindings")?,
                 as_utf8(
-                    &temp.join("standard_proof_component_type.o"),
+                    &temp.join("proof_component_type.o"),
                     "component type object",
                 )?,
                 as_utf8(&staged_proof, "C proof source")?,

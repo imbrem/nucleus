@@ -5,18 +5,24 @@ Nucleus Ethane kernel. The interface is deliberately low-level: syntax rows,
 imports, and syntactic-fact slots are represented by integers, while ownership
 is reserved for the host objects that must cross the component boundary.
 
-The `standard-proof` world imports `nucleus:proof/host` and exports one
-conventional entry point:
+The `proof` world imports `nucleus:proof/host` and exports four conventional
+entry points:
 
 ```wit
-prove: async func(target: list<u8>) -> result<kernel, string>;
+prove-addr: async func(addr: list<u8>, kernel: kernel) -> result<kernel, string>;
+prove-name: async func(name: string, kernel: kernel) -> result<kernel, string>;
+prove-ix: async func(ix: u64, kernel: kernel) -> result<kernel, string>;
+prove-bytes: async func(name: bytes, kernel: kernel) -> result<kernel, string>;
 ```
 
-A standard loader calls `prove` with a prover-local `o256` request and takes
-ownership of the returned checked kernel. The request need not be the returned
-kernel's address; the all-zero value conventionally asks for the prover's
-default result. A component may instead import the host interface under a
-different world and implement any higher-level protocol it needs.
+A loader calls the entry point matching its prover-local text, binary, address,
+or numeric selector, transferring ownership of a checked input kernel. Binary
+selectors use the shared `bytes` resource; there is no blob-selector case. The
+component extends the kernel through imported host operations and returns its
+checked successor. Names need not identify a kernel or component. An all-zero `addr`
+conventionally asks for the prover's default proof. A component may instead
+import the host interface under a different world and implement any
+higher-level protocol it needs.
 
 ## Host resources
 

@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use std::sync::Arc;
 
-use covalence_data_cas::{AsyncCas, IndexCas, get_exact_fact};
+use covalence_data_cas::{AsyncCas, AsyncCasError, IndexCas, get_exact_fact};
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_lib_wasm::wasmtime;
@@ -34,7 +34,7 @@ pub struct HostKernel(HolKernel);
 
 wasmtime::component::bindgen!({
     path: "../../wit/proof",
-    world: "standard-proof",
+    world: "proof",
     wasmtime_crate: covalence_lib_wasm::wasmtime,
     with: {
         "nucleus:proof/host.bytes": HostBytes,
@@ -2355,6 +2355,68 @@ impl nucleus::proof::capabilities::Host for ProofState {
     }
 }
 
+impl nucleus::proof::tactics::Host for ProofState {
+    fn iterate_unary(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        zero: u64,
+        successor: u64,
+        count: u64,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        Ok((|| {
+            let result = crate::tactics::iterate_unary(
+                &mut self
+                    .table
+                    .get_mut(&kernel)
+                    .map_err(|error| error.to_string())?
+                    .0,
+                reference(zero)?,
+                reference(successor)?,
+                count,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(u64_from_ref(result))
+        })())
+    }
+
+    fn rewrite_proposition(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        bool_type: u64,
+        equality: u64,
+        premise: u64,
+        direction: nucleus::proof::tactics::RewriteDirection,
+    ) -> wasmtime::Result<Result<nucleus::proof::tactics::RewriteResult, String>> {
+        let direction = match direction {
+            nucleus::proof::tactics::RewriteDirection::Forward => {
+                crate::tactics::RewriteDirection::Forward
+            }
+            nucleus::proof::tactics::RewriteDirection::Backward => {
+                crate::tactics::RewriteDirection::Backward
+            }
+        };
+        Ok((|| {
+            let result = crate::tactics::rewrite_proposition(
+                &mut self
+                    .table
+                    .get_mut(&kernel)
+                    .map_err(|error| error.to_string())?
+                    .0,
+                reference(bool_type)?,
+                theorem_id(equality)?,
+                theorem_id(premise)?,
+                direction,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(nucleus::proof::tactics::RewriteResult {
+                source: u64_from_ref(result.source()),
+                target: u64_from_ref(result.target()),
+                theorem: u64::from(result.theorem().get().unsigned_abs()),
+            })
+        })())
+    }
+}
+
 /// Failure to load or execute a standard proof component.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
@@ -2371,25 +2433,259 @@ pub enum ProofError {
         /// Component-provided diagnostic.
         message: String,
     },
+    /// A CAS failed while loading a content-addressed proof component.
+    #[snafu(display("could not load proof component from CAS: {source}"))]
+    Cas {
+        /// Provider or content-validation failure.
+        source: AsyncCasError,
+    },
+    /// The requested proof component address was absent from its CAS.
+    #[snafu(display("proof component {address} is absent from the CAS"))]
+    MissingComponent {
+        /// Requested component address.
+        address: O256,
+    },
+}
+
+/// A prover-local program, theorem, or mutation selector.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProofName {
+    /// Human-readable name interpreted by the selected prover.
+    Text(String),
+    /// Shared opaque bytes interpreted by the selected prover.
+    Bytes(Bytes),
+    /// Fixed-width content or conventionally assigned name.
+    Address(O256),
+    /// Compact prover-local mutation ID.
+    Id(u64),
+}
+
+impl Default for ProofName {
+    fn default() -> Self {
+        Self::Address(O256::from_array([0; 32]))
+    }
+}
+
+/// A live, reusable instance of the portable `nucleus:proof/proof` world.
+pub struct ProofInstance {
+    store: wasmtime::Store<ProofState>,
+    proof: Proof,
+}
+
+impl ProofInstance {
+    /// Compiles and instantiates component bytes without an external CAS.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProofError::Component`] if compilation, linking, or
+    /// instantiation fails.
+    pub fn from_bytes(component: &[u8]) -> Result<Self, ProofError> {
+        futures::executor::block_on(Self::from_bytes_async(component, None))
+    }
+
+    /// Compiles and instantiates component bytes with a runtime CAS provider.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProofError::Component`] if compilation, linking, or
+    /// instantiation fails.
+    pub fn from_bytes_with_cas(
+        component: &[u8],
+        provider: Arc<dyn AsyncCas>,
+    ) -> Result<Self, ProofError> {
+        futures::executor::block_on(Self::from_bytes_async(component, Some(provider)))
+    }
+
+    /// Compiles and instantiates component bytes with an optional runtime CAS.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProofError::Component`] if compilation, linking, or
+    /// instantiation fails.
+    pub async fn from_bytes_async(
+        component: &[u8],
+        provider: Option<Arc<dyn AsyncCas>>,
+    ) -> Result<Self, ProofError> {
+        let state = provider.map_or_else(ProofState::default, ProofState::with_provider);
+        let mut config = wasmtime::Config::new();
+        config.wasm_component_model(true);
+        config.wasm_component_model_async(true);
+        config.concurrency_support(true);
+        let engine =
+            wasmtime::Engine::new(&config).map_err(|source| ProofError::Component { source })?;
+        let component = wasmtime::component::Component::new(&engine, component)
+            .map_err(|source| ProofError::Component { source })?;
+        let mut linker = wasmtime::component::Linker::new(&engine);
+        Proof::add_to_linker::<ProofState, ProofState>(&mut linker, |state| state)
+            .map_err(|source| ProofError::Component { source })?;
+        let mut store = wasmtime::Store::new(&engine, state);
+        let proof = Proof::instantiate_async(&mut store, &component, &linker)
+            .await
+            .map_err(|source| ProofError::Component { source })?;
+        Ok(Self { store, proof })
+    }
+
+    /// Loads, validates, compiles, and instantiates a component from `provider`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProofError::Cas`] for provider or address-validation failures,
+    /// [`ProofError::MissingComponent`] when absent, and
+    /// [`ProofError::Component`] for component failures.
+    pub async fn from_address_async(
+        address: O256,
+        provider: Arc<dyn AsyncCas>,
+    ) -> Result<Self, ProofError> {
+        let fact = get_exact_fact(provider.as_ref(), address)
+            .await
+            .map_err(|source| ProofError::Cas { source })?
+            .ok_or(ProofError::MissingComponent { address })?;
+        Self::from_bytes_async(fact.bytes(), Some(provider)).await
+    }
+
+    /// Loads and instantiates a content-addressed component from `provider`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::from_address_async`].
+    pub fn from_address(address: O256, provider: Arc<dyn AsyncCas>) -> Result<Self, ProofError> {
+        futures::executor::block_on(Self::from_address_async(address, provider))
+    }
+
+    /// Runs one request against this already-instantiated component.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProofError::Component`] for runtime/resource failures and
+    /// [`ProofError::Guest`] when the component rejects the request.
+    pub fn prove(&mut self, name: ProofName, kernel: HolKernel) -> Result<HolKernel, ProofError> {
+        futures::executor::block_on(self.prove_async(name, kernel))
+    }
+
+    /// Runs one address-selected request against this instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::prove`].
+    pub fn prove_addr(&mut self, addr: O256, kernel: HolKernel) -> Result<HolKernel, ProofError> {
+        self.prove(ProofName::Address(addr), kernel)
+    }
+
+    /// Runs one text-selected request against this instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::prove`].
+    pub fn prove_name(&mut self, name: String, kernel: HolKernel) -> Result<HolKernel, ProofError> {
+        self.prove(ProofName::Text(name), kernel)
+    }
+
+    /// Runs one index-selected request against this instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::prove`].
+    pub fn prove_ix(&mut self, ix: u64, kernel: HolKernel) -> Result<HolKernel, ProofError> {
+        self.prove(ProofName::Id(ix), kernel)
+    }
+
+    /// Runs one byte-selected request against this instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::prove`].
+    pub fn prove_bytes(
+        &mut self,
+        bytes: Bytes,
+        kernel: HolKernel,
+    ) -> Result<HolKernel, ProofError> {
+        self.prove(ProofName::Bytes(bytes), kernel)
+    }
+
+    /// Asynchronously runs one request against this instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProofError::Component`] for runtime/resource failures and
+    /// [`ProofError::Guest`] when the component rejects the request.
+    pub async fn prove_async(
+        &mut self,
+        name: ProofName,
+        kernel: HolKernel,
+    ) -> Result<HolKernel, ProofError> {
+        enum Request {
+            Name(String),
+            Bytes(Resource<HostBytes>),
+            Addr(O256),
+            Ix(u64),
+        }
+
+        let kernel = self
+            .store
+            .data_mut()
+            .table
+            .push(HostKernel(kernel))
+            .map_err(|source| ProofError::Component {
+                source: source.into(),
+            })?;
+        let request = match name {
+            ProofName::Text(value) => Request::Name(value),
+            ProofName::Bytes(value) => {
+                Request::Bytes(self.store.data_mut().table.push(HostBytes(value)).map_err(
+                    |source| ProofError::Component {
+                        source: source.into(),
+                    },
+                )?)
+            }
+            ProofName::Address(value) => Request::Addr(value),
+            ProofName::Id(value) => Request::Ix(value),
+        };
+        let result = self
+            .store
+            .run_concurrent(async |accessor| {
+                let standard = self.proof.nucleus_proof_standard();
+                match request {
+                    Request::Name(value) => standard.call_prove_name(accessor, value, kernel).await,
+                    Request::Bytes(value) => {
+                        standard.call_prove_bytes(accessor, value, kernel).await
+                    }
+                    Request::Addr(value) => {
+                        standard
+                            .call_prove_addr(accessor, value.as_bytes().to_vec(), kernel)
+                            .await
+                    }
+                    Request::Ix(value) => standard.call_prove_ix(accessor, value, kernel).await,
+                }
+            })
+            .await
+            .map_err(|source| ProofError::Component { source })?;
+        let result = result.map_err(|source| ProofError::Component { source })?;
+        let kernel = result.map_err(|message| ProofError::Guest { message })?;
+        self.store
+            .data_mut()
+            .table
+            .delete(kernel)
+            .map(|kernel: HostKernel| kernel.0)
+            .map_err(|source| ProofError::Component {
+                source: source.into(),
+            })
+    }
 }
 
 /// Runs the default request for a component implementing
-/// `nucleus:proof/standard-proof`, blocking the current thread until its
+/// `nucleus:proof/proof`, blocking the current thread until its
 /// native-async execution completes.
 ///
 /// This is a Rust compatibility convenience, not a second component ABI. New
-/// async callers should use [`load_standard_proof_async`].
+/// async callers should use [`load_proof_async`].
 ///
 /// # Errors
 ///
 /// Returns [`ProofError::Component`] for malformed components, missing imports
 /// or exports, traps, and resource failures. Returns [`ProofError::Guest`] when
-/// the component's standard `prove` entry point returns an error.
-pub fn load_standard_proof(component: &[u8]) -> Result<HolKernel, ProofError> {
-    futures::executor::block_on(load_standard_proof_async(
-        component,
-        O256::from_array([0; 32]),
-    ))
+/// the component's standard `prove-addr` entry point returns an error.
+pub fn load_proof(component: &[u8]) -> Result<HolKernel, ProofError> {
+    ProofInstance::from_bytes(component)?.prove_addr(O256::from_array([0; 32]), HolKernel::new())
 }
 
 /// Runs one prover-local `o256` request through a native-async proof component.
@@ -2401,12 +2697,12 @@ pub fn load_standard_proof(component: &[u8]) -> Result<HolKernel, ProofError> {
 ///
 /// Returns [`ProofError::Component`] for malformed components, missing imports
 /// or exports, traps, and resource failures. Returns [`ProofError::Guest`] when
-/// the component's `prove` entry point rejects the request.
-pub async fn load_standard_proof_async(
-    component: &[u8],
-    target: O256,
-) -> Result<HolKernel, ProofError> {
-    load_standard_proof_with_state_async(component, target, ProofState::default()).await
+/// the component's `prove-addr` entry point rejects the request.
+pub async fn load_proof_async(component: &[u8], target: O256) -> Result<HolKernel, ProofError> {
+    ProofInstance::from_bytes_async(component, None)
+        .await?
+        .prove_async(ProofName::Address(target), HolKernel::new())
+        .await
 }
 
 /// Runs one prover-local request with an injected asynchronous CAS provider.
@@ -2421,54 +2717,15 @@ pub async fn load_standard_proof_async(
 /// Returns [`ProofError::Component`] for malformed components, missing imports
 /// or exports, traps, and resource failures. Returns [`ProofError::Guest`] when
 /// the component rejects the request, including a provider lookup failure.
-pub async fn load_standard_proof_with_cas_async(
+pub async fn load_proof_with_cas_async(
     component: &[u8],
     target: O256,
     provider: Arc<dyn AsyncCas>,
 ) -> Result<HolKernel, ProofError> {
-    load_standard_proof_with_state_async(component, target, ProofState::with_provider(provider))
+    ProofInstance::from_bytes_async(component, Some(provider))
+        .await?
+        .prove_async(ProofName::Address(target), HolKernel::new())
         .await
-}
-
-async fn load_standard_proof_with_state_async(
-    component: &[u8],
-    target: O256,
-    state: ProofState,
-) -> Result<HolKernel, ProofError> {
-    let mut config = wasmtime::Config::new();
-    config.wasm_component_model(true);
-    config.wasm_component_model_async(true);
-    config.concurrency_support(true);
-    let engine =
-        wasmtime::Engine::new(&config).map_err(|source| ProofError::Component { source })?;
-    let component = wasmtime::component::Component::new(&engine, component)
-        .map_err(|source| ProofError::Component { source })?;
-    let mut linker = wasmtime::component::Linker::new(&engine);
-    StandardProof::add_to_linker::<ProofState, ProofState>(&mut linker, |state| state)
-        .map_err(|source| ProofError::Component { source })?;
-    let mut store = wasmtime::Store::new(&engine, state);
-    let proof = StandardProof::instantiate_async(&mut store, &component, &linker)
-        .await
-        .map_err(|source| ProofError::Component { source })?;
-    let result = store
-        .run_concurrent(async |accessor| {
-            proof
-                .nucleus_proof_standard()
-                .call_prove(accessor, target.as_bytes().to_vec())
-                .await
-        })
-        .await
-        .map_err(|source| ProofError::Component { source })?;
-    let result = result.map_err(|source| ProofError::Component { source })?;
-    let kernel = result.map_err(|message| ProofError::Guest { message })?;
-    store
-        .data_mut()
-        .table
-        .delete(kernel)
-        .map(|kernel: HostKernel| kernel.0)
-        .map_err(|source| ProofError::Component {
-            source: source.into(),
-        })
 }
 
 #[cfg(test)]
@@ -2502,5 +2759,94 @@ mod tests {
 
         let default_id = Host::cas_insert(&mut state, Resource::new_borrow(blob.rep())).unwrap();
         assert!(Host::cas_get(&mut state, default_id).unwrap().is_some());
+    }
+
+    #[test]
+    fn wit_rewrite_accelerator_returns_a_checked_theorem() {
+        let mut kernel = HolKernel::new();
+        let star = kernel.star().expect("star");
+        let bool_ty = kernel.bool_ty(star).expect("bool");
+        let truth = kernel.bool(bool_ty, true).expect("truth");
+        let proposition = kernel.refl(bool_ty, truth).expect("truth equality");
+        let equality = kernel
+            .refl(bool_ty, proposition.equality)
+            .expect("proposition equality");
+
+        let mut state = ProofState::default();
+        let resource = state
+            .table
+            .push(HostKernel(kernel))
+            .expect("kernel resource");
+        let result = <ProofState as nucleus::proof::tactics::Host>::rewrite_proposition(
+            &mut state,
+            Resource::new_borrow(resource.rep()),
+            u64_from_ref(bool_ty),
+            u64::from(equality.theorem.get().unsigned_abs()),
+            u64::from(proposition.theorem.get().unsigned_abs()),
+            nucleus::proof::tactics::RewriteDirection::Forward,
+        )
+        .expect("host call")
+        .expect("rewrite");
+        let kernel = &state.table.get(&resource).expect("kernel resource").0;
+        assert!(
+            kernel
+                .thm()
+                .get(theorem_id(result.theorem).expect("theorem ID"))
+                .is_some()
+        );
+        assert_eq!(result.source, result.target);
+    }
+
+    #[test]
+    fn wit_unary_iteration_checks_classifiers_and_is_atomic() {
+        let mut kernel = HolKernel::new();
+        let star = kernel.star().expect("star");
+        let ty = kernel.bool_ty(star).expect("type");
+        let zero = kernel.bool(ty, false).expect("zero");
+        let binder = kernel.tm_fv(0, ty).expect("binder");
+        let successor = kernel.lam(binder, binder).expect("successor");
+        let malformed = kernel.bool(ty, true).expect("malformed successor");
+        let mut state = ProofState::default();
+        let resource = state
+            .table
+            .push(HostKernel(kernel))
+            .expect("kernel resource");
+
+        let result = <ProofState as nucleus::proof::tactics::Host>::iterate_unary(
+            &mut state,
+            Resource::new_borrow(resource.rep()),
+            u64_from_ref(zero),
+            u64_from_ref(successor),
+            3,
+        )
+        .expect("host call")
+        .expect("iteration");
+        let kernel = &state.table.get(&resource).expect("kernel resource").0;
+        assert_eq!(
+            kernel
+                .classifier(reference(result).expect("result reference"))
+                .expect("result classifier"),
+            ty
+        );
+
+        let before = kernel.arena().clone();
+        let rejected = <ProofState as nucleus::proof::tactics::Host>::iterate_unary(
+            &mut state,
+            Resource::new_borrow(resource.rep()),
+            u64_from_ref(zero),
+            u64_from_ref(malformed),
+            0,
+        )
+        .expect("host call");
+        assert!(rejected.is_err());
+        assert_eq!(
+            state
+                .table
+                .get(&resource)
+                .expect("kernel resource")
+                .0
+                .arena(),
+            &before
+        );
     }
 }

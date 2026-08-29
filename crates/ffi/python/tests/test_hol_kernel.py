@@ -14,17 +14,70 @@ from covalence.logic.hol import (
     Kernel,
     Kind,
     Link,
+    Prover,
     SynFact,
     Tm,
     Ty,
-    load_standard_proof,
+    get_default_cas,
+    load_proof,
+    set_default_cas,
 )
 from hol_support import Rows, basis, beta, prove_congruence, unify
 
 
-def test_standard_proof_loader_rejects_non_components() -> None:
+def test_proof_loader_rejects_non_components() -> None:
     with pytest.raises(RuntimeError, match="proof component failed"):
-        load_standard_proof(b"not a WebAssembly component")
+        load_proof(b"not a WebAssembly component")
+
+
+def test_prover_instantiates_at_construction_time() -> None:
+    with pytest.raises(RuntimeError, match="proof component failed"):
+        Prover(b"not a WebAssembly component")
+
+
+def test_proof_source_address_requires_and_uses_a_cas() -> None:
+    component = b"not a WebAssembly component"
+    address = O256.hash(component)
+    with pytest.raises(ValueError, match="requires a CAS"):
+        Prover(address)
+
+    class Cas:
+        def get(self, requested):
+            assert requested == address
+            return component
+
+    with pytest.raises(RuntimeError, match="proof component failed"):
+        Prover(address, cas=Cas())
+
+    with pytest.raises(RuntimeError, match="proof component failed"):
+        load_proof(address, cas=Cas())
+
+
+def test_omitted_cas_uses_the_python_default_but_none_does_not() -> None:
+    component = b"not a WebAssembly component"
+    address = O256.hash(component)
+
+    class Cas:
+        calls = 0
+
+        def get(self, requested):
+            assert requested == address
+            self.calls += 1
+            return component
+
+    cas = Cas()
+    previous = get_default_cas()
+    try:
+        set_default_cas(cas)
+        with pytest.raises(RuntimeError, match="proof component failed"):
+            Prover(address)
+        assert cas.calls == 1
+
+        with pytest.raises(ValueError, match="requires a CAS"):
+            Prover(address, cas=None)
+        assert cas.calls == 1
+    finally:
+        set_default_cas(previous)
 
 
 MISSING = "does not name a kernel row"
@@ -39,6 +92,32 @@ def test_a_new_kernel_is_empty_and_addresses_the_empty_arena() -> None:
     assert kernel.arena.definitions == []
     assert kernel.addr() == Arena().addr()
     assert kernel.syn_fact_len() == 0
+
+
+@pytest.mark.parametrize("direction", ["forward", "backward"])
+def test_high_level_proposition_rewrite_is_atomic_and_checked(direction: str) -> None:
+    kernel = Kernel()
+    star = kernel.star()
+    bool_ty = kernel.bool_ty(star)
+    truth = kernel.bool(bool_ty, True)
+    proposition, premise = kernel.refl(bool_ty, truth)
+    _, equality = kernel.refl(bool_ty, proposition)
+
+    result = kernel.rewrite_proposition(
+        bool_ty, equality, premise, direction=direction
+    )
+
+    assert result.source == proposition
+    assert result.target == proposition
+    assert kernel.theorem(result.theorem) == kernel.theorem(premise)
+
+
+def test_high_level_rewrite_rejects_bad_direction_without_mutation() -> None:
+    kernel = Kernel()
+    before = kernel.addr()
+    with pytest.raises(ValueError, match="direction"):
+        kernel.rewrite_proposition(1, 1, 1, direction="sideways")
+    assert kernel.addr() == before
 
 
 def test_constructors_record_the_classifier_they_derived() -> None:

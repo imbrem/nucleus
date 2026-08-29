@@ -16,6 +16,7 @@ covalence-data-cas = { path = "../../data/cas" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
 covalence-logic-cas = { path = "../../logic/cas" }
 covalence-logic-hol = { path = "../../logic/hol" }
+covalence-nucleus-tactics = { path = "../../nucleus/tactics" }
 wit-bindgen = "=0.61.1"
 
 [package.metadata.component]

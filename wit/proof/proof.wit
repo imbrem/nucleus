@@ -459,26 +459,78 @@ interface capabilities {
     random-bytes: func(len: u64) -> result<bytes, string>;
 }
 
+/// Versioned userspace conveniences built exclusively from checked host calls.
+///
+/// These operations are accelerators, not additional proof authority: every
+/// returned theorem is introduced by the same kernel rules as the low-level
+/// `host` interface.
+interface tactics {
+    use host.{bytes, kernel};
+
+    enum rewrite-direction {
+        forward,
+        backward,
+    }
+
+    record rewrite-result {
+        source: u64,
+        target: u64,
+        theorem: u64,
+    }
+
+    /// Applies a checked endomap `count` times to a checked base value.
+    ///
+    /// This is generic syntax acceleration, not a canonical natural numeral:
+    /// the caller supplies the base and function and owns their meaning.
+    iterate-unary: func(
+        kernel: borrow<kernel>,
+        zero: u64,
+        successor: u64,
+        count: u64,
+    ) -> result<u64, string>;
+
+    /// Rewrites a proposition using a proved equality and `EQ_MP`.
+    rewrite-proposition: func(
+        kernel: borrow<kernel>,
+        bool-type: u64,
+        equality: u64,
+        premise: u64,
+        direction: rewrite-direction,
+    ) -> result<rewrite-result, string>;
+}
+
 /// The conventional entry point understood by standard proof loaders.
 interface standard {
-    use host.{kernel};
+    use host.{bytes, kernel};
 
-    /// Resolves a prover-local request and transfers a checked kernel.
+    /// Resolves a prover-local name and extends a caller-supplied kernel.
     ///
-    /// The request is an opaque `o256` selector, not necessarily the address
-    /// of the returned kernel. By convention the all-zero selector requests
-    /// this prover's default result.
-    prove: async func(target: list<u8>) -> result<kernel, string>;
+    /// Names are interpreted entirely by the prover. By convention an
+    /// all-zero `addr` requests its default proof. Ownership of `kernel`
+    /// crosses the component boundary and the returned resource is its
+    /// checked, extended successor.
+    prove-addr: async func(addr: list<u8>, kernel: kernel) -> result<kernel, string>;
+
+    /// Extends a kernel using a human-readable prover-local name.
+    prove-name: async func(name: string, kernel: kernel) -> result<kernel, string>;
+
+    /// Extends a kernel using a compact prover-local index.
+    prove-ix: async func(ix: u64, kernel: kernel) -> result<kernel, string>;
+
+    /// Extends a kernel using arbitrary prover-local bytes.
+    prove-bytes: async func(name: bytes, kernel: kernel) -> result<kernel, string>;
 }
 
 /// A portable standard proof component.
-world standard-proof {
+world proof {
     import host;
     import capabilities;
+    import tactics;
     export standard;
 }
 
 /// A portable implementation of the complete proof host interface.
 world kernel-host {
     export host;
+    export tactics;
 }

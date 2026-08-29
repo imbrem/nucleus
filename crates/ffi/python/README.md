@@ -105,15 +105,27 @@ evidence from being reused after its slot is overwritten or across kernels.
 True
 ```
 
-`load_standard_proof` runs a portable WASM proof component implementing the
-`nucleus:proof/standard-proof` world and returns the checked kernel transferred
-by its `prove` entry point. The component receives no inherited filesystem,
+`Prover` instantiates a portable WASM component implementing the
+`nucleus:proof/proof` world once and may be called repeatedly. A prover-local
+name may be text, bytes-like data, an `O256`, a nonnegative integer, or `None`;
+`None`, an omitted name, and `ZERO_O256` all request the conventional default.
+Each call may extend a supplied `Kernel`; omitting it creates a fresh one. The
+component source may itself be bytes or an `O256`. Address-based loading
+requires a CAS, and the same optional CAS is wired into later component calls.
+The explicit entry points are `prove_addr`, `prove_name`, `prove_ix`, and
+`prove_bytes`; `prove` dispatches among them from the Python value's type.
+`load_proof` is the one-shot convenience which builds a `Prover` and requests
+its default on a fresh kernel. Components receive no inherited filesystem,
 network, environment, or command-line capabilities.
 
 ```python
->>> from covalence.logic.hol import load_standard_proof
+>>> from covalence.logic.hol import Prover, load_proof
+>>> from covalence.lib.hash import ZERO_O256
 >>> with open("proof.wasm", "rb") as source:
-...     kernel = load_standard_proof(source.read())
+...     prover = Prover(source.read())
+>>> kernel = prover.prove()
+>>> prover.prove(None).address == prover.prove(ZERO_O256).address
+True
 >>> len(kernel) >= 0
 True
 ```

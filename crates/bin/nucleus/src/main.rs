@@ -103,7 +103,7 @@ fn run_proof(
         .store()
         .fact_at(address)
         .ok_or_else(|| miette!("proof component {address} is not resident"))?;
-    let kernel = covalence_nucleus::load_standard_proof(component.bytes())
+    let kernel = covalence_nucleus::load_proof(component.bytes())
         .map_err(|error| miette!("proof failed: {error}"))?;
     writeln!(out, "{}", kernel.addr()).into_diagnostic()
 }

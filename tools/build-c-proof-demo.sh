@@ -15,12 +15,12 @@ else
 fi
 
 mkdir -p "$build_dir"
-wit-bindgen c --world standard-proof --out-dir "$build_dir" \
+wit-bindgen c --world proof --out-dir "$build_dir" \
   "$repo_root/wit/proof"
 
 "$wasi_cc" \
-  "$build_dir/standard_proof.c" \
-  "$build_dir/standard_proof_component_type.o" \
+  "$build_dir/proof.c" \
+  "$build_dir/proof_component_type.o" \
   "$repo_root/crates/proof/c-demo/proof.c" \
   -I "$build_dir" \
   -mexec-model=reactor \

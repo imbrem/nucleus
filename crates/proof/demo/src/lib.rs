@@ -14,6 +14,9 @@
 mod bindings;
 
 #[cfg(target_arch = "wasm32")]
+mod tactic;
+
+#[cfg(target_arch = "wasm32")]
 use bindings::{
     exports::nucleus::proof::standard::Guest,
     nucleus::proof::host::{
@@ -25,15 +28,8 @@ use bindings::{
 struct Component;
 
 #[cfg(target_arch = "wasm32")]
-impl Guest for Component {
-    async fn prove(target: Vec<u8>) -> Result<Kernel, String> {
-        if target.len() != 32 {
-            return Err(format!(
-                "proof targets contain 32 bytes, got {}",
-                target.len()
-            ));
-        }
-
+impl Component {
+    async fn prove_requested(requested: &[u8], kernel: Kernel) -> Result<Kernel, String> {
         // The zero selector conventionally requests this component's default
         // proof. Its input is independently addressed in the default CAS.
         const INPUT: [u8; 32] = [
@@ -41,10 +37,10 @@ impl Guest for Component {
             0x83, 0xd8, 0x99, 0xd0, 0x94, 0x79, 0xef, 0x66, 0x32, 0x86, 0xf3, 0xb3, 0xa1, 0x61,
             0xc2, 0x2c, 0x09, 0xcf,
         ];
-        let input_address = if target.iter().all(|byte| *byte == 0) {
+        let input_address = if requested.is_empty() || requested.iter().all(|byte| *byte == 0) {
             INPUT.as_slice()
         } else {
-            target.as_slice()
+            requested
         };
         let fetched = cas_get_bytes(input_address.to_vec())
             .await?
@@ -70,10 +66,20 @@ impl Guest for Component {
             return Err("default CAS did not retain the blob".to_owned());
         }
 
-        let kernel = Kernel::new();
         let star = kernel.kind_star()?;
         let bool_ty = kernel.bool_type(star)?;
         let truth = kernel.bool_lit(bool_ty, true)?;
+
+        // Run a userspace rewrite accelerator through its imported component
+        // interface. REFL gives `|- true = true`; EQT_ELIM gives `|- true`;
+        // the host tactic asks checked EQ_MP to transport that premise.
+        let equality = kernel.refl(bool_ty, truth)?;
+        let premise = kernel.eqt_elim(equality.theorem)?;
+        let rewritten = tactic::rewrite(&kernel, bool_ty, equality.theorem, premise)?;
+        if rewritten.source != truth || rewritten.target != truth {
+            return Err("userspace rewrite changed a reflexive proposition".to_owned());
+        }
+
         let reflexivity = kernel.syn_refl(SynRel::Syn, truth, None)?;
         if kernel.syn_fact_count() != 1 {
             return Err("unexpected syntactic-fact slot count".to_owned());
@@ -112,6 +118,40 @@ impl Guest for Component {
         }
 
         Ok(kernel)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Guest for Component {
+    async fn prove_addr(addr: Vec<u8>, kernel: Kernel) -> Result<Kernel, String> {
+        if addr.len() != 32 {
+            return Err(format!(
+                "O256 proof selectors contain 32 bytes, got {}",
+                addr.len()
+            ));
+        }
+        Self::prove_requested(&addr, kernel).await
+    }
+
+    async fn prove_name(name: String, kernel: Kernel) -> Result<Kernel, String> {
+        if name != "default" {
+            return Err(format!("unknown textual proof name {name:?}"));
+        }
+        Self::prove_requested(&[], kernel).await
+    }
+
+    async fn prove_ix(ix: u64, kernel: Kernel) -> Result<Kernel, String> {
+        if ix != 0 {
+            return Err(format!("unknown proof mutation index {ix}"));
+        }
+        Self::prove_requested(&[], kernel).await
+    }
+
+    async fn prove_bytes(bytes: Bytes, kernel: Kernel) -> Result<Kernel, String> {
+        if bytes.to_list() != b"default" {
+            return Err(format!("unknown byte proof name of length {}", bytes.len()));
+        }
+        Self::prove_requested(&[], kernel).await
     }
 }
 

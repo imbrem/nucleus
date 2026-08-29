@@ -16,6 +16,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 bytes = "1"
 covalence-data-cas = { path = "../data/cas" }
+covalence-data-vfs = { path = "../data/vfs" }
 covalence-lib-crypto = { path = "../lib/crypto" }
 covalence-lib-error = { path = "../lib/error" }
 covalence-lib-hash = { path = "../lib/hash", default-features = false, features = ["blake3"] }
@@ -24,6 +25,7 @@ covalence-logic-cas = { path = "../logic/cas" }
 covalence-logic-hol = { path = "../logic/hol" }
 covalence-nucleus-core = { path = "core" }
 covalence-nucleus-script = { path = "script" }
+covalence-nucleus-tactics = { path = "tactics" }
 futures = "0.3"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

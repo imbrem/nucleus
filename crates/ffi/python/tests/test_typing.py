@@ -96,11 +96,13 @@ def test_every_public_name_is_reexported() -> None:
             }
         if public_module is public_hol:
             # The public HOL module removes the extension's `Hol` prefix.
-            for name in names - {"AmbPred", "load_standard_proof"}:
+            pure_python = {"Prover", "get_default_cas", "load_proof", "set_default_cas"}
+            for name in names - {"AmbPred"} - pure_python:
                 assert getattr(public_module, name) is getattr(_covalence, f"Hol{name}")
             assert public_hol.AmbPred is _covalence.AmbPred
-            assert public_hol.load_standard_proof is _covalence.load_standard_proof
             continue
+        if public_module is public_hash:
+            names.remove("ZERO_O256")
         assert names <= _exported_names()
         for name in names:
             assert getattr(public_module, name) is getattr(_covalence, name)

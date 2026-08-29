@@ -38,6 +38,7 @@ members = [
   "crates/proton",
   "crates/nucleus/core",
   "crates/nucleus/script",
+  "crates/nucleus/tactics",
   "crates/nucleus/server",
   "crates/nucleus",
   "crates/proof/c-demo",

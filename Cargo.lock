@@ -1270,6 +1270,7 @@ version = "0.0.0"
 dependencies = [
  "bytes",
  "covalence-data-cas",
+ "covalence-data-vfs",
  "covalence-lib-crypto",
  "covalence-lib-error",
  "covalence-lib-hash",
@@ -1279,6 +1280,7 @@ dependencies = [
  "covalence-logic-hol",
  "covalence-nucleus-core",
  "covalence-nucleus-script",
+ "covalence-nucleus-tactics",
  "futures",
  "wasm-bindgen",
  "wit-bindgen-rt",
@@ -1321,6 +1323,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-nucleus-tactics"
+version = "0.0.0"
+dependencies = [
+ "covalence-lib-error",
+ "covalence-logic-hol",
+ "covalence-logic-hol-derived",
+]
+
+[[package]]
 name = "covalence-proof-c-demo-test"
 version = "0.0.0"
 dependencies = [
@@ -1343,6 +1354,7 @@ dependencies = [
  "covalence-lib-hash",
  "covalence-logic-cas",
  "covalence-logic-hol",
+ "covalence-nucleus-tactics",
  "wit-bindgen 0.61.1",
 ]
 

@@ -79,8 +79,8 @@ export async function drive(
         } finally {
           repl.closeObject(handle);
         }
-        const { kernelAddress, loadStandardProof } = await import("./proof.js");
-        const kernel = await loadStandardProof(bytes);
+        const { kernelAddress, loadProof } = await import("./proof.js");
+        const kernel = await loadProof(bytes);
         try {
           return { output: kernelAddress(kernel), quit: false };
         } finally {

@@ -17,6 +17,7 @@ from covalence.lib.hash import (
     COV_ROOT,
     COV_ROOT_CTX_KEY,
     O256,
+    ZERO_O256,
     Blake3,
     ContextKey,
     GitHash,
@@ -46,6 +47,12 @@ GIT_BLOB_HELLO = "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0"
 def sample(cls: type) -> object:
     """A value of `cls` that does not depend on hashing to construct."""
     return cls(bytes(range(cls.BYTES)))
+
+
+def test_zero_o256_has_a_constructor_constant_and_falsey_value() -> None:
+    assert O256.zero() == ZERO_O256
+    assert not ZERO_O256
+    assert O256.hash(b"")
 
 
 def test_multiformat_conversions_round_trip() -> None:
