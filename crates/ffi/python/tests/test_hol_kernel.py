@@ -103,9 +103,7 @@ def test_high_level_proposition_rewrite_is_atomic_and_checked(direction: str) ->
     proposition, premise = kernel.refl(bool_ty, truth)
     _, equality = kernel.refl(bool_ty, proposition)
 
-    result = kernel.rewrite_proposition(
-        bool_ty, equality, premise, direction=direction
-    )
+    result = kernel.rewrite_proposition(bool_ty, equality, premise, direction=direction)
 
     assert result.source == proposition
     assert result.target == proposition
