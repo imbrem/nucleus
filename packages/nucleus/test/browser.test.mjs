@@ -171,9 +171,11 @@ test("the browser composes the full kernel host with a proof", async (context) =
     const { Strategy, kernelAddress, proofHost, proofStats } = window.nucleus;
     const strategy = await Strategy.fromBytes(new Uint8Array(bytes));
     const kernel = await strategy.applyTactic(0n);
-    const repeated = await strategy.applyTactic(0n);
-    const named = await strategy.applyTacticName("default");
-    const addressed = await strategy.proveAddr(new Uint8Array(32));
+    const [repeated, named, addressed] = await Promise.all([
+      strategy.applyTactic(0n),
+      strategy.applyTacticName("default"),
+      strategy.proveAddr(new Uint8Array(32)),
+    ]);
     const stats = proofStats(kernel);
 
     // Exercise methods outside the demo's original subset through the same

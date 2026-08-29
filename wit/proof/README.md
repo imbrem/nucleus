@@ -17,6 +17,10 @@ apply-tactic: async func(tactic-id: u64, arguments: list<u8>, kernel: option<ker
 protocol. An omitted input asks the strategy to choose a checked starting
 kernel. Tactic arguments are a small copied `list<u8>`; larger inputs can travel
 through a CAS or a future separately reviewed resource-bearing extension.
+One live strategy may retain arbitrary untrusted state between calls. Hosts
+serialize calls unless a strategy explicitly advertises a future reentrant
+interface; retained state can guide later checked operations but cannot mint a
+kernel resource or theorem fact without the checked host API.
 
 By convention tactic zero with empty arguments and no input kernel requests a
 strategy's default starting/proved kernel. Tactic zero with 32 argument bytes

@@ -40,6 +40,7 @@ export type { Kernel };
 /** A live reusable untrusted component which constructs checked kernels. */
 export class Strategy {
   readonly #exports: ProofExports;
+  #tail: Promise<void> = Promise.resolve();
 
   private constructor(exports: ProofExports) {
     this.#exports = exports;
@@ -109,7 +110,9 @@ export class Strategy {
       this.#exports.strategy ?? this.#exports["nucleus:proof/strategy@0.1.0"],
       "strategy",
     );
-    return checkedKernel(await api.applyTactic(tacticId, arguments_, kernel));
+    return this.#exclusive(async () =>
+      checkedKernel(await api.applyTactic(tacticId, arguments_, kernel)),
+    );
   }
 
   /** Applies an optional human-readable tactic extension. */
@@ -121,6 +124,20 @@ export class Strategy {
   async proveAddr(addr: Uint8Array): Promise<Kernel> {
     checkAddress(addr);
     return this.applyTactic(0n, addr);
+  }
+
+  async #exclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.#tail;
+    let release: () => void = () => undefined;
+    this.#tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 }
 
