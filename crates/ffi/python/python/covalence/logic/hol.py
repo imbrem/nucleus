@@ -8,8 +8,8 @@ from .._covalence import HolDefinition as Definition
 from .._covalence import HolKernel as Kernel
 from .._covalence import HolKind as Kind
 from .._covalence import HolLink as Link
-from .._covalence import HolStrategy as _Strategy
 from .._covalence import HolRewriteResult as RewriteResult
+from .._covalence import HolStrategy as _Strategy
 from .._covalence import HolSynFact as SynFact
 from .._covalence import HolTm as Tm
 from .._covalence import HolTy as Ty
