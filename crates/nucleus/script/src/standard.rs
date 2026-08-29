@@ -7,7 +7,7 @@ use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_logic_hol::{Kernel, init};
 
-use super::{ImportDecl, InitLibraryError, Namespace, compile_init_slice};
+use super::{ImportDecl, InitLibraryError, Namespace, NamespaceChild, compile_init_slice};
 
 /// Exact source of the logical init segment.
 pub const LOGICAL_INIT_SCRIPT: &str = include_str!("../logical-init.sexpr");
@@ -49,7 +49,7 @@ pub const LOGICAL_INIT_TRIPLE: SegmentTriple = SegmentTriple {
 
 /// Pinned source, output-object, and kernel identities for natural init.
 pub const NATURAL_INIT_TRIPLE: SegmentTriple = SegmentTriple {
-    script: address("0e91f0615402bb9ed0e081aeafdb271ce5a56cb4896de409b3f7860c4ff1d7aa"),
+    script: address("7678eb034e81e7ff40845e48d66edff71b21f48ff16ba40ad43f3ab4f2d32c3a"),
     output: address("c140d7b08bd314beb49f2299a9027d695848868b726306fae1af6dd9c24eb7fa"),
     kernel: address("08b577109951887e8acca5a3039d7e0d1a324f1b0aad02da120993bceff18953"),
 };
@@ -243,13 +243,14 @@ fn metadata_addr(namespace: &Namespace, imports: &[ImportDecl]) -> O256 {
 }
 
 fn write_namespace(namespace: &Namespace, prefix: &str, output: &mut String) {
-    for (name, reference) in namespace.bindings() {
+    for binding in namespace.bindings() {
+        let name = binding.name();
         let qualified = if prefix.is_empty() {
             name.to_owned()
         } else {
             format!("{prefix}.{name}")
         };
-        writeln!(output, "name\t{qualified}\t{}", reference.get())
+        writeln!(output, "name\t{qualified}\t{}", binding.reference().get())
             .expect("writing to a String cannot fail");
     }
     for (name, child) in namespace.children() {
@@ -258,7 +259,13 @@ fn write_namespace(namespace: &Namespace, prefix: &str, output: &mut String) {
         } else {
             format!("{prefix}.{name}")
         };
-        write_namespace(child, &qualified, output);
+        match child {
+            NamespaceChild::Resident(child) => write_namespace(&child, &qualified, output),
+            NamespaceChild::Foreign(address) => {
+                writeln!(output, "foreign\t{qualified}\t{address}")
+                    .expect("writing to a String cannot fail");
+            }
+        }
     }
 }
 

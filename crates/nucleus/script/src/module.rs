@@ -1,16 +1,16 @@
 //! Tree-shaped module metadata around the checked theory compiler.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt::Write,
-};
+use std::{collections::BTreeSet, fmt::Write};
 
 use covalence_data_sexpr::Atom;
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_logic_hol::{Kernel, Ref};
 
-use super::{CompiledTheory, SExpr, TheoryError, atom, compile_theory, list, read_module};
+use super::{
+    CompiledTheory, Namespace, NamespaceChild, SExpr, TheoryError, atom, compile_theory, list,
+    read_module,
+};
 
 /// One content-addressed dependency declared by a source module.
 ///
@@ -49,57 +49,6 @@ impl ImportDecl {
     #[must_use]
     pub const fn metadata(&self) -> O256 {
         self.metadata
-    }
-}
-
-/// An immutable-by-convention tree mapping source names to local HOL rows.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Namespace {
-    bindings: BTreeMap<String, Ref>,
-    children: BTreeMap<String, Self>,
-}
-
-impl Namespace {
-    /// Resolves a dot-separated name from this namespace root.
-    #[must_use]
-    pub fn get(&self, path: &str) -> Option<Ref> {
-        let mut parts = path.split('.').peekable();
-        let mut namespace = self;
-        while let Some(part) = parts.next() {
-            if parts.peek().is_none() {
-                return namespace.bindings.get(part).copied();
-            }
-            namespace = namespace.children.get(part)?;
-        }
-        None
-    }
-
-    /// Iterates bindings directly contained in this namespace.
-    #[must_use]
-    pub fn bindings(&self) -> impl ExactSizeIterator<Item = (&str, Ref)> {
-        self.bindings
-            .iter()
-            .map(|(name, reference)| (name.as_str(), *reference))
-    }
-
-    /// Iterates immediate child namespaces.
-    #[must_use]
-    pub fn children(&self) -> impl ExactSizeIterator<Item = (&str, &Self)> {
-        self.children
-            .iter()
-            .map(|(name, namespace)| (name.as_str(), namespace))
-    }
-
-    pub(super) fn insert(&mut self, path: &str, reference: Ref) {
-        let mut parts = path.split('.').peekable();
-        let mut namespace = self;
-        while let Some(part) = parts.next() {
-            if parts.peek().is_none() {
-                namespace.bindings.insert(part.to_owned(), reference);
-                return;
-            }
-            namespace = namespace.children.entry(part.to_owned()).or_default();
-        }
     }
 }
 
@@ -236,9 +185,11 @@ pub fn delaborate_module(kernel: &Kernel, namespace: &Namespace, imports: &[Impo
 }
 
 fn collect_references(namespace: &Namespace, output: &mut BTreeSet<Ref>) {
-    output.extend(namespace.bindings.values().copied());
-    for child in namespace.children.values() {
-        collect_references(child, output);
+    output.extend(namespace.bindings().map(|binding| binding.reference()));
+    for (_, child) in namespace.children() {
+        if let NamespaceChild::Resident(child) = child {
+            collect_references(&child, output);
+        }
     }
 }
 
@@ -254,7 +205,7 @@ fn collect_definitions(
                 let local = items.get(1).ok_or_else(|| ModuleError::Invalid {
                     message: "define is missing its name".to_owned(),
                 })?;
-                let name = qualify(scope, atom(local)?)?;
+                let name = qualify_definition(scope, atom(local)?)?;
                 if !definitions.insert(name.clone()) {
                     return Err(ModuleError::Invalid {
                         message: format!("duplicate definition {name:?}"),
@@ -307,7 +258,7 @@ fn rewrite_define(
     if !matches!(items.len(), 4 | 5) {
         return module_invalid("expected (define name ('type ...) [type] term)");
     }
-    let name = qualify(scope, atom(&items[1])?)?;
+    let name = qualify_definition(scope, atom(&items[1])?)?;
     let parameters = list(&items[2], "a type-parameter list")?;
     let mut bound = parameters
         .iter()
@@ -391,13 +342,27 @@ fn address(expression: &SExpr, role: &str) -> Result<O256, ModuleError> {
     match expression {
         SExpr::O256(value) => Ok(*value),
         SExpr::Atom(_) | SExpr::List(_) => {
-            module_invalid(format!("import {role} must use the !(base64) O256 atom"))
+            module_invalid(format!("import {role} must use the !hex O256 atom"))
         }
     }
 }
 
 fn qualify(scope: &[String], local: &str) -> Result<String, ModuleError> {
     validate_part(local)?;
+    Ok(if scope.is_empty() {
+        local.to_owned()
+    } else {
+        format!("{}.{}", scope.join("."), local)
+    })
+}
+
+fn qualify_definition(scope: &[String], local: &str) -> Result<String, ModuleError> {
+    if local.is_empty() {
+        return module_invalid("definition names cannot be empty");
+    }
+    for part in local.split('.') {
+        validate_part(part)?;
+    }
     Ok(if scope.is_empty() {
         local.to_owned()
     } else {
@@ -434,7 +399,7 @@ fn is_builtin(name: &str) -> bool {
     )
 }
 
-fn render(forms: &[SExpr]) -> String {
+pub(super) fn render(forms: &[SExpr]) -> String {
     let mut output = String::new();
     for form in forms {
         render_expr(form, &mut output);
@@ -462,14 +427,32 @@ fn render_expr(expression: &SExpr, output: &mut String) {
 
 fn render_namespace(namespace: &Namespace, depth: usize, output: &mut String) {
     let indent = "  ".repeat(depth);
-    for (name, reference) in namespace.bindings() {
-        writeln!(output, "{indent}(name {name} %{})", reference.get())
-            .expect("writing to a String cannot fail");
+    for binding in namespace.bindings() {
+        writeln!(
+            output,
+            "{indent}(name {} %{})",
+            binding.name(),
+            binding.reference().get()
+        )
+        .expect("writing to a String cannot fail");
     }
     for (name, child) in namespace.children() {
-        writeln!(output, "{indent}(namespace {name}").expect("writing to a String cannot fail");
-        render_namespace(child, depth + 1, output);
-        writeln!(output, "{indent})").expect("writing to a String cannot fail");
+        match child {
+            NamespaceChild::Resident(child) => {
+                writeln!(output, "{indent}(namespace {name}")
+                    .expect("writing to a String cannot fail");
+                render_namespace(&child, depth + 1, output);
+                writeln!(output, "{indent})").expect("writing to a String cannot fail");
+            }
+            NamespaceChild::Foreign(address) => {
+                writeln!(
+                    output,
+                    "{indent}(foreign {name} {})",
+                    Atom::encode_o256(address)
+                )
+                .expect("writing to a String cannot fail");
+            }
+        }
     }
 }
 

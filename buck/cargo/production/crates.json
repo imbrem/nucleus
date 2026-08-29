@@ -277,6 +277,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-vfs@0.0.0",
+      "name": "covalence-data-vfs",
+      "version": "0.0.0",
+      "path": "crates/data/vfs",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_vfs",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-ffi-python@0.0.0",
       "name": "covalence-ffi-python",
       "version": "0.0.0",
@@ -815,6 +830,12 @@
           "kinds": [
             "test"
           ]
+        },
+        {
+          "name": "tree",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     },
@@ -1276,6 +1297,13 @@
     },
     {
       "source": "workspace#covalence-data-sqlite@0.0.0",
+      "target": "workspace#covalence-data-vfs@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-sqlite@0.0.0",
       "target": "workspace#covalence-lib-error@0.0.0",
       "kinds": [
         "normal"
@@ -1557,6 +1585,13 @@
     {
       "source": "workspace#covalence-nucleus-script@0.0.0",
       "target": "workspace#covalence-data-sexpr@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-script@0.0.0",
+      "target": "workspace#covalence-data-vfs@0.0.0",
       "kinds": [
         "normal"
       ]

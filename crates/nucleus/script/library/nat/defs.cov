@@ -1,0 +1,7 @@
+; Public abstract natural-number theory assembled from focused specifications.
+(import nat.spec)
+(import nat.rec)
+(import nat.arithmetic)
+(include nat.spec)
+(include nat.rec)
+(include nat.arithmetic)

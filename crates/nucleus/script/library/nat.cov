@@ -1,0 +1,4 @@
+; Publish the abstract natural-number specifications directly as `nat.*`
+; while retaining `nat.defs` as the private assembly boundary.
+(import nat.defs)
+(include nat.defs)

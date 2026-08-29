@@ -1,0 +1,77 @@
+; Recursive specifications for total natural-number arithmetic. These formulas
+; characterize candidate operations relative to zero and successor; they do
+; not create the operations.
+(import logic)
+
+(define add.spec ('n)
+  (-> 'n
+    (-> (-> 'n 'n)
+      (-> (-> 'n (-> 'n 'n)) bool)))
+  (lambda zero 'n
+    (lambda succ (-> 'n 'n)
+      (lambda add (-> 'n (-> 'n 'n))
+        ((logic.and
+          (forall m 'n (= ((add m) zero) m)))
+          (forall m 'n
+            (forall n 'n
+              (= ((add m) (succ n)) (succ ((add m) n))))))))))
+
+(define sub.spec ('n)
+  (-> 'n
+    (-> (-> 'n 'n)
+      (-> (-> 'n (-> 'n 'n)) bool)))
+  (lambda zero 'n
+    (lambda succ (-> 'n 'n)
+      (lambda sub (-> 'n (-> 'n 'n))
+        ((logic.and
+          (forall m 'n (= ((sub m) zero) m)))
+          ((logic.and
+            (forall n 'n (= ((sub zero) (succ n)) zero)))
+            (forall m 'n
+              (forall n 'n
+                (= ((sub (succ m)) (succ n)) ((sub m) n))))))))))
+
+(define mul.spec ('n)
+  (-> 'n
+    (-> (-> 'n 'n)
+      (-> (-> 'n (-> 'n 'n))
+        (-> (-> 'n (-> 'n 'n)) bool))))
+  (lambda zero 'n
+    (lambda succ (-> 'n 'n)
+      (lambda add (-> 'n (-> 'n 'n))
+        (lambda mul (-> 'n (-> 'n 'n))
+          ((logic.and
+            (forall m 'n (= ((mul m) zero) zero)))
+            (forall m 'n
+              (forall n 'n
+                (= ((mul m) (succ n))
+                   ((add ((mul m) n)) m))))))))))
+
+; Division by zero is totalized as quotient zero and remainder the dividend.
+; For a nonzero divisor, quotient and remainder satisfy n = q*d+r and r<d,
+; where r<d is witnessed by a positive difference.
+(define divmod.spec ('n)
+  (-> 'n
+    (-> (-> 'n 'n)
+      (-> (-> 'n (-> 'n 'n))
+        (-> (-> 'n (-> 'n 'n))
+          (-> (-> 'n (-> 'n 'n))
+            (-> (-> 'n (-> 'n 'n)) bool))))))
+  (lambda zero 'n
+    (lambda succ (-> 'n 'n)
+      (lambda add (-> 'n (-> 'n 'n))
+        (lambda mul (-> 'n (-> 'n 'n))
+          (lambda div (-> 'n (-> 'n 'n))
+            (lambda mod (-> 'n (-> 'n 'n))
+              ((logic.and
+                (forall n 'n
+                  ((logic.and (= ((div n) zero) zero))
+                             (= ((mod n) zero) n))))
+                (forall n 'n
+                  (forall d 'n
+                    (imp
+                      (not (= d zero))
+                      ((logic.and
+                        (= n ((add ((mul ((div n) d)) d)) ((mod n) d))))
+                        (exists k 'n
+                          (= d ((add ((mod n) d)) (succ k))))))))))))))))

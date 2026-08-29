@@ -1,0 +1,23 @@
+; Logical operators shared by the small law modules.
+
+(define not ()
+  (-> bool bool)
+  (lambda p bool (not p)))
+
+(define and ()
+  (-> bool (-> bool bool))
+  (lambda p bool (lambda q bool (and p q))))
+
+(define or ()
+  (-> bool (-> bool bool))
+  (lambda p bool (lambda q bool (or p q))))
+
+(define imp ()
+  (-> bool (-> bool bool))
+  (lambda p bool (lambda q bool (imp p q))))
+
+(define iff ()
+  (-> bool (-> bool bool))
+  (lambda p bool
+    (lambda q bool
+      (and (imp p q) (imp q p)))))

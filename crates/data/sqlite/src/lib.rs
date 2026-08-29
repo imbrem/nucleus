@@ -11,6 +11,7 @@
 mod cas_vfs;
 mod connection;
 mod image;
+mod resource_vfs;
 pub mod sql;
 
 pub use bytes::Bytes;
@@ -20,3 +21,4 @@ pub use connection::{
     CONNECTION_CATALOG_INTERPRETATION, Connection, ConnectionError,
 };
 pub use image::ImageError;
+pub use resource_vfs::ResourceVfsAdapter;

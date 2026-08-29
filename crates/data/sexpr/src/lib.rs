@@ -69,34 +69,10 @@ impl Atom {
         encoded
     }
 
-    /// Encodes an address as a parenthesized, canonical padded Base64 atom.
+    /// Encodes an address as `!` followed by 64 lowercase hexadecimal digits.
     #[must_use]
     pub fn encode_o256(value: O256) -> String {
-        const ALPHABET: &[u8; 64] =
-            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let bytes = value.as_ref();
-        let mut encoded = String::with_capacity(47);
-        encoded.push_str("!(");
-        for chunk in bytes.chunks_exact(3) {
-            encoded.push(char::from(ALPHABET[usize::from(chunk[0] >> 2)]));
-            encoded.push(char::from(
-                ALPHABET[usize::from((chunk[0] & 0x03) << 4 | chunk[1] >> 4)],
-            ));
-            encoded.push(char::from(
-                ALPHABET[usize::from((chunk[1] & 0x0f) << 2 | chunk[2] >> 6)],
-            ));
-            encoded.push(char::from(ALPHABET[usize::from(chunk[2] & 0x3f)]));
-        }
-        let tail = bytes.chunks_exact(3).remainder();
-        debug_assert_eq!(tail.len(), 2);
-        encoded.push(char::from(ALPHABET[usize::from(tail[0] >> 2)]));
-        encoded.push(char::from(
-            ALPHABET[usize::from((tail[0] & 0x03) << 4 | tail[1] >> 4)],
-        ));
-        encoded.push(char::from(ALPHABET[usize::from((tail[1] & 0x0f) << 2)]));
-        encoded.push('=');
-        encoded.push(')');
-        encoded
+        format!("!{}", value.hex())
     }
 }
 
@@ -157,7 +133,7 @@ pub enum ParseError {
         /// Location of the complete literal, or its remaining input.
         span: Span,
     },
-    /// An address atom was not canonical padded Base64 for exactly 32 bytes.
+    /// An address atom was not exactly 64 canonical lowercase hex digits.
     #[snafu(display("invalid O256 literal at byte {}", span.start))]
     InvalidO256 {
         /// Location of the complete address atom, or its remaining input.
@@ -344,18 +320,22 @@ impl<'a> Parser<'a> {
 
     fn atom(&mut self) -> Result<Event, ParseError> {
         let start = self.offset;
-        if self.input[start..].starts_with("!(") {
-            let Some(relative_end) = self.input[start + 2..].find(')') else {
-                self.offset = self.input.len();
-                return Err(ParseError::InvalidO256 {
-                    span: span(start, self.input.len()),
-                });
-            };
-            let end = start + 2 + relative_end + 1;
-            let encoded = &self.input[start + 2..end - 1];
-            let value = O256::from_base64(encoded).map_err(|_| ParseError::InvalidO256 {
-                span: span(start, end),
-            })?;
+        if self.input.as_bytes()[start] == b'!' {
+            let end = self.bare_end();
+            let encoded = &self.input[start + 1..end];
+            let canonical = encoded.len() == 64
+                && encoded
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'));
+            let value = canonical
+                .then(|| O256::from_hex(encoded))
+                .transpose()
+                .map_err(|_| ParseError::InvalidO256 {
+                    span: span(start, end),
+                })?
+                .ok_or_else(|| ParseError::InvalidO256 {
+                    span: span(start, end),
+                })?;
             self.offset = end;
             return Ok(Event::Atom {
                 value: Atom::O256(value),
@@ -977,6 +957,7 @@ fn atom_text(atom: &Atom) -> Result<String, PrintError> {
             value,
             bare(value)
                 && !value.starts_with([':', '#', '"'])
+                && !value.starts_with('!')
                 && !value.starts_with("b\"")
                 && !value.as_bytes()[0].is_ascii_digit(),
         ),

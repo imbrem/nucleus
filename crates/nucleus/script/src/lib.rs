@@ -20,20 +20,25 @@ use covalence_logic_hol::{
 
 mod init_library;
 mod module;
+mod namespace;
 mod standard;
+mod tree;
 
 pub use covalence_logic_hol_derived::CoproductSchema;
 pub use init_library::{
     InitLibrary, InitLibraryError, InitSlice, compile_init_library, compile_init_slice,
 };
-pub use module::{
-    CompiledModule, ImportDecl, ModuleError, Namespace, compile_module, delaborate_module,
+pub use module::{CompiledModule, ImportDecl, ModuleError, compile_module, delaborate_module};
+pub use namespace::{
+    ForeignNamespaceError, Namespace, NamespaceBinding, NamespaceChild, NamespaceId,
+    NamespaceResolver, RejectForeignNamespaces, ResolvedName,
 };
 pub use standard::{
     LOGICAL_INIT_SCRIPT, LOGICAL_INIT_TRIPLE, NATURAL_INIT_SCRIPT, NATURAL_INIT_TRIPLE,
     SegmentOutput, SegmentTriple, StandardSegment, StandardSegmentError, compile_standard_logical,
     compile_standard_natural,
 };
+pub use tree::{CompiledTree, ProofDecl, ProofSource, SourceUnit, TreeError, compile_tree};
 
 /// Source of the first opcode-free init-library schemata.
 ///

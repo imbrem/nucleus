@@ -1,0 +1,20 @@
+; The coproduct universal property as an open definition schema.
+(import logic)
+
+(define IsCoprod ('a 'b 't)
+  (exists inl (-> 'a 't)
+    (exists inr (-> 'b 't)
+      (ty.forall 'c
+        (forall f (-> 'a 'c)
+          (forall g (-> 'b 'c)
+            (exists h (-> 't 'c)
+              ((logic.and
+                ((logic.and
+                  (forall x 'a (= (h (inl x)) (f x))))
+                  (forall y 'b (= (h (inr y)) (g y)))))
+                (forall k (-> 't 'c)
+                  (imp
+                    (and
+                      (forall x 'a (= (k (inl x)) (f x)))
+                      (forall y 'b (= (k (inr y)) (g y))))
+                    (= k h)))))))))))

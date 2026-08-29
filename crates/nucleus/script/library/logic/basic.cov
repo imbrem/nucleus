@@ -1,0 +1,50 @@
+; Basic logical laws, currently represented as proposition-valued obligations
+; rather than asserted theorem facts.
+(import logic.defs)
+
+(define and.comm () bool
+  (forall p bool (forall q bool
+    (= ((logic.defs.and p) q) ((logic.defs.and q) p)))))
+
+(define or.comm () bool
+  (forall p bool (forall q bool
+    (= ((logic.defs.or p) q) ((logic.defs.or q) p)))))
+
+(define and.assoc () bool
+  (forall p bool (forall q bool (forall r bool
+    (= ((logic.defs.and ((logic.defs.and p) q)) r)
+       ((logic.defs.and p) ((logic.defs.and q) r)))))))
+
+(define or.assoc () bool
+  (forall p bool (forall q bool (forall r bool
+    (= ((logic.defs.or ((logic.defs.or p) q)) r)
+       ((logic.defs.or p) ((logic.defs.or q) r)))))))
+
+(define de-morgan.and () bool
+  (forall p bool (forall q bool
+    (= (logic.defs.not ((logic.defs.and p) q))
+       ((logic.defs.or (logic.defs.not p)) (logic.defs.not q))))))
+
+(define de-morgan.or () bool
+  (forall p bool (forall q bool
+    (= (logic.defs.not ((logic.defs.or p) q))
+       ((logic.defs.and (logic.defs.not p)) (logic.defs.not q))))))
+
+(define imp.trans () bool
+  (forall p bool (forall q bool (forall r bool
+    (imp (and (imp p q) (imp q r)) (imp p r))))))
+
+(define iff.trans () bool
+  (forall p bool (forall q bool (forall r bool
+    (imp
+      (and ((logic.defs.iff p) q) ((logic.defs.iff q) r))
+      ((logic.defs.iff p) r))))))
+
+(define iff.symm () bool
+  (forall p bool (forall q bool
+    (imp ((logic.defs.iff p) q) ((logic.defs.iff q) p)))))
+
+; Propositional antisymmetry: logical equivalence coincides with equality.
+(define iff.antisymm () bool
+  (forall p bool (forall q bool
+    (= ((logic.defs.iff p) q) (= p q)))))

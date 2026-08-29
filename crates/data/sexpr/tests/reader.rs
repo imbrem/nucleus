@@ -12,7 +12,7 @@ fn atom(expression: &Expr) -> &Atom {
 
 #[test]
 fn reads_every_atom_kind_and_preserves_spans() {
-    let source = "(sym \"a\\nβ\" b\"\\0\\x01\\x02\\xff\" 123abc :key #define !(q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=) 'a)";
+    let source = "(sym \"a\\nβ\" b\"\\0\\x01\\x02\\xff\" 123abc :key #define !abababababababababababababababababababababababababababababababab 'a)";
     let document = parse(source).unwrap();
     let ExprKind::List(node) = document.expressions()[0].node() else {
         panic!("expected list");
@@ -72,8 +72,8 @@ fn byte_literals_cover_all_bytes_and_reject_malformed_source() {
 }
 
 #[test]
-fn o256_literals_require_exact_canonical_padded_base64() {
-    let canonical = "!(q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=)";
+fn o256_literals_require_exact_canonical_lowercase_hex() {
+    let canonical = "!abababababababababababababababababababababababababababababababab";
     let parsed = parse_one(canonical).unwrap();
     let Atom::O256(value) = atom(&parsed) else {
         panic!("expected O256 atom");
@@ -81,10 +81,11 @@ fn o256_literals_require_exact_canonical_padded_base64() {
     assert_eq!(value.as_ref(), &[0xab; 32]);
     assert_eq!(Atom::encode_o256(*value), canonical);
     for invalid in [
-        "!()",
-        "!(q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s)",
-        "!(q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s!)",
-        "!(q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=",
+        "!",
+        "!abab",
+        "!ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB",
+        "!abababababababababababababababababababababababababababababababag",
+        "!(abababababababababababababababababababababababababababababababab)",
     ] {
         assert!(matches!(
             parse_one(invalid),

@@ -1,6 +1,6 @@
 use covalence_nucleus_script::{compile_module, delaborate_module};
 
-const ZERO: &str = "!(AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=)";
+const ZERO: &str = "!0000000000000000000000000000000000000000000000000000000000000000";
 
 #[test]
 fn nested_namespaces_resolve_lexically_without_entering_the_kernel() {
@@ -37,6 +37,13 @@ fn nested_namespaces_resolve_lexically_without_entering_the_kernel() {
         without_import.kernel().arena().addr(),
         "import metadata must not mutate checked state"
     );
+}
+
+#[test]
+fn dotted_definition_names_create_relative_namespace_paths() {
+    let module = compile_module("(namespace logic (define and.comm () bool true))")
+        .expect("dotted definition");
+    assert!(module.namespace().get("logic.and.comm").is_some());
 }
 
 #[test]

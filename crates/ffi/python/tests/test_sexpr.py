@@ -17,7 +17,7 @@ from covalence.data.sexpr import (
 def test_atoms_keep_fixed_kinds_and_python_values() -> None:
     expression = parse_one(
         '(name "text\\n" b"A\\x00\\xff" 123x :key #define '
-        "!(AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=))"
+        "!0000000000000000000000000000000000000000000000000000000000000000)"
     )
     values = expression.items
     assert [(value.atom_value.kind, value.atom_value.value) for value in values] == [
