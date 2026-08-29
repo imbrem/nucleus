@@ -2,6 +2,7 @@
   import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
   import { onMount } from "svelte";
   import type { GraphEdge, GraphNode } from "./repository-data";
+  import { nodeCategoryLabels } from "./site-content";
 
   interface Props {
     eyebrow: string;
@@ -185,21 +186,27 @@
   </div>
   <div class="graph-toolbar graph-toolbar-simple">
     <label>
-      <span class="sr-only">Find a crate</span>
+      <span class="sr-only">Find by name</span>
       <input
         type="search"
-        placeholder="Find a crate"
+        placeholder="Find by name"
         bind:value={query}
         oninput={search}
       />
     </label>
     <div class="view-controls" aria-label="Graph view controls">
-      <button type="button" title="Zoom out" aria-label="Zoom out" onclick={() => zoom(0.8)}
-        >−</button
+      <button
+        type="button"
+        title="Zoom out"
+        aria-label="Zoom out"
+        onclick={() => zoom(0.8)}>−</button
       >
       <button type="button" title="Fit graph" onclick={fit}>Fit</button>
-      <button type="button" title="Zoom in" aria-label="Zoom in" onclick={() => zoom(1.25)}
-        >+</button
+      <button
+        type="button"
+        title="Zoom in"
+        aria-label="Zoom in"
+        onclick={() => zoom(1.25)}>+</button
       >
     </div>
   </div>
@@ -214,12 +221,12 @@
       <aside class="node-detail" aria-live="polite">
         <button
           type="button"
-          aria-label="Close crate details"
+          aria-label="Close details"
           onclick={() => (selected = undefined)}>×</button
         >
-        <span>{selected.category}</span><strong>{selected.name}</strong><code
-          >{selected.version}</code
-        >
+        <span>{nodeCategoryLabels[selected.category]}</span><strong
+          >{selected.name}</strong
+        ><code>{selected.version}</code>
       </aside>
     {/if}
   </div>
