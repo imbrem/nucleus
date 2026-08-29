@@ -91,12 +91,7 @@ fn library_tree_compiles_once_in_dependency_order() {
             .is_some()
     );
     assert!(tree.namespace().get("logic.and").is_none());
-    assert!(
-        tree.module()
-            .namespace()
-            .get("nat.rec.rec.spec")
-            .is_some()
-    );
+    assert!(tree.module().namespace().get("nat.rec.rec.spec").is_some());
 
     let whole = ResourceVfs::read(&resources, "tactics/cache.sqlite").expect("resource bytes");
     assert_eq!(&whole[..6], b"SQLite");
