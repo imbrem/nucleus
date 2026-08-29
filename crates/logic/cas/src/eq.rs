@@ -1,23 +1,24 @@
 //! Propositions about blob expressions, and the decision procedure for them.
 //!
-//! [`BlobEq`] is the one proposition today, and it is VALID when its two sides
-//! denote the same thing in EVERY model — a model being a total, injective
-//! `σ : O256 -> Bytes` extending the CAS. The crate docs define it, give the
-//! weak (Kleene) reading of "the same thing", and state the standing
-//! collision-freedom hypothesis that all of this rests on, under "Standing
-//! assumption: the CAS is collision-free". It is stated there ONCE; no rule
-//! below repeats it and no rule's name carries it.
+//! [`BlobEq`] is the one proposition today, and it is *valid* when its two
+//! sides denote the same thing in every model — a model being a total,
+//! injective `σ : O256 -> Bytes` extending the CAS.
+//!
+//! The crate docs define a model, give the weak (Kleene) reading of "the same
+//! thing", and state the standing collision-freedom hypothesis that all of this
+//! rests on, under "Standing assumption: the CAS is collision-free". It is
+//! stated there once; no rule below repeats it and no rule's name carries it.
 //!
 //! Three consequences are load-bearing and easy to get wrong:
 //!
-//! - Two expressions UNDEFINED in every model are equal, because validity
+//! - Two expressions undefined in every model are equal, because validity
 //!   compares two `Option`s. Undefinedness comes only from an out-of-range
 //!   slice and from a `Cat` with an undefined side — never from a digest —
 //!   and it propagates outward, so a rule may never refute merely because one
 //!   side failed to evaluate.
-//! - DISTINCT DIGESTS ARE REFUTABLE, and this is what interpreting in a model
+//! - Distinct digests are refutable, and this is what interpreting in a model
 //!   buys. `σ` is injective, so `h1 != h2` gives `σ h1 != σ h2` in every model:
-//!   the two sides differ EVERYWHERE rather than merely somewhere, which is
+//!   the two sides differ everywhere rather than merely somewhere, which is
 //!   what refuting validity asks for. [`BlobProp::decide`] answers `Some(false)`
 //!   for that pair. Equal digests go to REFL, and nothing weaker than a bare
 //!   digest on both sides is refutable this way: `Slice(Blake3 h1, s)` and
@@ -26,13 +27,13 @@
 //!   [`BlobExpr::len`] certifies definedness: `Some(n)` says the expression is
 //!   defined in every model and is `n` bytes long in every one of them.
 //!
-//! Every `Some(false)` this module produces is in fact the STRONGER claim —
+//! Every `Some(false)` this module produces is in fact the stronger claim —
 //! the sides differ in every model, not merely in one — which is what a future
 //! n-ary distinctness proposition will want to consume.
 //!
-//! Congruence gives equality and never disequality (constraint 2): `Cat("ab",
-//! "c")` and `Cat("a", "bc")` are equal with unequal operands, so no rule here
-//! concludes `false` from mismatched structure.
+//! Congruence gives equality and never disequality: `Cat("ab", "c")` and
+//! `Cat("a", "bc")` are equal with unequal operands, so no rule here concludes
+//! `false` from mismatched structure.
 //!
 //! # The calculus
 //!
@@ -48,20 +49,24 @@
 //!
 //! Every one of them is total except [`BlobFact::check`], which declines
 //! wherever answering would be a guess, and [`BlobFact::trans`], which declines
-//! when the middle terms are different expressions. The congruence rules build
-//! a bigger expression and are total in doing so; what happens past
-//! [`MAX_TREE_NODES`](crate::MAX_TREE_NODES) is that [`BlobProp::decide`] stops
-//! answering questions about the conclusion, never that the conclusion stops
-//! following. [`BlobFact::erase`] re-types a fact without touching its claim.
+//! when the middle terms are different expressions.
+//!
+//! The congruence rules build a bigger expression and are total in doing so;
+//! what happens past [`MAX_TREE_NODES`](crate::MAX_TREE_NODES) is that
+//! [`BlobProp::decide`] stops answering questions about the conclusion, never
+//! that the conclusion stops following. [`BlobFact::erase`] re-types a fact
+//! without touching its claim.
 //!
 //! Nothing else can introduce a fact within this layer. The one introduction
 //! form from *outside* it is the bridge,
 //! [`CasRangeFact::to_blob_fact`](crate::CasRangeFact::to_blob_fact), which is
-//! an ORDINARY rule: a model extends the CAS by definition, so a checked pair
+//! an ordinary rule: a model extends the CAS by definition, so a checked pair
 //! makes its equality valid with no assumption beyond the standing one.
 //! Reading a fact back out through [`BlobFact::to_range_fact`] is ordinary
-//! too. Cancellation and n-ary distinctness are deferred, at named seams below
-//! the rules.
+//! too.
+//!
+//! Cancellation and n-ary distinctness are deferred. Each has a `DEFERRED:`
+//! comment below the rules saying what it would look like and why it is sound.
 //!
 //! Lean: `Nucleus.BlobEq` (the structure) and `Nucleus.BlobEq.Valid` (the
 //! proposition).
@@ -107,14 +112,17 @@ pub trait BlobProp: sealed::BlobProp + Clone + Debug {
     /// `Some(true)` means valid — it holds in every model. `Some(false)` means
     /// refuted, and every branch that answers it here refutes in the strong
     /// way, by making the two sides differ in every model rather than in one.
-    /// `None` means the rules do not settle it. It NEVER guesses (constraint
-    /// 6): `None` is always available and always sound.
+    /// `None` means the rules do not settle it.
     ///
-    /// Lean: `Nucleus.BlobEq.decide?`, owing `valid_of_decide?_true` and
-    /// `not_valid_of_decide?_false` — the two halves of "never guesses". The
-    /// digest branch is `not_valid_of_decide?_false`'s only interesting case,
-    /// and it is two lines from the model's injectivity field rather than a
-    /// separating-model construction.
+    /// It never guesses, because `None` is always available and always sound.
+    ///
+    /// Lean: `Nucleus.BlobEq.decide?`, proved both ways by
+    /// `Nucleus.BlobEq.valid_of_decide?_true` and
+    /// `Nucleus.BlobEq.not_valid_of_decide?_false` — the two halves of "never
+    /// guesses". The digest branch is `not_valid_of_decide?_false`'s only
+    /// interesting case, and it is two lines from the model's injectivity field
+    /// (`Nucleus.BlobExpr.denote_blake3_ne`) rather than a separating-model
+    /// construction.
     #[must_use]
     fn decide(&self) -> Option<bool>;
 }
@@ -128,8 +136,9 @@ pub trait BlobProp: sealed::BlobProp + Clone + Debug {
 /// The two operand types are a Rust-only convenience. They keep a carrier such
 /// as [`O256`](crate::O256) or [`Bytes`](crate::Bytes) from having to be
 /// reified into a [`BlobExpr`](crate::BlobExpr) before a claim can be made
-/// about it, and they let the congruence rules state their result type. Lean
-/// has one type, so `Nucleus.BlobEq` has no parameters.
+/// about it, and they let the congruence rules state their result type.
+///
+/// Lean has one type, so `Nucleus.BlobEq` has no parameters.
 ///
 /// Lean: `Nucleus.BlobEq` (the structure) and `Nucleus.BlobEq.Valid` (the
 /// proposition), mirroring `CasAssertion` / `CasAssertion.Valid`.
@@ -165,17 +174,18 @@ impl<L: BlobLike, R: BlobLike> BlobProp for BlobEq<L, R> {
     /// | anything else | `None` |
     ///
     /// There is deliberately no structural-mismatch branch — see the module
-    /// docs for the `Cat` trap — and the digest branch fires only on two BARE
+    /// docs for the `Cat` trap — and the digest branch fires only on two bare
     /// digests, never on slices or concatenations of them.
     fn decide(&self) -> Option<bool> {
-        // SIZE. First, ahead even of REFL, because REFL is the EXPENSIVE
-        // branch: `==` walks both TREES, which is exponential in a shared
-        // DAG's depth and declines at no point, and `to_expr` is no cheaper,
-        // since reifying a carrier rebuilds it node by node. Declining is
-        // sound for every proposition in this calculus, so an expression too
-        // large to walk is simply not decided. That costs completeness — REFL
-        // as a RULE is still total, and `BlobFact::refl` still mints the fact
-        // this branch will no longer confirm.
+        // SIZE. First, ahead even of REFL, because REFL is the expensive
+        // branch: `==` walks both trees, which is exponential in a shared
+        // DAG's depth and declines at no point.
+        //
+        // Declining is sound for every proposition in this calculus, so an
+        // expression too large to walk is simply not decided. That costs
+        // completeness alone: REFL as a rule is still total, and
+        // `BlobFact::refl` still mints the fact this branch will no longer
+        // confirm.
         if self.lhs.size() > MAX_TREE_NODES || self.rhs.size() > MAX_TREE_NODES {
             return None;
         }
@@ -185,31 +195,31 @@ impl<L: BlobLike, R: BlobLike> BlobProp for BlobEq<L, R> {
         if lhs == rhs {
             return Some(true);
         }
-        // DIGEST (constraint 1). A model is INJECTIVE, so `h1 != h2` gives
-        // `σ h1 != σ h2` in EVERY model: the two sides differ everywhere
-        // rather than merely somewhere, which is exactly what refuting
-        // validity needs. No model construction is involved, and neither side
-        // has to be resolvable — this is the one refutation that survives a
-        // digest.
+        // DIGEST. A model is injective, so `h1 != h2` gives `σ h1 != σ h2` in
+        // every model: the two sides differ everywhere rather than merely
+        // somewhere, which is exactly what refuting validity needs. No model
+        // construction is involved, and neither side has to be resolvable —
+        // this is the one refutation that survives a digest.
         //
         // Written to answer `left == right` rather than a bare `false`, so
         // that it stays correct if it is ever reordered above REFL. Reaching
         // it with equal hashes is impossible today.
         //
-        // The pattern matches the ALGORITHM as well as the hash. A future
+        // The pattern matches the algorithm as well as the hash. A future
         // `Sha256` variant would be a second namespace with its own `σ`,
         // saying nothing about this one, so a cross-algorithm pair must go on
-        // falling through to the branches below, which cannot settle it. A
-        // `Sha256`/`Sha256` pair falls through too until someone writes its
-        // arm; that is incompleteness, never unsoundness, which is why this
+        // falling through to the branches below, which cannot settle it.
+        //
+        // A `Sha256`/`Sha256` pair falls through too until someone writes its
+        // arm. That is incompleteness, never unsoundness, which is why this
         // one place may fall through rather than matching every variant.
         if let (BlobExpr::Blake3(left), BlobExpr::Blake3(right)) = (&lhs, &rhs) {
             return Some(left == right);
         }
-        // LENGTH (constraint 3). Sound because `Some` certifies definedness:
-        // both sides are defined in every model, and no byte string has two
-        // lengths. Cheap, so it runs before evaluation. `cmp_length` rather
-        // than `==` so that two unknown lengths never look alike.
+        // LENGTH. Sound because `Some` certifies definedness: both sides are
+        // defined in every model, and no byte string has two lengths. Cheap,
+        // so it runs before evaluation. `cmp_length` rather than `==` so that
+        // two unknown lengths never look alike.
         if matches!(
             cmp_length(&lhs, &rhs),
             Some(Ordering::Less | Ordering::Greater)
@@ -217,7 +227,7 @@ impl<L: BlobLike, R: BlobLike> BlobProp for BlobEq<L, R> {
             return Some(false);
         }
         // EVALUATION. `eval = Some v` pins the denotation to `v` in every
-        // model, so this settles the question in BOTH directions.
+        // model, so this settles the question in both directions.
         Some(lhs.eval()? == rhs.eval()?)
     }
 }
@@ -241,19 +251,19 @@ impl<L: BlobLike, R: BlobLike> BlobProp for BlobEq<L, R> {
 ///
 /// # Naming
 ///
-/// The sketch this implements calls the wrapper `CasFact<F: BlobProp>`. The
-/// shape is exactly that — one private field, generic over the sealed
-/// proposition trait — but the name is not, because
-/// [`CasFact`](crate::CasFact) already names a fact of a different SHAPE: it
-/// is a hash, a range and the bytes filling it, while this is a proposition
-/// about two expressions of which only some have that shape. The two say the
-/// same thing where they overlap — see [`Self::to_range_fact`] and
-/// [`CasRangeFact::to_blob_fact`](crate::CasRangeFact::to_blob_fact) — but
+/// The obvious name for this wrapper would be `CasFact<P: BlobProp>`, but
+/// [`CasFact`](crate::CasFact) already names a fact of a different shape: a
+/// hash, a range and the bytes filling it, where this is a proposition about
+/// two expressions of which only some have that shape.
+///
+/// The two say the same thing where they overlap — see [`Self::to_range_fact`]
+/// and [`CasRangeFact::to_blob_fact`](crate::CasRangeFact::to_blob_fact) — but
 /// repointing the name would leave every existing consumer holding a value
 /// with different fields. See the crate docs.
 ///
-/// Lean: `Nucleus.BlobEqFact`, owed — Lean specialises the wrapper to equality,
-/// carrying a `BlobEq.Valid` proof where this carries a private field.
+/// Lean: `Nucleus.BlobEqFact`, which specialises the wrapper to equality,
+/// carrying a `BlobEq.Valid` proof where this carries a private field. It is
+/// also indexed by the store it was checked against, which this is not.
 ///
 /// ```compile_fail
 /// use covalence_logic_cas::{BlobEq, BlobExpr, BlobFact, Bytes};
@@ -267,14 +277,15 @@ pub struct BlobFact<P: BlobProp>(P);
 impl<P: BlobProp> BlobFact<P> {
     /// Introduces a fact. Every caller is a checking rule of this crate.
     ///
-    /// Lean: `Nucleus.BlobEqFact.mk`, owed.
+    /// Lean: `Nucleus.BlobEqFact.mk`, whose second field is the `Valid` proof
+    /// this erases.
     pub(crate) const fn trust(prop: P) -> Self {
         Self(prop)
     }
 
     /// Borrows the proposition this fact establishes.
     ///
-    /// Lean: `Nucleus.BlobEqFact.prop`, owed.
+    /// Lean: `Nucleus.BlobEqFact.prop`.
     #[must_use]
     pub const fn prop(&self) -> &P {
         &self.0
@@ -284,20 +295,24 @@ impl<P: BlobProp> BlobFact<P> {
     /// decision procedure proves it.
     ///
     /// Sound because [`BlobProp::decide`] never guesses: `Some(true)` means
-    /// provable, so it *is* the proof. This declines in both of the other two
-    /// cases, and they are not the same thing. `None` is "the rules do not
-    /// settle it", and every reason for it is listed on [`BlobProp::decide`].
-    /// `Some(false)` is a refutation, which this crate has no fact type for.
-    /// That includes the digest branch, which is decided rather than deferred
-    /// yet still mints nothing: a refutation is not a `BlobFact` of anything
-    /// until a distinctness proposition exists to carry it.
+    /// provable, so it *is* the proof.
+    ///
+    /// This declines in both of the other two cases, and they are not the same
+    /// thing. `None` is "the rules do not settle it", and every reason for it
+    /// is listed on [`BlobProp::decide`]. `Some(false)` is a refutation, which
+    /// this crate has no fact type for.
+    ///
+    /// That includes the digest branch, decided rather than deferred yet still
+    /// minting nothing: a refutation is not a `BlobFact` of anything until a
+    /// distinctness proposition exists to carry it.
     ///
     /// Generic over every present and future [`BlobProp`], which is the whole
     /// reason `decide` lives on the proposition rather than being baked into an
     /// equality-specific rule.
     ///
-    /// Lean: `Nucleus.BlobEqFact.check?`, owed, resting on
-    /// `Nucleus.BlobEq.valid_of_decide?_true`.
+    /// Lean: `Nucleus.BlobEqFact.check?`, resting on
+    /// `Nucleus.BlobEq.valid_of_decide?_true`. It is specialised to equality
+    /// there, since Lean has no `BlobProp` class to be generic over.
     ///
     /// ```
     /// use covalence_logic_cas::{BlobEq, BlobExpr, BlobFact, Bytes};
@@ -323,12 +338,14 @@ impl<B: BlobLike> BlobFact<BlobEq<B, B>> {
     /// RULE: REFL. Total.
     ///
     /// Sound with no side condition whatsoever: in each model an expression
-    /// denotes what it denotes. It needs no evaluation, no length and no
-    /// definedness, so it holds for a digest this crate cannot resolve, for an
-    /// out-of-range slice and for a concatenation too long to measure — none
-    /// of which has a length or bytes here, and the middle one of which is
-    /// undefined in every model. Only the WEAK reading of validity makes that
-    /// middle case work; see the crate docs.
+    /// denotes what it denotes.
+    ///
+    /// It needs no evaluation, no length and no definedness, so it holds for a
+    /// digest this crate cannot resolve, for an out-of-range slice and for a
+    /// concatenation too long to measure — none of which has a length or bytes
+    /// here, and the middle one of which is undefined in every model. Only the
+    /// weak reading of validity makes that middle case work; see the crate
+    /// docs.
     ///
     /// Lean: `Nucleus.BlobEq.valid_refl`.
     #[must_use]
@@ -354,12 +371,13 @@ impl<L: BlobLike, R: BlobLike> BlobFact<BlobEq<L, R>> {
     /// model, needing no definedness — two undefined middles compose as
     /// happily as two defined ones.
     ///
-    /// `None` when the middle terms are different EXPRESSIONS. This check is
+    /// `None` when the middle terms are different expressions. This check is
     /// the whole of the side condition, and the types supply none of it: `M` is
     /// unconstrained by `R`, so without the check `a = b` and `c = d` would
-    /// compose into `a = d` for any `b` and `c` whatsoever. The comparison is on
-    /// the reified expressions rather than on the carriers, so the two spellings
-    /// of a whole-blob claim do compose:
+    /// compose into `a = d` for any `b` and `c` whatsoever.
+    ///
+    /// The comparison is on the reified expressions rather than on the
+    /// carriers, so the two spellings of a whole-blob claim do compose:
     /// `BlobExpr::slice` normalises `0..` away, so a `BlobSlice<O256,
     /// RangeFull>` middle meets an [`O256`](crate::O256) one.
     ///
@@ -387,18 +405,19 @@ impl<L: BlobLike, R: BlobLike> BlobFact<BlobEq<L, R>> {
     /// equal wholes — including when a part is undefined, which makes both
     /// wholes undefined together.
     ///
-    /// This gives EQUALITY ONLY. There is no converse arm and none may be
+    /// This gives equality only. There is no converse arm and none may be
     /// added: `Cat("ab", "c")` and `Cat("a", "bc")` are equal with unequal
-    /// operands (constraint 2), so unequal parts say nothing about the wholes.
-    /// The sound partial converse is cancellation, which needs a length
-    /// precondition and is deferred; see the seam below.
+    /// operands, so unequal parts say nothing about the wholes. The sound
+    /// partial converse is cancellation, which needs a length precondition and
+    /// is deferred; see the `DEFERRED:` comment below the rules.
     ///
-    /// TOTAL. Building a conclusion past
+    /// Total. Building a conclusion past
     /// [`MAX_TREE_NODES`](crate::MAX_TREE_NODES) is allowed — the conclusion
     /// follows whatever its size — and the consequence is only that
     /// [`BlobProp::decide`] will decline to say anything about it.
     ///
-    /// Lean: `Nucleus.BlobEq.valid_cat`, owed, and total there too.
+    /// Lean: `Nucleus.BlobEq.valid_cat`, total there too, and with the same
+    /// absence of a converse pinned by `Nucleus.exists_valid_cat_of_operands_ne`.
     #[must_use]
     pub fn cat<L2: BlobLike, R2: BlobLike>(
         &self,
@@ -417,13 +436,14 @@ impl<L: BlobLike, R: BlobLike> BlobFact<BlobEq<L, R>> {
     /// range on one side is out of range on the other, so both sides are
     /// undefined together.
     ///
-    /// Taking ONE span, rather than one per side, is what makes the unsound
+    /// Taking one span, rather than one per side, is what makes the unsound
     /// shape unrepresentable: `Slice(a, s) = Slice(b, t)` does not follow from
     /// `a = b` for `s ≠ t`. As with [`Self::cat`], this yields equality only.
     ///
-    /// TOTAL, for the reason given on [`Self::cat`].
+    /// Total, for the reason given on [`Self::cat`].
     ///
-    /// Lean: `Nucleus.BlobEq.valid_slice`, owed, and total there too.
+    /// Lean: `Nucleus.BlobEq.valid_slice`, total there too, and taking one
+    /// span for both sides for the same reason.
     #[must_use]
     pub fn slice<S: BlobRange>(
         &self,
@@ -451,56 +471,23 @@ impl<L: BlobLike, R: BlobLike> BlobFact<BlobEq<L, R>> {
     }
 }
 
-// DEFERRED (R5, R6). CANCELLATION goes HERE, as one impl block over
-// `BlobFact<BlobEq<BlobCat<A, B>, BlobCat<C, D>>>`, the ONLY other caller of
-// `cmp_length`:
+// DEFERRED: CANCELLATION. One impl block over
+// `BlobFact<BlobEq<BlobCat<A, B>, BlobCat<C, D>>>`, the only other caller of
+// `cmp_length`, offering `cancel_tails` and `cancel_heads`. It adds no trait
+// method, no variant, and touches none of the rules above, and it is not
+// `cat` run backwards: nothing in it concludes disequality.
 //
-//   impl<A: BlobLike, B: BlobLike, C: BlobLike, D: BlobLike>
-//       BlobFact<BlobEq<BlobCat<A, B>, BlobCat<C, D>>>
-//   {
-//       /// `Some` iff `cmp_length(a, c) == Some(Equal)`.
-//       pub fn cancel_tails(&self) -> Option<BlobFact<BlobEq<B, D>>>;
-//       /// `Some` iff additionally `b.len().is_some()`.
-//       pub fn cancel_heads(&self) -> Option<BlobFact<BlobEq<A, C>>>;
-//   }
+// Lean already proves it, as `Nucleus.BlobEq.valid_cancel_of_cmpLength?_heads`
+// and `_tails` with `valid_cancel_same_head` and `_tail` as corollaries, so the
+// rule is safe to add. The precondition, the definedness side condition and the
+// digest case it does not yet reach are set out in issue #1135.
 //
-// It adds no trait method, no variant, and touches none of the five rules
-// above — in particular it is NOT `BlobFact::cat` run backwards, since nothing
-// in it concludes disequality from unequal operands. Exact provable content,
-// all of it route (i) — both lengths are `Some` and equal:
-//
-//   from BlobEq (cat a b) (cat c d) and ...          conclude
-//   cmp_length(a, c) == Some(Equal)                  BlobEq b d, unconditionally
-//   the same, plus b.len().is_some()                 also BlobEq a c
-//   cmp_length(b, d) == Some(Equal)                  BlobEq a c; plus a.len()
-//                                                    known, also BlobEq b d
-//
-// R5's two syntactic special cases are the instances where one operand is the
-// same expression AND its length is known, so only the general rule is worth
-// writing.
-//
-// Route (ii) — "the shared component is syntactically identical, so it
-// cancels" — CHANGED with the model semantics, and is now SOUND given
-// DEFINEDNESS of that component. In each model a syntactically shared `x`
-// denotes the same `Option` on both sides; if it is defined there, then
-// `cat x b` and `cat x c` agreeing forces `b` and `c` to be undefined together
-// and to agree when defined, which is precisely `BlobEq b c` in that model. If
-// `x` is undefined in some model, both wholes are undefined there and the
-// premise says nothing, which is why definedness is not optional. A `Some`
-// length certifies definedness, so as written route (ii) is subsumed by route
-// (i). What it would ADD is the digest case: `Blake3 h` is defined in every
-// model yet has no known length, so `Cat(Blake3 h, b) = Cat(Blake3 h, c)` does
-// entail `b = c` while `cmp_length` reports `None`. Capturing that wants a
-// definedness observation separate from `len` — true for a digest, for literal
-// bytes and for a zero run, needing the bounds check only for a slice.
-// Deferred with the rest; adding it is purely additive.
-//
-// Route (iii) — an equality FACT as the premise, in place of syntactic
-// sharing — stays UNSOUND for the same reason route (ii) needs definedness:
+// Route (iii) is an equality fact as the premise, in place of syntactic
+// sharing. It stays unsound, for the same reason route (ii) needs definedness:
 // `BlobEq a c` is satisfied by two expressions undefined in every model, and
 // then `Cat(a, b) = Cat(c, d)` holds for arbitrary `b != d`.
 //
-// DEFERRED (R2). N-ARY DISTINCTNESS. The BINARY case is no longer deferred:
+// DEFERRED: N-ARY DISTINCTNESS. The binary case is not deferred:
 // `BlobEq(Blake3 h1, Blake3 h2)` with `h1 != h2` is refuted by `decide` above,
 // because a model is injective. What is left is the n-ary proposition
 //
@@ -508,22 +495,27 @@ impl<L: BlobLike, R: BlobLike> BlobFact<BlobEq<L, R>> {
 //
 // as a second `BlobProp`, which inherits the generic introduction rule for
 // free and can decide a list of digests in one sorted pass rather than n²
-// calls to `decide`. Two things to carry over when it lands. It must consume
-// the STRONG refutation — differing in every model, which is what every
-// `Some(false)` above establishes — since "not valid" alone does not compose
-// pairwise. And it must match the SAME algorithm on both sides: `Blake3(h)`
-// and a future `Sha256(h)` carrying identical bytes are interpreted by
-// different maps and say nothing about each other, so the rule is "same
-// namespace, different digest implies different blob", with unknown as the
-// fail-safe default.
+// calls to `decide`.
 //
-// The BRIDGE between the two layers is below. Both directions are ORDINARY
+// Two things to carry over when it lands.
+//
+// - It must consume the strong refutation — differing in every model, which is
+//   what every `Some(false)` above establishes — since "not valid" alone does
+//   not compose pairwise.
+// - It must match the same algorithm on both sides. `Blake3(h)` and a future
+//   `Sha256(h)` carrying identical bytes are interpreted by different maps and
+//   say nothing about each other, so the rule is "same namespace, different
+//   digest implies different blob", with unknown as the fail-safe default.
+//
+// The bridge between the two layers is below. Both directions are ordinary
 // rules, carrying no hypothesis of their own: a model extends the CAS by
 // definition, so a checked pair makes its equality valid, and conversely an
 // equality about `Blake3(h)` can only be valid when the CAS pins `h`, an
-// unpinned hash being free to read differently in some other model. They are
-// still asymmetric in one way that has nothing to do with trust: going up is
-// total, and coming back down is partial in the shapes it can express.
+// unpinned hash being free to read differently in some other model.
+//
+// They are still asymmetric in one way that has nothing to do with trust:
+// going up is total, and coming back down is partial in the shapes it can
+// express.
 
 impl<R: BlobRange> CasRangeFact<R> {
     /// Reads this fact as a blob-expression equality.
@@ -537,23 +529,20 @@ impl<R: BlobRange> CasRangeFact<R> {
     ///
     /// # Trust
     ///
-    /// ORDINARY, and total. It USED to be named for a collision-freedom
-    /// hypothesis it carried alone, back when `Blake3(h)` denoted every blob
-    /// named `h` and this was a strengthening. Under the model semantics it
-    /// carries nothing of its own: a model *is* a map extending the CAS, so
-    /// `σ h = b` for a checked pair `(h, b)` holds BY DEFINITION, and for a
-    /// sub-range fact the same definition pins `σ h` on that range. The
-    /// equality is valid in every model, and its proof is one step.
+    /// Ordinary, and total. It carries no hypothesis of its own: a model *is*
+    /// a map extending the CAS, so `σ h = b` holds by definition for a checked
+    /// pair `(h, b)`, and for a sub-range fact the same definition pins `σ h`
+    /// on that range.
     ///
-    /// Collision-freedom has not gone away; it moved. It is now the standing
-    /// assumption of the whole calculus — no models exist without it, and then
-    /// every proposition is vacuously valid — stated once in the crate docs
-    /// under "Standing assumption: the CAS is collision-free". Naming this one
-    /// method for it would misreport where the exposure lies, since `refl` is
-    /// just as vacuous under a collision as this is.
+    /// Collision-freedom is not this rule's concern. It is the standing
+    /// assumption of the whole calculus, stated once in the crate docs, and
+    /// `refl` is just as vacuous without it as this is.
     ///
-    /// Lean: `Nucleus.BlobEq.valid_ofCasRange`, whose only hypothesis is that
-    /// the pair is a member of the model's CAS. Owed.
+    /// Lean: `Nucleus.BlobEq.valid_ofCasRange_of_mem`, whose hypotheses are
+    /// that the pair is in the store and that slicing its blob yields these
+    /// bytes — nothing about the naming function beyond the check the pair
+    /// already carries. `Nucleus.BlobEq.valid_ofCasRange` is the *unstored*
+    /// variant, and it is the one that has to assume the section property.
     ///
     /// ```
     /// use covalence_logic_cas::{BlobExpr, Bytes, CasFact};
@@ -583,9 +572,10 @@ impl BlobFact<BlobEq<BlobExpr, BlobExpr>> {
     /// way. A `BlobFact` is a proof that its equality holds in every model, and
     /// an equality about `Blake3(h)` can only hold in every model when the CAS
     /// pins `h` there: an unpinned hash is free, so some other model reads
-    /// different bytes at it and refutes the claim. So the premise already
-    /// says what a [`CasRangeFact`] asserts, and this rule only rearranges it
-    /// into the other layer's shape.
+    /// different bytes at it and refutes the claim.
+    ///
+    /// So the premise already says what a [`CasRangeFact`] asserts, and this
+    /// rule only rearranges it into the other layer's shape.
     ///
     /// Partial for three separate reasons, none of which is a guess:
     ///
@@ -601,13 +591,22 @@ impl BlobFact<BlobEq<BlobExpr, BlobExpr>> {
     /// That last check is redundant under [`BlobEq`] today: a closed slice of
     /// the wrong width is either undefined or of a different length in every
     /// model, while the literal bytes are always defined, so no such equality
-    /// is valid in the first place. It is kept because
-    /// [`CasRangeFact::extent`] assumes the agreement and this is trusted code
-    /// minting a fact of the other layer. It also rejects a backwards span,
-    /// which reaches here through [`BlobRange::span`]'s bypass of
-    /// `BlobSpan::new`.
+    /// is valid in the first place.
     ///
-    /// Lean: `Nucleus.CasRange.of_valid`, carrying no hypothesis. Owed.
+    /// It is kept because [`CasRangeFact::extent`] assumes the agreement and
+    /// this is trusted code minting a fact of the other layer. It also rejects
+    /// a backwards span, which reaches here through [`BlobRange::span`]'s
+    /// bypass of `BlobSpan::new`.
+    ///
+    /// Lean: `Nucleus.CasRange.of_valid`, which is proved but *not*
+    /// hypothesis-free: stated for an arbitrary hash, it needs one model that
+    /// is a section (`Nucleus.Model.IsSection`), because an equality pins
+    /// `σ h` while `Nucleus.CasRange.Valid` asks for a blob *named* `h`.
+    ///
+    /// The step this rule leans on instead — that a valid equality about
+    /// `Blake3(h)` forces the CAS to pin `h`, so a checked fact naming it
+    /// already exists — is specific to quantifying over models of *this*
+    /// crate's facts, and has no Lean statement yet.
     ///
     /// ```
     /// use std::ops::{RangeFrom, RangeFull};
@@ -714,7 +713,7 @@ mod tests {
         );
     }
 
-    /// Constraint 2: congruence gives EQUALITY, never DISEQUALITY. Unequal
+    /// Congruence gives equality, never disequality. Unequal
     /// `Cat` operands with equal wholes must decide `true`, not `false`.
     #[test]
     fn congruence_never_yields_disequality() {
@@ -735,7 +734,7 @@ mod tests {
         );
     }
 
-    /// Constraint 3: known, differing lengths refute, and do so without
+    /// Known, differing lengths refute, and do so without
     /// materialising either side.
     #[test]
     fn known_differing_lengths_decide_false() {
@@ -750,7 +749,7 @@ mod tests {
         );
     }
 
-    /// Constraint 1: distinct digests REFUTE. A model is injective, so
+    /// Distinct digests refute. A model is injective, so
     /// `h1 != h2` gives `σ h1 != σ h2` in every model, and the sides differ
     /// everywhere rather than merely somewhere.
     #[test]
@@ -763,7 +762,7 @@ mod tests {
         // A refutation is not a fact: there is no `BlobFact` for `!=`.
         assert_eq!(BlobFact::check(BlobEq::new(left.clone(), right)), None);
 
-        // EQUAL digests go to REFL, never to `false`. This is the branch's
+        // Equal digests go to REFL, never to `false`. This is the branch's
         // one trap, and the same claim holds through the carriers.
         assert_eq!(decide(left.clone(), left.clone()), Some(true));
         let hash = O256::from_bytes(b"left");
@@ -773,13 +772,13 @@ mod tests {
             Some(false)
         );
 
-        // A digest against anything that is NOT a digest stays unknown: this
+        // A digest against anything that is not a digest stays unknown: this
         // crate cannot read a store, so `σ h` may or may not be those bytes.
         assert_eq!(decide(left.clone(), bytes(b"abc")), None);
         assert_eq!(decide(left, BlobExpr::Zero(32)), None);
     }
 
-    /// Injectivity refutes two BARE digests and nothing more. `σ h1 != σ h2`
+    /// Injectivity refutes two bare digests and nothing more. `σ h1 != σ h2`
     /// says nothing about their prefixes, their suffixes or anything built
     /// from them, so every derived shape must fall through to `None`.
     #[test]
@@ -787,7 +786,7 @@ mod tests {
         let left = BlobExpr::Blake3(O256::from_bytes(b"left"));
         let right = BlobExpr::Blake3(O256::from_bytes(b"right"));
 
-        // Two different blobs can share a prefix, so this is NOT refutable.
+        // Two different blobs can share a prefix, so this is not refutable.
         assert_eq!(
             decide(
                 BlobExpr::slice(left.clone(), 0..4),
@@ -797,7 +796,8 @@ mod tests {
         );
         // This one is false in every model — appending the same suffix cannot
         // merge two different byte strings — but no rule here sees it. That is
-        // incompleteness, and recovering it is the deferred cancellation seam.
+        // incompleteness, and the deferred cancellation rule is where
+        // recovering it would go.
         assert_eq!(
             decide(
                 BlobExpr::cat(left.clone(), bytes(b"a")),
@@ -810,7 +810,7 @@ mod tests {
     }
 
     /// The bug the bounds-checked slice length exists to prevent. Both sides
-    /// are undefined in every model, so under the weak reading they are EQUAL;
+    /// are undefined in every model, so under the weak reading they are equal;
     /// a `len` reporting the raw span width would answer `Some(false)` here,
     /// which is a false fact. `decide` answers `None`, which is the sound
     /// incomplete answer.
@@ -824,7 +824,7 @@ mod tests {
         assert_eq!(decide(wide, narrow), None);
     }
 
-    /// Constraint 5: the blob named by `h` is not the 32 bytes of `h`. Nothing
+    /// The blob named by `h` is not the 32 bytes of `h`. Nothing
     /// refutes it either — `σ h` could be any byte string at all, those 32
     /// included. The section property considered in the crate docs is exactly
     /// what would decide this one.
@@ -836,7 +836,7 @@ mod tests {
         assert_eq!(decide(BlobExpr::Blake3(hash), digest), None);
     }
 
-    /// Constraint 6: no guessing. Anything a digest is involved in is unknown
+    /// No guessing. Anything a digest is involved in is unknown
     /// unless reflexivity or the digest branch already settled it.
     #[test]
     fn decide_never_guesses_on_a_digest() {
@@ -895,9 +895,9 @@ mod tests {
         BlobExpr::Blake3(O256::from_bytes(name))
     }
 
-    /// A HYPERBLOB: 65 [`Arc`]-shared nodes denoting a tree of `2^65`, whose
-    /// length passes `u64` and whose size pins at [`u32::MAX`]. Building it is
-    /// cheap; walking it is not, which is the whole point.
+    /// A hyperblob: 65 [`Arc`]-shared nodes denoting a tree of `2^64` leaves,
+    /// whose length passes `u64` and whose size pins at [`u32::MAX`]. Building
+    /// it is cheap; walking it is not, which is the whole point.
     fn overflowing_nest() -> BlobExpr {
         let mut expr = bytes(b"0123456789abcdef");
         for _ in 0..64 {
@@ -946,7 +946,7 @@ mod tests {
         let hash = O256::from_bytes(b"blob");
         let named = BlobExpr::Blake3(hash);
 
-        // Not against the 32 bytes of the digest itself (constraint 5)...
+        // Not against the 32 bytes of the digest itself...
         let digest_bytes = BlobExpr::Bytes(Bytes::copy_from_slice(hash.as_bytes()));
         assert_eq!(
             BlobFact::check(BlobEq::new(named.clone(), digest_bytes)),
@@ -967,7 +967,7 @@ mod tests {
             None
         );
         // ...and against another digest it declines for the opposite reason:
-        // that one is REFUTED, and a refutation is not a fact either.
+        // that one is refuted, and a refutation is not a fact either.
         let distinct = BlobEq::new(named.clone(), digest(b"other"));
         assert_eq!(distinct.decide(), Some(false));
         assert_eq!(BlobFact::check(distinct), None);
@@ -980,7 +980,7 @@ mod tests {
         );
     }
 
-    /// EVALUATION declines on an out-of-range slice, which denotes NOTHING
+    /// EVALUATION declines on an out-of-range slice, which denotes nothing
     /// rather than a clamped prefix. Two such slices of differing width are
     /// therefore equal, so refuting them from their span widths would be a
     /// false fact — and proving them would be a guess.
@@ -1017,12 +1017,12 @@ mod tests {
         );
     }
 
-    /// The constraint-2 trap, from both sides. Unequal `Cat` operands say
-    /// NOTHING about the wholes, so evaluation must never refute from a
-    /// structural mismatch; and a shared operand does not license cancelling it.
+    /// The `Cat` trap, from both sides. Unequal `Cat` operands say nothing
+    /// about the wholes, so evaluation must never refute from a structural
+    /// mismatch; and a shared operand does not license cancelling it.
     #[test]
     fn evaluation_declines_rather_than_refuting_a_cat_split() {
-        // Different splits of the same bytes are EQUAL, and are settled by
+        // Different splits of the same bytes are equal, and are settled by
         // evaluating them rather than refuted by comparing their structure.
         let left = BlobExpr::cat(bytes(b"ab"), bytes(b"c"));
         let right = BlobExpr::cat(bytes(b"a"), bytes(b"bc"));
@@ -1039,7 +1039,7 @@ mod tests {
         );
 
         // With a digest in the shared head the wholes are unknown. The
-        // proposition is in fact FALSE in every model — `σ h` is defined
+        // proposition is in fact false in every model — `σ h` is defined
         // there, so the two tails would have to agree — but seeing that is
         // route (ii) of the deferred cancellation rule, which wants a
         // definedness observation `len` cannot supply for a digest. `None` is
@@ -1083,10 +1083,10 @@ mod tests {
         assert_eq!(BlobFact::check(equation), None);
     }
 
-    /// `decide` declines past [`MAX_TREE_NODES`] BEFORE its REFL branch, so
+    /// `decide` declines past [`MAX_TREE_NODES`] before its REFL branch, so
     /// the exponential structural comparison is never entered on a hyperblob.
     /// Declining is sound for every proposition here, so this is pure
-    /// incompleteness — and REFL as a RULE is unaffected, which is where a
+    /// incompleteness — and REFL as a rule is unaffected, which is where a
     /// fact about a hyperblob still comes from.
     #[test]
     fn decide_declines_past_the_tree_limit_even_for_refl() {
@@ -1139,7 +1139,7 @@ mod tests {
         assert_eq!(BlobFact::refl(hash).symm().prop(), &BlobEq::new(hash, hash));
     }
 
-    /// TRANS composes only across a shared middle EXPRESSION. The type
+    /// TRANS composes only across a shared middle *expression*. The type
     /// parameters force nothing between the two middles, so this check is what
     /// keeps `a = b` and `c = d` from composing into `a = d`.
     #[test]
@@ -1163,7 +1163,7 @@ mod tests {
         // A different middle of the same type does not compose.
         assert_eq!(first.trans(&BlobFact::refl(bytes(b"zz"))), None);
 
-        // The middles are compared as EXPRESSIONS, not as carriers, so the two
+        // The middles are compared as expressions, not as carriers, so the two
         // spellings of a whole-blob claim meet: `BlobExpr::slice` normalises
         // the `0..` span away.
         let hash = O256::from_bytes(b"blob");
@@ -1196,11 +1196,11 @@ mod tests {
             BlobExpr::cat(bytes(b"abc"), digest(b"blob"))
         );
         // Equality only: the rule runs in this direction alone, and the
-        // deferred cancellation seam is where the partial converse will go.
+        // deferred cancellation rule is where the partial converse will go.
         assert_eq!(cmp_length(&prop.lhs, &prop.rhs), None);
     }
 
-    /// CONGRUENCE for `Slice` takes ONE span, so the unsound shape — a
+    /// CONGRUENCE for `Slice` takes one span, so the unsound shape — a
     /// different span on each side — is unrepresentable rather than rejected.
     #[test]
     fn slice_congruence_takes_one_span() {
@@ -1304,7 +1304,7 @@ mod tests {
         assert_eq!(equality.to_range_fact::<RangeTo<u64>>(), Some(prefix));
     }
 
-    /// The bridge is a genuine INTRODUCTION rule: the equality it mints is
+    /// The bridge is a genuine introduction rule: the equality it mints is
     /// valid — the CAS pins that hash, and every model extends the CAS — yet
     /// nothing in the calculus can decide it, because `decide` cannot read a
     /// store. The store is the only source of this fact.
@@ -1319,7 +1319,7 @@ mod tests {
         assert_eq!(BlobFact::check(prop), None);
     }
 
-    /// Coming back down is partial in the SHAPES it can express, and each
+    /// Coming back down is partial in the shapes it can express, and each
     /// refusal is a `None` rather than a guessed fact.
     #[test]
     fn to_range_fact_refuses_shapes_that_are_not_range_facts() {

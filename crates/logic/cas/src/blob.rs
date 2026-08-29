@@ -8,20 +8,22 @@
 //!
 //! | Expression | `denote σ` |
 //! | ---------- | ---------- |
-//! | `Blake3(h)` | `Some(σ h)` — ALWAYS defined; *which* bytes depends on `σ` |
+//! | `Blake3(h)` | `Some(σ h)` — always defined; *which* bytes depends on `σ` |
 //! | `Bytes(v)` | `Some(v)` |
 //! | `Zero(n)` | `Some` of `n` zero bytes |
 //! | `Cat(x, y)` | the two denotations concatenated, when both are defined |
 //! | `Slice(e, s)` | the `s` sub-range of `denote σ e`, when `s` is in range |
 //!
-//! An expression denotes at most ONE byte string in a given model, so
-//! undefinedness is the only three-valuedness here, and it has exactly two
-//! sources: a slice whose span runs past its subject, and a concatenation with
-//! an undefined side. A DIGEST IS NOT ONE OF THEM. `Blake3(h)` denotes a byte
-//! string in every model even when the CAS holds nothing for `h`: an unpinned
-//! hash is simply free, and different models choose differently for it. What
-//! no observation in this module can do is say *which* byte string, which is
-//! why a digest has neither a length nor a value here.
+//! An expression denotes at most one byte string in a given model, so
+//! undefinedness is the only three-valuedness here. It has exactly two sources:
+//! a slice whose span runs past its subject, and a concatenation with an
+//! undefined side.
+//!
+//! A digest is not one of them. `Blake3(h)` denotes a byte string in every
+//! model even when the CAS holds nothing for `h`: an unpinned hash is simply
+//! free, and different models choose differently for it. What no observation in
+//! this module can do is say *which* byte string, which is why a digest has
+//! neither a length nor a value here.
 //!
 //! Out-of-range slicing is undefined rather than clamped, uniformly in
 //! [`BlobExpr::len`] and [`BlobExpr::eval`]; a truncating slice would make
@@ -33,26 +35,23 @@
 //!
 //! # Hyperblobs are built, and then declined
 //!
+//! A *hyperblob* is an expression that is cheap to build and ruinous to walk.
 //! `Cat` is the only branching node and its children are [`Arc`]-shared, so a
-//! DAG of `n + 1` nodes denotes a TREE of `2^n`. Every traversal in this crate
-//! walks the tree rather than the DAG — [`BlobExpr::len`], [`BlobExpr::eval`],
-//! `==`, [`BlobLike::to_expr`], and the `Drop` glue that frees the [`Arc`]
-//! chain.
+//! DAG of `n + 1` nodes denotes a tree of `2^n` leaves. Every observation that
+//! reads an expression's contents walks the tree rather than the DAG —
+//! [`BlobExpr::len`], [`BlobExpr::eval`] and `==`. [`BlobLike::to_expr`] and
+//! the `Drop` glue that frees the [`Arc`] chain are cheaper, walking the DAG
+//! rather than the tree, but they still recurse to its depth.
 //!
-//! Nothing refuses to BUILD such an expression. Every constructor here is
-//! TOTAL, and deliberately so: a `Result` on `cat` and `slice` would poison
-//! every call site, every trait bound and every test to solve a problem this
-//! calculus does not have. An expression too large to walk is a DEGENERATE
-//! INPUT, and dying on one — a stack overflow in `Drop`, a comparison that
-//! runs for a week — is ACCEPTABLE. A WRONG ANSWER is not, and there is
-//! exactly one way to get one here: a measurement that wraps, so that a
-//! colossal expression reports a small length and satisfies a
-//! length-agreement precondition that is false.
+//! Every constructor here is total, so such an expression can be built. The
+//! crate docs say why dying on one is acceptable; the one thing that must not
+//! happen is a measurement that wraps, letting a colossal expression report a
+//! small length and satisfy a length check that is false.
 //!
 //! So the arithmetic never wraps, and the observations decline:
 //!
 //! - every branching value carries its [`BlobLike::size`], the node count of
-//!   its expression viewed as a TREE, added with SATURATING arithmetic. A size
+//!   its expression viewed as a tree, added with saturating arithmetic. A size
 //!   pinned at [`u32::MAX`] reads as "at least this big", which is all any
 //!   check below asks of it.
 //! - lengths are summed with `checked_add`, so a length past `u64` is `None`
@@ -60,19 +59,19 @@
 //! - [`BlobExpr::len`], [`BlobExpr::eval`] and
 //!   [`BlobProp::decide`](crate::BlobProp::decide) answer `None` once that
 //!   size passes [`MAX_TREE_NODES`]. `None` means "no answer here", which is
-//!   sound for every rule in this calculus, so declining needs no
-//!   justification beyond being available.
+//!   sound for every rule in this calculus.
 //!
 //! `==` and `Drop` are left alone on purpose. A limit inside `==` would change
-//! what equality MEANS, and `Drop` cannot decline at all — it aborts the
-//! process rather than unwinding, so no `Result` and no `catch_unwind` could
-//! contain it. Both may therefore be slow, or may die, on an expression that
-//! nothing above would answer a question about anyway.
+//! what equality means, and `Drop` cannot decline at all — the way it fails on
+//! a deep chain is a stack overflow, which aborts the process rather than
+//! unwinding, so no `Result` and no `catch_unwind` could contain it. Both may
+//! therefore be slow, or may die, on an expression that nothing above would
+//! answer a question about anyway.
 //!
 //! Lean: `Nucleus.BlobExpr` and `Nucleus.BlobExpr.denote`, the latter a
-//! function of a `Nucleus.Model` rather than the superseded `Nucleus.Denotes`
-//! relation. Owed. The limit is Rust-only: Lean's expressions are finite trees
-//! already, with no sharing to expand and no stack to overflow.
+//! function of a `Nucleus.Model` rather than a relation over an unknown fibre.
+//! The limit is Rust-only: Lean's expressions are finite trees already, with no
+//! sharing to expand and no stack to overflow.
 
 use std::{cmp::Ordering, fmt::Debug, sync::Arc};
 
@@ -93,6 +92,10 @@ mod sealed {
 
 /// A value denoting a byte string.
 ///
+/// An implementor is called a *carrier*: a value such as an [`O256`] or a
+/// [`Bytes`] that a claim can be made about directly, without first being
+/// *reified* — turned into a [`BlobExpr`] by [`Self::to_expr`].
+///
 /// Sealed for soundness, exactly as [`BlobRange`] is: the calculus reads
 /// [`Self::len`] and [`Self::eval`] and then stores the answer inside a
 /// checked fact. An outside implementor that misreported a length would
@@ -101,7 +104,11 @@ mod sealed {
 ///
 /// Lean: no counterpart. Lean has one type, `Nucleus.BlobExpr`;
 /// [`Self::to_expr`] is the Rust-only coercion into it, and every other method
-/// is defined as the corresponding `BlobExpr` function of that coercion.
+/// defaults to the corresponding `BlobExpr` function of that coercion. An
+/// implementor that overrides one answers at least as often and never
+/// differently: [`BlobCat`]'s cached length is exact where the reified
+/// expression would decline to walk, and a [`Self::size`] memo may over-count a
+/// span that reification normalises away.
 ///
 /// ```compile_fail
 /// use covalence_logic_cas::{BlobExpr, BlobLike, Bytes};
@@ -131,7 +138,7 @@ pub trait BlobLike: sealed::BlobLike + Clone + Debug {
     #[must_use]
     fn to_expr(&self) -> BlobExpr;
 
-    /// The node count of [`Self::to_expr`] viewed as a TREE, never as a DAG.
+    /// The node count of [`Self::to_expr`] viewed as a tree, never as a DAG.
     ///
     /// This is the crate's one resource measure, and the invariant every
     /// implementor keeps is
@@ -140,17 +147,18 @@ pub trait BlobLike: sealed::BlobLike + Clone + Debug {
     /// self.to_expr().size() <= self.size()
     /// ```
     ///
-    /// — never an under-estimate, so a caller may treat it as the cost of ANY
-    /// traversal of this value and as a bound on its depth. It is exact except
-    /// in two directions that both err upwards: [`BlobExpr::slice`] normalises
-    /// a whole-blob span away, which only makes the reified expression
-    /// smaller, and the addition SATURATES, so [`u32::MAX`] means "at least
-    /// this big". Neither loses the property the readers rely on, which is
-    /// that a small answer is a true one.
+    /// — never an under-estimate, so a caller may treat it as the cost of any
+    /// traversal of this value and as a bound on its depth.
     ///
-    /// Every implementation answers in O(1), from a memo where the shape
-    /// branches. The default is for shapes that do not: it reifies, and so
-    /// costs a walk of the whole tree.
+    /// It is exact except in two directions that both err upwards.
+    /// [`BlobExpr::slice`] normalises a whole-blob span away, which only makes
+    /// the reified expression smaller, and the addition saturates, so
+    /// [`u32::MAX`] means "at least this big". Neither loses the property the
+    /// readers rely on: a small answer is a true one.
+    ///
+    /// Every implementation in this crate answers in O(1), from a memo where
+    /// the shape branches. None of them takes the default, which reifies and so
+    /// costs a walk of the value.
     ///
     /// Lean: no counterpart. A Lean `Nucleus.BlobExpr` is a finite tree with
     /// no sharing to expand, so nothing there needs bounding.
@@ -183,9 +191,10 @@ pub trait BlobLike: sealed::BlobLike + Clone + Debug {
 
 /// An expression denoting a byte string.
 ///
-/// Variants are named for the hash ALGORITHM, not for "the CAS": `Sha256` is a
-/// planned sibling and nothing here assumes a unique digest variant. Each
-/// digest arm is written out rather than caught by `_`, because
+/// Variants are named for the hash algorithm, not for "the CAS": `Sha256` is a
+/// planned sibling and nothing here assumes a unique digest variant.
+///
+/// Each digest arm is written out rather than caught by `_`, because
 /// `#[non_exhaustive]` does not weaken exhaustiveness inside the defining
 /// crate, so adding a variant breaks the build at every arm that must decide.
 ///
@@ -198,9 +207,10 @@ pub enum BlobExpr {
     ///
     /// The payload is [`O256`] rather than
     /// [`Blake3Hash`](covalence_lib_hash::blake3::Blake3Hash) because every
-    /// consumer of this crate speaks `O256`, and because widening loses
-    /// nothing: a keyed or context-derived `O256` simply is not a hash the CAS
-    /// ever pins, so every model is free to give it any bytes at all. That is
+    /// consumer of this crate speaks `O256`.
+    ///
+    /// Widening loses nothing. A keyed or context-derived `O256` is not a hash
+    /// the CAS ever pins, so every model is free to give it any bytes at all —
     /// the ordinary unpinned case, which the calculus already handles without
     /// special-casing.
     ///
@@ -226,14 +236,16 @@ pub enum BlobExpr {
 
 /// A sub-range of a blob, carrying its own tree size.
 ///
-/// Fields are PRIVATE and [`Self::new`] is the only way in, because the memo
-/// is an INVARIANT rather than a claim: it has to stay a function of `blob`,
-/// and a struct literal could set it to anything. Nothing unsound follows from
-/// a forged memo — its only readers decline on it, and declining is sound —
-/// but a forged small one would put back the traversal the limit exists to
-/// skip. Being a function of the other fields, it makes no difference to `==`.
+/// Fields are private and [`Self::new`] is the only way in, because the size
+/// memo is an invariant rather than a claim: it has to stay a function of
+/// `blob`, and a struct literal could set it to anything.
 ///
-/// Lean: erases into `Nucleus.BlobExpr.sliceOf`. The memo has NO Lean
+/// Nothing unsound follows from a forged memo — its only readers decline on it,
+/// and declining is sound — but a forged small one would put back the traversal
+/// the limit exists to skip. Being a function of the other fields, it makes no
+/// difference to `==`.
+///
+/// Lean: erases into `Nucleus.BlobExpr.sliceOf`. The memo has no Lean
 /// counterpart.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BlobSlice<B, S> {
@@ -245,8 +257,8 @@ pub struct BlobSlice<B, S> {
 impl<B: BlobLike, S: BlobRange> BlobSlice<B, S> {
     /// Slices a value, computing the result's tree size once.
     ///
-    /// TOTAL. A slice node is one node on top of its subject, and the addition
-    /// SATURATES, so an absurd subject yields a memo pinned at [`u32::MAX`]
+    /// Total. A slice node is one node on top of its subject, and the addition
+    /// saturates, so an absurd subject yields a memo pinned at [`u32::MAX`]
     /// rather than a refusal; see the module docs for why nothing here refuses.
     ///
     /// Lean: `Nucleus.BlobExpr.sliceOf`.
@@ -271,18 +283,20 @@ impl<B: BlobLike, S: BlobRange> BlobSlice<B, S> {
 
 /// A concatenation, carrying its own length and tree size.
 ///
-/// Fields are PRIVATE and [`Self::new`] is the only constructor, because the
+/// Fields are private and [`Self::new`] is the only constructor, because the
 /// cached length is what the disequality rule reads: a forged cache makes
 /// [`BlobLike::len`] lie. Both caches are functions of the other two fields.
 ///
-/// Neither is an optimization. `Cat` is the only branching node and children
-/// are [`Arc`]-shared, so a 64-level doubling DAG is 65 nodes but `2^64`
-/// leaves; an unmemoized recursion over it does not terminate. Caching the
-/// length is what lets it be answered — `checked_add`ed, so `None` rather than
-/// wrapped — without walking those leaves, and caching the size is what lets
-/// [`BlobExpr::len`] and its fellows DECLINE without walking them either.
+/// Neither cache is an optimization. `Cat` is the only branching node and
+/// children are [`Arc`]-shared, so a 64-level doubling DAG is 65 nodes but
+/// `2^64` leaves, and an unmemoized recursion over it does not terminate.
 ///
-/// Lean: erases into `Nucleus.BlobExpr.cat`. The caches have NO Lean
+/// Caching the length is what lets the length be answered without walking
+/// those leaves — `checked_add`ed, so `None` rather than a wrapped number.
+/// Caching the size is what lets [`BlobExpr::len`] and the other observations
+/// decline without walking them either.
+///
+/// Lean: erases into `Nucleus.BlobExpr.cat`. The caches have no Lean
 /// counterpart; `Nucleus.BlobExpr.length?` recomputes.
 #[derive(Clone, Copy, Debug)]
 pub struct BlobCat<L, R> {
@@ -296,9 +310,9 @@ impl<L: BlobLike, R: BlobLike> BlobCat<L, R> {
     /// Concatenates two values, computing the result's length and tree size
     /// once each.
     ///
-    /// TOTAL. The length is `checked_add`ed and the size saturates, so an
+    /// Total. The length is `checked_add`ed and the size saturates, so an
     /// absurd pair yields `None` and [`u32::MAX`] rather than a refusal. The
-    /// sizes are counted as TREES: concatenating an expression with ITSELF
+    /// sizes are counted as trees, so concatenating an expression with itself
     /// doubles the count, whatever the [`Arc`] sharing underneath.
     ///
     /// Lean: `Nucleus.BlobExpr.cat`.
@@ -347,14 +361,15 @@ impl<L: Eq, R: Eq> Eq for BlobCat<L, R> {}
 /// Compares two shared sub-expressions.
 ///
 /// Same allocation implies same value, so the pointer test is sound. It is an
-/// OPTIMIZATION AND NOTHING MORE, and it is worth saying which case it misses:
-/// it can only fire between [`Arc`]s that are shared, which two independently
-/// built expressions never are, however alike they look. Comparing two copies
-/// of a doubling DAG therefore walks both trees in full, and NOTHING bounds
-/// that: `==` is left exponential deliberately, since a limit inside it would
-/// change what equality MEANS. What keeps the calculus clear of it is
-/// [`BlobProp::decide`](crate::BlobProp::decide), which declines past
-/// [`MAX_TREE_NODES`] before it ever compares anything.
+/// optimization and nothing more, and it misses a case worth naming: it can
+/// only fire between [`Arc`]s that are shared, which two independently built
+/// expressions never are, however alike they look.
+///
+/// Comparing two copies of a doubling DAG therefore walks both trees in full,
+/// and nothing bounds that. `==` is left exponential deliberately, since a
+/// limit inside it would change what equality means. What keeps the calculus
+/// clear of it is [`BlobProp::decide`](crate::BlobProp::decide), which declines
+/// past [`MAX_TREE_NODES`] before it ever compares anything.
 fn shared_eq(left: &Arc<BlobExpr>, right: &Arc<BlobExpr>) -> bool {
     Arc::ptr_eq(left, right) || **left == **right
 }
@@ -388,7 +403,7 @@ impl PartialEq for BlobExpr {
               unknown, so a `bool` answer would have to guess"
 )]
 impl BlobExpr {
-    /// Concatenates two expressions. TOTAL; see the module docs for why
+    /// Concatenates two expressions. Total; see the module docs for why
     /// nothing here refuses to build.
     ///
     /// Lean: `Nucleus.BlobExpr.cat`.
@@ -397,16 +412,17 @@ impl BlobExpr {
         Self::Cat(BlobCat::new(Arc::new(left), Arc::new(right)))
     }
 
-    /// Slices an expression, normalising the whole-blob span away. TOTAL.
+    /// Slices an expression, normalising the whole-blob span away. Total.
     ///
-    /// `slice(e, 0..) = e` is SOUND: every byte string is its own `0..`
+    /// `slice(e, 0..) = e` is sound: every byte string is its own `0..`
     /// sub-range, so the two denote the same thing in every model, and are
-    /// undefined in the same models. It earns its `if` because `O256` and
-    /// `BlobSlice<O256, RangeFull>` would otherwise reify to different
-    /// expressions for the same claim, and the transitivity rule matches
-    /// middle terms syntactically.
+    /// undefined in the same models.
     ///
-    /// Lean: `Nucleus.BlobExpr.sliceOf`, with `@[simp] denotes_sliceOf`.
+    /// It earns its `if` because `O256` and `BlobSlice<O256, RangeFull>` would
+    /// otherwise reify to different expressions for the same claim, and the
+    /// transitivity rule matches middle terms syntactically.
+    ///
+    /// Lean: `Nucleus.BlobExpr.sliceOf`, with `@[simp] denote_sliceOf`.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "the range shapes are small `Copy` values, and by-value is the \
@@ -421,13 +437,14 @@ impl BlobExpr {
         Self::Slice(BlobSlice::new(Arc::new(blob), span))
     }
 
-    /// The node count of this expression viewed as a TREE, never as a DAG.
+    /// The node count of this expression viewed as a tree, never as a DAG.
     ///
-    /// O(1) from the memo at each branching node, and EXACT until it saturates
-    /// at [`u32::MAX`], where it reads as "at least this big". `Cat` counts
-    /// both children in full, so an expression sharing one [`Arc`] between
-    /// them counts it twice. That is the point — every traversal expands the
-    /// sharing, so the tree is the true cost, and [`MAX_TREE_NODES`] is the
+    /// O(1) from the memo at each branching node, and exact until it saturates
+    /// at [`u32::MAX`], where it reads as "at least this big".
+    ///
+    /// `Cat` counts both children in full, so an expression sharing one [`Arc`]
+    /// between them counts it twice. That is the point: every traversal expands
+    /// the sharing, so the tree is the true cost, and [`MAX_TREE_NODES`] is the
     /// size past which the observations below decline to pay it.
     ///
     /// Lean: no counterpart; see [`BlobLike::size`].
@@ -455,39 +472,46 @@ impl BlobExpr {
     /// The length of the byte string this expression denotes, when a `u64`
     /// answers.
     ///
-    /// `Some(n)` is a DEFINEDNESS CERTIFICATE, and it quantifies over models:
-    /// the expression is defined in EVERY model and is `n` bytes long in every
+    /// `Some(n)` is a definedness certificate, and it quantifies over models:
+    /// the expression is defined in every model and is `n` bytes long in every
     /// one of them. That is what makes length-disagreement a sound disequality
     /// and what gives the deferred cancellation rule a computed precondition.
-    /// It is why the `Slice` arm bounds-checks rather than reporting the span's
-    /// width: two out-of-range slices of differing width are undefined in every
-    /// model, so they are *equal*, and an unchecked width would refute that.
     ///
-    /// `None` is neither an error nor zero. It means "no `u64` answer",
-    /// whether because a digest hides the length, a slice is out of range, a
-    /// `Cat` sum does not fit, or the expression passes [`MAX_TREE_NODES`] and
-    /// this declines to walk it. All are uniformly conservative: by the `None`
-    /// convention of [`cmp_length`] an unknown length agrees with nothing, so
-    /// an over-long `Cat` never cancels and never settles a disequality. There
-    /// is deliberately no error type distinguishing the cases.
+    /// The certificate is why the `Slice` arm bounds-checks rather than
+    /// reporting the span's width: two out-of-range slices of differing width
+    /// are undefined in every model, so they are *equal*, and an unchecked
+    /// width would refute that.
     ///
-    /// The size guard comes FIRST, and it is what makes the recursion below
-    /// safe to enter: past it, the walk visits at most [`MAX_TREE_NODES`]
-    /// nodes and nests at most that deep. A hyperblob gets `None`, which is
-    /// exactly the answer a hyperblob deserves — never a wrapped small number
-    /// that would satisfy a length-agreement precondition that is false.
+    /// `None` is neither an error nor zero. It means "no `u64` answer": a
+    /// digest hides the length, a slice is out of range, a `Cat` sum does not
+    /// fit, or the expression passes [`MAX_TREE_NODES`] and this declines to
+    /// walk it.
+    ///
+    /// All four are uniformly conservative. By the `None` convention of
+    /// [`cmp_length`] an unknown length agrees with nothing, so an over-long
+    /// `Cat` never cancels and never settles a disequality. There is
+    /// deliberately no error type distinguishing the cases.
+    ///
+    /// The size guard comes first, and it is what makes the recursion below
+    /// safe to enter: past it, the walk visits at most [`MAX_TREE_NODES`] nodes
+    /// and nests at most that deep. A hyperblob gets `None` rather than a
+    /// wrapped small number that would satisfy a length-agreement precondition
+    /// that is false.
     ///
     /// `Blake3(h)` is the interesting `None`. It is not undefined — every model
     /// reads *some* byte string at `h` — but `σ h` varies from model to model,
     /// so no single `n` answers, and a certificate quantified over models is
     /// exactly what this returns.
     ///
-    /// Lean: `Nucleus.BlobExpr.length?`. ONE-DIRECTIONAL: Lean recurses in
-    /// `Nat` and never overflows, so Rust answers `None` strictly more often;
-    /// the obligation is `length?_agrees`, that when Rust answers it agrees.
-    /// The definedness certificate itself is owed as `denote_isSome_of_length?`
-    /// (`length? = some n` implies the expression is defined in every model)
-    /// and `length?_sound` (it is `n` bytes long there).
+    /// Lean: `Nucleus.BlobExpr.length?`. The definedness certificate is proved
+    /// there, as `Nucleus.BlobExpr.denote_isSome_of_length?` (`length? = some n`
+    /// implies the expression is defined in every model) and
+    /// `Nucleus.BlobExpr.length?_sound` (it is `n` octets long there).
+    ///
+    /// One-directional: Lean recurses in `Nat`, never overflows and has no size
+    /// limit, so Rust answers `None` strictly more often. That refinement has no
+    /// Lean statement — nothing there models this function — so the tests below
+    /// are what pin the agreement where Rust does answer.
     ///
     /// ```
     /// use covalence_logic_cas::{BlobExpr, Bytes, O256};
@@ -529,20 +553,25 @@ impl BlobExpr {
     /// [`MAX_TREE_NODES`].
     ///
     /// The two limits bound different things, and both are needed.
-    /// [`MAX_EVAL_BYTES`] bounds the RESULT: it refuses `Zero(u64::MAX)`
+    ///
+    /// [`MAX_EVAL_BYTES`] bounds the result. It refuses `Zero(u64::MAX)`
     /// before a huge allocation aborts the process, and, being applied through
     /// [`Self::len`], it makes `eval e = Some v` imply `len e = Some(v.len())`
-    /// with no loss. What it does NOT bound is the work — an `n`-level
-    /// doubling DAG is `n + 1` nodes and `2^n` tree nodes, and this recurses
-    /// into both children at every level, so with one-byte leaves a 30-level
-    /// DAG sits inside the byte budget while doing sixty-four times the work
-    /// of a 24-level one. [`MAX_TREE_NODES`] bounds that: past it this
-    /// declines, and inside it the walk visits at most that many nodes, each
-    /// copying at most [`MAX_EVAL_BYTES`].
+    /// with no loss.
     ///
-    /// Lean: `Nucleus.BlobExpr.eval?`, owing `eval?_sound`: evaluating to `v`
-    /// pins the denotation to the singleton `{v}`. ONE-DIRECTIONAL: neither
-    /// limit has a Lean counterpart.
+    /// What it does not bound is the work. An `n`-level doubling DAG is
+    /// `n + 1` nodes and `2^n` leaves, and this recurses into both children at
+    /// every level, so with one-byte leaves a 30-level DAG sits inside the byte
+    /// budget while doing sixty-four times the work of a 24-level one.
+    ///
+    /// [`MAX_TREE_NODES`] bounds that: past it this declines, and inside it the
+    /// walk visits at most that many nodes, each copying at most
+    /// [`MAX_EVAL_BYTES`].
+    ///
+    /// Lean: `Nucleus.BlobExpr.eval?`, proved sound by
+    /// `Nucleus.BlobExpr.eval?_sound`: evaluating to `v` makes the denotation
+    /// `some v` in every model. One-directional: neither limit has a Lean
+    /// counterpart.
     ///
     /// ```
     /// use covalence_logic_cas::{BlobExpr, Bytes};
@@ -586,46 +615,49 @@ impl BlobExpr {
 /// The largest expression [`BlobExpr::eval`] will materialise.
 ///
 /// Completeness only: a smaller budget yields `None`, which means "unknown"
-/// and is always sound. It bounds the ANSWER; [`MAX_TREE_NODES`] bounds the
+/// and is always sound. It bounds the answer; [`MAX_TREE_NODES`] bounds the
 /// work of getting there. Lean has no counterpart.
 pub const MAX_EVAL_BYTES: u64 = 1 << 30;
 
-/// The largest expression the observations here will WALK, counted as a tree.
+/// The largest expression the observations here will walk, counted as a tree.
 ///
-/// ONE THOUSAND AND TWENTY-FOUR nodes. Nothing refuses to BUILD a bigger one;
-/// [`BlobExpr::len`], [`BlobExpr::eval`] and
-/// [`BlobProp::decide`](crate::BlobProp::decide) simply answer `None` past
-/// this point instead of walking it.
+/// Nothing refuses to build a bigger one; [`BlobExpr::len`],
+/// [`BlobExpr::eval`] and [`BlobProp::decide`](crate::BlobProp::decide) simply
+/// answer `None` past this point instead of walking it.
 ///
 /// Completeness only, like [`MAX_EVAL_BYTES`]. `None` is "the rules do not
 /// settle it", which is a sound answer to every question this calculus asks,
-/// so a limit set too low costs answers and never truth. That is the whole
-/// justification, and it is why the number can be this small.
+/// so a limit set too low costs answers and never truth. That is why the number
+/// can be as small as 1024.
 ///
-/// Why so small. Nothing here is MEANT to build a large expression: the bridge
-/// from a range fact is two nodes, each congruence rule adds one, and the
-/// widest thing anyone reassembles by hand is a concatenation of range facts
-/// at two nodes each — so 1024 leaves room for some five hundred of them,
-/// orders of magnitude past any use these expressions were designed for. What
-/// it buys is that a declining traversal visits at most 1024 nodes and nests
-/// at most 1024 deep, tens of kilobytes of stack. Raising it would only admit
-/// inputs that are already past reasoning about.
+/// Nothing here is meant to build a large expression: the bridge from a range
+/// fact is two nodes, each congruence rule adds one, and the widest thing
+/// anyone reassembles by hand is a concatenation of range facts at two nodes
+/// each. Joining `k` of them is `3k - 1` nodes, so 1024 leaves room for some
+/// three hundred, orders of magnitude past any use these expressions were
+/// designed for.
+///
+/// What it buys is that a traversal which does not decline visits at most 1024
+/// nodes and nests at most 1024 deep, a depth an ordinary stack absorbs.
+/// Raising it would only admit inputs that are already past reasoning about.
 ///
 /// Lean has no counterpart: its expressions are finite trees with no sharing.
 pub const MAX_TREE_NODES: u32 = 1024;
 
 /// Compares two values' lengths, or `None` when either is unknown.
 ///
-/// This is the ONLY place in the crate where two lengths are compared, and the
+/// This is the only place in the crate where two lengths are compared, and the
 /// only place the deferred cancellation rule would compute its precondition.
 ///
-/// Writing `left.len() == right.len()` would be a SOUNDNESS BUG: `Option`'s
+/// Writing `left.len() == right.len()` would be a soundness bug: `Option`'s
 /// derived `PartialEq` makes `None == None` true, so two values of unknown
 /// length would pass as having agreeing lengths. Unknown lengths compare like
 /// SQL `NULL`: none equals anything, not even itself. The `?` makes that
-/// unrepresentable here — the convention is structural, not a comment someone
-/// can forget. Note that "known to differ" is
-/// `matches!(.., Some(Less | Greater))`, which is NOT `!= Some(Equal)`.
+/// unrepresentable here, so the convention is structural rather than a comment
+/// someone can forget.
+///
+/// "Known to differ" is `matches!(.., Some(Less | Greater))`, which is not the
+/// same as `!= Some(Equal)`.
 ///
 /// Lean: `Nucleus.BlobExpr.cmpLength?`.
 ///
@@ -709,8 +741,8 @@ impl<B: BlobLike> BlobLike for Arc<B> {
         (**self).to_expr()
     }
 
-    /// Sharing costs a node NOTHING and saves it nothing: the tree counts what
-    /// a traversal walks, and a traversal walks through the [`Arc`].
+    /// Sharing neither costs a node nor saves one: the tree counts what a
+    /// traversal walks, and a traversal walks through the [`Arc`].
     fn size(&self) -> u32 {
         (**self).size()
     }
@@ -742,15 +774,15 @@ impl<B: BlobLike, S: BlobRange> BlobLike for BlobSlice<B, S> {
         self.size
     }
 
-    /// The ONE place the slice length rule lives; [`BlobExpr::len`] delegates.
+    /// The one place the slice length rule lives; [`BlobExpr::len`] delegates.
     ///
     /// Deliberately stronger than "the span width": the bounds check against
     /// the subject's length is what makes `Some` certify that the slice is
-    /// defined. The unchecked width is UNSOUND as a disequality source,
-    /// because two out-of-range slices of differing width are undefined in
-    /// every model and are therefore equal.
+    /// defined. The unchecked width is unsound as a disequality source, because
+    /// two out-of-range slices of differing width are undefined in every model
+    /// and are therefore equal.
     ///
-    /// The `start <= end` guard matters too:
+    /// The `start <= end` guard matters too.
     /// [`BlobRange::span`](crate::BlobRange::span) builds a
     /// [`BlobSpan`](crate::BlobSpan) by struct literal, bypassing
     /// `BlobSpan::new`'s guard, so a backwards `Range<u64>` reaches here. It
@@ -782,9 +814,10 @@ impl<B: BlobLike, S: BlobRange> BlobLike for BlobSlice<B, S> {
 
 impl<L: BlobLike, R: BlobLike> BlobLike for BlobCat<L, R> {
     /// Total, and it never grows the count, for the reason given on
-    /// [`BlobSlice::to_expr`]. It is NOT cheap: reifying walks both operands
-    /// in full, so on a hyperblob carrier it is one of the traversals that may
-    /// die rather than decline.
+    /// [`BlobSlice::to_expr`]. It walks this carrier's own nodes rather than
+    /// the tree they denote: a [`BlobExpr`] operand reifies by cloning an
+    /// [`Arc`], so the cost is the tower of carriers, not what it stands for.
+    /// A tall enough tower can still overflow the stack rather than decline.
     fn to_expr(&self) -> BlobExpr {
         BlobExpr::Cat(BlobCat::new(
             Arc::new(self.left.to_expr()),
@@ -799,12 +832,13 @@ impl<L: BlobLike, R: BlobLike> BlobLike for BlobCat<L, R> {
 
     /// The memo, read in O(1). See [`Self::new`].
     ///
-    /// Deliberately NOT guarded by [`MAX_TREE_NODES`], unlike
+    /// Deliberately not guarded by [`MAX_TREE_NODES`], unlike
     /// [`BlobExpr::len`]: reading a memo walks nothing, so there is no work to
     /// decline, and the value is exact or `None` — `Self::new` summed it with
-    /// `checked_add`. So this may answer where the reified expression, which
-    /// would have to be walked, declines. Both answers are sound; one is
-    /// merely less complete.
+    /// `checked_add`.
+    ///
+    /// So this may answer where the reified expression, which would have to be
+    /// walked, declines. Both answers are sound; one is merely less complete.
     fn len(&self) -> Option<u64> {
         self.len
     }
@@ -819,7 +853,7 @@ mod tests {
     }
 
     /// An `Arc`-shared doubling DAG over `leaf`: `levels` new nodes, and a
-    /// TREE of `2^(levels + 1) - 1`. Each level is ONE node and TWICE the
+    /// tree of `2^(levels + 1) - 1`. Each level adds one node and doubles the
     /// tree, which is the shape every limit here exists for.
     fn doubling_dag(leaf: BlobExpr, levels: u32) -> BlobExpr {
         let mut expr = leaf;
@@ -830,11 +864,11 @@ mod tests {
         expr
     }
 
-    /// MANDATORY (R8). Sixty-four nested `Cat`s. The length is exact while the
-    /// tree is small enough to walk, and `None` after — from the size limit
-    /// first and from `checked_add` past `2^64` — but NEVER a small wrapped
-    /// number, which is the one answer that would be a lie. It must not panic
-    /// in a debug build either.
+    /// Sixty-four nested `Cat`s. The length is exact while the tree is small
+    /// enough to walk, and `None` after — from the size limit first and from
+    /// `checked_add` past `2^64` — but never a small wrapped number, which is
+    /// the one answer that would be a lie. It must not panic in a debug build
+    /// either.
     #[test]
     fn nested_cat_length_never_wraps() {
         let mut expr = bytes(b"0123456789abcdef"); // 2^4 bytes
@@ -852,8 +886,8 @@ mod tests {
                 assert_eq!(expr.len(), None);
             }
         }
-        // Sixty-four doublings is `2^70` tree nodes, so the memo has pinned at
-        // its maximum: "at least this big", which is all the limit needs.
+        // Sixty-four doublings is `2^65 - 1` tree nodes, so the memo has pinned
+        // at its maximum: "at least this big", which is all the limit needs.
         assert_eq!(expr.size(), u32::MAX);
         assert_eq!(expr.len(), None);
         assert_eq!(expr.eval(), None);
@@ -869,10 +903,7 @@ mod tests {
         assert_eq!(BlobExpr::cat(huge.clone(), bytes(b"a")).len(), None);
     }
 
-    /// Deep nesting BUILDS, and is then DECLINED. Making the constructors
-    /// fallible instead would poison every call site to solve a non-problem:
-    /// a hyperblob is a degenerate input, and what must never happen to one is
-    /// a WRONG ANSWER, not a refusal to exist.
+    /// Deep nesting builds, and is then declined.
     #[test]
     fn deep_nesting_is_built_and_then_declined() {
         // Slices: one node per level, so the limit is passed at the limit.
@@ -893,8 +924,9 @@ mod tests {
         assert_eq!(inside.len(), Some(1));
         assert_eq!(inside.eval(), Some(Bytes::from_static(b"0")));
 
-        // `Cat`s, spine-shaped rather than doubling: also one node per level,
-        // and the memo is `None` past the limit rather than a wrapped number.
+        // `Cat`s, spine-shaped rather than doubling: two nodes per level, the
+        // join and its new leaf, and the memo is `None` past the limit rather
+        // than a wrapped number.
         let mut spine = bytes(b"z");
         for _ in 0..MAX_TREE_NODES {
             spine = BlobExpr::cat(spine, bytes(b"z"));
@@ -903,12 +935,12 @@ mod tests {
         assert_eq!(spine.len(), None);
     }
 
-    /// Two INDEPENDENTLY built, structurally identical DAGs compare by walking
-    /// both TREES in full: [`shared_eq`]'s pointer test cannot fire between
+    /// Two independently built, structurally identical DAGs compare by walking
+    /// both trees in full: [`shared_eq`]'s pointer test cannot fire between
     /// them, nothing being shared across two separately built expressions.
     ///
     /// Nothing bounds that walk, and nothing should — a limit inside `==`
-    /// would change what equality MEANS. Under [`MAX_TREE_NODES`] it is
+    /// would change what equality means. Under [`MAX_TREE_NODES`] it is
     /// microseconds, and above it
     /// [`BlobProp::decide`](crate::BlobProp::decide) declines before it ever
     /// gets here; `eq.rs` pins that half.
@@ -925,7 +957,7 @@ mod tests {
     }
 
     /// Evaluating a shared doubling DAG expands the sharing, so the work is
-    /// the TREE. [`MAX_EVAL_BYTES`] bounds the ANSWER and so never bounded
+    /// the tree. [`MAX_EVAL_BYTES`] bounds the answer and so never bounded
     /// this: a 30-level DAG of one-byte leaves sits inside the byte budget
     /// while doing sixty-four times the work of a 24-level one.
     /// [`MAX_TREE_NODES`] is what makes `eval` decline instead.
@@ -933,7 +965,7 @@ mod tests {
     fn eval_expands_the_sharing_and_declines_past_the_limit() {
         let inside = doubling_dag(bytes(b"x"), 9);
         assert_eq!(inside.size(), MAX_TREE_NODES - 1);
-        // One byte per leaf and `2^9` leaves, so the ANSWER is tiny and the
+        // One byte per leaf and `2^9` leaves, so the answer is tiny and the
         // byte budget was never going to be what stopped this.
         assert_eq!(inside.len(), Some(512));
         assert!(inside.len() < Some(MAX_EVAL_BYTES));
@@ -947,7 +979,7 @@ mod tests {
         assert_eq!(outside.eval(), None);
     }
 
-    /// The limit is stated in TREE nodes, so sharing buys nothing: `Cat`
+    /// The limit is stated in tree nodes, so sharing buys nothing: `Cat`
     /// counts a child twice when both sides are the same allocation.
     #[test]
     fn size_counts_the_tree_and_never_the_dag() {
@@ -973,7 +1005,7 @@ mod tests {
     }
 
     /// A `BlobCat` carrier answers its length from the memo without the size
-    /// guard, so it may answer where the REIFIED expression declines. Both are
+    /// guard, so it may answer where the reified expression declines. Both are
     /// sound: the memo is exact or `None`, never wrapped, and `None` is a
     /// refusal to answer rather than a claim.
     #[test]
@@ -986,14 +1018,14 @@ mod tests {
         assert_eq!(carrier.to_expr().len(), None); // would have to be walked
     }
 
-    /// MANDATORY (R7). `None` agrees with nothing, not even itself.
+    /// `None` agrees with nothing, not even itself.
     #[test]
     fn unknown_lengths_never_agree_and_therefore_never_cancel() {
         let left = BlobExpr::Blake3(O256::from_bytes(b"left"));
         let right = BlobExpr::Blake3(O256::from_bytes(b"right"));
 
         assert_eq!((left.len(), right.len()), (None, None));
-        assert_eq!(cmp_length(&left, &left), None); // NOT `Some(Equal)`
+        assert_eq!(cmp_length(&left, &left), None); // not `Some(Equal)`
         assert_eq!(cmp_length(&left, &right), None);
         assert_eq!(cmp_length(&left, &BlobExpr::Zero(3)), None);
         assert_eq!(cmp_length(&BlobExpr::Zero(3), &left), None);
@@ -1033,7 +1065,7 @@ mod tests {
         assert_eq!(BlobExpr::slice(digest, 0..32).len(), None);
     }
 
-    /// Constraint 4: out of range denotes nothing, and is never clamped.
+    /// Out of range denotes nothing. It is never clamped.
     #[test]
     fn out_of_range_slice_denotes_nothing() {
         let two = bytes(b"ab");
@@ -1113,7 +1145,7 @@ mod tests {
         );
     }
 
-    /// Constraint 5: `Blake3(h)` is the blob NAMED by `h`, not the digest.
+    /// `Blake3(h)` is the blob named by `h`, not the digest's own bytes.
     #[test]
     fn digest_bytes_are_not_the_named_blob() {
         let hash = O256::from_bytes(b"abc");
