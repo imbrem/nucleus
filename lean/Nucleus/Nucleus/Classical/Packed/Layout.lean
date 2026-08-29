@@ -115,6 +115,8 @@ structure Valid (arena : Arena payloadWidth) (layout : Layout) : Prop where
   allFit : AllFit (layout.live ++ arena.memory.free) arena.memory.words.size
   disjoint : (layout.live ++ arena.memory.free).Pairwise Block.Disjoint
   freeZeroed : FreeZeroed arena.memory
+  /-- Every memory index fits the fixed-width pointer address space. -/
+  addressable : arena.memory.words.size ≤ 2 ^ payloadWidth
 
 theorem Valid.live_fit {arena : Arena payloadWidth} {layout : Layout}
     (valid : Valid arena layout) {block : Block} (member : block ∈ layout.live) :

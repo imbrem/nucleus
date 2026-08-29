@@ -65,6 +65,7 @@ example : cycleLayout.Valid cycleArena := by
   · simp [cycleLayout, cycleArena, Block.Disjoint, Block.stop, Block.capacity]
   · intro block member
     simp [cycleArena] at member
+  · decide
 
 /-- The decoder consumes `block4` before following its self-edge. -/
 example : (Nucleus.Classical.Alternating.Packed.decode?
@@ -94,6 +95,7 @@ example : aliasLayout.Valid aliasArena := by
       Block.capacity]
   · intro block member
     simp [aliasArena] at member
+  · decide
 
 /-- Two paths cannot own the same child block. -/
 example : (Nucleus.Classical.Alternating.Packed.decode?
@@ -121,6 +123,7 @@ example : cycleLayout.Valid garbageArena := by
   · simp [cycleLayout, garbageArena, Block.Disjoint, Block.stop, Block.capacity]
   · intro block member
     simp [garbageArena] at member
+  · decide
 
 /-- A certified live block which no root reaches is rejected. -/
 example : (Nucleus.Classical.Tagged.Packed.decode?
@@ -166,6 +169,7 @@ example : emptyLayout.Valid freeEdgeArena := by
     simp [Memory.read, block4, Block.Fits, Block.Aligned, Block.stop,
       Block.capacity, freeEdgeArena, decodeWords, zero8, Word.zero,
       Word.CanonicalZero]
+  · decide
 
 /-- A root may not acquire ownership by pointing into the free list. -/
 example : (Nucleus.Classical.Tagged.Packed.decode?

@@ -16,7 +16,8 @@ open Nucleus.Classical.Packed
 
 variable {payloadWidth : Nat}
 
-private def node (tag : Nat) (negative : Bool)
+/-- Interpret one decoded connective tag. -/
+def node (tag : Nat) (negative : Bool)
     (children : List (Formula Nat)) : Option (Formula Nat) :=
   match tag with
   | 0 => some (.and negative children)
