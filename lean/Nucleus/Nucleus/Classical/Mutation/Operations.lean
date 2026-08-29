@@ -42,6 +42,14 @@ def select (side : Side) (roots : Word.Ref payloadWidth × Word.Ref payloadWidth
   | .left => roots.1
   | .right => roots.2
 
+/-- The opposite side of one sequent. -/
+def flip : Side → Side
+  | .left => .right
+  | .right => .left
+
+@[simp] theorem flip_flip (side : Side) : side.flip.flip = side := by
+  cases side <;> rfl
+
 end Side
 
 namespace State
@@ -159,6 +167,16 @@ def pushRootLiteral? (state : Packed.State payloadWidth) (index : Nat) (side : S
   else
     none
 
+/-- Transfer the last owned child of `sourceSide` to the opposite root and
+complement its sign.  Design-specific wrappers decide whether the transferred
+subtree is admissible for their semantics. -/
+def crossRoot? (state : Packed.State payloadWidth) (index : Nat)
+    (sourceSide : Side) : Option (Packed.State payloadWidth) := do
+  let source ← State.rootBlock? state index sourceSide
+  let target ← State.rootBlock? state index sourceSide.flip
+  let (_, memory) ← state.arena.memory.cross? source target
+  some (State.withMemory state memory)
+
 theorem reorderRoot?_result {state after : Packed.State payloadWidth}
     {index : Nat} {side : Side} {candidate : List (Word.Ref payloadWidth)}
     (ran : reorderRoot? state index side candidate = some after) :
@@ -229,6 +247,29 @@ theorem pushRootLiteral?_result {state after : Packed.State payloadWidth}
             exact ⟨literal, block, memory, rfl, mutated, equal.symm⟩
   · simp [pushRootLiteral?, literal] at ran
 
+theorem crossRoot?_result {state after : Packed.State payloadWidth}
+    {index : Nat} {sourceSide : Side}
+    (ran : crossRoot? state index sourceSide = some after) :
+    ∃ source target moved memory,
+      State.rootBlock? state index sourceSide = some source ∧
+      State.rootBlock? state index sourceSide.flip = some target ∧
+      state.arena.memory.cross? source target = some (moved, memory) ∧
+      after = State.withMemory state memory := by
+  cases sourceFound : State.rootBlock? state index sourceSide with
+  | none => simp [crossRoot?, sourceFound] at ran
+  | some source =>
+      cases targetFound : State.rootBlock? state index sourceSide.flip with
+      | none => simp [crossRoot?, sourceFound, targetFound] at ran
+      | some target =>
+          cases crossed : state.arena.memory.cross? source target with
+          | none => simp [crossRoot?, sourceFound, targetFound, crossed] at ran
+          | some result =>
+              rcases result with ⟨moved, memory⟩
+              have equal : State.withMemory state memory = after := by
+                simpa [crossRoot?, sourceFound, targetFound, crossed] using ran
+              exact ⟨source, target, moved, memory, rfl, rfl,
+                crossed, equal.symm⟩
+
 theorem reorderRoot?_valid {state after : Packed.State payloadWidth}
     {index : Nat} {side : Side} {candidate : List (Word.Ref payloadWidth)}
     (valid : state.layout.Valid state.arena)
@@ -281,6 +322,27 @@ theorem pushRootLiteral?_valid {state after : Packed.State payloadWidth}
     valid (State.rootBlock?_mem found) ?_
   unfold Memory.push? at mutated
   simpa [read] using mutated
+
+theorem crossRoot?_valid {state after : Packed.State payloadWidth}
+    {index : Nat} {sourceSide : Side}
+    (valid : state.layout.Valid state.arena)
+    (ran : crossRoot? state index sourceSide = some after) :
+    after.layout.Valid after.arena := by
+  obtain ⟨source, target, moved, memory, sourceFound, targetFound, crossed, rfl⟩ :=
+    crossRoot?_result ran
+  obtain ⟨sourceInitial, intermediate, targetReferences, _, _, sourceWritten, _,
+    targetWritten⟩ := Memory.cross?_steps crossed
+  have intermediateValid :
+      (State.withMemory state intermediate).layout.Valid
+        (State.withMemory state intermediate).arena :=
+    writeLiveValid valid (State.rootBlock?_mem sourceFound) sourceWritten
+  have targetLive : target ∈ (State.withMemory state intermediate).layout.live := by
+    simpa [State.withMemory] using State.rootBlock?_mem targetFound
+  have finalValid :
+      (State.withMemory (State.withMemory state intermediate) memory).layout.Valid
+        (State.withMemory (State.withMemory state intermediate) memory).arena :=
+    writeLiveValid intermediateValid targetLive targetWritten
+  simpa [State.withMemory] using finalValid
 
 end Raw
 
@@ -492,6 +554,49 @@ theorem pushesRoot_eq_true (pushed : Expr Nat) (side : Side)
   | none => simp
   | some expected => simp [eq_comm]
 
+/-- Exact alternating crossing target.  Arrays are path-typed, so only a
+literal may cross between the root AND and root OR arrays. -/
+def crossTarget? : Side → Sequent Nat → Option (Sequent Nat)
+  | .left, ⟨.node false left, .node false right⟩ => do
+      let (initial, moved) ← splitLast?
+        (Classical.Alternating.Children.toList left)
+      match moved with
+      | .literal literal =>
+          some ⟨Expr.array false initial,
+            Expr.array false
+              (Classical.Alternating.Children.toList right ++
+                [Classical.Alternating.Syn.literal literal.neg])⟩
+      | .node _ _ => none
+  | .right, ⟨.node false left, .node false right⟩ => do
+      let (initial, moved) ← splitLast?
+        (Classical.Alternating.Children.toList right)
+      match moved with
+      | .literal literal =>
+          some ⟨Expr.array false
+              (Classical.Alternating.Children.toList left ++
+                [Classical.Alternating.Syn.literal literal.neg]),
+            Expr.array false initial⟩
+      | .node _ _ => none
+  | _, _ => none
+
+def crossesRoot (sourceSide : Side) (before after : Sequent Nat) : Bool :=
+  match crossTarget? sourceSide before with
+  | some expected => decide (after = expected)
+  | none => false
+
+/-- Exact abstract effect of transferring and complementing a literal between
+the two alternating root arrays. -/
+def CrossesRoot (sourceSide : Side) (before after : Sequent Nat) : Prop :=
+  crossTarget? sourceSide before = some after
+
+theorem crossesRoot_eq_true (sourceSide : Side) (before after : Sequent Nat) :
+    crossesRoot sourceSide before after = true ↔
+      CrossesRoot sourceSide before after := by
+  unfold crossesRoot CrossesRoot
+  cases target : crossTarget? sourceSide before with
+  | none => simp
+  | some expected => simp [eq_comm]
+
 private theorem eval_node_perm (assignment : Assignment Nat) (mode : Mode)
     (negative : Bool) {before after : Children Nat}
     (permutation : before.toList.Perm after.toList) :
@@ -615,6 +720,91 @@ theorem PushesRoot.entailsAt {pushed : Expr Nat} {side : Side}
           exact Or.inl (by simpa only [Expr.node_toList] using source)
         · simp [PushesRoot, pushTarget?] at edited
 
+theorem CrossesRoot.entailsAt {sourceSide : Side}
+    {before after : Sequent Nat}
+    (edited : CrossesRoot sourceSide before after)
+    (known : PartialAssignment Nat) (holds : before.EntailsAt known) :
+    after.EntailsAt known := by
+  cases sourceSide with
+  | left =>
+      cases before with
+      | mk beforeLeft beforeRight =>
+          cases beforeLeft with
+          | literal value => simp [CrossesRoot, crossTarget?] at edited
+          | node leftNegative leftChildren =>
+              cases leftNegative with
+              | true => simp [CrossesRoot, crossTarget?] at edited
+              | false =>
+                  cases beforeRight with
+                  | literal value => simp [CrossesRoot, crossTarget?] at edited
+                  | node rightNegative rightChildren =>
+                      cases rightNegative with
+                      | true => simp [CrossesRoot, crossTarget?] at edited
+                      | false =>
+                          cases split : splitLast?
+                              (Classical.Alternating.Children.toList leftChildren) with
+                          | none =>
+                              simp [CrossesRoot, crossTarget?, split] at edited
+                          | some result =>
+                              rcases result with ⟨initial, moved⟩
+                              cases moved with
+                              | node negative children =>
+                                  simp [CrossesRoot, crossTarget?, split] at edited
+                              | literal literal =>
+                                  have afterEqual :
+                                      after = ⟨Expr.array false initial,
+                                        Expr.array false
+                                          (Classical.Alternating.Children.toList
+                                              rightChildren ++
+                                            [Classical.Alternating.Syn.literal
+                                              literal.neg])⟩ :=
+                                    (Option.some.inj (by
+                                      simpa [CrossesRoot, crossTarget?, split]
+                                        using edited)).symm
+                                  subst after
+                                  have shape := splitLast?_eq_some split
+                                  apply Sequent.crossRight literal
+                                  simpa [← Expr.node_toList, shape] using holds
+  | right =>
+      cases before with
+      | mk beforeLeft beforeRight =>
+          cases beforeLeft with
+          | literal value => simp [CrossesRoot, crossTarget?] at edited
+          | node leftNegative leftChildren =>
+              cases leftNegative with
+              | true => simp [CrossesRoot, crossTarget?] at edited
+              | false =>
+                  cases beforeRight with
+                  | literal value => simp [CrossesRoot, crossTarget?] at edited
+                  | node rightNegative rightChildren =>
+                      cases rightNegative with
+                      | true => simp [CrossesRoot, crossTarget?] at edited
+                      | false =>
+                          cases split : splitLast?
+                              (Classical.Alternating.Children.toList rightChildren) with
+                          | none =>
+                              simp [CrossesRoot, crossTarget?, split] at edited
+                          | some result =>
+                              rcases result with ⟨initial, moved⟩
+                              cases moved with
+                              | node negative children =>
+                                  simp [CrossesRoot, crossTarget?, split] at edited
+                              | literal literal =>
+                                  have afterEqual :
+                                      after = ⟨Expr.array false
+                                          (Classical.Alternating.Children.toList
+                                              leftChildren ++
+                                            [Classical.Alternating.Syn.literal
+                                              literal.neg]),
+                                        Expr.array false initial⟩ :=
+                                    (Option.some.inj (by
+                                      simpa [CrossesRoot, crossTarget?, split]
+                                        using edited)).symm
+                                  subst after
+                                  have shape := splitLast?_eq_some split
+                                  apply Sequent.crossLeft literal.neg
+                                  simpa [← Expr.node_toList, shape] using holds
+
 theorem EditedAt.entailsAt {relation : Sequent Nat → Sequent Nat → Prop}
     (preserves : ∀ {before after}, relation before after →
       ∀ known, before.EntailsAt known → after.EntailsAt known)
@@ -650,6 +840,12 @@ def pushRootLiteral? (state : Packed.State payloadWidth) (index : Nat) (side : S
     (reference : Word.Ref payloadWidth) : Option (Packed.State payloadWidth) :=
   checked? decode (pushesRoot (literal reference) side) index state
     (Raw.pushRootLiteral? state index side reference)
+
+/-- Cross the last literal from `sourceSide` to the opposite root. -/
+def crossRoot? (state : Packed.State payloadWidth) (index : Nat)
+    (sourceSide : Side) : Option (Packed.State payloadWidth) :=
+  checked? decode (crossesRoot sourceSide) index state
+    (Raw.crossRoot? state index sourceSide)
 
 theorem checkedEntailsAt
     {check : Sequent Nat → Sequent Nat → Bool}
@@ -717,6 +913,15 @@ theorem pushRootLiteral?_entailsAt {before after : Packed.State payloadWidth}
     PushesRoot.entailsAt
     Raw.pushRootLiteral?_valid ran holds
 
+theorem crossRoot?_entailsAt {before after : Packed.State payloadWidth}
+    {index : Nat} {sourceSide : Side} {known : PartialAssignment Nat}
+    (ran : crossRoot? before index sourceSide = some after)
+    (holds : Classical.Mutation.Alternating.EntailsAt
+      known before.arena before.layout) :
+    Classical.Mutation.Alternating.EntailsAt known after.arena after.layout := by
+  apply checkedEntailsAt (crossesRoot_eq_true sourceSide)
+    CrossesRoot.entailsAt Raw.crossRoot?_valid ran holds
+
 theorem reorderRoot?_syllogistic {before after : Packed.State payloadWidth}
     {index : Nat} {side : Side} {candidate : List (Word.Ref payloadWidth)}
     (ran : reorderRoot? before index side candidate = some after)
@@ -744,6 +949,13 @@ theorem pushRootLiteral?_syllogistic {before after : Packed.State payloadWidth}
     (holds : Classical.Mutation.Alternating.Syllogistic before.arena before.layout) :
     Classical.Mutation.Alternating.Syllogistic after.arena after.layout :=
   pushRootLiteral?_entailsAt ran holds
+
+theorem crossRoot?_syllogistic {before after : Packed.State payloadWidth}
+    {index : Nat} {sourceSide : Side}
+    (ran : crossRoot? before index sourceSide = some after)
+    (holds : Classical.Mutation.Alternating.Syllogistic before.arena before.layout) :
+    Classical.Mutation.Alternating.Syllogistic after.arena after.layout :=
+  crossRoot?_entailsAt ran holds
 
 end Alternating
 
@@ -864,6 +1076,38 @@ theorem pushesRoot_eq_true (pushed : Formula Nat) (side : Side)
   | none => simp
   | some expected => simp [eq_comm]
 
+/-- Exact tagged crossing target.  Tags preserve a subtree's connective when
+ownership moves between roots, so any formula—not merely a literal—may cross. -/
+def crossTarget? (sourceSide : Side) (before : Sequent Nat) :
+    Option (Sequent Nat) := do
+  let left ← andChildren? before.premise
+  let right ← orChildren? before.conclusion
+  match sourceSide with
+  | .left => do
+      let (initial, moved) ← splitLast? left
+      some ⟨.and false initial, .or false (right ++ [moved.neg])⟩
+  | .right => do
+      let (initial, moved) ← splitLast? right
+      some ⟨.and false (left ++ [moved.neg]), .or false initial⟩
+
+def crossesRoot (sourceSide : Side) (before after : Sequent Nat) : Bool :=
+  match crossTarget? sourceSide before with
+  | some expected => decide (after = expected)
+  | none => false
+
+/-- Exact abstract effect of transferring and complementing a tagged formula
+between the positive AND and OR roots. -/
+def CrossesRoot (sourceSide : Side) (before after : Sequent Nat) : Prop :=
+  crossTarget? sourceSide before = some after
+
+theorem crossesRoot_eq_true (sourceSide : Side) (before after : Sequent Nat) :
+    crossesRoot sourceSide before after = true ↔
+      CrossesRoot sourceSide before after := by
+  unfold crossesRoot CrossesRoot
+  cases target : crossTarget? sourceSide before with
+  | none => simp
+  | some expected => simp [eq_comm]
+
 theorem PermutesRoot.entailsAt {side : Side} {before after : Sequent Nat}
     (edited : PermutesRoot side before after) (known : PartialAssignment Nat)
     (holds : before.EntailsAt known) : after.EntailsAt known := by
@@ -978,6 +1222,63 @@ theorem PushesRoot.entailsAt {pushed : Formula Nat} {side : Side}
         · simp [PushesRoot, pushTarget?] at edited
       | sat negative children => simp [PushesRoot, pushTarget?] at edited
 
+theorem CrossesRoot.entailsAt {sourceSide : Side}
+    {before after : Sequent Nat}
+    (edited : CrossesRoot sourceSide before after)
+    (known : PartialAssignment Nat) (holds : before.EntailsAt known) :
+    after.EntailsAt known := by
+  cases leftFound : andChildren? before.premise with
+  | none => simp [CrossesRoot, crossTarget?, leftFound] at edited
+  | some left =>
+      cases rightFound : orChildren? before.conclusion with
+      | none =>
+          simp [CrossesRoot, crossTarget?, leftFound, rightFound] at edited
+      | some right =>
+          have premiseEqual := andChildren?_eq_some leftFound
+          have conclusionEqual := orChildren?_eq_some rightFound
+          have beforeEqual : before = ⟨.and false left, .or false right⟩ := by
+            cases before
+            simp_all
+          cases sourceSide with
+          | left =>
+              cases split : splitLast? left with
+              | none =>
+                  simp [CrossesRoot, crossTarget?, leftFound, rightFound, split]
+                    at edited
+              | some result =>
+                  rcases result with ⟨initial, moved⟩
+                  have afterEqual :
+                      after = ⟨.and false initial,
+                        .or false (right ++ [moved.neg])⟩ :=
+                    (Option.some.inj (by
+                      simpa [CrossesRoot, crossTarget?, leftFound, rightFound, split]
+                        using edited)).symm
+                  subst after
+                  have shape := splitLast?_eq_some split
+                  rw [beforeEqual] at holds
+                  exact Sequent.EntailsAt.cross known initial right moved
+                    (by simpa [Formula.conjunction, Formula.disjunction, shape]
+                      using holds)
+          | right =>
+              cases split : splitLast? right with
+              | none =>
+                  simp [CrossesRoot, crossTarget?, leftFound, rightFound, split]
+                    at edited
+              | some result =>
+                  rcases result with ⟨initial, moved⟩
+                  have afterEqual :
+                      after = ⟨.and false (left ++ [moved.neg]),
+                        .or false initial⟩ :=
+                    (Option.some.inj (by
+                      simpa [CrossesRoot, crossTarget?, leftFound, rightFound, split]
+                        using edited)).symm
+                  subst after
+                  have shape := splitLast?_eq_some split
+                  rw [beforeEqual] at holds
+                  exact Sequent.EntailsAt.crossLeft known left initial moved
+                    (by simpa [Formula.conjunction, Formula.disjunction, shape]
+                      using holds)
+
 theorem EditedAt.entailsAt {relation : Sequent Nat → Sequent Nat → Prop}
     (preserves : ∀ {before after}, relation before after →
       ∀ known, before.EntailsAt known → after.EntailsAt known)
@@ -1019,6 +1320,12 @@ def pushRootLiteral? (state : Packed.State payloadWidth) (index : Nat) (side : S
     (reference : Word.Ref payloadWidth) : Option (Packed.State payloadWidth) :=
   checked? decode (pushesRoot (literal reference) side) index state
     (Raw.pushRootLiteral? state index side reference)
+
+/-- Cross the last tagged formula from `sourceSide` to the opposite root. -/
+def crossRoot? (state : Packed.State payloadWidth) (index : Nat)
+    (sourceSide : Side) : Option (Packed.State payloadWidth) :=
+  checked? decode (crossesRoot sourceSide) index state
+    (Raw.crossRoot? state index sourceSide)
 
 theorem checkedEntailsAt
     {check : Sequent Nat → Sequent Nat → Bool}
@@ -1081,6 +1388,15 @@ theorem pushRootLiteral?_entailsAt {before after : Packed.State payloadWidth}
   apply checkedEntailsAt (pushesRoot_eq_true (literal reference) side)
     PushesRoot.entailsAt Raw.pushRootLiteral?_valid ran holds
 
+theorem crossRoot?_entailsAt {before after : Packed.State payloadWidth}
+    {index : Nat} {sourceSide : Side} {known : PartialAssignment Nat}
+    (ran : crossRoot? before index sourceSide = some after)
+    (holds : Classical.Mutation.Tagged.EntailsAt
+      known before.arena before.layout) :
+    Classical.Mutation.Tagged.EntailsAt known after.arena after.layout := by
+  apply checkedEntailsAt (crossesRoot_eq_true sourceSide)
+    CrossesRoot.entailsAt Raw.crossRoot?_valid ran holds
+
 theorem reorderRoot?_syllogism {before after : Packed.State payloadWidth}
     {index : Nat} {side : Side} {candidate : List (Word.Ref payloadWidth)}
     (ran : reorderRoot? before index side candidate = some after)
@@ -1108,6 +1424,13 @@ theorem pushRootLiteral?_syllogism {before after : Packed.State payloadWidth}
     (holds : Classical.Mutation.Tagged.Syllogism before.arena before.layout) :
     Classical.Mutation.Tagged.Syllogism after.arena after.layout :=
   pushRootLiteral?_entailsAt ran holds
+
+theorem crossRoot?_syllogism {before after : Packed.State payloadWidth}
+    {index : Nat} {sourceSide : Side}
+    (ran : crossRoot? before index sourceSide = some after)
+    (holds : Classical.Mutation.Tagged.Syllogism before.arena before.layout) :
+    Classical.Mutation.Tagged.Syllogism after.arena after.layout :=
+  crossRoot?_entailsAt ran holds
 
 end Tagged
 

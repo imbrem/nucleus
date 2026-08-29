@@ -48,6 +48,25 @@ private def literal1 : Word.Ref 8 := ref8 false ⟨7, by decide⟩ (by decide)
 private def array4 : Word.Ref 8 := ref8 false ⟨4, by decide⟩ (by decide)
 private def array8 : Word.Ref 8 := ref8 false ⟨8, by decide⟩ (by decide)
 
+private def crossMemory : Memory 8 where
+  words := #[zero8, zero8, zero8, zero8,
+    literal0.word, zero8, zero8, zero8,
+    zero8, zero8, zero8, zero8]
+  free := []
+
+private def crossedMemory : Memory 8 where
+  words := #[zero8, zero8, zero8, zero8,
+    zero8, zero8, zero8, zero8,
+    literal0.neg.word, zero8, zero8, zero8]
+  free := []
+
+/-- Crossing transfers ownership, complements the reference, and is reversible. -/
+example : crossMemory.cross? block4 block8 = some (literal0, crossedMemory) := by
+  decide
+
+example : crossedMemory.cross? block8 block4 = some (literal0.neg, crossMemory) := by
+  decide
+
 private def cycleArena : Arena 8 where
   memory := ⟨#[zero8, zero8, zero8, zero8,
     array4.word, zero8, zero8, zero8], []⟩

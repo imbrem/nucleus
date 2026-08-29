@@ -83,6 +83,32 @@ theorem Holds.cross (assignment : Classical.Assignment Atom)
     refine ⟨formula.neg, List.mem_append.mpr (Or.inr (by simp)), ?_⟩
     exact (Formula.eval_neg formula assignment).mpr formulaTrue
 
+/-- Move a final disjunct back across a sequent, again complementing it. -/
+theorem Holds.crossLeft (assignment : Classical.Assignment Atom)
+    (cnf dnf : List (Formula Atom)) (formula : Formula Atom)
+    (holds : Holds
+      ⟨Formula.conjunction cnf, Formula.disjunction (dnf ++ [formula])⟩
+      assignment) :
+    Holds
+      ⟨Formula.conjunction (cnf ++ [formula.neg]), Formula.disjunction dnf⟩
+      assignment := by
+  intro expandedPremise
+  have cnfTrue : (Formula.conjunction cnf).Eval assignment := by
+    apply (Formula.eval_conjunction assignment cnf).mpr
+    intro child member
+    exact (Formula.eval_conjunction assignment (cnf ++ [formula.neg])).mp
+      expandedPremise child (List.mem_append.mpr (Or.inl member))
+  have negatedTrue : formula.neg.Eval assignment :=
+    (Formula.eval_conjunction assignment (cnf ++ [formula.neg])).mp
+      expandedPremise formula.neg (List.mem_append.mpr (Or.inr (by simp)))
+  obtain ⟨child, member, childTrue⟩ :=
+    (Formula.eval_disjunction assignment (dnf ++ [formula])).mp (holds cnfTrue)
+  rcases List.mem_append.mp member with member | member
+  · exact (Formula.eval_disjunction assignment dnf).mpr ⟨child, member, childTrue⟩
+  · have equal : child = formula := List.mem_singleton.mp member
+    subst child
+    exact False.elim ((Formula.eval_neg formula assignment).mp negatedTrue childTrue)
+
 /-- Permuting conjuncts in a premise preserves a sequent. -/
 theorem Holds.lhsAndPermute (assignment : Classical.Assignment Atom)
     {before after : List (Formula Atom)} {rhs : Formula Atom}
@@ -155,6 +181,15 @@ theorem EntailsAt.cross (known : Classical.PartialAssignment Atom)
     EntailsAt known
       ⟨Formula.conjunction cnf, Formula.disjunction (dnf ++ [formula.neg])⟩ :=
   holds.map fun assignment ↦ Holds.cross assignment cnf dnf formula
+
+/-- Partial-assignment form of inverse crossing. -/
+theorem EntailsAt.crossLeft (known : Classical.PartialAssignment Atom)
+    (cnf dnf : List (Formula Atom)) (formula : Formula Atom)
+    (holds : EntailsAt known
+      ⟨Formula.conjunction cnf, Formula.disjunction (dnf ++ [formula])⟩) :
+    EntailsAt known
+      ⟨Formula.conjunction (cnf ++ [formula.neg]), Formula.disjunction dnf⟩ :=
+  holds.map fun assignment ↦ Holds.crossLeft assignment cnf dnf formula
 
 /-- Partial-assignment form of left conjunction permutation. -/
 theorem EntailsAt.lhsAndPermute (known : Classical.PartialAssignment Atom)
