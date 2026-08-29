@@ -14,8 +14,12 @@ cite only labels declared **strictly earlier** than the theorem it proves
 (`MmError::ForwardReference`), and may cite only its own `$e` premises
 (`MmError::InactiveHypothesis`). Databases that relied on either being
 unchecked—a theorem citing itself, or another block's hypothesis—no longer
-validate. `$f` floats are exempt from the scope test: citing an active but
-non-mandatory float is how a proof introduces a dummy variable.
+validate.
+
+The current verifier does not yet enforce the corresponding active-scope rule
+for `$f` hypotheses. Active non-mandatory floats must remain usable because
+they introduce dummy variables, but an earlier float outside the theorem's
+scope must be rejected. This correctness gap is tracked in #1144.
 
 ```rust
 use covalence_logic_metamath::{parse, verify_all};

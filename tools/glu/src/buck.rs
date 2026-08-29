@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fs,
     path::{Path, PathBuf},
 };
@@ -891,7 +891,11 @@ impl<'a> Graph<'a> {
             .copied()
             .collect::<BTreeSet<_>>();
         let tools = self.dependency_cell.ends_with("/glu");
-        let root = self.metadata.workspace_root.as_std_path();
+        let tcb = if tools {
+            BTreeSet::new()
+        } else {
+            self.tcb_workspace_ids()?
+        };
         let mut roots = self
             .workspace_packages()
             .into_iter()
@@ -911,15 +915,10 @@ impl<'a> Graph<'a> {
                 dependencies.dedup();
                 let category = if tools {
                     "tool"
-                } else if package
-                    .manifest_path
-                    .as_std_path()
-                    .strip_prefix(root)
-                    .is_ok_and(|path| path.starts_with("crates/bin"))
-                {
-                    "product"
-                } else {
+                } else if tcb.contains(package.id.repr.as_str()) {
                     "tcb"
+                } else {
+                    "product"
                 };
                 Some(DependencyRoot {
                     id: stable_workspace_id(package),
@@ -1014,6 +1013,11 @@ impl<'a> Graph<'a> {
 
     fn workspace_data(&self, root: &Path) -> Result<WorkspaceData> {
         let tools = self.dependency_cell.ends_with("/glu");
+        let tcb = if tools {
+            BTreeSet::new()
+        } else {
+            self.tcb_workspace_ids()?
+        };
         let mut crates = self
             .workspace_packages()
             .into_iter()
@@ -1021,10 +1025,10 @@ impl<'a> Graph<'a> {
                 let path = package_directory(root, package)?;
                 let category = if tools {
                     "tool"
-                } else if path.starts_with("crates/bin") {
-                    "product"
-                } else {
+                } else if tcb.contains(package.id.repr.as_str()) {
                     "tcb"
+                } else {
+                    "product"
                 };
                 let mut targets = package
                     .targets
@@ -1065,6 +1069,44 @@ impl<'a> Graph<'a> {
             crates,
             edges,
         })
+    }
+
+    /// Workspace packages in the resolved normal-dependency closure of the
+    /// checked core. This is the crate-level TCB view used by generated graph
+    /// data; tests, tools, frontends, and hosts stay product code even when
+    /// they live under `crates/`.
+    fn tcb_workspace_ids(&self) -> Result<BTreeSet<String>> {
+        let root = self
+            .metadata
+            .packages
+            .iter()
+            .find(|package| package.name == "covalence-nucleus-core")
+            .ok_or_else(|| color_eyre::eyre::eyre!("workspace has no covalence-nucleus-core"))?;
+        let mut pending = VecDeque::from([&root.id]);
+        let mut visited = BTreeSet::new();
+        let mut tcb = BTreeSet::new();
+        while let Some(id) = pending.pop_front() {
+            if !visited.insert(id.repr.clone()) {
+                continue;
+            }
+            if self.workspace.contains(id) {
+                tcb.insert(id.repr.clone());
+            }
+            if let Some(node) = self.nodes.get(id) {
+                pending.extend(
+                    node.deps
+                        .iter()
+                        .filter(|dependency| {
+                            dependency
+                                .dep_kinds
+                                .iter()
+                                .any(|kind| kind.kind == DependencyKind::Normal)
+                        })
+                        .map(|dependency| &dependency.pkg),
+                );
+            }
+        }
+        Ok(tcb)
     }
 
     fn dependency_edges(
