@@ -11,12 +11,12 @@ introduce a `CasFact`.
 All request and response bodies containing object data are
 `application/octet-stream`.
 
-| Method | Path | Meaning |
-| --- | --- | --- |
-| `POST` or `PUT` | `/cas/upload` | Stream bytes into the CAS and compute their BLAKE3 address. |
-| `PUT` | `/cas/blake3/{hash}` | Stream bytes into the CAS only if they match `{hash}`. |
+| Method          | Path                 | Meaning                                                             |
+| --------------- | -------------------- | ------------------------------------------------------------------- |
+| `POST` or `PUT` | `/cas/upload`        | Stream bytes into the CAS and compute their BLAKE3 address.         |
+| `PUT`           | `/cas/blake3/{hash}` | Stream bytes into the CAS only if they match `{hash}`.              |
 | `GET` or `HEAD` | `/cas/blake3/{hash}` | Read the complete object, its length, or standard HTTP byte ranges. |
-| `GET` or `HEAD` | `/cas/{hash}` | Compatibility alias for the BLAKE3 route. |
+| `GET` or `HEAD` | `/cas/{hash}`        | Compatibility alias for the BLAKE3 route.                           |
 
 `PUT /cas/upload` is idempotent in CAS terms: repeating a body admits the same
 address. `POST` is also accepted because it is the conventional HTTP method
