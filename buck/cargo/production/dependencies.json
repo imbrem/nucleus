@@ -9601,6 +9601,14 @@
       ]
     },
     {
+      "id": "workspace#covalence-nucleus-script@0.0.0",
+      "name": "covalence-nucleus-script",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6"
+      ]
+    },
+    {
       "id": "workspace#covalence-nucleus-server@0.0.0",
       "name": "covalence-nucleus-server",
       "category": "tcb",
