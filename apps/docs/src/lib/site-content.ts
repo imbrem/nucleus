@@ -44,7 +44,7 @@ export const staticNaturalDemo = {
   eyebrow: "Static walkthrough",
   title: "One plus one, checked",
   introduction:
-    "This page records a result in the current natural-number init prefix. It does not run a proof component or an AI model in your browser.",
+    "This page records a frozen result produced by the natural-number init compiler. It does not run a proof component or an AI model in your browser.",
   status: "Not interactive",
   theorem: {
     eyebrow: "Checked theorem",
