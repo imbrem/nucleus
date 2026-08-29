@@ -12,7 +12,12 @@
     loadRepositoryData,
     type RepositoryData,
   } from "./repository-data";
-  import { graphCopy, statusMetrics } from "./site-content";
+  import {
+    graphCopy,
+    nodeCategoryLabels,
+    snapshotCopy,
+    statusMetrics,
+  } from "./site-content";
 
   let data: RepositoryData | undefined = $state();
   let inventory: DependencyInventoryEntry[] = $state([]);
@@ -31,7 +36,7 @@
           error =
             cause instanceof Error
               ? cause.message
-              : "Could not load project status";
+              : "Could not load repository snapshot";
         }
       });
     return () => controller.abort();
@@ -41,8 +46,9 @@
 <section aria-labelledby="status-heading">
   <div class="section-heading">
     <div>
-      <p class="eyebrow">Repository health</p>
-      <h1 id="status-heading">Project status</h1>
+      <p class="eyebrow">{snapshotCopy.eyebrow}</p>
+      <h1 id="status-heading">{snapshotCopy.title}</h1>
+      <p class="snapshot-introduction">{snapshotCopy.introduction}</p>
     </div>
     <a class="api-link" href={`${base}/api/nucleus/`}
       >Rust API docs <span>→</span></a
@@ -51,7 +57,7 @@
   {#if error}
     <p class="error">{error}</p>
   {:else if data}
-    <div class="metrics" aria-label="Project statistics">
+    <div class="metrics" aria-label="Repository statistics">
       {#each statusMetrics as metric}
         <article class:tcb-metric={metric.emphasis ?? false}>
           <strong>{format.format(data.lines[metric.key])}</strong><span
@@ -73,6 +79,7 @@
         <strong>{inventory.length}</strong><span>dependency names</span>
       </article>
     </div>
+    <p class="snapshot-note">{snapshotCopy.tcbNote}</p>
   {:else}
     <p class="loading">Reading generated repository data…</p>
   {/if}
@@ -116,7 +123,9 @@
           <span>{dependency.name}</span>
           <div>
             {#each dependency.versions as version}
-              <code class={version.category} title={version.category}
+              <code
+                class={version.category}
+                title={nodeCategoryLabels[version.category]}
                 >{version.version}</code
               >
             {/each}

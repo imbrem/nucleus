@@ -9332,7 +9332,7 @@
     {
       "id": "workspace#covalence-browser@0.0.0",
       "name": "covalence-browser",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen@0.2.121"
       ]
@@ -9340,7 +9340,7 @@
     {
       "id": "workspace#covalence-data-array@0.0.0",
       "name": "covalence-data-array",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#zerocopy@0.8.56"
       ]
@@ -9348,7 +9348,7 @@
     {
       "id": "workspace#covalence-data-cas@0.0.0",
       "name": "covalence-data-cas",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.34"
@@ -9357,7 +9357,7 @@
     {
       "id": "workspace#covalence-data-cas-http@0.0.0",
       "name": "covalence-data-cas-http",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#axum-extra@0.10.3",
         "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
@@ -9372,7 +9372,7 @@
     {
       "id": "workspace#covalence-data-cas-s3@0.0.0",
       "name": "covalence-data-cas-s3",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
@@ -9383,7 +9383,7 @@
     {
       "id": "workspace#covalence-data-cas-sqlite@0.0.0",
       "name": "covalence-data-cas-sqlite",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.34"
       ]
@@ -9391,7 +9391,7 @@
     {
       "id": "workspace#covalence-data-sexpr@0.0.0",
       "name": "covalence-data-sexpr",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6"
@@ -9400,7 +9400,7 @@
     {
       "id": "workspace#covalence-data-sqlite@0.0.0",
       "name": "covalence-data-sqlite",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
       ]
@@ -9408,7 +9408,7 @@
     {
       "id": "workspace#covalence-ffi-python@0.0.0",
       "name": "covalence-ffi-python",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#cid@0.11.3"
       ]
@@ -9416,7 +9416,7 @@
     {
       "id": "workspace#covalence-lib-bigint@0.0.0",
       "name": "covalence-lib-bigint",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8"
       ]
@@ -9432,7 +9432,7 @@
     {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#ed25519-dalek@2.2.0"
       ]
@@ -9463,7 +9463,7 @@
     {
       "id": "workspace#covalence-lib-json@0.0.0",
       "name": "covalence-lib-json",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151"
       ]
@@ -9471,7 +9471,7 @@
     {
       "id": "workspace#covalence-lib-parse@0.0.0",
       "name": "covalence-lib-parse",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#winnow@1.0.4"
       ]
@@ -9479,7 +9479,7 @@
     {
       "id": "workspace#covalence-lib-pretty@0.0.0",
       "name": "covalence-lib-pretty",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#pretty@0.12.5"
       ]
@@ -9487,7 +9487,7 @@
     {
       "id": "workspace#covalence-lib-python@0.0.0",
       "name": "covalence-lib-python",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#pyo3@0.29.2"
       ]
@@ -9503,7 +9503,7 @@
     {
       "id": "workspace#covalence-lib-s3@0.0.0",
       "name": "covalence-lib-s3",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
         "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
@@ -9515,7 +9515,7 @@
     {
       "id": "workspace#covalence-lib-serde@0.0.0",
       "name": "covalence-lib-serde",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229"
       ]
@@ -9523,7 +9523,7 @@
     {
       "id": "workspace#covalence-lib-sqlite@0.0.0",
       "name": "covalence-lib-sqlite",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
@@ -9533,7 +9533,7 @@
     {
       "id": "workspace#covalence-lib-table@0.0.0",
       "name": "covalence-lib-table",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
         "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0"
@@ -9542,7 +9542,7 @@
     {
       "id": "workspace#covalence-lib-wasm@0.0.0",
       "name": "covalence-lib-wasm",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#wasmtime-wasi@48.0.1",
         "registry+https://github.com/rust-lang/crates.io-index#wasmtime@48.0.1"
@@ -9577,7 +9577,7 @@
     {
       "id": "workspace#covalence-logic-metamath@0.0.0",
       "name": "covalence-logic-metamath",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
         "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6"
@@ -9586,7 +9586,7 @@
     {
       "id": "workspace#covalence-nucleus@0.0.0",
       "name": "covalence-nucleus",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.34"
@@ -9595,7 +9595,7 @@
     {
       "id": "workspace#covalence-nucleus-server@0.0.0",
       "name": "covalence-nucleus-server",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1"
@@ -9604,7 +9604,7 @@
     {
       "id": "workspace#covalence-proof-demo@0.0.0",
       "name": "covalence-proof-demo",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#wit-bindgen@0.61.1"
       ]
@@ -9612,7 +9612,7 @@
     {
       "id": "workspace#covalence-proof-host@0.0.0",
       "name": "covalence-proof-host",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#wit-bindgen@0.61.1"
@@ -9621,7 +9621,7 @@
     {
       "id": "workspace#covalence-proof-invalid-demo@0.0.0",
       "name": "covalence-proof-invalid-demo",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#wit-bindgen@0.61.1"
       ]
@@ -9629,7 +9629,7 @@
     {
       "id": "workspace#covalence-repl@0.0.0",
       "name": "covalence-repl",
-      "category": "tcb",
+      "category": "product",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
       ]
