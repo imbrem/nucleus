@@ -375,6 +375,55 @@ theorem lookup_of_mem {cas : Cas} {pair : CasPair} (member : pair ∈ cas) :
     cas.Lookup pair.hash pair.blob :=
   ⟨pair, member, rfl, rfl⟩
 
+/--
+The store *pins* an address when it holds a checked pair addressed there.
+
+This is the address half of `Cas.Lookup`: it asks only that *some* blob answer
+at `hash`, never which one, so it survives a collision unchanged.  It is the
+hypothesis a naming claim about `hash` needs, because a pinned address is read
+back to a checked pair by every model — see `Nucleus.Model.extendsCas` — and a
+checked pair already carries the naming equation `Nucleus.CasPair.valid_hash`.
+-/
+def Pins (cas : Cas) (hash : O256) : Prop := ∃ pair ∈ cas, pair.hash = hash
+
+/-- A checked pair pins its own address. -/
+theorem pins_of_mem {cas : Cas} {pair : CasPair} (member : pair ∈ cas) : cas.Pins pair.hash :=
+  ⟨pair, member, rfl⟩
+
+/-- Pinning is exactly a relational lookup that succeeds at some blob. -/
+theorem pins_iff_exists_lookup {cas : Cas} {hash : O256} :
+    cas.Pins hash ↔ ∃ blob, cas.Lookup hash blob := by
+  constructor
+  · rintro ⟨pair, member, addressed⟩
+    exact ⟨pair.blob, pair, member, addressed, rfl⟩
+  · rintro ⟨_, pair, member, addressed, _⟩
+    exact ⟨pair, member, addressed⟩
+
+/-- The empty store pins nothing. -/
+@[simp] theorem not_pins_empty (hash : O256) : ¬ (empty : Cas).Pins hash := by
+  rintro ⟨pair, member, _⟩
+  simp [empty] at member
+
+/-- A singleton store pins exactly its own address. -/
+@[simp] theorem pins_singleton {pair : CasPair} {hash : O256} :
+    (singleton pair).Pins hash ↔ pair.hash = hash := by
+  constructor
+  · rintro ⟨other, member, addressed⟩
+    rw [← mem_singleton.mp member]
+    exact addressed
+  · exact fun addressed ↦ ⟨pair, mem_singleton.mpr rfl, addressed⟩
+
+/-- A union pins what either side pins. -/
+@[simp] theorem pins_union {left right : Cas} {hash : O256} :
+    (left.union right).Pins hash ↔ left.Pins hash ∨ right.Pins hash := by
+  constructor
+  · rintro ⟨pair, member, addressed⟩
+    exact (mem_union.mp member).imp (fun side ↦ ⟨pair, side, addressed⟩)
+      fun side ↦ ⟨pair, side, addressed⟩
+  · rintro (⟨pair, member, addressed⟩ | ⟨pair, member, addressed⟩)
+    · exact ⟨pair, mem_union.mpr (Or.inl member), addressed⟩
+    · exact ⟨pair, mem_union.mpr (Or.inr member), addressed⟩
+
 /-- Every lookup result satisfies the naming equation. -/
 theorem lookup_valid {cas : Cas} {hash : O256} {blob : Bytes}
     (found : cas.Lookup hash blob) : Name.name blob = hash := by

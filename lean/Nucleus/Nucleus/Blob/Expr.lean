@@ -41,10 +41,10 @@ carry it as a single section variable; no individual rule restates it.
 
 `Model.IsSection` asks for `name (σ h) = h`, which says `σ h` really *is* a blob
 named `h`.  It implies injectivity — see `Model.injective_of_isSection` — and it
-would buy the two range-fact theorems at the end of `Nucleus.Blob.Eq`, which
-without it have to assume it outright: an unpinned address is otherwise sent
-somewhere the naming function knows nothing about, so a bare naming equation
-`name whole = h` says nothing at all about `σ h`.
+is what `Nucleus.BlobEq.valid_ofCasRange` and `Nucleus.CasRange.of_valid` assume
+outright: an unpinned address is otherwise sent somewhere the naming function
+knows nothing about, so a bare naming equation `name whole = h` says nothing at
+all about `σ h`.
 
 It is deliberately *not* adopted.  Existence would then be tied to `name` being
 surjective, since every address would have to be named by some blob, and
@@ -52,6 +52,17 @@ surjective, since every address would have to be named by some blob, and
 standing assumption would no longer be collision-freedom, which is the one
 hypothesis the rest of the system already tracks.  Injectivity is everything the
 calculus needs and it is free.
+
+Nor is it needed for the direction that matters.  A valid equality about a
+digest already *forces* the store to pin it, so a checked pair naming the
+address exists and carries the naming equation itself:
+`Nucleus.Cas.pins_of_valid_blake3` is that step and
+`Nucleus.CasRange.of_valid_of_contentful` is the section-free replacement.  The
+tools it spends are `Model.exists_length_bound` and `Model.update` below — there
+are finitely many addresses and infinitely many byte strings, so an unpinned
+address can always be moved somewhere that refutes the equation.  The one shape
+it cannot reach is the empty closed window, which is valid at every address of
+every store; `Nucleus.CasRange.Contentful` excludes it.
 
 ## A digest is always defined
 
@@ -245,6 +256,74 @@ theorem injective_of_isSection {model : Model cas} (isSection : model.IsSection)
     Function.Injective model.sigma := by
   intro left right equal
   rw [← isSection left, ← isSection right, equal]
+
+/-!
+### Room to move an unpinned address
+
+An address the store says nothing about is free, and the two results below are
+what "free" means operationally: a model reads only finitely many blobs, since
+there are only finitely many addresses, so a long enough byte string is one no
+address denotes, and redirecting one *unpinned* address to such a byte string
+leaves a model.  That is the whole of the pinning argument in
+`Nucleus.Cas.pins_of_valid_blake3`: an equation about an unpinned digest is
+refuted by moving it.
+-/
+
+/--
+Every blob a model denotes is bounded in length.
+
+There are finitely many addresses, so `sigma` has a finite range; this is only
+that finiteness, phrased as the bound the freshness argument actually spends.
+-/
+theorem exists_length_bound (model : Model cas) :
+    ∃ bound : Nat, ∀ hash : O256, (model.sigma hash).length ≤ bound := by
+  obtain ⟨bound, bounded⟩ := (Set.finite_range fun hash ↦ (model.sigma hash).length).bddAbove
+  exact ⟨bound, fun hash ↦ bounded (Set.mem_range_self hash)⟩
+
+/--
+Redirect one unpinned address to a byte string no address already denotes.
+
+Both hypotheses are exactly what the two fields need.  Freshness keeps `sigma`
+injective, because the moved address is the only one sent to `blob`; being
+unpinned keeps `extendsCas`, because no checked pair is addressed at `hash` and
+so no pair notices the move.  Nothing is claimed about the *old* value of
+`sigma hash`: the point is that there was never anything to claim.
+-/
+def update (model : Model cas) {hash : O256} (blob : Bytes)
+    (unpinned : ¬ cas.Pins hash) (fresh : blob ∉ Set.range model.sigma) : Model cas where
+  sigma := Function.update model.sigma hash blob
+  injective := by
+    intro left right equal
+    by_cases leftAt : left = hash
+    · by_cases rightAt : right = hash
+      · rw [leftAt, rightAt]
+      · rw [leftAt, Function.update_self, Function.update_of_ne rightAt] at equal
+        exact absurd ⟨right, equal.symm⟩ fresh
+    · by_cases rightAt : right = hash
+      · rw [rightAt, Function.update_self, Function.update_of_ne leftAt] at equal
+        exact absurd ⟨left, equal⟩ fresh
+      · rw [Function.update_of_ne leftAt, Function.update_of_ne rightAt] at equal
+        exact model.injective equal
+  extendsCas := by
+    intro pair member
+    have different : pair.hash ≠ hash := fun addressed ↦ unpinned ⟨pair, member, addressed⟩
+    rw [Function.update_of_ne different]
+    exact model.extendsCas pair member
+
+/-- The moved address denotes the byte string it was moved to. -/
+@[simp] theorem update_sigma_self (model : Model cas) {hash : O256} (blob : Bytes)
+    (unpinned : ¬ cas.Pins hash) (fresh : blob ∉ Set.range model.sigma) :
+    (model.update blob unpinned fresh).sigma hash = blob := by
+  change Function.update model.sigma hash blob hash = blob
+  exact Function.update_self hash blob model.sigma
+
+/-- Every other address is left exactly where it was. -/
+@[simp] theorem update_sigma_of_ne (model : Model cas) {hash other : O256} (blob : Bytes)
+    (unpinned : ¬ cas.Pins hash) (fresh : blob ∉ Set.range model.sigma)
+    (different : other ≠ hash) :
+    (model.update blob unpinned fresh).sigma other = model.sigma other := by
+  change Function.update model.sigma hash blob other = model.sigma other
+  exact Function.update_of_ne different blob model.sigma
 
 end Model
 

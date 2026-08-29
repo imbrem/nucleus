@@ -91,8 +91,11 @@ mod sealed {
 /// an outside implementor returning `Some(true)` unconditionally would forge
 /// every fact in the crate.
 ///
-/// Lean: no counterpart; each implementor maps to one Lean `Prop`
-/// (`Nucleus.BlobEq.Valid` today, `Nucleus.BlobDistinct.Valid` later).
+/// Lean: no counterpart by design. The trait exists so that one LCF wrapper can
+/// serve several propositions in a language where that has to be a type; Lean
+/// quantifies over `Prop` directly, so each implementor is simply one Lean
+/// predicate (`Nucleus.BlobEq.Valid` today, `Nucleus.BlobDistinct.Valid` later)
+/// and the abstraction itself has nothing left to state.
 ///
 /// ```compile_fail
 /// use covalence_logic_cas::BlobProp;
@@ -463,8 +466,10 @@ impl<L: BlobLike, R: BlobLike> BlobFact<BlobEq<L, R>> {
     /// [`CasRangeFact::erase`](crate::CasRangeFact::erase) is used for range
     /// shapes.
     ///
-    /// Lean: none. Lean has one expression type, so there is nothing to erase;
-    /// this is Rust-only re-typing.
+    /// Lean: no counterpart by design. Erasure is re-typing and nothing else,
+    /// needed because a carrier is a static type here; Lean has the single type
+    /// `Nucleus.BlobExpr`, so every Lean fact is already in the erased form and
+    /// there is no step to state.
     #[must_use]
     pub fn erase(&self) -> BlobFact<BlobEq<BlobExpr, BlobExpr>> {
         BlobFact::trust(BlobEq::new(self.0.lhs.to_expr(), self.0.rhs.to_expr()))
@@ -570,12 +575,30 @@ impl BlobFact<BlobEq<BlobExpr, BlobExpr>> {
     ///
     /// Ordinary, exactly like [`CasRangeFact::to_blob_fact`] going the other
     /// way. A `BlobFact` is a proof that its equality holds in every model, and
-    /// an equality about `Blake3(h)` can only hold in every model when the CAS
-    /// pins `h` there: an unpinned hash is free, so some other model reads
-    /// different bytes at it and refutes the claim.
+    /// a *contentful* equality about `Blake3(h)` can only hold in every model
+    /// when the CAS pins `h` there: an unpinned hash is free, so some other
+    /// model reads different bytes at it and refutes the claim.
     ///
     /// So the premise already says what a [`CasRangeFact`] asserts, and this
     /// rule only rearranges it into the other layer's shape.
+    ///
+    /// "Contentful" excludes exactly one family, and the exclusion is real
+    /// rather than bookkeeping: the empty closed window,
+    /// `Slice(Blake3(h), k..k) = Bytes("")`. Every byte string selects nothing
+    /// on `[k, k)`, so at `k = 0` that equality holds in every model of every
+    /// store while naming nothing at all. Every other shape is contentful —
+    /// every open span, every window of nonzero width, every backwards or
+    /// mis-widthed one — so nothing this crate reasons about is excluded.
+    ///
+    /// This rule does not test for that shape, and nothing mints such a premise
+    /// for an address the crate does not already hold a fact about.
+    /// [`BlobProp::decide`](crate::BlobProp::decide) cannot settle a slice of a
+    /// digest, which has neither a known length nor an evaluation, and the only
+    /// other route to the shape is [`CasRangeFact::to_blob_fact`], whose subject
+    /// is pinned by the very fact it came from — the case
+    /// `Nucleus.CasRange.of_valid_of_pins` covers with no side condition. Making
+    /// that a check rather than a property of what is derivable, by refusing an
+    /// empty closed span against empty bytes, is a follow-up.
     ///
     /// Partial for three separate reasons, none of which is a guess:
     ///
@@ -598,15 +621,27 @@ impl BlobFact<BlobEq<BlobExpr, BlobExpr>> {
     /// a backwards span, which reaches here through [`BlobRange::span`]'s
     /// bypass of `BlobSpan::new`.
     ///
-    /// Lean: `Nucleus.CasRange.of_valid`, which is proved but *not*
-    /// hypothesis-free: stated for an arbitrary hash, it needs one model that
-    /// is a section (`Nucleus.Model.IsSection`), because an equality pins
-    /// `σ h` while `Nucleus.CasRange.Valid` asks for a blob *named* `h`.
+    /// Lean: `Nucleus.CasRange.of_valid_of_contentful`, which is this rule: a
+    /// valid equality of range-fact shape over a contentful span yields
+    /// `Nucleus.CasRange.Valid`, with no section property and no injectivity.
+    /// The step it takes is the one this rule's argument takes,
+    /// `Nucleus.Cas.pins_of_valid_blake3` — an unpinned address is free, so
+    /// redirecting it to a byte string long enough to be fresh refutes the
+    /// equality. `Nucleus.CasRange.of_valid_of_pins` is the variant that takes
+    /// the pin rather than deriving it, and `Nucleus.CasRange.Contentful` is the
+    /// side condition, discharged by `contentful_of_open` for any open span and
+    /// by `contentful_of_ne_empty` for any nonempty bytes.
     ///
-    /// The step this rule leans on instead — that a valid equality about
-    /// `Blake3(h)` forces the CAS to pin `h`, so a checked fact naming it
-    /// already exists — is specific to quantifying over models of *this*
-    /// crate's facts, and has no Lean statement yet.
+    /// The side condition is not slack. `Nucleus.BlobEq.valid_emptyWindow`
+    /// proves the empty closed window valid at every address of every store, and
+    /// `Nucleus.exists_valid_not_casRange` exhibits a store that has a model,
+    /// where the equality holds, the address is unpinned, and the range claim is
+    /// false — so a hypothesis-free reading of this rule is refutable, not
+    /// merely unproved.
+    ///
+    /// `Nucleus.CasRange.of_valid` reaches the same conclusion for any span at
+    /// all, but only through a model that is a section
+    /// (`Nucleus.Model.IsSection`), which this crate does not assume.
     ///
     /// ```
     /// use std::ops::{RangeFrom, RangeFull};
@@ -651,6 +686,18 @@ impl BlobFact<BlobEq<BlobExpr, BlobExpr>> {
         if let Some(end) = span.end()
             && end.checked_sub(span.start()) != Some(width)
         {
+            return None;
+        }
+        // An empty closed window establishes nothing about the address.
+        // `Slice(Blake3(h), k..k)` equals `Bytes("")` in every model of every
+        // store, because every byte string selects nothing on an empty range,
+        // so the premise holds even when `h` names nothing at all. A
+        // `CasRangeFact` is a naming claim, so this shape must be refused.
+        //
+        // Lean: `Nucleus.CasRange.Contentful` is the side condition, and
+        // `Nucleus.exists_valid_not_casRange` is the counterexample to
+        // dropping it. Every other shape is contentful, so this costs nothing.
+        if span.end() == Some(span.start()) && bytes.is_empty() {
             return None;
         }
         let range = R::from_bounds(span.start(), span.end())?;
@@ -1317,6 +1364,46 @@ mod tests {
         // denotes is invisible from here, so `decide` refuses to guess.
         assert_eq!(prop.decide(), None);
         assert_eq!(BlobFact::check(prop), None);
+    }
+
+    /// An empty closed window proves nothing about the address it names.
+    ///
+    /// `Slice(Blake3(h), k..k) = Bytes("")` is valid in every model of every
+    /// store, since every byte string selects nothing on an empty range. A
+    /// `CasRangeFact` asserts that a blob named `h` exists, so minting one
+    /// here would be a naming claim the premise does not support.
+    ///
+    /// Lean: `Nucleus.BlobEq.valid_emptyWindow` proves the premise holds
+    /// unconditionally, and `Nucleus.exists_valid_not_casRange` is the
+    /// refutation of the conclusion.
+    #[test]
+    fn an_empty_closed_window_mints_no_naming_claim() {
+        let hash = O256::from_bytes(b"never stored");
+
+        for start in [0, 7, u64::MAX] {
+            let empty = BlobFact::trust(BlobEq::new(
+                BlobExpr::slice(BlobExpr::Blake3(hash), start..start),
+                bytes(b""),
+            ));
+            assert_eq!(empty.to_range_fact::<Range<u64>>(), None);
+            assert_eq!(empty.to_range_fact::<RangeFull>(), None);
+        }
+
+        // Everything else is contentful, so the guard costs nothing. An empty
+        // range that is open still reaches the end of the blob, which is a
+        // claim about the blob rather than about nothing.
+        let open = BlobFact::trust(BlobEq::new(
+            BlobExpr::slice(BlobExpr::Blake3(hash), 4..),
+            bytes(b""),
+        ));
+        assert!(open.to_range_fact::<RangeFrom<u64>>().is_some());
+
+        // And a window of nonzero width is unaffected.
+        let wide = BlobFact::trust(BlobEq::new(
+            BlobExpr::slice(BlobExpr::Blake3(hash), 3..9),
+            bytes(b"345678"),
+        ));
+        assert!(wide.to_range_fact::<Range<u64>>().is_some());
     }
 
     /// Coming back down is partial in the shapes it can express, and each

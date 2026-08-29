@@ -138,8 +138,14 @@ pub struct CasCheckError {
 /// In Lean, [`CasFact::from_bytes`] corresponds to `Nucleus.CasPair.ofBlob`,
 /// the projections correspond to `Nucleus.CasPair.hash` and
 /// `Nucleus.CasPair.blob`, and the invariant is `Nucleus.CasPair.valid_hash`.
-/// [`CasAssertion::check`] corresponds to `Nucleus.CasAssertion.check?`. The
-/// range rules have no Lean counterpart yet.
+/// [`CasAssertion::check`] corresponds to `Nucleus.CasAssertion.check?`.
+///
+/// The range rules are stated over `Nucleus.CasRange.Valid`, the proposition
+/// that some blob named this address carries these bytes on this span:
+/// [`Self::slice`] is `Nucleus.CasRange.valid_slice`, [`Self::fuse`] is
+/// `Nucleus.CasRange.valid_fuse`, and [`Self::blob_len`] is
+/// `Nucleus.CasRange.exists_length_of_valid_open`. Each is cited on the rule
+/// itself, together with the counterexample that pins its side conditions.
 ///
 /// ```compile_fail
 /// use bytes::Bytes;
@@ -229,6 +235,16 @@ impl<R: BlobRange> CasRangeFact<R> {
     /// [`Self::slice`] derives one from any fact that reaches the end, which
     /// includes a fact checked from a proof of the blob's final range.
     ///
+    /// Lean: `Nucleus.CasRange.exists_length_of_valid_open`, which takes the
+    /// open upper bound and nothing else, and produces a blob named this address
+    /// whose length is the extent's end. `Nucleus.CasRange.length_of_valid_open`
+    /// is the "*every* blob named this address" reading, which needs the naming
+    /// function to be injective — the crate's standing collision-freedom
+    /// assumption, as on [`Self::fuse`]. `Nucleus.exists_valid_length_ne` is why
+    /// the bounded case
+    /// answers `None`: two blobs of different lengths witness one closed range
+    /// fact, so a range's end is genuinely not the blob's.
+    ///
     /// ```
     /// use covalence_logic_cas::{Bytes, CasFact};
     ///
@@ -290,6 +306,20 @@ impl<R: BlobRange> CasRangeFact<R> {
     /// ends, while a fact about `3..` does, so `..` narrows a `0..` fact into a
     /// whole-blob [`CasFact`].
     ///
+    /// Lean: `Nucleus.CasRange.valid_slice`, whose four hypotheses are exactly
+    /// the four refusals below — `reaches` for the open upper bound, then
+    /// `lower`, `ordered` and `upper` for containment in the bytes this fact
+    /// already knows. Its conclusion carries the locally computed octets, so it
+    /// proves both that the `Bytes` slice here is in range and that the result
+    /// is a fact; `Nucleus.CasRange.valid_slice_of_slice?` is the same statement
+    /// with those octets supplied. No collision-freedom is needed, because the
+    /// blob witnessing the premise witnesses the conclusion too.
+    ///
+    /// `reaches` is the one that is easy to get wrong, and
+    /// `Nucleus.exists_valid_slice_not_valid` is why it cannot be dropped: a
+    /// fact about `0..1` can be true at an address where `0..` is false, so a
+    /// bounded fact may not be widened into one that reaches the end.
+    ///
     /// # Errors
     ///
     /// Returns [`SliceError`] when the request is not contained in the bytes
@@ -343,12 +373,35 @@ impl<R: BlobRange> CasRangeFact<R> {
     /// shape comes from [`FuseRange`], so fusing a prefix with a suffix yields
     /// a whole-blob [`CasFact`].
     ///
-    /// Both operands are checked facts about the same blob, so wherever they
-    /// overlap they agree, and the join takes each byte from whichever operand
-    /// covers it. When one range contains the other the wider operand's buffer
-    /// is retained as is; otherwise the union is copied into a new buffer,
-    /// because `Bytes` has no safe way to widen a shared view back over the
-    /// buffer it was sliced from.
+    /// Both operands are checked facts about the same *address*, and under the
+    /// crate's standing collision-freedom assumption that makes them facts about
+    /// the same blob, so wherever they overlap they agree and the join may take
+    /// each byte from whichever operand covers it. Without that assumption the
+    /// two could be witnessed by different blobs sharing an address, and their
+    /// union would be no blob at all. When one range contains the other the
+    /// wider operand's buffer is retained as is; otherwise the union is copied
+    /// into a new buffer, because `Bytes` has no safe way to widen a shared view
+    /// back over the buffer it was sliced from.
+    ///
+    /// Lean: `Nucleus.CasRange.valid_fuse`, one theorem covering all three
+    /// branches here, because its seam is clamped exactly as the `.min` below
+    /// clamps it, so a contained operand contributes nothing. `ordered` is the
+    /// comparison that picks which operand starts first and `touching` is the
+    /// gap refusal; `fusedStart` and `fusedStop` are the output shape, open
+    /// exactly when either operand is open, which is what makes a prefix fused
+    /// with a suffix a whole-blob fact.
+    ///
+    /// It takes injectivity of the naming function as a hypothesis, which is
+    /// this crate's collision-freedom in its idealised, store-independent form —
+    /// one of the two `Nucleus.BlobEq.valid_ofCasRange` already takes.
+    /// `Nucleus.exists_valid_fuse_not_valid` fuses two true facts into a false
+    /// one without it, so the paragraph above is a real appeal to the standing
+    /// assumption rather than a restatement of "checked".
+    ///
+    /// The gap refusal is about computability rather than truth: with a shared
+    /// witness the union range is a real range of that blob even across a gap,
+    /// but the bytes in the gap are ones neither operand holds, so `touching` is
+    /// what makes the concatenation below the right byte string.
     ///
     /// # Errors
     ///

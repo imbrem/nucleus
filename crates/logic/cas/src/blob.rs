@@ -70,8 +70,9 @@
 //!
 //! Lean: `Nucleus.BlobExpr` and `Nucleus.BlobExpr.denote`, the latter a
 //! function of a `Nucleus.Model` rather than a relation over an unknown fibre.
-//! The limit is Rust-only: Lean's expressions are finite trees already, with no
-//! sharing to expand and no stack to overflow.
+//! The limit is Rust-only by design: it budgets a traversal of an `Arc`-shared
+//! DAG, and a Lean expression is a finite tree with no sharing to expand and no
+//! stack to overflow, so there is no cost there to bound.
 
 use std::{cmp::Ordering, fmt::Debug, sync::Arc};
 
@@ -102,9 +103,11 @@ mod sealed {
 /// satisfy a length-agreement precondition that is false; one that misreported
 /// bytes would forge an equality.
 ///
-/// Lean: no counterpart. Lean has one type, `Nucleus.BlobExpr`;
-/// [`Self::to_expr`] is the Rust-only coercion into it, and every other method
-/// defaults to the corresponding `BlobExpr` function of that coercion. An
+/// Lean: no counterpart by design. The trait exists so that Rust can state a
+/// claim about an [`O256`] or a [`Bytes`] without allocating a [`BlobExpr`]
+/// first; Lean has the one type `Nucleus.BlobExpr`, so the coercion
+/// [`Self::to_expr`] is the whole content of the abstraction and every other
+/// method defaults to the corresponding `BlobExpr` function of it. An
 /// implementor that overrides one answers at least as often and never
 /// differently: [`BlobCat`]'s cached length is exact where the reified
 /// expression would decline to walk, and a [`Self::size`] memo may over-count a
@@ -160,8 +163,10 @@ pub trait BlobLike: sealed::BlobLike + Clone + Debug {
     /// the shape branches. None of them takes the default, which reifies and so
     /// costs a walk of the value.
     ///
-    /// Lean: no counterpart. A Lean `Nucleus.BlobExpr` is a finite tree with
-    /// no sharing to expand, so nothing there needs bounding.
+    /// Lean: no counterpart by design. This measure exists to budget Rust's
+    /// traversals of an `Arc`-shared DAG; a Lean `Nucleus.BlobExpr` is a finite
+    /// tree with no sharing to expand, so there is no cost to measure and
+    /// nothing to prove about measuring it.
     #[must_use]
     fn size(&self) -> u32 {
         self.to_expr().size()
@@ -245,8 +250,9 @@ pub enum BlobExpr {
 /// the limit exists to skip. Being a function of the other fields, it makes no
 /// difference to `==`.
 ///
-/// Lean: erases into `Nucleus.BlobExpr.sliceOf`. The memo has no Lean
-/// counterpart.
+/// Lean: erases into `Nucleus.BlobExpr.sliceOf`. The memo is Rust-only by
+/// design: it caches the traversal cost of a shared DAG, which Lean, recursing
+/// over a finite tree, never pays.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BlobSlice<B, S> {
     blob: B,
@@ -296,8 +302,12 @@ impl<B: BlobLike, S: BlobRange> BlobSlice<B, S> {
 /// Caching the size is what lets [`BlobExpr::len`] and the other observations
 /// decline without walking them either.
 ///
-/// Lean: erases into `Nucleus.BlobExpr.cat`. The caches have no Lean
-/// counterpart; `Nucleus.BlobExpr.length?` recomputes.
+/// Lean: erases into `Nucleus.BlobExpr.cat`. The caches are Rust-only by
+/// design: they exist because children are [`Arc`]-shared here, so an
+/// unmemoized recursion over the DAG need not terminate.
+/// `Nucleus.BlobExpr.length?` recurses over a finite tree and simply
+/// recomputes, so there is nothing there to cache and nothing to prove about
+/// caching.
 #[derive(Clone, Copy, Debug)]
 pub struct BlobCat<L, R> {
     left: L,
@@ -447,7 +457,8 @@ impl BlobExpr {
     /// the sharing, so the tree is the true cost, and [`MAX_TREE_NODES`] is the
     /// size past which the observations below decline to pay it.
     ///
-    /// Lean: no counterpart; see [`BlobLike::size`].
+    /// Lean: no counterpart by design; see [`BlobLike::size`] for why a finite
+    /// tree needs no size budget.
     ///
     /// ```
     /// use covalence_logic_cas::{BlobExpr, Bytes};
@@ -508,10 +519,11 @@ impl BlobExpr {
     /// implies the expression is defined in every model) and
     /// `Nucleus.BlobExpr.length?_sound` (it is `n` octets long there).
     ///
-    /// One-directional: Lean recurses in `Nat`, never overflows and has no size
-    /// limit, so Rust answers `None` strictly more often. That refinement has no
-    /// Lean statement — nothing there models this function — so the tests below
-    /// are what pin the agreement where Rust does answer.
+    /// One-directional by design: Lean recurses in `Nat`, never overflows and
+    /// has no size limit, so Rust answers `None` strictly more often. Declining
+    /// is sound, so those extra refusals are a Rust resource policy rather than
+    /// a claim wanting a proof; the tests below pin the agreement where Rust
+    /// does answer.
     ///
     /// ```
     /// use covalence_logic_cas::{BlobExpr, Bytes, O256};
@@ -570,8 +582,9 @@ impl BlobExpr {
     ///
     /// Lean: `Nucleus.BlobExpr.eval?`, proved sound by
     /// `Nucleus.BlobExpr.eval?_sound`: evaluating to `v` makes the denotation
-    /// `some v` in every model. One-directional: neither limit has a Lean
-    /// counterpart.
+    /// `some v` in every model. One-directional by design: neither limit is
+    /// modelled in Lean and neither should be, since both only make Rust decline
+    /// more often, which is sound.
     ///
     /// ```
     /// use covalence_logic_cas::{BlobExpr, Bytes};
@@ -616,7 +629,8 @@ impl BlobExpr {
 ///
 /// Completeness only: a smaller budget yields `None`, which means "unknown"
 /// and is always sound. It bounds the answer; [`MAX_TREE_NODES`] bounds the
-/// work of getting there. Lean has no counterpart.
+/// work of getting there. Rust-only by design: `Nucleus.BlobExpr.eval?`
+/// recurses in `Nat` and materialises nothing, so it has no result to cap.
 pub const MAX_EVAL_BYTES: u64 = 1 << 30;
 
 /// The largest expression the observations here will walk, counted as a tree.
@@ -641,7 +655,9 @@ pub const MAX_EVAL_BYTES: u64 = 1 << 30;
 /// nodes and nests at most 1024 deep, a depth an ordinary stack absorbs.
 /// Raising it would only admit inputs that are already past reasoning about.
 ///
-/// Lean has no counterpart: its expressions are finite trees with no sharing.
+/// Rust-only by design, like [`MAX_EVAL_BYTES`]: a Lean expression is a finite
+/// tree with no [`Arc`] sharing to expand, so there is no traversal to cap and
+/// nothing there to state about capping it.
 pub const MAX_TREE_NODES: u32 = 1024;
 
 /// Compares two values' lengths, or `None` when either is unknown.

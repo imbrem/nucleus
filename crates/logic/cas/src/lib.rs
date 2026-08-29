@@ -33,8 +33,16 @@
 //! The corresponding Lean theory names the unchecked whole-blob proposition
 //! `Nucleus.CasAssertion.Valid` and the checked atom `Nucleus.CasPair`; see
 //! issue #875. This crate erases the Lean proof while preserving the same LCF
-//! constructor boundary in safe Rust. The range rules have no Lean counterpart
-//! yet.
+//! constructor boundary in safe Rust.
+//!
+//! The range rules are stated there too, over `Nucleus.CasRange.Valid`:
+//! [`CasRangeFact::slice`] is `Nucleus.CasRange.valid_slice`,
+//! [`CasRangeFact::fuse`] is `Nucleus.CasRange.valid_fuse`, and
+//! [`CasRangeFact::blob_len`] is
+//! `Nucleus.CasRange.exists_length_of_valid_open`. The bridge back from an
+//! equality, [`BlobFact::to_range_fact`], is
+//! `Nucleus.CasRange.of_valid_of_contentful`. Each rule cites its theorem and
+//! the counterexample that pins its side conditions.
 //!
 //! # Blob expressions
 //!
