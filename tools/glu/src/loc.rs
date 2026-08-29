@@ -204,10 +204,26 @@ impl fmt::Display for Report {
             "│ TCB    │ {:>8} │ authority headline │",
             grouped(self.tcb)
         )?;
-        writeln!(formatter, "│  integ │ {:>8} │ integration        │", grouped(self.integration))?;
-        writeln!(formatter, "│  logic │ {:>8} │ core logic deps    │", grouped(self.logic))?;
-        writeln!(formatter, "│  data  │ {:>8} │ core data deps     │", grouped(self.data))?;
-        writeln!(formatter, "│ glue   │ {:>8} │ excluded support   │", grouped(self.glue))?;
+        writeln!(
+            formatter,
+            "│  integ │ {:>8} │ integration        │",
+            grouped(self.integration)
+        )?;
+        writeln!(
+            formatter,
+            "│  logic │ {:>8} │ core logic deps    │",
+            grouped(self.logic)
+        )?;
+        writeln!(
+            formatter,
+            "│  data  │ {:>8} │ core data deps     │",
+            grouped(self.data)
+        )?;
+        writeln!(
+            formatter,
+            "│ glue   │ {:>8} │ excluded support   │",
+            grouped(self.glue)
+        )?;
         write!(formatter, "└────────┴──────────┴────────────────────┘")
     }
 }
