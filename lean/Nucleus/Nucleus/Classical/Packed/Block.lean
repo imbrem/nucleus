@@ -2,7 +2,7 @@ import Nucleus.Classical.Packed.Word
 import Mathlib.Data.List.Perm.Basic
 
 /-!
-# Zero-terminated blocks and a reusable free list
+# Zero-terminated blocks and an external free-list specification
 
 This is the common concrete storage substrate for the packed classical
 designs.  Proposition arrays occupy aligned power-of-two blocks in one flat
@@ -10,9 +10,13 @@ word array.  The first canonical zero terminates the live children; remaining
 capacity is canonical-zero padding.  Free blocks are carried explicitly and
 contain only canonical zeroes.
 
-The logical layout witness used by each decoder records allocated blocks.
-That witness is not serialized state: the executable state is the word array,
-the free list, and the sequent roots.
+This module keeps free blocks in an external `List Block`, which makes
+allocator operations and their refinement targets simple.  The candidate
+runtime layout with one intrusive root word and in-block ring links is modeled
+separately in `Packed.Intrusive`.
+
+The logical layout witness used by each syntax decoder records allocated live
+blocks.  That witness is not serialized state.
 -/
 
 namespace Nucleus.Classical.Packed
@@ -241,7 +245,7 @@ theorem replaceRange_slice_of_disjoint {words replacement : Array α}
   · exact replaceRange_slice_after changedStart replacementSize after
   · exact replaceRange_slice_before changedStart before
 
-/-- The concrete heap shared by both packed syntaxes. -/
+/-- The external-list allocator specification shared by both packed syntaxes. -/
 structure Memory (payloadWidth : Nat) where
   words : Array (Word payloadWidth)
   free : List Block

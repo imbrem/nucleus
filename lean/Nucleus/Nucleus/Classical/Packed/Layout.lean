@@ -3,11 +3,13 @@ import Nucleus.Classical.Packed.Block
 /-!
 # Packed arenas and strict layout certificates
 
-The packed arena contains one word array, a reusable free list, and a list of
-sequent-root pairs.  Live block size classes are not recoverable from those
-fields alone, so a complete candidate state also carries `Layout` and must
-validate it.  A future semantic wire object need not serialize allocator state,
-but decoding such an object must construct both fields together.
+This specification-level packed arena contains one word array, an external
+free-block list, and a list of sequent-root pairs.  `Packed.Intrusive` gives the
+candidate runtime representation with one free-root word and in-block rings.
+Live block size classes are not recoverable from either arena's proposition
+pointers alone, so a complete candidate state also carries `Layout` and must
+validate it.  A future semantic wire object need not serialize allocator
+state, but decoding such an object must construct the required evidence.
 
 Decoders consume live blocks as they traverse roots.  Removing a block before
 its children are visited rejects cycles, and requiring every block to be

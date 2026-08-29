@@ -9,6 +9,7 @@ import Nucleus.Classical.Mutation
 import Nucleus.Classical.Mutation.Operations
 import Nucleus.Classical.Packed.Block
 import Nucleus.Classical.Packed.Encode
+import Nucleus.Classical.Packed.Intrusive
 import Nucleus.Classical.Packed.Layout
 import Nucleus.Classical.Packed.Mutate
 import Nucleus.Classical.Packed.Word
