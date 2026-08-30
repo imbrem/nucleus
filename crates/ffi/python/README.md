@@ -88,6 +88,32 @@ fact's address is still compared with the request.
 True
 ```
 
+`CasRangeFact` narrows that to a byte range, introduced by `CasFact.range`, by
+`slice` and `fuse` on an existing one, or by checking a `RangeProof` while
+holding none of the rest of the blob. An `end` of `None` runs to the end of the
+blob, which is the stronger claim: such a fact also knows the blob's length.
+
+Above those sits an equality calculus. A `BlobExpr` is syntax — a digest,
+literal bytes, a run of zeros, a concatenation, or a slice — and `BlobEq` is the
+claim that two of them denote the same byte string in every model of the CAS.
+`BlobFact` is the checked form, built only by the rules and by the bridges to
+and from `CasRangeFact`. Its observations are three-valued: `decide()`,
+`len_bytes` and `eval()` answer `None` where the rules do not settle a question,
+so an expression has `len_bytes` rather than `len()`. `left + right` is
+concatenation and `blob[3:7]` is a slice, on a fact as well as an expression.
+
+```python
+>>> from covalence.cas import BlobEq, BlobExpr, BlobFact
+>>> from covalence.lib.hash import O256
+>>> joined = BlobExpr.bytes(b"ab") + BlobExpr.bytes(b"c")
+>>> BlobEq(joined, BlobExpr.bytes(b"abc")).decide()
+True
+>>> BlobFact.check(BlobEq(joined, BlobExpr.bytes(b"abc")))[0:2].prop.rhs.eval()
+b'ab'
+>>> BlobExpr.blake3(O256.hash(b"unresolved")).len_bytes is None
+True
+```
+
 `covalence.logic.hol` exposes the one-based Ethane arena in two layers.
 `Arena` is mutable wire data and may contain unchecked rows. `Kernel` starts
 empty and can only grow through checked row and syntactic-fact rules. Both
