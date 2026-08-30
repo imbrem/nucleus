@@ -378,12 +378,31 @@ def MapInDeterministicOrder (entries : CborSyn .map) : Prop :=
 def canonicalTextKeyBytes (key : String) : List UInt8 :=
   encodeSyn (.primitive (.text key))
 
+/-- Strict length-first byte order used by deterministic CBOR text maps. -/
+def DeterministicTextKeyLt (left right : String) : Prop :=
+  lexLt (canonicalTextKeyBytes left) (canonicalTextKeyBytes right) = true
+
+instance (left right : String) : Decidable (DeterministicTextKeyLt left right) := by
+  unfold DeterministicTextKeyLt
+  infer_instance
+
+theorem deterministicTextKeyLt_iff (left right : String) :
+    DeterministicTextKeyLt left right ↔
+      (canonicalTextKeyBytes left).length < (canonicalTextKeyBytes right).length ∨
+      ((canonicalTextKeyBytes left).length = (canonicalTextKeyBytes right).length ∧
+        canonicalTextKeyBytes left < canonicalTextKeyBytes right) := by
+  unfold DeterministicTextKeyLt lexLt
+  by_cases sameLength :
+      (canonicalTextKeyBytes left).length = (canonicalTextKeyBytes right).length
+  · simp [sameLength]
+  · simp [sameLength]
+
 /-- A list of text keys is already in strict deterministic length-first byte
 order. Strictness deliberately excludes duplicate key encodings. -/
 def TextKeysInDeterministicOrder : List String → Prop
   | [] | [_] => True
   | left :: right :: rest =>
-      lexLt (canonicalTextKeyBytes left) (canonicalTextKeyBytes right) = true ∧
+      DeterministicTextKeyLt left right ∧
         TextKeysInDeterministicOrder (right :: rest)
 
 private def textKeysInDeterministicOrderDecidable :
@@ -392,7 +411,7 @@ private def textKeysInDeterministicOrderDecidable :
   | [_] => isTrue trivial
   | left :: right :: rest =>
       @instDecidableAnd
-        (lexLt (canonicalTextKeyBytes left) (canonicalTextKeyBytes right) = true)
+        (DeterministicTextKeyLt left right)
         (TextKeysInDeterministicOrder (right :: rest)) inferInstance
         (textKeysInDeterministicOrderDecidable (right :: rest))
 
@@ -423,7 +442,7 @@ private theorem sortEntries_textMapOfList
           have headBefore :
               lexLt (encodeSyn (.primitive (.text key)))
                 (encodeSyn (.primitive (.text nextKey))) = true := by
-            simpa [canonicalTextKeyBytes] using ordered.1
+            simpa [DeterministicTextKeyLt, canonicalTextKeyBytes] using ordered.1
           simp [insertEntry, headBefore]
 
 /-- Strictly ordered text keys establish the exact deterministic map order,
@@ -1650,6 +1669,32 @@ theorem parse?_deterministic_wireNormal (value : Cbor)
       (2 * (encodeSyn value).length) [] enough
   rw [parsed]
   simp
+
+/-- The deterministic bytes of bounded text values are injective.  This is
+the bridge used to order AT Protocol object keys by their complete CBOR key
+encoding without assuming a correspondence between Lean's `String` order and
+UTF-8 byte order. -/
+theorem canonicalTextKeyBytes_injective {left right : String}
+    (leftFits : left.toUTF8.size ≤ Bytes.maxDefiniteLength)
+    (rightFits : right.toUTF8.size ≤ Bytes.maxDefiniteLength)
+    (equal : canonicalTextKeyBytes left = canonicalTextKeyBytes right) :
+    left = right := by
+  let leftValue : Cbor := .primitive (.text left)
+  let rightValue : Cbor := .primitive (.text right)
+  have leftNormal : WireNormal leftValue := .text left leftFits
+  have rightNormal : WireNormal rightValue := .text right rightFits
+  have encodedEqual :
+      deterministic ⟨leftValue, leftNormal.reasonable⟩ =
+        deterministic ⟨rightValue, rightNormal.reasonable⟩ := by
+    unfold deterministic
+    apply congrArg bytesOfList
+    simpa [canonicalTextKeyBytes, leftValue, rightValue] using equal
+  have leftParsed := parse?_deterministic_wireNormal leftValue leftNormal
+  have rightParsed := parse?_deterministic_wireNormal rightValue rightNormal
+  rw [encodedEqual] at leftParsed
+  have valuesEqual : leftValue = rightValue :=
+    Option.some.inj (leftParsed.symm.trans rightParsed)
+  simpa [leftValue, rightValue] using valuesEqual
 
 /-- Regression for the parser-fuel bound: each definite array cursor consumes
 fuel in addition to its head byte, so `input.length + 1` was insufficient for

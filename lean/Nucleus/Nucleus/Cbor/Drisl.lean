@@ -3,10 +3,11 @@ import Nucleus.Cbor.Wire
 /-!
 # AT Protocol data profile
 
-This module refines general CBOR syntax to the DRISL data model used for Nucleus
-objects: signed 64-bit integers,
-byte and text strings, arrays, text-keyed maps, `null` and booleans, and CID
-links encoded as tag 42 around a byte string.  The CID payload predicate is a
+This module refines general CBOR syntax to the float-free AT Protocol data
+model carried by DRISL-CBOR: signed 64-bit integers, byte and text strings,
+arrays, text-keyed maps, `null` and booleans, and CID links encoded as tag 42
+around a byte string.  Generic DRISL also admits a constrained set of 64-bit
+floats; AT Protocol deliberately does not.  The CID payload predicate is a
 parameter so hash and multicodec policy remains outside the CBOR grammar.
 
 `Normal` is intentionally stronger than the structural profile.  It also
@@ -87,6 +88,38 @@ theorem reasonable {acceptCid : Bytes → Bool} {value : Cbor}
     (normal : Normal acceptCid value) : value.Reasonable :=
   normal.2.2.reasonable
 
+/-- A non-negative signed-64-bit argument is normal in every CID policy. -/
+theorem unsigned (acceptCid : Bytes → Bool) (argument : UInt64)
+    (fits : argument ≤ int64ArgumentMax) :
+    Normal acceptCid (.primitive (.integer (.unsigned argument))) := by
+  exact ⟨by simp [Profile, profile?, fits], by simp [CborWire.Canonical],
+    .unsigned argument⟩
+
+/-- A negative signed-64-bit argument is normal in every CID policy. -/
+theorem negative (acceptCid : Bytes → Bool) (argument : UInt64)
+    (fits : argument ≤ int64ArgumentMax) :
+    Normal acceptCid (.primitive (.integer (.negative argument))) := by
+  exact ⟨by simp [Profile, profile?, fits], by simp [CborWire.Canonical],
+    .negative argument⟩
+
+/-- `null` is normal in every CID policy. -/
+theorem null (acceptCid : Bytes → Bool) :
+    Normal acceptCid (.primitive (.simple 22)) := by
+  refine ⟨?_, ?_, .simple 22⟩
+  · simp [Profile, profile?]
+  · simp [CborWire.Canonical]
+
+/-- A Boolean is normal in every CID policy. -/
+theorem bool (acceptCid : Bytes → Bool) (value : Bool) :
+    Normal acceptCid (.primitive (if value then .true else .false)) := by
+  cases value with
+  | false =>
+      change Normal acceptCid (.primitive (.simple 20))
+      exact ⟨by simp [Profile, profile?], by simp [CborWire.Canonical], .simple 20⟩
+  | true =>
+      change Normal acceptCid (.primitive (.simple 21))
+      exact ⟨by simp [Profile, profile?], by simp [CborWire.Canonical], .simple 21⟩
+
 /-- A bounded byte string is normal in every CID policy. -/
 theorem bytes (acceptCid : Bytes → Bool) (value : Bytes)
     (fits : value.length ≤ Bytes.maxDefiniteLength) :
@@ -102,6 +135,16 @@ theorem text (acceptCid : Bytes → Bool) (value : String)
     simpa only [String.toUTF8_eq_toByteArray, String.size_toByteArray] using fits
   exact ⟨by simp [Profile, profile?], by simpa [CborWire.Canonical] using utf8Fits,
     .text value fits⟩
+
+/-- An accepted, bounded tag-42 payload is a normal link. -/
+theorem link (acceptCid : Bytes → Bool) (payload : Bytes)
+    (fits : payload.length ≤ Bytes.maxDefiniteLength)
+    (accepted : acceptCid payload = true) :
+    Normal acceptCid (.tag 42 (.primitive (.bytes payload))) := by
+  have content := bytes acceptCid payload fits
+  exact ⟨by simp [Profile, profile?, accepted], by
+      simpa only [CborWire.Canonical] using content.2.1,
+    .tag 42 _ content.2.2⟩
 
 private theorem arrayProfileOfList (acceptCid : Bytes → Bool)
     (values : List Cbor) (normal : ∀ value ∈ values, Normal acceptCid value) :
@@ -205,6 +248,34 @@ def parseNormal? (acceptCid : Bytes → Bool) (bytes : Bytes) :
     (value : {value : Cbor // Normal acceptCid value}) :
     parseNormal? acceptCid (deterministic value) = some value := by
   simp [parseNormal?, value.2]
+
+/-- Successful checked parsing records that the input was exactly the
+deterministic serialization of the returned normal tree. -/
+theorem parseNormal?_sound {acceptCid : Bytes → Bool} {bytes : Bytes}
+    {value : {value : Cbor // Normal acceptCid value}}
+    (accepted : parseNormal? acceptCid bytes = some value) :
+    deterministic value = bytes := by
+  unfold parseNormal? at accepted
+  cases parsed : CborWire.parse? bytes with
+  | none => simp [parsed] at accepted
+  | some tree =>
+      simp only [parsed] at accepted
+      change (if normal : Normal acceptCid tree then
+          let checked : {value : Cbor // Normal acceptCid value} := ⟨tree, normal⟩
+          if deterministic checked = bytes then some checked else none
+        else none) = some value at accepted
+      split at accepted
+      · rename_i normal
+        change (if deterministic (⟨tree, normal⟩ :
+            {value : Cbor // Normal acceptCid value}) = bytes then
+              some ⟨tree, normal⟩ else none) = some value at accepted
+        split at accepted
+        · rename_i encoded
+          have same := Option.some.inj accepted
+          rw [← same]
+          exact encoded
+        · simp at accepted
+      · simp at accepted
 
 /-- Relational presentation of normal serialization. -/
 def Encoding (acceptCid : Bytes → Bool) (value : Cbor) (bytes : Bytes) : Prop :=

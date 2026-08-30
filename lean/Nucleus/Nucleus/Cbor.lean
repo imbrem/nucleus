@@ -12,6 +12,9 @@ import Nucleus.Cbor.Json
 import Nucleus.Cbor.Cas
 import Nucleus.Cbor.Wire
 import Nucleus.Cbor.Drisl
+import Nucleus.Cbor.Atproto.Cid
+import Nucleus.Cbor.Atproto.Data
+import Nucleus.Cbor.Atproto.Address
 
 /-!
 # CBOR
