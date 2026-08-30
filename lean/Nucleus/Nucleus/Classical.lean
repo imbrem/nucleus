@@ -26,6 +26,7 @@ import Nucleus.Classical.Tagged.Runtime.Correspondence
 import Nucleus.Classical.Tagged.Runtime.Encode
 import Nucleus.Classical.Tagged.Runtime.EncodeCorrect
 import Nucleus.Classical.Tagged.Runtime.Equality
+import Nucleus.Classical.Tagged.Runtime.Kernel
 import Nucleus.Classical.Tagged.Runtime.MachineWord
 import Nucleus.Classical.Tagged.Runtime.Mutate
 import Nucleus.Classical.Tagged.Runtime.Refutation
