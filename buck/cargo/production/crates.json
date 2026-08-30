@@ -1298,7 +1298,7 @@
     },
     {
       "source": "workspace#covalence-data-classical@0.0.0",
-      "target": "workspace#covalence-lib-cbor@0.0.0",
+      "target": "workspace#covalence-data-cbor@0.0.0",
       "kinds": [
         "normal"
       ]

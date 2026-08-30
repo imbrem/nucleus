@@ -448,7 +448,9 @@ impl Theorem {
                 Side::Left => {
                     let row = take_row(premise, source_side, row_index)?;
                     let Formula::Or { children, .. } = row else {
-                        unreachable!("matrix shape was checked")
+                        return Err(EditError::InapplicableMatrixRule {
+                            rule: "matrix crossing",
+                        });
                     };
                     conclusion.push(matrix_cube(
                         children.into_iter().map(Formula::negated).collect(),
@@ -457,7 +459,9 @@ impl Theorem {
                 Side::Right => {
                     let row = take_row(conclusion, source_side, row_index)?;
                     let Formula::And { children, .. } = row else {
-                        unreachable!("matrix shape was checked")
+                        return Err(EditError::InapplicableMatrixRule {
+                            rule: "matrix crossing",
+                        });
                     };
                     premise.push(matrix_clause(
                         children.into_iter().map(Formula::negated).collect(),

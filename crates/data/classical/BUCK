@@ -28,7 +28,7 @@ rust_library(
     srcs = _RUST_SOURCES,
     tests = [":covalence_data_classical-unit-test"],
     named_deps = {
-        "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
+        "covalence_data_cbor": "nucleus//crates/data/cbor:covalence_data_cbor",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_logic_classical": "nucleus//crates/logic/classical:covalence_logic_classical",
     },
@@ -59,7 +59,7 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
-        "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
+        "covalence_data_cbor": "nucleus//crates/data/cbor:covalence_data_cbor",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_logic_classical": "nucleus//crates/logic/classical:covalence_logic_classical",
     },

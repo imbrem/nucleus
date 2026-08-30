@@ -1023,7 +1023,7 @@ dependencies = [
 name = "covalence-data-classical"
 version = "0.0.0"
 dependencies = [
- "covalence-lib-cbor",
+ "covalence-data-cbor",
  "covalence-lib-error",
  "covalence-logic-classical",
 ]

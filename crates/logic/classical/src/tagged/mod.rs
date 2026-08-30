@@ -25,6 +25,32 @@ mod tests {
 
     use super::{Arena, Checked, Formula, Ref, Sequent, Theorem, Word, pack};
 
+    #[derive(Default)]
+    struct TraceHasher(Vec<u64>);
+
+    impl Hasher for TraceHasher {
+        fn finish(&self) -> u64 {
+            0
+        }
+
+        fn write(&mut self, _bytes: &[u8]) {
+            panic!("tagged structural hashing must use typed integer writes")
+        }
+
+        fn write_u8(&mut self, value: u8) {
+            self.0.push(u64::from(value));
+        }
+
+        fn write_u64(&mut self, value: u64) {
+            self.0.push(value);
+        }
+
+        fn write_usize(&mut self, value: usize) {
+            self.0
+                .push(u64::try_from(value).expect("test trace length fits u64"));
+        }
+    }
+
     fn literal(atom: u64) -> Formula {
         Formula::Literal {
             atom,
@@ -173,6 +199,33 @@ mod tests {
         let mut with_free_hash = DefaultHasher::new();
         with_free.hash(&mut with_free_hash);
         assert_eq!(canonical_hash.finish(), with_free_hash.finish());
+    }
+
+    #[test]
+    fn hash_feed_is_the_exact_lean_hash_trace() {
+        let checked = pack(&[Sequent {
+            premise: Formula::And {
+                negative: false,
+                children: vec![
+                    literal(1),
+                    Formula::Sat {
+                        negative: true,
+                        children: vec![Formula::Literal {
+                            atom: 2,
+                            negative: true,
+                        }],
+                    },
+                ],
+            },
+            conclusion: Formula::Or {
+                negative: false,
+                children: Vec::new(),
+            },
+        }])
+        .unwrap();
+        let mut trace = TraceHasher::default();
+        checked.hash(&mut trace);
+        assert_eq!(trace.0, [1, 0, 0, 2, 3, 0, 1, 2, 1, 1, 3, 1, 2, 1, 0, 0]);
     }
 
     #[test]
