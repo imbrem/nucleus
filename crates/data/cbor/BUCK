@@ -29,6 +29,10 @@ rust_library(
     tests = [":covalence_data_cbor-unit-test"],
     named_deps = {
         "covalence_data_num": "nucleus//crates/data/num:covalence_data_num",
+        "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "covalence_lib_json": "nucleus//crates/lib/json:covalence_lib_json",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -58,6 +62,10 @@ rust_test(
     srcs = _RUST_SOURCES,
     named_deps = {
         "covalence_data_num": "nucleus//crates/data/num:covalence_data_num",
+        "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "covalence_lib_json": "nucleus//crates/lib/json:covalence_lib_json",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

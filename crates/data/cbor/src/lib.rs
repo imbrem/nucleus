@@ -1,5 +1,7 @@
 //! Immutable, shared CBOR values.
 
+pub mod drisl;
+
 use std::sync::Arc;
 
 pub use covalence_data_num::Int;

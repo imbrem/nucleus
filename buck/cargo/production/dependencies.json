@@ -1504,6 +1504,26 @@
       "buildscript": {}
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cbor4ii@1.2.2",
+      "name": "cbor4ii",
+      "version": "1.2.2",
+      "checksum": "faed1a83001dc2c9201451030cc317e35bef36c84d3781d7c5bb9f343c397da8",
+      "edition": "2018",
+      "features": [
+        "use_alloc",
+        "use_std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "quininer <quininer@live.com>",
+        "CARGO_PKG_DESCRIPTION": "CBOR: Concise Binary Object Representation",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/quininer/cbor4ii"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#cc@1.4.4",
       "name": "cc",
       "version": "1.4.4",
@@ -1661,6 +1681,7 @@
       "features": [
         "alloc",
         "default",
+        "serde",
         "std"
       ],
       "env": {
@@ -1674,6 +1695,8 @@
           "named_deps": {
             "multibase": ":multibase-0.9.3",
             "multihash": ":multihash-0.19.5",
+            "serde": ":serde-1.0.229",
+            "serde_bytes": ":serde_bytes-0.11.19",
             "unsigned_varint": ":unsigned-varint-0.8.0"
           }
         }
@@ -4173,6 +4196,34 @@
       "buildscript": {}
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#ipld-core@0.4.3",
+      "name": "ipld-core",
+      "version": "0.4.3",
+      "checksum": "090f624976d72f0b0bb71b86d58dc16c15e069193067cb3a3a09d655246cbbda",
+      "edition": "2021",
+      "features": [
+        "codec",
+        "default",
+        "serde",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Volker Mische <volker.mische@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "IPLD core types",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/ipld/rust-ipld-core"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cid": ":cid-0.11.3",
+            "serde": ":serde-1.0.229",
+            "serde_bytes": ":serde_bytes-0.11.19"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#ipnet@2.12.1",
       "name": "ipnet",
       "version": "2.12.1",
@@ -4335,9 +4386,6 @@
           "cc": ":cc-1.4.4",
           "pkg_config": ":pkg-config-0.3.34",
           "vcpkg": ":vcpkg-0.2.15"
-        },
-        "run_env": {
-          "CARGO_MANIFEST_LINKS": "sqlite3"
         }
       }
     },
@@ -4748,6 +4796,7 @@
       "edition": "2021",
       "features": [
         "alloc",
+        "serde",
         "std"
       ],
       "env": {
@@ -4759,6 +4808,7 @@
       "targets": [
         {
           "named_deps": {
+            "serde": ":serde-1.0.229",
             "unsigned_varint": ":unsigned-varint-0.8.0"
           }
         }
@@ -5226,11 +5276,7 @@
           }
         }
       ],
-      "buildscript": {
-        "run_env": {
-          "CARGO_MANIFEST_LINKS": "prettyplease02"
-        }
-      }
+      "buildscript": {}
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
@@ -5347,9 +5393,6 @@
       "buildscript": {
         "named_deps": {
           "pyo3_build_config": ":pyo3-build-config-0.29.2"
-        },
-        "run_env": {
-          "CARGO_MANIFEST_LINKS": "pyo3-python"
         }
       }
     },
@@ -5409,9 +5452,6 @@
       "buildscript": {
         "named_deps": {
           "pyo3_build_config": ":pyo3-build-config-0.29.2"
-        },
-        "run_env": {
-          "CARGO_MANIFEST_LINKS": "python"
         }
       }
     },
@@ -5904,9 +5944,6 @@
       "buildscript": {
         "named_deps": {
           "cc": ":cc-1.4.4"
-        },
-        "run_env": {
-          "CARGO_MANIFEST_LINKS": "ring_core_0_17_14_"
         }
       }
     },
@@ -6231,6 +6268,22 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#scopeguard@1.2.0",
+      "name": "scopeguard",
+      "version": "1.2.0",
+      "checksum": "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_AUTHORS": "bluss",
+        "CARGO_PKG_DESCRIPTION": "A RAII scope guard that will run a given closure when it goes out of scope,\neven if the code between panics (assuming unwinding panic).\n\nDefines the macros `defer!`, `defer_on_unwind!`, `defer_on_success!` as\nshorthands for guards with one of the implemented strategies.\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bluss/scopeguard"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#sct@0.7.1",
       "name": "sct",
       "version": "0.7.1",
@@ -6308,6 +6361,30 @@
       "buildscript": {}
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#serde_bytes@0.11.19",
+      "name": "serde_bytes",
+      "version": "0.11.19",
+      "checksum": "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Optimized handling of `&[u8]` and `Vec<u8>` for Serde",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/serde-rs/bytes"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "serde_core": ":serde_core-1.0.229"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
       "name": "serde_core",
       "version": "1.0.229",
@@ -6355,6 +6432,33 @@
             "syn": ":syn-3.0.4"
           },
           "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#serde_ipld_dagcbor@0.7.0",
+      "name": "serde_ipld_dagcbor",
+      "version": "0.7.0",
+      "checksum": "2918680761336241e07049131fdc59f63c5691a8aaf592a167c0706b473c5fe5",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Pyfisch <pyfisch@posteo.org>:Steven Fackler <sfackler@gmail.com>:Volker Mische <volker.mische@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "IPLD DAG-CBOR support for Serde.",
+        "CARGO_PKG_LICENSE": "MIT/Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/ipld/serde_ipld_dagcbor"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cbor4ii": ":cbor4ii-1.2.2",
+            "ipld_core": ":ipld-core-0.4.3",
+            "scopeguard": ":scopeguard-1.2.0",
+            "serde": ":serde-1.0.229"
+          }
         }
       ]
     },
@@ -8060,11 +8164,7 @@
           }
         }
       ],
-      "buildscript": {
-        "run_env": {
-          "CARGO_MANIFEST_LINKS": "wasm_bindgen"
-        }
-      }
+      "buildscript": {}
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#wasm-encoder@0.254.0",
@@ -9332,7 +9432,7 @@
     {
       "id": "workspace#covalence-browser@0.0.0",
       "name": "covalence-browser",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen@0.2.121"
       ]
@@ -9340,7 +9440,7 @@
     {
       "id": "workspace#covalence-data-array@0.0.0",
       "name": "covalence-data-array",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#zerocopy@0.8.56"
       ]
@@ -9348,7 +9448,7 @@
     {
       "id": "workspace#covalence-data-cas@0.0.0",
       "name": "covalence-data-cas",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.34"
@@ -9357,7 +9457,7 @@
     {
       "id": "workspace#covalence-data-cas-http@0.0.0",
       "name": "covalence-data-cas-http",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#axum-extra@0.10.3",
         "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
@@ -9372,7 +9472,7 @@
     {
       "id": "workspace#covalence-data-cas-s3@0.0.0",
       "name": "covalence-data-cas-s3",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
@@ -9383,7 +9483,7 @@
     {
       "id": "workspace#covalence-data-cas-sqlite@0.0.0",
       "name": "covalence-data-cas-sqlite",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.34"
       ]
@@ -9391,7 +9491,7 @@
     {
       "id": "workspace#covalence-data-sexpr@0.0.0",
       "name": "covalence-data-sexpr",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6"
@@ -9400,7 +9500,7 @@
     {
       "id": "workspace#covalence-data-sqlite@0.0.0",
       "name": "covalence-data-sqlite",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
       ]
@@ -9408,7 +9508,7 @@
     {
       "id": "workspace#covalence-data-vfs@0.0.0",
       "name": "covalence-data-vfs",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
       ]
@@ -9416,7 +9516,7 @@
     {
       "id": "workspace#covalence-ffi-python@0.0.0",
       "name": "covalence-ffi-python",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#cid@0.11.3"
       ]
@@ -9424,7 +9524,7 @@
     {
       "id": "workspace#covalence-lib-bigint@0.0.0",
       "name": "covalence-lib-bigint",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8"
       ]
@@ -9434,13 +9534,15 @@
       "name": "covalence-lib-cbor",
       "category": "tcb",
       "dependencies": [
-        "registry+https://github.com/rust-lang/crates.io-index#ciborium@0.2.2"
+        "registry+https://github.com/rust-lang/crates.io-index#ciborium@0.2.2",
+        "registry+https://github.com/rust-lang/crates.io-index#ipld-core@0.4.3",
+        "registry+https://github.com/rust-lang/crates.io-index#serde_ipld_dagcbor@0.7.0"
       ]
     },
     {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#ed25519-dalek@2.2.0"
       ]
@@ -9471,15 +9573,16 @@
     {
       "id": "workspace#covalence-lib-json@0.0.0",
       "name": "covalence-lib-json",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#base64@0.22.1",
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151"
       ]
     },
     {
       "id": "workspace#covalence-lib-parse@0.0.0",
       "name": "covalence-lib-parse",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#winnow@1.0.4"
       ]
@@ -9487,7 +9590,7 @@
     {
       "id": "workspace#covalence-lib-pretty@0.0.0",
       "name": "covalence-lib-pretty",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#pretty@0.12.5"
       ]
@@ -9495,7 +9598,7 @@
     {
       "id": "workspace#covalence-lib-python@0.0.0",
       "name": "covalence-lib-python",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#pyo3@0.29.2"
       ]
@@ -9511,7 +9614,7 @@
     {
       "id": "workspace#covalence-lib-s3@0.0.0",
       "name": "covalence-lib-s3",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#aws-config@1.11.0",
         "registry+https://github.com/rust-lang/crates.io-index#aws-sdk-s3@1.144.0",
@@ -9523,7 +9626,7 @@
     {
       "id": "workspace#covalence-lib-serde@0.0.0",
       "name": "covalence-lib-serde",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229"
       ]
@@ -9531,7 +9634,7 @@
     {
       "id": "workspace#covalence-lib-sqlite@0.0.0",
       "name": "covalence-lib-sqlite",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
@@ -9541,7 +9644,7 @@
     {
       "id": "workspace#covalence-lib-table@0.0.0",
       "name": "covalence-lib-table",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
         "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0"
@@ -9550,7 +9653,7 @@
     {
       "id": "workspace#covalence-lib-wasm@0.0.0",
       "name": "covalence-lib-wasm",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#wasmtime-wasi@48.0.1",
         "registry+https://github.com/rust-lang/crates.io-index#wasmtime@48.0.1"
@@ -9585,7 +9688,7 @@
     {
       "id": "workspace#covalence-logic-metamath@0.0.0",
       "name": "covalence-logic-metamath",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
         "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6"
@@ -9594,7 +9697,7 @@
     {
       "id": "workspace#covalence-nucleus@0.0.0",
       "name": "covalence-nucleus",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.34"
@@ -9603,7 +9706,7 @@
     {
       "id": "workspace#covalence-nucleus-script@0.0.0",
       "name": "covalence-nucleus-script",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6"
       ]
@@ -9611,7 +9714,7 @@
     {
       "id": "workspace#covalence-nucleus-server@0.0.0",
       "name": "covalence-nucleus-server",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1"
@@ -9620,7 +9723,7 @@
     {
       "id": "workspace#covalence-proof-demo@0.0.0",
       "name": "covalence-proof-demo",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#wit-bindgen@0.61.1"
       ]
@@ -9628,7 +9731,7 @@
     {
       "id": "workspace#covalence-proof-host@0.0.0",
       "name": "covalence-proof-host",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#wit-bindgen@0.61.1"
@@ -9637,7 +9740,7 @@
     {
       "id": "workspace#covalence-proof-invalid-demo@0.0.0",
       "name": "covalence-proof-invalid-demo",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#wit-bindgen@0.61.1"
       ]
@@ -9645,7 +9748,7 @@
     {
       "id": "workspace#covalence-repl@0.0.0",
       "name": "covalence-repl",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
       ]
@@ -11999,6 +12102,20 @@
     },
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#cid@0.11.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cid@0.11.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_bytes@0.11.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cid@0.11.3",
       "target": "registry+https://github.com/rust-lang/crates.io-index#unsigned-varint@0.8.0",
       "kinds": [
         "normal"
@@ -14018,6 +14135,27 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#ipld-core@0.4.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cid@0.11.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#ipld-core@0.4.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#ipld-core@0.4.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_bytes@0.11.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#itertools@0.14.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#either@1.18.0",
       "kinds": [
@@ -14258,6 +14396,13 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#multibase@0.9.3",
       "target": "registry+https://github.com/rust-lang/crates.io-index#data-encoding@2.11.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#multihash@0.19.5",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
       "kinds": [
         "normal"
       ]
@@ -15334,6 +15479,13 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_bytes@0.11.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
       "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
       "kinds": [
@@ -15350,6 +15502,34 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
       "target": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_ipld_dagcbor@0.7.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cbor4ii@1.2.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_ipld_dagcbor@0.7.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#ipld-core@0.4.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_ipld_dagcbor@0.7.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#scopeguard@1.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_ipld_dagcbor@0.7.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
       "kinds": [
         "normal"
       ]
