@@ -368,6 +368,91 @@ mutual
     | .mapCons key value tail => (encodeSyn key, encodeSyn value) :: encodeEntries tail
 end
 
+/-- A map tail already has the exact entry order emitted by the deterministic
+encoder. This public predicate lets schema codecs compose wire-normal maps
+without exposing the recursive evidence type. -/
+def MapInDeterministicOrder (entries : CborSyn .map) : Prop :=
+  sortEntries (encodeEntries entries) = encodeEntries entries
+
+/-- Deterministic bytes used to compare a text map key. -/
+def canonicalTextKeyBytes (key : String) : List UInt8 :=
+  encodeSyn (.primitive (.text key))
+
+/-- Strict length-first byte order used by deterministic CBOR text maps. -/
+def DeterministicTextKeyLt (left right : String) : Prop :=
+  lexLt (canonicalTextKeyBytes left) (canonicalTextKeyBytes right) = true
+
+instance (left right : String) : Decidable (DeterministicTextKeyLt left right) := by
+  unfold DeterministicTextKeyLt
+  infer_instance
+
+theorem deterministicTextKeyLt_iff (left right : String) :
+    DeterministicTextKeyLt left right ↔
+      (canonicalTextKeyBytes left).length < (canonicalTextKeyBytes right).length ∨
+      ((canonicalTextKeyBytes left).length = (canonicalTextKeyBytes right).length ∧
+        canonicalTextKeyBytes left < canonicalTextKeyBytes right) := by
+  unfold DeterministicTextKeyLt lexLt
+  by_cases sameLength :
+      (canonicalTextKeyBytes left).length = (canonicalTextKeyBytes right).length
+  · simp [sameLength]
+  · simp [sameLength]
+
+/-- A list of text keys is already in strict deterministic length-first byte
+order. Strictness deliberately excludes duplicate key encodings. -/
+def TextKeysInDeterministicOrder : List String → Prop
+  | [] | [_] => True
+  | left :: right :: rest =>
+      DeterministicTextKeyLt left right ∧
+        TextKeysInDeterministicOrder (right :: rest)
+
+private def textKeysInDeterministicOrderDecidable :
+    (keys : List String) → Decidable (TextKeysInDeterministicOrder keys)
+  | [] => isTrue trivial
+  | [_] => isTrue trivial
+  | left :: right :: rest =>
+      @instDecidableAnd
+        (DeterministicTextKeyLt left right)
+        (TextKeysInDeterministicOrder (right :: rest)) inferInstance
+        (textKeysInDeterministicOrderDecidable (right :: rest))
+
+instance (keys : List String) :
+    Decidable (TextKeysInDeterministicOrder keys) :=
+  textKeysInDeterministicOrderDecidable keys
+
+private theorem sortEntries_textMapOfList
+    (fields : List (String × Cbor))
+    (ordered : TextKeysInDeterministicOrder (fields.map Prod.fst)) :
+    sortEntries (encodeEntries (CborSyn.textMapOfList fields)) =
+      encodeEntries (CborSyn.textMapOfList fields) := by
+  induction fields with
+  | nil => simp [CborSyn.textMapOfList, encodeEntries, sortEntries]
+  | cons field fields ih =>
+      rcases field with ⟨key, value⟩
+      cases fields with
+      | nil =>
+          simp [CborSyn.textMapOfList, encodeEntries, sortEntries, insertEntry]
+      | cons next rest =>
+          rcases next with ⟨nextKey, nextValue⟩
+          rw [TextKeysInDeterministicOrder.eq_def] at ordered
+          simp only [List.map_cons] at ordered
+          have tailSorted := ih (by simpa using ordered.2)
+          simp only [CborSyn.textMapOfList, encodeEntries, sortEntries]
+            at tailSorted ⊢
+          rw [tailSorted]
+          have headBefore :
+              lexLt (encodeSyn (.primitive (.text key)))
+                (encodeSyn (.primitive (.text nextKey))) = true := by
+            simpa [DeterministicTextKeyLt, canonicalTextKeyBytes] using ordered.1
+          simp [insertEntry, headBefore]
+
+/-- Strictly ordered text keys establish the exact deterministic map order,
+independently of the associated values. -/
+theorem MapInDeterministicOrder.textMapOfList
+    (fields : List (String × Cbor))
+    (ordered : TextKeysInDeterministicOrder (fields.map Prod.fst)) :
+    MapInDeterministicOrder (CborSyn.textMapOfList fields) :=
+  sortEntries_textMapOfList fields ordered
+
 /-! ## Primitive cursor roundtrips -/
 
 private theorem parseItem_encode_unsigned (fuel : Nat) (value : UInt64)
@@ -884,6 +969,65 @@ private inductive WireNormalMap : CborSyn .map → Prop where
 
 end
 
+private theorem wireNormalArrayOfList (values : List Cbor)
+    (normal : ∀ value ∈ values, WireNormal value) :
+    WireNormalArray (CborSyn.arrayOfList values) := by
+  induction values with
+  | nil => exact .nil
+  | cons value values ih =>
+      exact .cons (normal value (by simp))
+        (ih fun member present => normal member (by simp [present]))
+
+@[simp] private theorem arrayLength_arrayOfList (values : List Cbor) :
+    (CborSyn.arrayOfList values).arrayLength = values.length := by
+  induction values with
+  | nil => simp [CborSyn.arrayOfList, CborSyn.arrayLength]
+  | cons _ values ih => simp [CborSyn.arrayOfList, CborSyn.arrayLength, ih]
+
+/-- Compose a wire-normal array from wire-normal elements and its explicit
+definite-length bound. -/
+theorem WireNormal.arrayOfList (values : List Cbor)
+    (fits : values.length ≤ Bytes.maxDefiniteLength)
+    (normal : ∀ value ∈ values, WireNormal value) :
+    WireNormal (.array (CborSyn.arrayOfList values)) := by
+  apply WireNormal.array _
+  · simpa using fits
+  · exact wireNormalArrayOfList values normal
+
+private theorem wireNormalTextMapOfList (fields : List (String × Cbor))
+    (normal : ∀ field ∈ fields,
+      WireNormal (.primitive (.text field.1)) ∧ WireNormal field.2) :
+    WireNormalMap (CborSyn.textMapOfList fields) := by
+  induction fields with
+  | nil => exact .nil
+  | cons field fields ih =>
+      rcases field with ⟨key, value⟩
+      have head := normal (key, value) (by simp)
+      exact .cons head.1 head.2
+        (ih fun member present => normal member (by simp [present]))
+
+@[simp] private theorem mapLength_textMapOfList
+    (fields : List (String × Cbor)) :
+    (CborSyn.textMapOfList fields).mapLength = fields.length := by
+  induction fields with
+  | nil => simp [CborSyn.textMapOfList, CborSyn.mapLength]
+  | cons field fields ih =>
+      rcases field with ⟨key, value⟩
+      simp [CborSyn.textMapOfList, CborSyn.mapLength, ih]
+
+/-- Compose a wire-normal text map from normal keys and values, its explicit
+length bound, and its exact deterministic entry order. -/
+theorem WireNormal.textMapOfList (fields : List (String × Cbor))
+    (fits : fields.length ≤ Bytes.maxDefiniteLength)
+    (ordered : MapInDeterministicOrder (CborSyn.textMapOfList fields))
+    (normal : ∀ field ∈ fields,
+      WireNormal (.primitive (.text field.1)) ∧ WireNormal field.2) :
+    WireNormal (.map (CborSyn.textMapOfList fields)) := by
+  apply WireNormal.map _
+  · simpa using fits
+  · exact ordered
+  · exact wireNormalTextMapOfList fields normal
+
 mutual
 
 /-- Structural decision procedure for deterministic wire-normal evidence.
@@ -1203,6 +1347,40 @@ private def canonicalMapKeyBytes : CborSyn .map → List (List UInt8)
   | .mapNil => []
   | .mapCons key _ tail => canonicalKeyBytes key :: canonicalMapKeyBytes tail
 
+/-- No two map keys have the same canonical byte encoding. This is stronger
+than source-level syntactic inequality and is the condition used by the
+canonical artifact profile. -/
+def DistinctCanonicalMapKeys (entries : CborSyn .map) : Prop :=
+  (canonicalMapKeyBytes entries).Nodup
+
+/-- Text keys have pairwise distinct canonical encodings. -/
+def TextKeysDistinct (keys : List String) : Prop :=
+  (keys.map canonicalTextKeyBytes).Nodup
+
+instance (keys : List String) : Decidable (TextKeysDistinct keys) := by
+  unfold TextKeysDistinct
+  infer_instance
+
+private theorem canonicalMapKeyBytes_textMapOfList
+    (fields : List (String × Cbor)) :
+    canonicalMapKeyBytes (CborSyn.textMapOfList fields) =
+      (fields.map Prod.fst).map canonicalTextKeyBytes := by
+  induction fields with
+  | nil => simp [canonicalMapKeyBytes, CborSyn.textMapOfList]
+  | cons field fields ih =>
+      rcases field with ⟨key, value⟩
+      simp [canonicalMapKeyBytes, canonicalKeyBytes, canonicalTextKeyBytes,
+        CborSyn.textMapOfList, ih]
+
+/-- Source-independent text-key evidence establishes the canonical map-key
+condition, independently of the associated values. -/
+theorem DistinctCanonicalMapKeys.textMapOfList
+    (fields : List (String × Cbor))
+    (distinct : TextKeysDistinct (fields.map Prod.fst)) :
+    DistinctCanonicalMapKeys (CborSyn.textMapOfList fields) := by
+  rw [DistinctCanonicalMapKeys, canonicalMapKeyBytes_textMapOfList]
+  exact distinct
+
 /-! ## Canonical artifact profile
 
 The total CBOR syntax and parser deliberately preserve invalid or ambiguous
@@ -1239,6 +1417,51 @@ private def CanonicalMap : CborSyn .map → Prop
       Canonical key ∧ Canonical value ∧ CanonicalMap tail
 
 end
+
+private theorem canonicalArrayOfList (values : List Cbor)
+    (canonical : ∀ value ∈ values, Canonical value) :
+    CanonicalArray (CborSyn.arrayOfList values) := by
+  induction values with
+  | nil => simp [CborSyn.arrayOfList, CanonicalArray]
+  | cons value values ih =>
+      simp only [CborSyn.arrayOfList, CanonicalArray]
+      exact ⟨canonical value (by simp),
+        ih fun member present => canonical member (by simp [present])⟩
+
+/-- Compose a canonical array from canonical elements and its explicit
+definite-length bound. -/
+theorem Canonical.arrayOfList (values : List Cbor)
+    (fits : values.length ≤ Bytes.maxDefiniteLength)
+    (canonical : ∀ value ∈ values, Canonical value) :
+    Canonical (.array (CborSyn.arrayOfList values)) := by
+  rw [Canonical]
+  exact ⟨by simpa using fits,
+    canonicalArrayOfList values canonical⟩
+
+private theorem canonicalTextMapOfList (fields : List (String × Cbor))
+    (canonical : ∀ field ∈ fields,
+      Canonical (.primitive (.text field.1)) ∧ Canonical field.2) :
+    CanonicalMap (CborSyn.textMapOfList fields) := by
+  induction fields with
+  | nil => simp [CborSyn.textMapOfList, CanonicalMap]
+  | cons field fields ih =>
+      rcases field with ⟨key, value⟩
+      simp only [CborSyn.textMapOfList, CanonicalMap]
+      have head := canonical (key, value) (by simp)
+      exact ⟨head.1, head.2,
+        ih fun member present => canonical member (by simp [present])⟩
+
+/-- Compose a canonical text map from canonical keys and values, its explicit
+length bound, and distinct canonical key bytes. -/
+theorem Canonical.textMapOfList (fields : List (String × Cbor))
+    (fits : fields.length ≤ Bytes.maxDefiniteLength)
+    (distinct : DistinctCanonicalMapKeys (CborSyn.textMapOfList fields))
+    (canonical : ∀ field ∈ fields,
+      Canonical (.primitive (.text field.1)) ∧ Canonical field.2) :
+    Canonical (.map (CborSyn.textMapOfList fields)) := by
+  rw [Canonical]
+  exact ⟨by simpa using fits,
+    canonicalTextMapOfList fields canonical, distinct⟩
 
 mutual
 
@@ -1446,6 +1669,32 @@ theorem parse?_deterministic_wireNormal (value : Cbor)
       (2 * (encodeSyn value).length) [] enough
   rw [parsed]
   simp
+
+/-- The deterministic bytes of bounded text values are injective.  This is
+the bridge used to order AT Protocol object keys by their complete CBOR key
+encoding without assuming a correspondence between Lean's `String` order and
+UTF-8 byte order. -/
+theorem canonicalTextKeyBytes_injective {left right : String}
+    (leftFits : left.toUTF8.size ≤ Bytes.maxDefiniteLength)
+    (rightFits : right.toUTF8.size ≤ Bytes.maxDefiniteLength)
+    (equal : canonicalTextKeyBytes left = canonicalTextKeyBytes right) :
+    left = right := by
+  let leftValue : Cbor := .primitive (.text left)
+  let rightValue : Cbor := .primitive (.text right)
+  have leftNormal : WireNormal leftValue := .text left leftFits
+  have rightNormal : WireNormal rightValue := .text right rightFits
+  have encodedEqual :
+      deterministic ⟨leftValue, leftNormal.reasonable⟩ =
+        deterministic ⟨rightValue, rightNormal.reasonable⟩ := by
+    unfold deterministic
+    apply congrArg bytesOfList
+    simpa [canonicalTextKeyBytes, leftValue, rightValue] using equal
+  have leftParsed := parse?_deterministic_wireNormal leftValue leftNormal
+  have rightParsed := parse?_deterministic_wireNormal rightValue rightNormal
+  rw [encodedEqual] at leftParsed
+  have valuesEqual : leftValue = rightValue :=
+    Option.some.inj (leftParsed.symm.trans rightParsed)
+  simpa [leftValue, rightValue] using valuesEqual
 
 /-- Regression for the parser-fuel bound: each definite array cursor consumes
 fuel in addition to its head byte, so `input.length + 1` was insufficient for
