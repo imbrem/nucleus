@@ -58,7 +58,7 @@
       "name": "covalence-browser",
       "version": "0.0.0",
       "path": "crates/browser",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_browser",
@@ -74,7 +74,7 @@
       "name": "covalence-data-array",
       "version": "0.0.0",
       "path": "crates/data/array",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_data_array",
@@ -89,7 +89,7 @@
       "name": "covalence-data-basic",
       "version": "0.0.0",
       "path": "crates/data/basic",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_data_basic",
@@ -104,7 +104,7 @@
       "name": "covalence-data-cas",
       "version": "0.0.0",
       "path": "crates/data/cas",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_data_cas",
@@ -119,7 +119,7 @@
       "name": "covalence-data-cas-http",
       "version": "0.0.0",
       "path": "crates/data/cas-http",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "client",
@@ -146,7 +146,7 @@
       "name": "covalence-data-cas-s3",
       "version": "0.0.0",
       "path": "crates/data/cas-s3",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_data_cas_s3",
@@ -173,7 +173,7 @@
       "name": "covalence-data-cas-sqlite",
       "version": "0.0.0",
       "path": "crates/data/cas-sqlite",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_data_cas_sqlite",
@@ -194,7 +194,7 @@
       "name": "covalence-data-cbor",
       "version": "0.0.0",
       "path": "crates/data/cbor",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_data_cbor",
@@ -224,7 +224,7 @@
       "name": "covalence-data-container",
       "version": "0.0.0",
       "path": "crates/data/container",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_data_container",
@@ -239,7 +239,7 @@
       "name": "covalence-data-num",
       "version": "0.0.0",
       "path": "crates/data/num",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_data_num",
@@ -254,7 +254,7 @@
       "name": "covalence-data-sexpr",
       "version": "0.0.0",
       "path": "crates/data/sexpr",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_data_sexpr",
@@ -281,7 +281,7 @@
       "name": "covalence-data-sqlite",
       "version": "0.0.0",
       "path": "crates/data/sqlite",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_data_sqlite",
@@ -296,7 +296,7 @@
       "name": "covalence-data-vfs",
       "version": "0.0.0",
       "path": "crates/data/vfs",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_data_vfs",
@@ -311,7 +311,7 @@
       "name": "covalence-ffi-python",
       "version": "0.0.0",
       "path": "crates/ffi/python",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_ffi_python",
@@ -327,7 +327,7 @@
       "name": "covalence-lib-bigint",
       "version": "0.0.0",
       "path": "crates/lib/bigint",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_lib_bigint",
@@ -357,7 +357,7 @@
       "name": "covalence-lib-crypto",
       "version": "0.0.0",
       "path": "crates/lib/crypto",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_lib_crypto",
@@ -408,7 +408,7 @@
       "name": "covalence-lib-json",
       "version": "0.0.0",
       "path": "crates/lib/json",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_lib_json",
@@ -423,7 +423,7 @@
       "name": "covalence-lib-parse",
       "version": "0.0.0",
       "path": "crates/lib/parse",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_lib_parse",
@@ -438,7 +438,7 @@
       "name": "covalence-lib-pretty",
       "version": "0.0.0",
       "path": "crates/lib/pretty",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_lib_pretty",
@@ -453,7 +453,7 @@
       "name": "covalence-lib-python",
       "version": "0.0.0",
       "path": "crates/lib/python",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_lib_python",
@@ -489,7 +489,7 @@
       "name": "covalence-lib-s3",
       "version": "0.0.0",
       "path": "crates/lib/s3",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_lib_s3",
@@ -504,7 +504,7 @@
       "name": "covalence-lib-serde",
       "version": "0.0.0",
       "path": "crates/lib/serde",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_lib_serde",
@@ -519,7 +519,7 @@
       "name": "covalence-lib-sqlite",
       "version": "0.0.0",
       "path": "crates/lib/sqlite",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_lib_sqlite",
@@ -534,7 +534,7 @@
       "name": "covalence-lib-table",
       "version": "0.0.0",
       "path": "crates/lib/table",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_lib_table",
@@ -549,7 +549,7 @@
       "name": "covalence-lib-wasm",
       "version": "0.0.0",
       "path": "crates/lib/wasm",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_lib_wasm",
@@ -720,7 +720,7 @@
       "name": "covalence-logic-lrat",
       "version": "0.0.0",
       "path": "crates/logic/lrat",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_logic_lrat",
@@ -735,7 +735,7 @@
       "name": "covalence-logic-metamath",
       "version": "0.0.0",
       "path": "crates/logic/metamath",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "corpus",
@@ -774,7 +774,7 @@
       "name": "covalence-logic-sat",
       "version": "0.0.0",
       "path": "crates/logic/sat",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_logic_sat",
@@ -789,7 +789,7 @@
       "name": "covalence-nucleus",
       "version": "0.0.0",
       "path": "crates/nucleus",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_nucleus",
@@ -826,7 +826,7 @@
       "name": "covalence-nucleus-script",
       "version": "0.0.0",
       "path": "crates/nucleus/script",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_nucleus_script",
@@ -859,7 +859,7 @@
       "name": "covalence-nucleus-server",
       "version": "0.0.0",
       "path": "crates/nucleus/server",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_nucleus_server",
@@ -880,7 +880,7 @@
       "name": "covalence-proof-c-demo-test",
       "version": "0.0.0",
       "path": "crates/proof/c-demo",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "proof_c",
@@ -895,7 +895,7 @@
       "name": "covalence-proof-demo",
       "version": "0.0.0",
       "path": "crates/proof/demo",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_proof_demo",
@@ -910,7 +910,7 @@
       "name": "covalence-proof-host",
       "version": "0.0.0",
       "path": "crates/proof/host",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_proof_host",
@@ -925,7 +925,7 @@
       "name": "covalence-proof-invalid-demo",
       "version": "0.0.0",
       "path": "crates/proof/invalid-demo",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_proof_invalid_demo",
@@ -940,7 +940,7 @@
       "name": "covalence-proton",
       "version": "0.0.0",
       "path": "crates/proton",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_proton",
@@ -955,7 +955,7 @@
       "name": "covalence-repl",
       "version": "0.0.0",
       "path": "crates/repl",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_repl",
