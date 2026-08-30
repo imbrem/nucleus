@@ -21,9 +21,12 @@ import Nucleus.Classical.Tagged.Packed
 import Nucleus.Classical.Tagged.Rules
 import Nucleus.Classical.Tagged.Runtime
 import Nucleus.Classical.Tagged.Runtime.Allocator
+import Nucleus.Classical.Tagged.Runtime.Canonical
+import Nucleus.Classical.Tagged.Runtime.Correspondence
 import Nucleus.Classical.Tagged.Runtime.Encode
 import Nucleus.Classical.Tagged.Runtime.EncodeCorrect
 import Nucleus.Classical.Tagged.Runtime.Equality
+import Nucleus.Classical.Tagged.Runtime.MachineWord
 import Nucleus.Classical.Tagged.Runtime.Mutate
 import Nucleus.Classical.Tagged.Runtime.Refutation
 
