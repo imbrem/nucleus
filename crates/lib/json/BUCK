@@ -28,6 +28,7 @@ rust_library(
     srcs = _RUST_SOURCES,
     tests = [":covalence_lib_json-unit-test"],
     named_deps = {
+        "base64": "nucleus//buck/cargo/production:base64-0.22.1",
         "serde_json": "nucleus//buck/cargo/production:serde_json-1.0.151",
     },
     env = {
@@ -57,6 +58,7 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
+        "base64": "nucleus//buck/cargo/production:base64-0.22.1",
         "serde_json": "nucleus//buck/cargo/production:serde_json-1.0.151",
     },
     env = {

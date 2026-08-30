@@ -8,6 +8,13 @@ pub use ciborium;
 #[cfg(feature = "serde")]
 pub use ciborium::*;
 
+/// IPLD's extensional data model used by the strict DAG-CBOR codec.
+#[cfg(feature = "drisl")]
+pub use ipld_core;
+/// Strict deterministic DAG-CBOR serialization used as the DRISL substrate.
+#[cfg(feature = "drisl")]
+pub use serde_ipld_dagcbor;
+
 #[cfg(all(test, feature = "serde"))]
 mod tests {
     #[test]

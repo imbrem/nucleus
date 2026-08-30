@@ -1,5 +1,6 @@
 //! JSON serialization used by Nucleus.
 
+pub use base64;
 pub use serde_json;
 pub use serde_json::*;
 

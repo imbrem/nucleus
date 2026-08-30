@@ -8,11 +8,14 @@ description = "CBOR serialization for Nucleus"
 publish = false
 
 [features]
-default = ["serde"]
+default = ["serde", "drisl"]
 serde = ["dep:ciborium"]
+drisl = ["dep:ipld-core", "dep:serde_ipld_dagcbor"]
 
 [dependencies]
 ciborium = { version = "0.2.2", optional = true }
+ipld-core = { version = "0.4.3", features = ["serde"], optional = true }
+serde_ipld_dagcbor = { version = "0.7.0", optional = true }
 
 [lints]
 workspace = true
