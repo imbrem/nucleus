@@ -137,6 +137,52 @@ required to succeed.  The prefix bound matters for the empty arena. -/
 def Fits (payloadWidth : Nat) (input : List (Tagged.Sequent Nat)) : Prop :=
   4 ≤ 2 ^ payloadWidth ∧ FitsSequents payloadWidth 4 input
 
+mutual
+  /-- A fitting formula cannot extend beyond the fixed-width address space. -/
+  theorem FitsFormula.end_le {payloadWidth base : Nat}
+      {formula : Tagged.Formula Nat}
+      (baseBound : base ≤ 2 ^ payloadWidth)
+      (fits : FitsFormula payloadWidth base formula) :
+      base + formulaWords formula ≤ 2 ^ payloadWidth := by
+    cases formula with
+    | literal value => simpa [formulaWords] using baseBound
+    | and negative children | or negative children | sat negative children =>
+        let block : Block := ⟨base, leastSizeClass children.length⟩
+        change block.Aligned ∧ block.stop ≤ 2 ^ payloadWidth ∧
+          block.sizeClass + 2 ≤ payloadWidth ∧
+          FitsFormulas payloadWidth block.stop children at fits
+        have childrenEnd := FitsFormulas.end_le fits.2.1 fits.2.2.2
+        simpa [formulaWords, block, Block.stop, Block.capacity,
+          Nat.add_assoc] using childrenEnd
+
+  /-- A fitting consecutive formula list stays inside the address space. -/
+  theorem FitsFormulas.end_le {payloadWidth base : Nat}
+      {formulas : List (Tagged.Formula Nat)}
+      (baseBound : base ≤ 2 ^ payloadWidth)
+      (fits : FitsFormulas payloadWidth base formulas) :
+      base + formulasWords formulas ≤ 2 ^ payloadWidth := by
+    cases formulas with
+    | nil => simpa [formulasWords] using baseBound
+    | cons formula formulas =>
+        have headEnd := FitsFormula.end_le baseBound fits.1
+        have tailEnd := FitsFormulas.end_le headEnd fits.2
+        simpa [formulasWords, Nat.add_assoc] using tailEnd
+end
+
+/-- A fitting complete table stays inside the address space. -/
+theorem FitsSequents.end_le {payloadWidth base : Nat}
+    {input : List (Tagged.Sequent Nat)}
+    (baseBound : base ≤ 2 ^ payloadWidth)
+    (fits : FitsSequents payloadWidth base input) :
+    base + tableWords input ≤ 2 ^ payloadWidth := by
+  induction input generalizing base with
+  | nil => simpa [tableWords] using baseBound
+  | cons sequent sequents ih =>
+      have premiseEnd := FitsFormula.end_le baseBound fits.1
+      have conclusionEnd := FitsFormula.end_le premiseEnd fits.2.1
+      have restEnd := ih conclusionEnd fits.2.2
+      simpa [tableWords, sequentWords, Nat.add_assoc] using restEnd
+
 /-- Concrete output for one formula. -/
 structure Chunk (payloadWidth : Nat) where
   reference : Word.Ref payloadWidth
@@ -149,8 +195,18 @@ structure Forest (payloadWidth : Nat) where
   words : List (Word payloadWidth)
   live : List Block
 
-private def asRef? (word : Word payloadWidth) : Option (Word.Ref payloadWidth) :=
+/-- Refine a raw nonzero word into a checked proposition reference. -/
+def asRef? (word : Word payloadWidth) : Option (Word.Ref payloadWidth) :=
   if reference : word.IsRef then some ⟨word, reference⟩ else none
+
+theorem asRef?_word {word : Word payloadWidth} {reference : Word.Ref payloadWidth}
+    (encoded : asRef? word = some reference) : reference.word = word := by
+  unfold asRef? at encoded
+  split at encoded
+  · have equal := Option.some.inj encoded
+    subst reference
+    rfl
+  · contradiction
 
 private theorem asRef?_some {word : Word payloadWidth} (reference : word.IsRef) :
     ∃ result, asRef? word = some result := by

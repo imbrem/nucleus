@@ -32,6 +32,32 @@ def natural? (payloadWidth value : Nat) : Option (Word payloadWidth) :=
 def pointer? (payloadWidth base : Nat) : Option (Word payloadWidth) :=
   Word.pointer? payloadWidth base 0 false
 
+theorem natural?_decodes {value : Nat} {word : Word payloadWidth}
+    (encoded : natural? payloadWidth value = some word) :
+    Packed.Intrusive.Arena.natural? word = some value := by
+  unfold natural? at encoded
+  split at encoded
+  · have equal := Option.some.inj encoded
+    subst word
+    simp [Packed.Intrusive.Arena.natural?]
+  · contradiction
+
+theorem pointer?_decodes {base : Nat} {word : Word payloadWidth}
+    (encoded : pointer? payloadWidth base = some word) :
+    Packed.Intrusive.Arena.pointer? word = some base := by
+  unfold pointer? at encoded
+  have negative := Word.pointer?_negative encoded
+  have tag := Word.pointer?_tag encoded
+  have decodedBase := Word.pointer?_base encoded
+  have reference := Word.pointer?_isRef encoded
+  unfold Packed.Intrusive.Arena.pointer?
+  rw [negative]
+  simp only [Bool.false_eq_true, ↓reduceIte]
+  split
+  · rename_i zero
+    exact (reference zero).elim
+  · exact congrArg some decodedBase
+
 /-- Encode an optional allocator pointer using canonical zero for null. -/
 def optionalPointer? (payloadWidth : Nat) : Option Nat → Option (Word payloadWidth)
   | none => some (Word.zero payloadWidth)
@@ -54,6 +80,35 @@ def liveWords? (payloadWidth : Nat) (block : Block)
   let header ← natural? payloadWidth block.sizeClass
   let children ← encodeWords payloadWidth (block.capacity - 1) references
   some (header :: children)
+
+theorem liveWords?_result {block : Block}
+    {references : List (Word.Ref payloadWidth)} {contents : List (Word payloadWidth)}
+    (encoded : liveWords? payloadWidth block references = some contents) :
+    ∃ header children,
+      block.sizeClass + 2 ≤ payloadWidth ∧
+      natural? payloadWidth block.sizeClass = some header ∧
+      encodeWords payloadWidth (block.capacity - 1) references = some children ∧
+      contents = header :: children := by
+  unfold liveWords? at encoded
+  split at encoded
+  · rename_i classBound
+    cases headerEncoded : natural? payloadWidth block.sizeClass with
+    | none => simp [headerEncoded] at encoded
+    | some header =>
+        cases childrenEncoded :
+            encodeWords payloadWidth (block.capacity - 1) references with
+        | none => simp [headerEncoded, childrenEncoded] at encoded
+        | some children =>
+            rw [headerEncoded] at encoded
+            change (do
+              let children ← encodeWords payloadWidth (block.capacity - 1) references
+              some (header :: children)) = some contents at encoded
+            rw [childrenEncoded] at encoded
+            change some (header :: children) = some contents at encoded
+            have equal : header :: children = contents := by
+              exact Option.some.inj encoded
+            exact ⟨header, children, classBound, rfl, rfl, equal.symm⟩
+  · contradiction
 
 /-- Initialize one allocated block as an empty live array. -/
 def initializeLive? (arena : Arena payloadWidth) (block : Block) :
