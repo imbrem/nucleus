@@ -11,6 +11,7 @@ import Nucleus.Cbor.Dag
 import Nucleus.Cbor.Json
 import Nucleus.Cbor.Cas
 import Nucleus.Cbor.Wire
+import Nucleus.Cbor.Drisl
 
 /-!
 # CBOR

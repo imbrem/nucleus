@@ -104,7 +104,7 @@ impl Kernel {
         self.transaction(|candidate| {
             candidate.check_learn(id, clause)?;
             let mut trail = falsifying_trail(clause);
-            if !candidate.propagate(id, &mut trail, ordered_hints)? {
+            if !trail_conflicts(&trail) && !candidate.propagate(id, &mut trail, ordered_hints)? {
                 return Err(Error::NoConflict { step: id });
             }
             candidate.commit(id, clause);
@@ -131,7 +131,7 @@ impl Kernel {
                 return Err(Error::BadPivot { step: id });
             }
             let mut trail = falsifying_trail(clause);
-            if candidate.propagate(id, &mut trail, prefix_rup_hints)? {
+            if trail_conflicts(&trail) || candidate.propagate(id, &mut trail, prefix_rup_hints)? {
                 candidate.commit(id, clause);
                 return Ok(());
             }
@@ -251,7 +251,10 @@ impl Kernel {
                 }
                 trail.insert(-literal);
             }
-            if !tautological && !self.propagate(step, &mut trail, &group.resolvent_rup_hints)? {
+            if !tautological
+                && !trail_conflicts(&trail)
+                && !self.propagate(step, &mut trail, &group.resolvent_rup_hints)?
+            {
                 return Err(Error::NoConflict { step });
             }
         }
@@ -266,6 +269,10 @@ impl Kernel {
 
 fn falsifying_trail(clause: &Clause) -> BTreeSet<Literal> {
     clause.iter().map(std::ops::Neg::neg).collect()
+}
+
+fn trail_conflicts(trail: &BTreeSet<Literal>) -> bool {
+    trail.iter().any(|literal| trail.contains(&-*literal))
 }
 
 #[cfg(test)]
@@ -285,6 +292,22 @@ mod tests {
         let mut kernel = kernel([vec![1], vec![-1]]);
         kernel.learn_rup(3, &clause([]), &[1, 2]).expect("RUP");
         assert!(kernel.refuted());
+    }
+
+    #[test]
+    fn a_tautological_clause_has_an_immediate_rup_conflict() {
+        let mut kernel = kernel([]);
+        kernel
+            .learn_rup(1, &clause([1, -1]), &[])
+            .expect("initial falsifying trail conflicts");
+    }
+
+    #[test]
+    fn a_tautological_clause_short_circuits_rat_before_groups() {
+        let mut kernel = kernel([]);
+        kernel
+            .learn_rat(1, &clause([1, -1]), Literal::new(1).unwrap(), &[], &[])
+            .expect("initial falsifying trail conflicts");
     }
 
     #[test]

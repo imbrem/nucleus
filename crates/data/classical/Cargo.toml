@@ -1,0 +1,16 @@
+[package]
+name = "covalence-data-classical"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Untrusted wire formats for checked classical logic"
+publish = false
+
+[dependencies]
+covalence-lib-cbor = { path = "../../lib/cbor" }
+covalence-lib-error = { path = "../../lib/error" }
+covalence-logic-classical = { path = "../../logic/classical" }
+
+[lints]
+workspace = true

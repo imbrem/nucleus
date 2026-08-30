@@ -1,0 +1,48 @@
+{
+  "lexicon": 1,
+  "id": "io.github.imbrem.nucleus.classicalArenaV1",
+  "defs": {
+    "main": {
+      "type": "object",
+      "description": "A fixed-64-bit Nucleus classical arena leaf.",
+      "required": ["words", "freeRoot", "roots"],
+      "properties": {
+        "words": {
+          "type": "bytes",
+          "description": "Packed arena words as concatenated big-endian u64 values.",
+          "minLength": 32
+        },
+        "freeRoot": {
+          "type": "bytes",
+          "description": "The packed intrusive free-list root word.",
+          "minLength": 8,
+          "maxLength": 8
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "ref",
+            "ref": "#root"
+          }
+        }
+      }
+    },
+    "root": {
+      "type": "object",
+      "description": "A premise and conclusion root pair.",
+      "required": ["premise", "conclusion"],
+      "properties": {
+        "premise": {
+          "type": "bytes",
+          "minLength": 8,
+          "maxLength": 8
+        },
+        "conclusion": {
+          "type": "bytes",
+          "minLength": 8,
+          "maxLength": 8
+        }
+      }
+    }
+  }
+}

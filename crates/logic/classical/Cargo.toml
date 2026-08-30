@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Polarity-aware classical matrix storage and inference rules"
+description = "Tagged classical logic runtime and sealed theorem rules"
 publish = false
 
 [dependencies]
