@@ -54,6 +54,95 @@ theorem Holds.rhsOrPush (assignment : Classical.Assignment Atom)
   apply (Formula.eval_disjunction assignment (rhs ++ [pushed])).mpr
   exact ⟨child, List.mem_append.mpr (Or.inl member), childTrue⟩
 
+/-- Cut a formula occurring as the final disjunct of one conclusion and the
+first conjunct of a second premise. -/
+theorem Holds.cut (assignment : Classical.Assignment Atom)
+    (leftPrem rightPrem leftConc rightConc : List (Formula Atom))
+    (pivot : Formula Atom)
+    (leftHolds : Holds
+      ⟨Formula.conjunction leftPrem,
+        Formula.disjunction (leftConc ++ [pivot])⟩ assignment)
+    (rightHolds : Holds
+      ⟨Formula.conjunction (pivot :: rightPrem),
+        Formula.disjunction rightConc⟩ assignment) :
+    Holds
+      ⟨Formula.conjunction (leftPrem ++ rightPrem),
+        Formula.disjunction (leftConc ++ rightConc)⟩ assignment := by
+  intro premises
+  have leftPremise : (Formula.conjunction leftPrem).Eval assignment := by
+    apply (Formula.eval_conjunction assignment leftPrem).mpr
+    intro child member
+    exact (Formula.eval_conjunction assignment (leftPrem ++ rightPrem)).mp
+      premises child (List.mem_append.mpr (Or.inl member))
+  have rightPremise : (Formula.conjunction rightPrem).Eval assignment := by
+    apply (Formula.eval_conjunction assignment rightPrem).mpr
+    intro child member
+    exact (Formula.eval_conjunction assignment (leftPrem ++ rightPrem)).mp
+      premises child (List.mem_append.mpr (Or.inr member))
+  obtain ⟨child, member, childTrue⟩ :=
+    (Formula.eval_disjunction assignment (leftConc ++ [pivot])).mp
+      (leftHolds leftPremise)
+  rcases List.mem_append.mp member with member | member
+  · apply (Formula.eval_disjunction assignment (leftConc ++ rightConc)).mpr
+    exact ⟨child, List.mem_append.mpr (Or.inl member), childTrue⟩
+  · have equal : child = pivot := List.mem_singleton.mp member
+    subst child
+    have combined : (Formula.conjunction (pivot :: rightPrem)).Eval assignment := by
+      apply (Formula.eval_conjunction assignment (pivot :: rightPrem)).mpr
+      intro child member
+      rcases List.mem_cons.mp member with equal | member
+      · simpa [equal] using childTrue
+      · exact (Formula.eval_conjunction assignment rightPrem).mp
+          rightPremise child member
+    obtain ⟨child, member, childTrue⟩ :=
+      (Formula.eval_disjunction assignment rightConc).mp (rightHolds combined)
+    apply (Formula.eval_disjunction assignment (leftConc ++ rightConc)).mpr
+    exact ⟨child, List.mem_append.mpr (Or.inr member), childTrue⟩
+
+/-- Resolve complementary final disjuncts of two conclusions. -/
+theorem Holds.resolve (assignment : Classical.Assignment Atom)
+    (leftPrem rightPrem leftConc rightConc : List (Formula Atom))
+    (pivot : Formula Atom)
+    (leftHolds : Holds
+      ⟨Formula.conjunction leftPrem,
+        Formula.disjunction (leftConc ++ [pivot])⟩ assignment)
+    (rightHolds : Holds
+      ⟨Formula.conjunction rightPrem,
+        Formula.disjunction (rightConc ++ [pivot.neg])⟩ assignment) :
+    Holds
+      ⟨Formula.conjunction (leftPrem ++ rightPrem),
+        Formula.disjunction (leftConc ++ rightConc)⟩ assignment := by
+  intro premises
+  have leftPremise : (Formula.conjunction leftPrem).Eval assignment := by
+    apply (Formula.eval_conjunction assignment leftPrem).mpr
+    intro child member
+    exact (Formula.eval_conjunction assignment (leftPrem ++ rightPrem)).mp
+      premises child (List.mem_append.mpr (Or.inl member))
+  have rightPremise : (Formula.conjunction rightPrem).Eval assignment := by
+    apply (Formula.eval_conjunction assignment rightPrem).mpr
+    intro child member
+    exact (Formula.eval_conjunction assignment (leftPrem ++ rightPrem)).mp
+      premises child (List.mem_append.mpr (Or.inr member))
+  by_cases pivotTrue : pivot.Eval assignment
+  · obtain ⟨child, member, childTrue⟩ :=
+      (Formula.eval_disjunction assignment (rightConc ++ [pivot.neg])).mp
+        (rightHolds rightPremise)
+    rcases List.mem_append.mp member with member | member
+    · apply (Formula.eval_disjunction assignment (leftConc ++ rightConc)).mpr
+      exact ⟨child, List.mem_append.mpr (Or.inr member), childTrue⟩
+    · have equal : child = pivot.neg := List.mem_singleton.mp member
+      subst child
+      exact False.elim ((Formula.eval_neg pivot assignment).mp childTrue pivotTrue)
+  · obtain ⟨child, member, childTrue⟩ :=
+      (Formula.eval_disjunction assignment (leftConc ++ [pivot])).mp
+        (leftHolds leftPremise)
+    rcases List.mem_append.mp member with member | member
+    · apply (Formula.eval_disjunction assignment (leftConc ++ rightConc)).mpr
+      exact ⟨child, List.mem_append.mpr (Or.inl member), childTrue⟩
+    · have equal : child = pivot := List.mem_singleton.mp member
+      subst child
+      exact False.elim (pivotTrue childTrue)
+
 /-- Move a conjunct across a sequent by negating it.  This is the corrected
 `CNF, p ⊢ DNF` to `CNF ⊢ DNF, ¬p` mutation. -/
 theorem Holds.cross (assignment : Classical.Assignment Atom)
@@ -172,6 +261,40 @@ theorem EntailsAt.rhsOrPush (known : Classical.PartialAssignment Atom)
     (holds : EntailsAt known ⟨lhs, Formula.disjunction rhs⟩) :
     EntailsAt known ⟨lhs, Formula.disjunction (rhs ++ [pushed])⟩ :=
   holds.map fun assignment ↦ Holds.rhsOrPush assignment lhs pushed rhs
+
+/-- Partial-assignment form of cut. -/
+theorem EntailsAt.cut (known : Classical.PartialAssignment Atom)
+    (leftPrem rightPrem leftConc rightConc : List (Formula Atom))
+    (pivot : Formula Atom)
+    (leftHolds : EntailsAt known
+      ⟨Formula.conjunction leftPrem,
+        Formula.disjunction (leftConc ++ [pivot])⟩)
+    (rightHolds : EntailsAt known
+      ⟨Formula.conjunction (pivot :: rightPrem),
+        Formula.disjunction rightConc⟩) :
+    EntailsAt known
+      ⟨Formula.conjunction (leftPrem ++ rightPrem),
+        Formula.disjunction (leftConc ++ rightConc)⟩ :=
+  fun assignment completes ↦
+    Holds.cut assignment leftPrem rightPrem leftConc rightConc pivot
+      (leftHolds assignment completes) (rightHolds assignment completes)
+
+/-- Partial-assignment form of resolution. -/
+theorem EntailsAt.resolve (known : Classical.PartialAssignment Atom)
+    (leftPrem rightPrem leftConc rightConc : List (Formula Atom))
+    (pivot : Formula Atom)
+    (leftHolds : EntailsAt known
+      ⟨Formula.conjunction leftPrem,
+        Formula.disjunction (leftConc ++ [pivot])⟩)
+    (rightHolds : EntailsAt known
+      ⟨Formula.conjunction rightPrem,
+        Formula.disjunction (rightConc ++ [pivot.neg])⟩) :
+    EntailsAt known
+      ⟨Formula.conjunction (leftPrem ++ rightPrem),
+        Formula.disjunction (leftConc ++ rightConc)⟩ :=
+  fun assignment completes ↦
+    Holds.resolve assignment leftPrem rightPrem leftConc rightConc pivot
+      (leftHolds assignment completes) (rightHolds assignment completes)
 
 /-- Partial-assignment form of the corrected crossing rule. -/
 theorem EntailsAt.cross (known : Classical.PartialAssignment Atom)
