@@ -8,7 +8,8 @@ description = "Python bindings for Covalence"
 readme = "README.md"
 license = "CC0-1.0"
 requires-python = ">=3.11"
-# Taken from Cargo.toml, which is where every version in this repository lives.
+# Development wheels take the workspace Cargo version. Tagged alpha builds
+# replace this field in their disposable checkout with the tag's PEP 440 version.
 dynamic = ["version"]
 
 [tool.maturin]

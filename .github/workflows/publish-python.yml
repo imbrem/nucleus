@@ -1,0 +1,72 @@
+name: Publish Python alpha
+
+on:
+  push:
+    tags:
+      - covalence-v*
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.version.outputs.python }}
+    steps:
+      - name: Validate alpha tag
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          python - "${TAG}" "${GITHUB_OUTPUT}" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          match = re.fullmatch(r"covalence-v(\d+\.\d+\.\d+a\d+)", sys.argv[1])
+          if match is None:
+              raise SystemExit(
+                  "Python release tags must look like covalence-v0.1.0a1"
+              )
+          with pathlib.Path(sys.argv[2]).open("a") as output:
+              print(f"python={match.group(1)}", file=output)
+          PY
+
+  build:
+    needs: version
+    permissions:
+      contents: read
+    uses: ./.github/workflows/python-wheels.yml
+    with:
+      python-version: ${{ needs.version.outputs.python }}
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/covalence
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download tested wheel
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: covalence-linux-x86_64-${{ github.sha }}
+          path: artifact
+
+      - name: Select distribution file
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=(artifact/covalence-${{ needs.version.outputs.python }}-*.whl)
+          test "${#wheels[@]}" -eq 1
+          mkdir dist
+          cp "${wheels[0]}" dist/
+
+      - name: Publish to PyPI with attestations
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

@@ -217,6 +217,35 @@ feature in `covalence-lib-python`, which is also where the PyO3 version and the
 
 ### Installing a wheel from a particular commit
 
+Alpha releases are the easiest way to try Covalence on a supported platform:
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --pre covalence
+```
+
+Pin the selected alpha in a dependency file when reproducibility matters, for
+example `covalence==0.1.0a1`. PyPI selects the compatible wheel and installs any
+declared Python dependencies automatically. At present Covalence has no
+third-party Python runtime dependencies.
+
+Maintainers publish an immutable alpha by tagging a green `main` commit with a
+PEP 440 alpha version:
+
+```sh
+git tag -a covalence-v0.1.0a1 -m 'Covalence Python 0.1.0a1'
+git push origin covalence-v0.1.0a1
+```
+
+The **Publish Python alpha** workflow validates the tag, builds and tests the
+wheel through the ordinary wheel workflow, and publishes that exact artifact
+with a PyPI provenance attestation. Publishing uses OIDC trusted publishing;
+there is no repository token. The PyPI publisher is scoped to project
+`covalence`, owner `imbrem`, repository `nucleus`, workflow
+`publish-python.yml`, and GitHub environment `pypi`. PyPI versions and Git tags
+are immutable: use a new alpha number rather than moving or rebuilding a tag.
+
 Successful `main` and pull-request runs of the **Python wheels** workflow build
 an experimental snapshot for Linux x86-64. The wheel uses the CPython 3.11
 stable ABI and the `manylinux_2_28_x86_64` platform tag: the same file supports
