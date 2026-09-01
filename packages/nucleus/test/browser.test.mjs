@@ -168,9 +168,14 @@ test("the browser composes the full kernel host with a proof", async (context) =
   );
 
   const result = await page.evaluate(async (bytes) => {
-    const { kernelAddress, loadStandardProof, proofHost, proofStats } =
-      window.nucleus;
-    const kernel = await loadStandardProof(new Uint8Array(bytes));
+    const { Strategy, kernelAddress, proofHost, proofStats } = window.nucleus;
+    const strategy = await Strategy.fromBytes(new Uint8Array(bytes));
+    const kernel = await strategy.applyTactic(0n);
+    const [repeated, named, addressed] = await Promise.all([
+      strategy.applyTactic(0n),
+      strategy.applyTacticName("default"),
+      strategy.proveAddr(new Uint8Array(32)),
+    ]);
     const stats = proofStats(kernel);
 
     // Exercise methods outside the demo's original subset through the same
@@ -179,19 +184,32 @@ test("the browser composes the full kernel host with a proof", async (context) =
     const arrow = kernel.kindArr(star, star);
     const encoded = kernel.arena().toCbor();
     const table = proofHost.Table.fromBlob(encoded.blob());
-    return {
+    const result = {
       address: kernelAddress(kernel),
+      repeatedRows: proofStats(repeated).rows.toString(),
+      namedRows: proofStats(named).rows.toString(),
+      addressedRows: proofStats(addressed).rows.toString(),
       rows: stats.rows.toString(),
       synFacts: stats.synFacts.toString(),
       category: kernel.category(arrow),
       tableAddressBytes: table.address().length,
     };
+    table[Symbol.dispose]();
+    encoded[Symbol.dispose]();
+    kernel[Symbol.dispose]();
+    repeated[Symbol.dispose]();
+    named[Symbol.dispose]();
+    addressed[Symbol.dispose]();
+    return result;
   }, Array.from(component));
 
   assert.match(result.address, /^[0-9a-f]{64}$/);
-  // The demo now exercises the full subtype package rather than stopping at
-  // the three-row Boolean prelude.
-  assert.equal(result.rows, "75");
+  assert.equal(result.repeatedRows, result.rows);
+  assert.equal(result.namedRows, result.rows);
+  assert.equal(result.addressedRows, result.rows);
+  // The demo exercises the full subtype package and a rewrite through the
+  // imported userspace tactics interface.
+  assert.equal(result.rows, "76");
   assert.equal(result.synFacts, "0");
   assert.equal(result.category, "kind");
   assert.equal(result.tableAddressBytes, 32);
@@ -223,7 +241,7 @@ test("the browser proof loader runs a proof component", async (context) => {
     await proofPage.locator("#address").textContent(),
     /^[0-9a-f]{64}$/,
   );
-  assert.equal(await proofPage.locator("#rows").textContent(), "75");
+  assert.equal(await proofPage.locator("#rows").textContent(), "76");
 });
 
 test("the REPL runs proofs from the selected kernel by content address", async (context) => {

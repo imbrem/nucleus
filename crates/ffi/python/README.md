@@ -131,15 +131,23 @@ evidence from being reused after its slot is overwritten or across kernels.
 True
 ```
 
-`load_standard_proof` runs a portable WASM proof component implementing the
-`nucleus:proof/standard-proof` world and returns the checked kernel transferred
-by its `prove` entry point. The component receives no inherited filesystem,
+`Strategy` instantiates a portable WASM component implementing the
+`nucleus:proof/proof` world once and may be called repeatedly. Its one portable
+operation applies a numeric tactic with small byte arguments to an optional
+checked `Kernel`; omitting the kernel lets the strategy choose its checked
+starting point. `apply_tactic_name` encodes a UTF-8 name as tactic one, and
+`prove_addr` encodes an address as tactic zero. The component source may itself
+be bytes or an `O256`. Address-based loading requires a CAS, and the same
+optional CAS is wired into later component calls.
+`load_proof` is the one-shot convenience which builds a `Strategy` and requests
+its default on a fresh kernel. Components receive no inherited filesystem,
 network, environment, or command-line capabilities.
 
 ```python
->>> from covalence.logic.hol import load_standard_proof
+>>> from covalence.logic.hol import Strategy, load_proof
 >>> with open("proof.wasm", "rb") as source:
-...     kernel = load_standard_proof(source.read())
+...     strategy = Strategy(source.read())
+>>> kernel = strategy.apply_tactic(0)
 >>> len(kernel) >= 0
 True
 ```

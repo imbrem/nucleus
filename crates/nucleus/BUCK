@@ -47,6 +47,7 @@ rust_library(
     named_deps = {
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
+        "covalence_data_vfs": "nucleus//crates/data/vfs:covalence_data_vfs",
         "covalence_lib_crypto": "nucleus//crates/lib/crypto:covalence_lib_crypto",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
@@ -56,6 +57,7 @@ rust_library(
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
         "covalence_nucleus_core": "nucleus//crates/nucleus/core:covalence_nucleus_core",
         "covalence_nucleus_script": "nucleus//crates/nucleus/script:covalence_nucleus_script",
+        "covalence_nucleus_tactics": "nucleus//crates/nucleus/tactics:covalence_nucleus_tactics",
         "futures": "nucleus//buck/cargo/production:futures-0.3.34",
     },
     env = {
@@ -90,6 +92,7 @@ rust_test(
     named_deps = {
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
+        "covalence_data_vfs": "nucleus//crates/data/vfs:covalence_data_vfs",
         "covalence_lib_crypto": "nucleus//crates/lib/crypto:covalence_lib_crypto",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
@@ -99,6 +102,7 @@ rust_test(
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
         "covalence_nucleus_core": "nucleus//crates/nucleus/core:covalence_nucleus_core",
         "covalence_nucleus_script": "nucleus//crates/nucleus/script:covalence_nucleus_script",
+        "covalence_nucleus_tactics": "nucleus//crates/nucleus/tactics:covalence_nucleus_tactics",
         "futures": "nucleus//buck/cargo/production:futures-0.3.34",
     },
     env = {
@@ -133,6 +137,7 @@ rust_test(
     named_deps = {
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
+        "covalence_data_vfs": "nucleus//crates/data/vfs:covalence_data_vfs",
         "covalence_lib_crypto": "nucleus//crates/lib/crypto:covalence_lib_crypto",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
@@ -143,6 +148,7 @@ rust_test(
         "covalence_nucleus": ":covalence_nucleus",
         "covalence_nucleus_core": "nucleus//crates/nucleus/core:covalence_nucleus_core",
         "covalence_nucleus_script": "nucleus//crates/nucleus/script:covalence_nucleus_script",
+        "covalence_nucleus_tactics": "nucleus//crates/nucleus/tactics:covalence_nucleus_tactics",
         "futures": "nucleus//buck/cargo/production:futures-0.3.34",
     },
     env = {

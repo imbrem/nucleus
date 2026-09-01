@@ -34,6 +34,8 @@ from .._covalence import (
     git_object,
 )
 
+ZERO_O256 = O256.zero()
+
 __all__ = [
     "COV",
     "COV_ROOT",
@@ -48,6 +50,7 @@ __all__ = [
     "Obj",
     "Sha1",
     "Sha256",
+    "ZERO_O256",
     "git_blob",
     "git_object",
 ]

@@ -5,18 +5,31 @@ Nucleus Ethane kernel. The interface is deliberately low-level: syntax rows,
 imports, and syntactic-fact slots are represented by integers, while ownership
 is reserved for the host objects that must cross the component boundary.
 
-The `standard-proof` world imports `nucleus:proof/host` and exports one
-conventional entry point:
+The `proof` world imports `nucleus:proof/host` and exports one minimal strategy
+interface:
 
 ```wit
-prove: async func(target: list<u8>) -> result<kernel, string>;
+apply-tactic: async func(tactic-id: u64, arguments: list<u8>, kernel: option<kernel>)
+    -> result<kernel, string>;
 ```
 
-A standard loader calls `prove` with a prover-local `o256` request and takes
-ownership of the returned checked kernel. The request need not be the returned
-kernel's address; the all-zero value conventionally asks for the prover's
-default result. A component may instead import the host interface under a
-different world and implement any higher-level protocol it needs.
+`strategy.apply-tactic` is the complete small stable kernel-transformer
+protocol. An omitted input asks the strategy to choose a checked starting
+kernel. Tactic arguments are a small copied `list<u8>`; larger inputs can travel
+through a CAS or a future separately reviewed resource-bearing extension.
+One live strategy may retain arbitrary untrusted state between calls. Hosts
+serialize calls unless a strategy explicitly advertises a future reentrant
+interface; retained state can guide later checked operations but cannot mint a
+kernel resource or theorem fact without the checked host API.
+
+By convention tactic zero with empty arguments and no input kernel requests a
+strategy's default starting/proved kernel. Tactic zero with 32 argument bytes
+requests an addressed kernel. Tactic one conventionally interprets its
+arguments as a UTF-8 strategy-local name. Retrieving bytes from a CAS is
+insufficient: the strategy must reconstruct or independently validate its
+result. A future trusted or signed kernel-hash cache can accelerate this same
+operation without granting today's untrusted loader any theorem-producing
+authority.
 
 ## Host resources
 

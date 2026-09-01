@@ -262,6 +262,13 @@ class HolSynFact:
     input: int
     output: int
 
+class HolRewriteResult:
+    """Result of one atomic high-level proposition rewrite."""
+
+    source: int
+    target: int
+    theorem: int
+
 class HolKernel:
     """A checked Ethane arena assembled through local LCF operations."""
 
@@ -343,6 +350,13 @@ class HolKernel:
     def ap_thm(self, theorem: int, argument: int, /) -> tuple[int, int, int, int]: ...
     def ap_term(self, theorem: int, function: int, /) -> tuple[int, int, int, int]: ...
     def eq_mp(self, equality: int, premise: int, /) -> int: ...
+    def rewrite_proposition(
+        self,
+        bool_ty: int,
+        equality: int,
+        premise: int,
+        direction: str = "forward",
+    ) -> HolRewriteResult: ...
     def forall_intro(self, theorem: int, binder: int, /) -> tuple[int, int]: ...
     def forall_intro_at(self, theorem: int, binder: int, universal: int, /) -> int: ...
     def choice_intro(self, theorem: int, /) -> tuple[int, int, int]: ...
@@ -459,7 +473,20 @@ class HolKernel:
     def union_syn_fact(self, fact: HolSynFact, /) -> None: ...
     def __len__(self) -> int: ...
 
-def load_standard_proof(component: Buffer, /) -> HolKernel: ...
+class HolStrategy:
+    def __init__(self, source: Buffer | O256, /, cas: object | None = None) -> None: ...
+    def apply_tactic(
+        self,
+        tactic_id: int,
+        arguments: Buffer | None = None,
+        kernel: HolKernel | None = None,
+    ) -> HolKernel: ...
+    def apply_tactic_name(
+        self,
+        name: str,
+        kernel: HolKernel | None = None,
+    ) -> HolKernel: ...
+    def prove_addr(self, addr: O256) -> HolKernel: ...
 
 COV: ContextKey
 COV_ROOT: O256
@@ -681,6 +708,9 @@ class Obj:
     def __ge__(self, other: Obj, /) -> bool: ...
 
 class O256(Obj):
+    @staticmethod
+    def zero() -> O256: ...
+    def __bool__(self) -> bool: ...
     """A standard Covalence 256-bit object."""
 
     BYTES: int

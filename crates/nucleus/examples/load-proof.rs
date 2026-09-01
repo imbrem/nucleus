@@ -14,7 +14,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match covalence_nucleus::load_standard_proof(&component) {
+    match covalence_nucleus::load_proof(&component) {
         Ok(kernel) => {
             println!("{}", kernel.addr());
             ExitCode::SUCCESS

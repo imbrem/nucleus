@@ -305,6 +305,16 @@ object!(
      The interoperable namespace: content hashing embeds BLAKE3 into it, and \
      the tag hierarchy is built in it.",
     {
+        /// Returns the all-zero prover-default selector.
+        #[staticmethod]
+        fn zero(python: Python<'_>) -> PyResult<Py<Self>> {
+            Self::wrap(python, O256::from_array([0; 32]))
+        }
+
+        fn __bool__(slf: PyRef<'_, Self>) -> bool {
+            Self::value(&slf) != O256::from_array([0; 32])
+        }
+
         /// BLAKE3 of `data`, in the Covalence namespace.
         #[staticmethod]
         fn hash(python: Python<'_>, data: Bytes) -> PyResult<Py<Self>> {

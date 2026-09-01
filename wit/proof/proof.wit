@@ -459,26 +459,72 @@ interface capabilities {
     random-bytes: func(len: u64) -> result<bytes, string>;
 }
 
-/// The conventional entry point understood by standard proof loaders.
-interface standard {
-    use host.{kernel};
+/// Versioned userspace conveniences built exclusively from checked host calls.
+///
+/// These operations are accelerators, not additional proof authority: every
+/// returned theorem is introduced by the same kernel rules as the low-level
+/// `host` interface.
+interface tactics {
+    use host.{bytes, kernel};
 
-    /// Resolves a prover-local request and transfers a checked kernel.
+    enum rewrite-direction {
+        forward,
+        backward,
+    }
+
+    record rewrite-result {
+        source: u64,
+        target: u64,
+        theorem: u64,
+    }
+
+    /// Applies a checked endomap `count` times to a checked base value.
     ///
-    /// The request is an opaque `o256` selector, not necessarily the address
-    /// of the returned kernel. By convention the all-zero selector requests
-    /// this prover's default result.
-    prove: async func(target: list<u8>) -> result<kernel, string>;
+    /// This is generic syntax acceleration, not a canonical natural numeral:
+    /// the caller supplies the base and function and owns their meaning.
+    iterate-unary: func(
+        kernel: borrow<kernel>,
+        zero: u64,
+        successor: u64,
+        count: u64,
+    ) -> result<u64, string>;
+
+    /// Rewrites a proposition using a proved equality and `EQ_MP`.
+    rewrite-proposition: func(
+        kernel: borrow<kernel>,
+        bool-type: u64,
+        equality: u64,
+        premise: u64,
+        direction: rewrite-direction,
+    ) -> result<rewrite-result, string>;
 }
 
-/// A portable standard proof component.
-world standard-proof {
+/// The minimal interface for a reusable kernel-transforming strategy.
+interface strategy {
+    use host.{kernel};
+
+    /// Applies a compact strategy-local tactic to a supplied or fresh kernel.
+    ///
+    /// The strategy interprets `tactic-id`; it carries no ambient authority.
+    /// Ownership of a supplied kernel crosses the component boundary. `none`
+    /// asks the strategy to choose a checked starting kernel.
+    apply-tactic: async func(
+        tactic-id: u64,
+        arguments: list<u8>,
+        kernel: option<kernel>,
+    ) -> result<kernel, string>;
+}
+
+/// A portable kernel-transforming strategy.
+world proof {
     import host;
     import capabilities;
-    export standard;
+    import tactics;
+    export strategy;
 }
 
 /// A portable implementation of the complete proof host interface.
 world kernel-host {
     export host;
+    export tactics;
 }

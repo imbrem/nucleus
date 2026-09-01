@@ -36,11 +36,39 @@ fn c_can_implement_the_async_proof_world() {
             .unwrap_or_else(|error| panic!("{} could not be read: {error}", path.display()))
     };
 
-    let kernel = covalence_nucleus::load_standard_proof(component.as_ref())
-        .expect("the C proof should run to completion");
-
+    let mut proof = covalence_nucleus::Strategy::from_bytes(component.as_ref())
+        .expect("the C proof should instantiate");
+    let zero = covalence_nucleus::core::cas::O256::from_array([0; 32]);
     assert!(
-        kernel.is_empty(),
-        "the micro-demo deliberately returns an empty checked kernel"
+        proof
+            .apply_tactic(
+                99,
+                Vec::new(),
+                Some(covalence_nucleus::core::hol::Kernel::new()),
+            )
+            .is_err(),
+        "rejecting an unknown tactic must clean up its supplied kernel"
     );
+    let kernels = [
+        proof
+            .apply_tactic(
+                0,
+                Vec::new(),
+                Some(covalence_nucleus::core::hol::Kernel::new()),
+            )
+            .expect("indexed tactic with supplied kernel"),
+        proof
+            .apply_tactic_name("default".to_owned(), None)
+            .expect("named tactic with fresh kernel"),
+        proof
+            .apply_tactic(0, zero.as_ref().to_vec(), None)
+            .expect("addressed tactic with fresh kernel"),
+    ];
+
+    for kernel in kernels {
+        assert!(
+            kernel.is_empty(),
+            "the micro-demo deliberately returns an empty checked kernel"
+        );
+    }
 }

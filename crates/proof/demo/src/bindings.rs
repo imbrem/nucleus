@@ -2,5 +2,5 @@
 
 wit_bindgen::generate!({
     path: "../../../wit/proof",
-    world: "standard-proof",
+    world: "proof",
 });

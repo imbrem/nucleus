@@ -50,6 +50,7 @@ rust_library(
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_logic_cas": "nucleus//crates/logic/cas:covalence_logic_cas",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
+        "covalence_nucleus_tactics": "nucleus//crates/nucleus/tactics:covalence_nucleus_tactics",
         "wit_bindgen": "nucleus//buck/cargo/production:wit-bindgen-0.61.1",
     },
     env = {
@@ -84,6 +85,7 @@ rust_test(
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_logic_cas": "nucleus//crates/logic/cas:covalence_logic_cas",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
+        "covalence_nucleus_tactics": "nucleus//crates/nucleus/tactics:covalence_nucleus_tactics",
         "wit_bindgen": "nucleus//buck/cargo/production:wit-bindgen-0.61.1",
     },
     env = {

@@ -14,8 +14,11 @@
 mod bindings;
 
 #[cfg(target_arch = "wasm32")]
+mod tactic;
+
+#[cfg(target_arch = "wasm32")]
 use bindings::{
-    exports::nucleus::proof::standard::Guest,
+    exports::nucleus::proof::strategy::Guest as StrategyGuest,
     nucleus::proof::host::{
         Bytes, IndexCas, Kernel, Sort, SynRel, cas_get, cas_get_bytes, cas_insert,
     },
@@ -25,15 +28,19 @@ use bindings::{
 struct Component;
 
 #[cfg(target_arch = "wasm32")]
-impl Guest for Component {
-    async fn prove(target: Vec<u8>) -> Result<Kernel, String> {
-        if target.len() != 32 {
-            return Err(format!(
-                "proof targets contain 32 bytes, got {}",
-                target.len()
-            ));
+impl Component {
+    fn requested(arguments: &[u8]) -> Result<&[u8], String> {
+        if arguments.is_empty() || arguments.len() == 32 {
+            Ok(arguments)
+        } else {
+            Err(format!(
+                "proof arguments must be empty or contain a 32-byte address, got {} bytes",
+                arguments.len()
+            ))
         }
+    }
 
+    async fn prove_requested(requested: &[u8], kernel: Kernel) -> Result<Kernel, String> {
         // The zero selector conventionally requests this component's default
         // proof. Its input is independently addressed in the default CAS.
         const INPUT: [u8; 32] = [
@@ -41,10 +48,10 @@ impl Guest for Component {
             0x83, 0xd8, 0x99, 0xd0, 0x94, 0x79, 0xef, 0x66, 0x32, 0x86, 0xf3, 0xb3, 0xa1, 0x61,
             0xc2, 0x2c, 0x09, 0xcf,
         ];
-        let input_address = if target.iter().all(|byte| *byte == 0) {
+        let input_address = if requested.is_empty() || requested.iter().all(|byte| *byte == 0) {
             INPUT.as_slice()
         } else {
-            target.as_slice()
+            requested
         };
         let fetched = cas_get_bytes(input_address.to_vec())
             .await?
@@ -70,10 +77,20 @@ impl Guest for Component {
             return Err("default CAS did not retain the blob".to_owned());
         }
 
-        let kernel = Kernel::new();
         let star = kernel.kind_star()?;
         let bool_ty = kernel.bool_type(star)?;
         let truth = kernel.bool_lit(bool_ty, true)?;
+
+        // Run a userspace rewrite accelerator through its imported component
+        // interface. REFL gives `|- true = true`; EQT_ELIM gives `|- true`;
+        // the host tactic asks checked EQ_MP to transport that premise.
+        let equality = kernel.refl(bool_ty, truth)?;
+        let premise = kernel.eqt_elim(equality.theorem)?;
+        let rewritten = tactic::rewrite(&kernel, bool_ty, equality.theorem, premise)?;
+        if rewritten.source != truth || rewritten.target != truth {
+            return Err("userspace rewrite changed a reflexive proposition".to_owned());
+        }
+
         let reflexivity = kernel.syn_refl(SynRel::Syn, truth, None)?;
         if kernel.syn_fact_count() != 1 {
             return Err("unexpected syntactic-fact slot count".to_owned());
@@ -112,6 +129,26 @@ impl Guest for Component {
         }
 
         Ok(kernel)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl StrategyGuest for Component {
+    async fn apply_tactic(
+        tactic_id: u64,
+        arguments: Vec<u8>,
+        kernel: Option<Kernel>,
+    ) -> Result<Kernel, String> {
+        let requested = match tactic_id {
+            0 => Self::requested(&arguments)?,
+            1 if arguments == b"default" => &[],
+            1 => {
+                let name = String::from_utf8_lossy(&arguments);
+                return Err(format!("unknown tactic name {name:?}"));
+            }
+            _ => return Err(format!("unknown tactic ID {tactic_id}")),
+        };
+        Self::prove_requested(requested, kernel.unwrap_or_else(Kernel::new)).await
     }
 }
 

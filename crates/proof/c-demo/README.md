@@ -1,14 +1,19 @@
 # C proof micro-demo
 
 This is a deliberately small C implementation of the standard asynchronous
-Nucleus proof component world. It accepts a 32-byte prover-local selector and
+Nucleus proof component world. It implements indexed strategy dispatch and
 returns a host-created empty checked kernel.
+Tactic zero accepts either empty arguments for the default input or a 32-byte
+address; tactic one treats its UTF-8 arguments as a local tactic name.
 
 The component is still untrusted: C code receives and returns opaque host
 resources, while only the host kernel can construct theorem facts. The demo
 performs an asynchronous CAS fetch and uses the generated subtask and callback
 API when that fetch suspends. The same mechanism can drive other asynchronous
 imports without changing the WIT world.
+
+The entry point drops an incoming kernel on rejection and transfers it exactly
+once on success.
 
 From the repository development shell, build and run it with:
 

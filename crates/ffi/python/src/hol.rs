@@ -4,11 +4,19 @@
 
 use std::{
     num::NonZeroU64,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
+use covalence_data_cas::{AsyncCas, AsyncCasError, Bytes as CasBytes, CasFuture};
+use covalence_lib_hash::O256;
 use covalence_lib_python::prelude::*;
-use covalence_lib_python::pyo3::{exceptions::PyRuntimeError, types::PyBytes, types::PyType};
+use covalence_lib_python::pyo3::{
+    exceptions::PyRuntimeError,
+    types::{PyBytes, PyType},
+};
 use covalence_logic_hol::{
     AmbPred, Arena, CnfId, DnfId, Import, ImportId, Kernel, Link, LinkFormat, Lit, LitVec, Ref,
     Sort, SynFact, SynFactId, SynRel, ThmId,
@@ -496,14 +504,44 @@ pub struct PyKernel {
     id: KernelId,
 }
 
-impl PyKernel {
-    pub(crate) fn from_kernel(kernel: Kernel) -> Self {
-        Self {
-            kernel,
-            id: KernelId::fresh(),
-        }
+/// Result of one atomic high-level proposition rewrite.
+#[pyclass(
+    module = "covalence.logic.hol",
+    name = "HolRewriteResult",
+    frozen,
+    skip_from_py_object
+)]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Clone, Copy)]
+struct PyRewriteResult {
+    source: i32,
+    target: i32,
+    theorem: i32,
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyRewriteResult {
+    /// Proposition consumed by the rewrite.
+    #[getter]
+    const fn source(&self) -> i32 {
+        self.source
     }
 
+    /// Proposition concluded after rewriting.
+    #[getter]
+    const fn target(&self) -> i32 {
+        self.target
+    }
+
+    /// Checked theorem concluding `target`.
+    #[getter]
+    const fn theorem(&self) -> i32 {
+        self.theorem
+    }
+}
+
+impl PyKernel {
     fn checked_fact(&self, fact: &PySynFact) -> PyResult<SynFactId> {
         if self.id != fact.owner {
             return Err(PyValueError::new_err(
@@ -528,15 +566,147 @@ impl PyKernel {
     }
 }
 
-/// Runs a standard portable proof component and returns its checked kernel.
-#[pyfunction]
+/// A reusable portable proof strategy.
+#[pyclass(frozen, module = "covalence.logic.hol", name = "HolStrategy")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
-fn load_standard_proof(python: Python<'_>, component: Bytes) -> PyResult<PyKernel> {
-    let component = component.as_slice().to_vec();
-    python
-        .detach(|| covalence_nucleus::load_standard_proof(&component))
-        .map(PyKernel::from_kernel)
-        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+struct PyStrategy {
+    instance: Mutex<covalence_nucleus::Strategy>,
+}
+
+struct PythonCas {
+    provider: Py<PyAny>,
+}
+
+impl AsyncCas for PythonCas {
+    fn get_bytes(&self, address: O256) -> CasFuture<'_, Option<CasBytes>> {
+        Box::pin(async move {
+            Python::attach(|python| {
+                let address = PyO256::wrap(python, address).map_err(python_cas_error)?;
+                let returned = self
+                    .provider
+                    .bind(python)
+                    .call_method1("get", (address,))
+                    .map_err(python_cas_error)?;
+                let bytes = returned.extract::<Bytes>().map_err(python_cas_error)?;
+                Ok(Some(CasBytes::copy_from_slice(bytes.as_slice())))
+            })
+        })
+    }
+}
+
+enum StrategyRequest {
+    Tactic(u64, Vec<u8>),
+    Name(String),
+    Prove(O256),
+}
+
+impl PyStrategy {
+    fn run(
+        &self,
+        python: Python<'_>,
+        request: StrategyRequest,
+        kernel: Option<Py<PyKernel>>,
+    ) -> PyResult<Py<PyKernel>> {
+        let input = kernel
+            .as_ref()
+            .map(|kernel| kernel.borrow(python).kernel.fork());
+        let result = match kernel {
+            Some(kernel) => kernel,
+            None => Py::new(python, PyKernel::new())?,
+        };
+        let output = python
+            .detach(|| {
+                let mut strategy = self
+                    .instance
+                    .lock()
+                    .map_err(|_| "strategy instance lock is poisoned".to_owned())?;
+                match request {
+                    StrategyRequest::Tactic(id, arguments) => {
+                        strategy.apply_tactic(id, arguments, input)
+                    }
+                    StrategyRequest::Name(name) => strategy.apply_tactic_name(name, input),
+                    StrategyRequest::Prove(addr) => strategy.prove_addr(addr),
+                }
+                .map_err(|error| error.to_string())
+            })
+            .map_err(PyRuntimeError::new_err)?;
+        {
+            let mut target = result.borrow_mut(python);
+            target.kernel = output;
+            target.id = KernelId::fresh();
+        }
+        Ok(result)
+    }
+}
+
+fn python_cas_error(error: PyErr) -> AsyncCasError {
+    AsyncCasError::provider(std::io::Error::other(error.to_string()))
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyStrategy {
+    #[new]
+    #[pyo3(signature = (source, cas=None))]
+    fn new(
+        python: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        cas: Option<Py<PyAny>>,
+    ) -> PyResult<Self> {
+        let provider = cas.map(|provider| Arc::new(PythonCas { provider }) as Arc<dyn AsyncCas>);
+        let instance = if let Ok(address) = source.extract::<PyRef<'_, PyO256>>() {
+            let provider = provider.ok_or_else(|| {
+                PyValueError::new_err("loading a proof by O256 requires a CAS provider")
+            })?;
+            let address = PyO256::value(&address);
+            python.detach(|| covalence_nucleus::Strategy::from_address(address, provider))
+        } else {
+            let component = source.extract::<Bytes>()?;
+            let component = component.as_slice().to_vec();
+            python.detach(|| match provider {
+                Some(provider) => {
+                    covalence_nucleus::Strategy::from_bytes_with_cas(&component, provider)
+                }
+                None => covalence_nucleus::Strategy::from_bytes(&component),
+            })
+        }
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(Self {
+            instance: Mutex::new(instance),
+        })
+    }
+
+    #[pyo3(signature = (tactic_id, arguments=None, kernel=None))]
+    fn apply_tactic(
+        &self,
+        python: Python<'_>,
+        tactic_id: u64,
+        arguments: Option<Bytes>,
+        kernel: Option<Py<PyKernel>>,
+    ) -> PyResult<Py<PyKernel>> {
+        self.run(
+            python,
+            StrategyRequest::Tactic(
+                tactic_id,
+                arguments.map_or_else(Vec::new, |value| value.as_slice().to_vec()),
+            ),
+            kernel,
+        )
+    }
+
+    #[pyo3(signature = (name, kernel=None))]
+    fn apply_tactic_name(
+        &self,
+        python: Python<'_>,
+        name: String,
+        kernel: Option<Py<PyKernel>>,
+    ) -> PyResult<Py<PyKernel>> {
+        self.run(python, StrategyRequest::Name(name), kernel)
+    }
+
+    fn prove_addr(&self, python: Python<'_>, addr: PyRef<'_, PyO256>) -> PyResult<Py<PyKernel>> {
+        self.run(python, StrategyRequest::Prove(PyO256::value(&addr)), None)
+    }
 }
 
 #[pymethods]
@@ -1079,6 +1249,38 @@ impl PyKernel {
             .map_err(value_error)
     }
 
+    #[pyo3(signature = (bool_ty, equality, premise, direction="forward"))]
+    fn rewrite_proposition(
+        &mut self,
+        bool_ty: i32,
+        equality: i32,
+        premise: i32,
+        direction: &str,
+    ) -> PyResult<PyRewriteResult> {
+        let direction = match direction {
+            "forward" => covalence_nucleus::tactics::RewriteDirection::Forward,
+            "backward" => covalence_nucleus::tactics::RewriteDirection::Backward,
+            _ => {
+                return Err(PyValueError::new_err(
+                    "direction must be forward or backward",
+                ));
+            }
+        };
+        covalence_nucleus::tactics::rewrite_proposition(
+            &mut self.kernel,
+            reference(bool_ty)?,
+            theorem_id(equality)?,
+            theorem_id(premise)?,
+            direction,
+        )
+        .map(|result| PyRewriteResult {
+            source: result.source().get(),
+            target: result.target().get(),
+            theorem: result.theorem().get(),
+        })
+        .map_err(value_error)
+    }
+
     fn forall_intro(&mut self, theorem: i32, binder: i32) -> PyResult<(i32, i32)> {
         self.kernel
             .forall_intro(theorem_id(theorem)?, reference(binder)?)
@@ -1476,9 +1678,9 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyTm>()?;
     module.add_class::<PySynFact>()?;
     module.add_class::<PyKernel>()?;
-    let function = wrap_pyfunction!(load_standard_proof, module)?;
-    function.setattr("__module__", "covalence.logic.hol")?;
-    module.add_function(function)
+    module.add_class::<PyRewriteResult>()?;
+    module.add_class::<PyStrategy>()?;
+    Ok(())
 }
 
 #[pymethods]

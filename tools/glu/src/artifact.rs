@@ -437,7 +437,11 @@ impl Runner {
             fs::remove_dir_all(&temp).wrap_err("could not clear C proof build directory")?;
         }
         fs::create_dir_all(&temp).wrap_err("could not create C proof build directory")?;
-        let staged_proof = temp.join("proof.c");
+        // `wit-bindgen c --world proof` emits `proof.c` into this directory,
+        // so keep the guest implementation under a distinct name. Otherwise
+        // the generated bindings overwrite the staged source and are passed
+        // to the linker twice.
+        let staged_proof = temp.join("guest.c");
         fs::copy(&proof, &staged_proof).wrap_err("could not stage C proof source")?;
 
         let version = Command::new(wit_bindgen)
@@ -460,7 +464,7 @@ impl Runner {
             [
                 "c",
                 "--world",
-                "standard-proof",
+                "proof",
                 "--out-dir",
                 as_utf8(&temp, "C binding output")?,
                 as_utf8(&wit, "proof WIT")?,
@@ -471,9 +475,9 @@ impl Runner {
             "compile C proof",
             as_utf8(wasi_cc, "WASI C compiler")?,
             [
-                as_utf8(&temp.join("standard_proof.c"), "generated C bindings")?,
+                as_utf8(&temp.join("proof.c"), "generated C bindings")?,
                 as_utf8(
-                    &temp.join("standard_proof_component_type.o"),
+                    &temp.join("proof_component_type.o"),
                     "component type object",
                 )?,
                 as_utf8(&staged_proof, "C proof source")?,

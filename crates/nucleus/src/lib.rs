@@ -6,6 +6,9 @@ pub use covalence_nucleus_core as core;
 /// Untrusted S-expression parsing, elaboration, metadata, and init tooling.
 pub use covalence_nucleus_script as script;
 
+/// Untrusted high-level proof programs over checked kernel operations.
+pub use covalence_nucleus_tactics as tactics;
+
 /// Compatibility name for the formerly HOL-specific frontend module.
 pub use covalence_nucleus_script as hol_script;
 
@@ -23,9 +26,13 @@ pub use covalence_data_cas::IndexCas;
 mod proof;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use proof::{
-    ProofError, load_standard_proof, load_standard_proof_async, load_standard_proof_with_cas_async,
-};
+mod script_proof;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use proof::{ProofError, Strategy, load_proof, load_proof_async, load_proof_with_cas_async};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use script_proof::{ScriptProofError, ScriptProofOutput, run_script_proofs};
 
 mod snapshot;
 
