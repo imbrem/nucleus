@@ -1,0 +1,16 @@
+[package]
+name = "covalence-data-spectec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Pinned SpecTec inputs and resource-bounded elaborated IL reader"
+publish = false
+
+[dependencies]
+covalence-data-cbor = { path = "../cbor" }
+covalence-data-sexpr = { path = "../sexpr" }
+covalence-lib-error = { path = "../../lib/error" }
+
+[lints]
+workspace = true

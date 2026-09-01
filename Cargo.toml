@@ -28,6 +28,7 @@ members = [
   "crates/data/classical",
   "crates/data/num",
   "crates/data/sexpr",
+  "crates/data/spectec",
   "crates/data/vfs",
   "crates/data/sqlite",
   "crates/data/cas",

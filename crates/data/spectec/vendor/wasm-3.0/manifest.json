@@ -1,0 +1,326 @@
+{
+  "ast": {
+    "artifact": {
+      "bytes": 1523947,
+      "cid": {
+        "$link": "bafkreigdboqqahicaabxsoziya7gxzu4goh7hay66b4p2xs4loiagjoiay"
+      },
+      "path": "wasm-3.0.ast.sexp"
+    },
+    "events": 343363,
+    "maxDepth": 19,
+    "roots": 926
+  },
+  "format": "io.github.imbrem.nucleus.spectecBundleV1",
+  "generator": {
+    "arguments": [
+      "specification/wasm-3.0/0.1-aux.vars.spectec",
+      "specification/wasm-3.0/0.2-aux.num.spectec",
+      "specification/wasm-3.0/0.3-aux.seq.spectec",
+      "specification/wasm-3.0/1.0-syntax.profiles.spectec",
+      "specification/wasm-3.0/1.1-syntax.values.spectec",
+      "specification/wasm-3.0/1.2-syntax.types.spectec",
+      "specification/wasm-3.0/1.3-syntax.instructions.spectec",
+      "specification/wasm-3.0/1.4-syntax.modules.spectec",
+      "specification/wasm-3.0/2.0-validation.contexts.spectec",
+      "specification/wasm-3.0/2.1-validation.types.spectec",
+      "specification/wasm-3.0/2.2-validation.subtyping.spectec",
+      "specification/wasm-3.0/2.3-validation.instructions.spectec",
+      "specification/wasm-3.0/2.4-validation.modules.spectec",
+      "specification/wasm-3.0/3.0-numerics.relaxed.spectec",
+      "specification/wasm-3.0/3.1-numerics.scalar.spectec",
+      "specification/wasm-3.0/3.2-numerics.vector.spectec",
+      "specification/wasm-3.0/4.0-execution.configurations.spectec",
+      "specification/wasm-3.0/4.1-execution.values.spectec",
+      "specification/wasm-3.0/4.2-execution.types.spectec",
+      "specification/wasm-3.0/4.3-execution.instructions.spectec",
+      "specification/wasm-3.0/4.4-execution.modules.spectec",
+      "specification/wasm-3.0/5.1-binary.values.spectec",
+      "specification/wasm-3.0/5.2-binary.types.spectec",
+      "specification/wasm-3.0/5.3-binary.instructions.spectec",
+      "specification/wasm-3.0/5.4-binary.modules.spectec",
+      "specification/wasm-3.0/6.0-text.lexical.spectec",
+      "specification/wasm-3.0/6.1-text.values.spectec",
+      "specification/wasm-3.0/6.2-text.types.spectec",
+      "specification/wasm-3.0/6.3-text.instructions.spectec",
+      "specification/wasm-3.0/6.3-text.modules.spectec",
+      "specification/wasm-3.0/X.1-notation.syntax.spectec",
+      "specification/wasm-3.0/X.2-notation.typing.spectec",
+      "specification/wasm-3.0/X.3-notation.execution.spectec",
+      "specification/wasm-3.0/X.4-notation.binary.spectec",
+      "specification/wasm-3.0/X.5-notation.text.spectec",
+      "--ast",
+      "-o",
+      "wasm-3.0.ast.sexp"
+    ],
+    "version": "0.5"
+  },
+  "licenses": [
+    {
+      "bytes": 376,
+      "cid": {
+        "$link": "bafkreibirnq6mksx2je633krphvt2zkfzwcewkiubzbwvi3rbznib2s5te"
+      },
+      "path": "license/UPSTREAM-LICENSE"
+    },
+    {
+      "bytes": 143,
+      "cid": {
+        "$link": "bafkreiapyzuh2zfnyjs23r4iwoo73dze4hrji36hezmr7l2zwc74z7yjhq"
+      },
+      "path": "license/W3C-LICENSE"
+    }
+  ],
+  "sources": [
+    {
+      "bytes": 217,
+      "cid": {
+        "$link": "bafkreidzofis36dizhswopuw4oawq3fauiypxevcky5vqc3mhi7tfzlfsq"
+      },
+      "path": "source/0.1-aux.vars.spectec"
+    },
+    {
+      "bytes": 354,
+      "cid": {
+        "$link": "bafkreigi6olukvitffwvavwvrpis6vwgik5vzu6t4qwtzmc4hx6en7vwzy"
+      },
+      "path": "source/0.2-aux.num.spectec"
+    },
+    {
+      "bytes": 2166,
+      "cid": {
+        "$link": "bafkreidsqvrin6roosb2wf5t2ducoyzd2s5bjnkzfvnkjoqcbq7g3qoy7a"
+      },
+      "path": "source/0.3-aux.seq.spectec"
+    },
+    {
+      "bytes": 68,
+      "cid": {
+        "$link": "bafkreifiouhbli6a42eixr34ukhirjt4xfzxdejzfjdbjwnp56e6xap5ae"
+      },
+      "path": "source/1.0-syntax.profiles.spectec"
+    },
+    {
+      "bytes": 5694,
+      "cid": {
+        "$link": "bafkreiduhouhineiz2pntfdszbcb2dnoejr7chmw6usuqetv7c6hxe56va"
+      },
+      "path": "source/1.1-syntax.values.spectec"
+    },
+    {
+      "bytes": 21770,
+      "cid": {
+        "$link": "bafkreidljbg4mi6hrlr7nltasslotrc55agftc6gm7f7vmgg322kkjpysy"
+      },
+      "path": "source/1.2-syntax.types.spectec"
+    },
+    {
+      "bytes": 22115,
+      "cid": {
+        "$link": "bafkreiftz5dm224uw25lvcnxxy7twefb2ohs6ijhwqmttnhgxzj3lkz43e"
+      },
+      "path": "source/1.3-syntax.instructions.spectec"
+    },
+    {
+      "bytes": 3661,
+      "cid": {
+        "$link": "bafkreidj2p44wlxy6hm76jumkqumth72mzq2ez6pocc5yasrfe5xoseq6m"
+      },
+      "path": "source/1.4-syntax.modules.spectec"
+    },
+    {
+      "bytes": 2699,
+      "cid": {
+        "$link": "bafkreiglyqq4kwapqj6e6srpakeneasn4uy3jverjsd46midsolvtbglh4"
+      },
+      "path": "source/2.0-validation.contexts.spectec"
+    },
+    {
+      "bytes": 7911,
+      "cid": {
+        "$link": "bafkreiclla3oe7jzw6fjwko435n6ssj2x262vo6lp53o6pp5qszioddytm"
+      },
+      "path": "source/2.1-validation.types.spectec"
+    },
+    {
+      "bytes": 7205,
+      "cid": {
+        "$link": "bafkreidr5pfsuu7flobenqjz44h7xz7urboel23vp6hhcohbkyybjtkdf4"
+      },
+      "path": "source/2.2-validation.subtyping.spectec"
+    },
+    {
+      "bytes": 18609,
+      "cid": {
+        "$link": "bafkreifihwnt5iaxid4gzftk2jlnnneeo6nmibzcvfli3ybbkfctoudlye"
+      },
+      "path": "source/2.3-validation.instructions.spectec"
+    },
+    {
+      "bytes": 5946,
+      "cid": {
+        "$link": "bafkreigeldr3shvw2gqmezc6l3y6uvhoputzkyveyrez5i7ii5vtvs747u"
+      },
+      "path": "source/2.4-validation.modules.spectec"
+    },
+    {
+      "bytes": 950,
+      "cid": {
+        "$link": "bafkreidqzsxclc76xavdi3wxmy6airmmgs3yhc6unmwexan2nlknz5fdta"
+      },
+      "path": "source/3.0-numerics.relaxed.spectec"
+    },
+    {
+      "bytes": 17357,
+      "cid": {
+        "$link": "bafkreihycbg24hwukd2twmcovbvn6wi43xf4bbkaio7dahyxv2k4ncx424"
+      },
+      "path": "source/3.1-numerics.scalar.spectec"
+    },
+    {
+      "bytes": 20914,
+      "cid": {
+        "$link": "bafkreicbroxki4xhrohhoty453ih7arngeszgshoyuc4kd43trmphidws4"
+      },
+      "path": "source/3.2-numerics.vector.spectec"
+    },
+    {
+      "bytes": 12831,
+      "cid": {
+        "$link": "bafkreid42ve2rosoyn7bhgezfbl7oph5hnjvkvqyksnxfaejwmyxxwviwi"
+      },
+      "path": "source/4.0-execution.configurations.spectec"
+    },
+    {
+      "bytes": 2538,
+      "cid": {
+        "$link": "bafkreics2k4gwyw2k5vdbfnus4d6s5uvaeriitkvznqywghpt3dfb7tim4"
+      },
+      "path": "source/4.1-execution.values.spectec"
+    },
+    {
+      "bytes": 1066,
+      "cid": {
+        "$link": "bafkreiew7htnczhylw2u6r7i27inc32y5ma7k2fbqiqyhwibe3wkx6xhbu"
+      },
+      "path": "source/4.2-execution.types.spectec"
+    },
+    {
+      "bytes": 34236,
+      "cid": {
+        "$link": "bafkreih26cp72nzar4ytpu32rnzup3tlmwhj56ywnjy23ybxlruh7ukpwy"
+      },
+      "path": "source/4.3-execution.instructions.spectec"
+    },
+    {
+      "bytes": 9334,
+      "cid": {
+        "$link": "bafkreiezijacwnuubrc7tkvxngllyep7xzwupduiwgtufpwarzrnz2lnc4"
+      },
+      "path": "source/4.4-execution.modules.spectec"
+    },
+    {
+      "bytes": 2456,
+      "cid": {
+        "$link": "bafkreidhbhbhhmjed3vzwp7yjt5altgtnmvqpj2jxstxwh3i2ha5pqffju"
+      },
+      "path": "source/5.1-binary.values.spectec"
+    },
+    {
+      "bytes": 2313,
+      "cid": {
+        "$link": "bafkreigquqv36mjism5uuetq7h2yvtjjdmdmlonba4d2nuslchfdkqrnem"
+      },
+      "path": "source/5.2-binary.types.spectec"
+    },
+    {
+      "bytes": 27247,
+      "cid": {
+        "$link": "bafkreiauvcfeyu4y4wfdhiuy62cqrv3mxp6dbcsn3hsfn7ru2xysurs3yu"
+      },
+      "path": "source/5.3-binary.instructions.spectec"
+    },
+    {
+      "bytes": 4894,
+      "cid": {
+        "$link": "bafkreiavtjt6gbj74hpkgr2my7pdspkhuejef3gbluvlq5rmogs2aucfae"
+      },
+      "path": "source/5.4-binary.modules.spectec"
+    },
+    {
+      "bytes": 1317,
+      "cid": {
+        "$link": "bafkreihp46novwmlquqwpae4vpiouaotwwozfq3dvqthoj3bkrz7nacmwa"
+      },
+      "path": "source/6.0-text.lexical.spectec"
+    },
+    {
+      "bytes": 5741,
+      "cid": {
+        "$link": "bafkreigd5f6suw5glxxbcxp5fnxvdk2ka6jvm5i45dzfdhaf3qd5tte2g4"
+      },
+      "path": "source/6.1-text.values.spectec"
+    },
+    {
+      "bytes": 5387,
+      "cid": {
+        "$link": "bafkreiel5ospxric7njh2wfbpso5hqzqfmgiwgnsfq2ijtivvtgzl6wlxi"
+      },
+      "path": "source/6.2-text.types.spectec"
+    },
+    {
+      "bytes": 40920,
+      "cid": {
+        "$link": "bafkreicqetth5ct65tr7isbegzroqihmujjq4hz5avargufmwfwc3vohvm"
+      },
+      "path": "source/6.3-text.instructions.spectec"
+    },
+    {
+      "bytes": 11001,
+      "cid": {
+        "$link": "bafkreicg7wpttn5z5t6yrleih4rsqpoaeapwvpl4oe7mz4pagoz66tvcf4"
+      },
+      "path": "source/6.3-text.modules.spectec"
+    },
+    {
+      "bytes": 628,
+      "cid": {
+        "$link": "bafkreifuixqfldgrsoe5jqdslos7wuorfj65igeebrnhdihoyozflwjtae"
+      },
+      "path": "source/X.1-notation.syntax.spectec"
+    },
+    {
+      "bytes": 921,
+      "cid": {
+        "$link": "bafkreidbmlfc4p7lnfmo3cx74hr37pdiftiap4bkvbkqbkhvr6wci2vhtq"
+      },
+      "path": "source/X.2-notation.typing.spectec"
+    },
+    {
+      "bytes": 1059,
+      "cid": {
+        "$link": "bafkreib3tt5fowy66dktajlv7ittrg3wqpt3bfifyp2ugh263etnuogbj4"
+      },
+      "path": "source/X.3-notation.execution.spectec"
+    },
+    {
+      "bytes": 552,
+      "cid": {
+        "$link": "bafkreiabboispzpnkak4uwbx6gmxccpmqmc3kopvmug2knch5gtembgmhm"
+      },
+      "path": "source/X.4-notation.binary.spectec"
+    },
+    {
+      "bytes": 842,
+      "cid": {
+        "$link": "bafkreia66k2576ufznfcyogcbeh3xkghnqjx5wsxrjpvgjdpi6s4rv2mxu"
+      },
+      "path": "source/X.5-notation.text.spectec"
+    }
+  ],
+  "upstream": {
+    "release": "wg-3.0",
+    "repository": "https://github.com/WebAssembly/spec",
+    "revision": "9d36019973201a19f9c9ebb0f10828b2fe2374aa"
+  }
+}
