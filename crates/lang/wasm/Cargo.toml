@@ -1,0 +1,15 @@
+[package]
+name = "covalence-lang-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Owned WebAssembly language objects and bounded binary extraction"
+publish = false
+
+[dependencies]
+covalence-lib-error = { path = "../../lib/error" }
+covalence-lib-wasm = { path = "../../lib/wasm", features = ["parser"] }
+
+[lints]
+workspace = true

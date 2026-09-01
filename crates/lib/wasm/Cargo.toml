@@ -4,16 +4,19 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "WebAssembly runtimes shared by Covalence hosts and guests"
+description = "WebAssembly ecosystem dependencies shared by Covalence crates"
 publish = false
 
 [features]
 default = []
 browser = ["dep:wasm-bindgen"]
 component-guest = ["dep:wit-bindgen-rt"]
-component-host = ["dep:wasmtime", "dep:wasmtime-wasi"]
+component-host = ["engine", "dep:wasmtime-wasi"]
+engine = ["dep:wasmtime"]
+parser = ["dep:wasmparser"]
 
 [dependencies]
+wasmparser = { version = "0.254", optional = true }
 wit-bindgen-rt = { version = "=0.44.0", features = ["async", "bitflags"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

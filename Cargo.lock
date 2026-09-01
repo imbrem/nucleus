@@ -1080,6 +1080,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-exec-wasm"
+version = "0.0.0"
+dependencies = [
+ "covalence-lang-wasm",
+ "covalence-lib-error",
+ "covalence-lib-hash",
+ "covalence-lib-wasm",
+]
+
+[[package]]
 name = "covalence-ffi-python"
 version = "0.0.0"
 dependencies = [
@@ -1095,6 +1105,14 @@ dependencies = [
  "covalence-logic-metamath",
  "covalence-logic-sat",
  "covalence-nucleus",
+]
+
+[[package]]
+name = "covalence-lang-wasm"
+version = "0.0.0"
+dependencies = [
+ "covalence-lib-error",
+ "covalence-lib-wasm",
 ]
 
 [[package]]
@@ -1224,6 +1242,7 @@ name = "covalence-lib-wasm"
 version = "0.0.0"
 dependencies = [
  "wasm-bindgen",
+ "wasmparser 0.254.0",
  "wasmtime",
  "wasmtime-wasi",
  "wit-bindgen-rt",

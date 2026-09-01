@@ -1,0 +1,19 @@
+[package]
+name = "covalence-exec-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Reference execution of supported WebAssembly programs"
+publish = false
+
+[dependencies]
+covalence-lang-wasm = { path = "../../lang/wasm" }
+covalence-lib-error = { path = "../../lib/error" }
+
+[dev-dependencies]
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3", "sha256"] }
+covalence-lib-wasm = { path = "../../lib/wasm", default-features = false, features = ["engine"] }
+
+[lints]
+workspace = true

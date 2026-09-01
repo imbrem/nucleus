@@ -18,6 +18,9 @@ checked-in Lean module should build continuously.
 ## Repository map
 
 - `crates/logic/`: checked logic and proof-format crates
+- `crates/lang/`: untrusted language representations and decoders
+- `crates/exec/`: reference executors, trusted only when selected by an
+  explicit acceleration boundary
 - `lean/Nucleus/`: specifications, metatheory, and design comparisons
 - `wit/`: component authority boundaries
 - `lexicons/`: portable leaf-object schemas

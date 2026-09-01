@@ -328,6 +328,33 @@
       ]
     },
     {
+      "id": "workspace#covalence-exec-wasm@0.0.0",
+      "name": "covalence-exec-wasm",
+      "version": "0.0.0",
+      "path": "crates/exec/wasm",
+      "category": "product",
+      "targets": [
+        {
+          "name": "covalence_exec_wasm",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "oracle",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "run",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-ffi-python@0.0.0",
       "name": "covalence-ffi-python",
       "version": "0.0.0",
@@ -339,6 +366,21 @@
           "kinds": [
             "cdylib",
             "rlib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-lang-wasm@0.0.0",
+      "name": "covalence-lang-wasm",
+      "version": "0.0.0",
+      "path": "crates/lang/wasm",
+      "category": "product",
+      "targets": [
+        {
+          "name": "covalence_lang_wasm",
+          "kinds": [
+            "lib"
           ]
         }
       ]
@@ -1451,6 +1493,34 @@
       ]
     },
     {
+      "source": "workspace#covalence-exec-wasm@0.0.0",
+      "target": "workspace#covalence-lang-wasm@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-exec-wasm@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-exec-wasm@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "dev"
+      ]
+    },
+    {
+      "source": "workspace#covalence-exec-wasm@0.0.0",
+      "target": "workspace#covalence-lib-wasm@0.0.0",
+      "kinds": [
+        "dev"
+      ]
+    },
+    {
       "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-data-cas@0.0.0",
       "kinds": [
@@ -1523,6 +1593,20 @@
     {
       "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-nucleus@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-lang-wasm@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-lang-wasm@0.0.0",
+      "target": "workspace#covalence-lib-wasm@0.0.0",
       "kinds": [
         "normal"
       ]
