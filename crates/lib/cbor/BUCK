@@ -28,11 +28,14 @@ rust_library(
     srcs = _RUST_SOURCES,
     features = [
         "default",
+        "drisl",
         "serde",
     ],
     tests = [":covalence_lib_cbor-unit-test"],
     named_deps = {
         "ciborium": "nucleus//buck/cargo/production:ciborium-0.2.2",
+        "ipld_core": "nucleus//buck/cargo/production:ipld-core-0.4.3",
+        "serde_ipld_dagcbor": "nucleus//buck/cargo/production:serde_ipld_dagcbor-0.7.0",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -62,10 +65,13 @@ rust_test(
     srcs = _RUST_SOURCES,
     features = [
         "default",
+        "drisl",
         "serde",
     ],
     named_deps = {
         "ciborium": "nucleus//buck/cargo/production:ciborium-0.2.2",
+        "ipld_core": "nucleus//buck/cargo/production:ipld-core-0.4.3",
+        "serde_ipld_dagcbor": "nucleus//buck/cargo/production:serde_ipld_dagcbor-0.7.0",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

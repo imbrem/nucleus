@@ -281,7 +281,7 @@
       "name": "covalence-data-vfs",
       "version": "0.0.0",
       "path": "crates/data/vfs",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_data_vfs",
@@ -1249,6 +1249,34 @@
     {
       "source": "workspace#covalence-data-cbor@0.0.0",
       "target": "workspace#covalence-data-num@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cbor@0.0.0",
+      "target": "workspace#covalence-lib-cbor@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cbor@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cbor@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cbor@0.0.0",
+      "target": "workspace#covalence-lib-json@0.0.0",
       "kinds": [
         "normal"
       ]
