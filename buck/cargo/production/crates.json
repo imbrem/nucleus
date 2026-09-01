@@ -277,6 +277,27 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-spectec@0.0.0",
+      "name": "covalence-data-spectec",
+      "version": "0.0.0",
+      "path": "crates/data/spectec",
+      "category": "product",
+      "targets": [
+        {
+          "name": "bundle",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "covalence_data_spectec",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-data-sqlite@0.0.0",
       "name": "covalence-data-sqlite",
       "version": "0.0.0",
@@ -880,7 +901,7 @@
       "name": "covalence-nucleus-tactics",
       "version": "0.0.0",
       "path": "crates/nucleus/tactics",
-      "category": "tcb",
+      "category": "product",
       "targets": [
         {
           "name": "covalence_nucleus_tactics",
@@ -1369,6 +1390,27 @@
     {
       "source": "workspace#covalence-data-sexpr@0.0.0",
       "target": "workspace#covalence-lib-pretty@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-spectec@0.0.0",
+      "target": "workspace#covalence-data-cbor@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-spectec@0.0.0",
+      "target": "workspace#covalence-data-sexpr@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-spectec@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
       "kinds": [
         "normal"
       ]

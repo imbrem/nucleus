@@ -1052,6 +1052,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-data-spectec"
+version = "0.0.0"
+dependencies = [
+ "covalence-data-cbor",
+ "covalence-data-sexpr",
+ "covalence-lib-error",
+]
+
+[[package]]
 name = "covalence-data-sqlite"
 version = "0.0.0"
 dependencies = [
