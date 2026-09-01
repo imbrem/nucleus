@@ -913,6 +913,12 @@
       "category": "product",
       "targets": [
         {
+          "name": "compiler",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "covalence_proof_demo",
           "kinds": [
             "cdylib"
