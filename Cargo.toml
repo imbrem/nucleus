@@ -25,6 +25,7 @@ members = [
   "crates/data/array",
   "crates/data/basic",
   "crates/data/cbor",
+  "crates/data/classical",
   "crates/data/num",
   "crates/data/sexpr",
   "crates/data/vfs",

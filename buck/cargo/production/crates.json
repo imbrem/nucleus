@@ -205,6 +205,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-classical@0.0.0",
+      "name": "covalence-data-classical",
+      "version": "0.0.0",
+      "path": "crates/data/classical",
+      "category": "product",
+      "targets": [
+        {
+          "name": "covalence_data_classical",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-data-container@0.0.0",
       "name": "covalence-data-container",
       "version": "0.0.0",
@@ -1277,6 +1292,27 @@
     {
       "source": "workspace#covalence-data-cbor@0.0.0",
       "target": "workspace#covalence-lib-json@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-classical@0.0.0",
+      "target": "workspace#covalence-data-cbor@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-classical@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-classical@0.0.0",
+      "target": "workspace#covalence-logic-classical@0.0.0",
       "kinds": [
         "normal"
       ]

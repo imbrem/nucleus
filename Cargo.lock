@@ -1020,6 +1020,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-data-classical"
+version = "0.0.0"
+dependencies = [
+ "covalence-data-cbor",
+ "covalence-lib-error",
+ "covalence-logic-classical",
+]
+
+[[package]]
 name = "covalence-data-container"
 version = "0.0.0"
 

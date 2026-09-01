@@ -475,8 +475,10 @@ impl LratProver {
             validate_atom(&self.kernel, *literal)?;
         }
         let hints = self.rows(id, ordered_hints)?;
+        let mut kernel = self.kernel.fork();
+        let term = build_clause(&mut kernel, &literals, self.false_ref)?;
         let row = self.refuter.learn_rup(literals.clone().into(), &hints)?;
-        let term = build_clause(&mut self.kernel, &literals, self.false_ref)?;
+        self.kernel = kernel;
         self.live.insert(id, ClauseRecord { term, row });
         self.high_water = id;
         Ok(())
@@ -524,12 +526,15 @@ impl LratProver {
                 })
             })
             .collect::<Result<Vec<_>, Error>>()?;
-        let row = self
-            .refuter
-            .learn_rat(literals.clone().into(), pivot, &prefix, &groups)?;
+        let refuter_literals = literals.clone();
         literals.sort_unstable();
         literals.dedup();
-        let term = build_clause(&mut self.kernel, &literals, self.false_ref)?;
+        let mut kernel = self.kernel.fork();
+        let term = build_clause(&mut kernel, &literals, self.false_ref)?;
+        let row = self
+            .refuter
+            .learn_rat(refuter_literals.into(), pivot, &prefix, &groups)?;
+        self.kernel = kernel;
         self.live.insert(id, ClauseRecord { term, row });
         self.high_water = id;
         Ok(())
@@ -1037,16 +1042,20 @@ mod tests {
 
     #[test]
     fn rejected_rup_does_not_mutate_the_refuter() {
-        let (kernel, bool_ty, p, _) = fixture();
+        let (kernel, bool_ty, p, q) = fixture();
         let mut builder = CnfBuilder::new(kernel, bool_ty);
         builder.clause(&[p]).unwrap();
         let mut prover = builder.refute().unwrap();
         let before = prover.refuter.state().clone();
+        let kernel_before = prover.kernel().arena().clone();
         assert!(matches!(
-            prover.learn_rup_props(2, &[p], &[99]),
-            Err(Error::UnknownClause { .. })
+            prover.learn_rup_props(2, &[p, q], &[]),
+            Err(Error::Classical {
+                source: ClassicalError::NoConflict
+            })
         ));
         assert_eq!(prover.refuter.state(), &before);
+        assert_eq!(prover.kernel().arena(), &kernel_before);
     }
 
     #[test]
@@ -1076,20 +1085,22 @@ mod tests {
         builder.clause(&[p]).unwrap();
         let mut prover = builder.refute().unwrap();
         let before = prover.refuter.state().clone();
+        let kernel_before = prover.kernel().arena().clone();
 
         assert!(matches!(
-            prover.learn_rat(3, &dimacs([1]), Literal::new(1).unwrap(), &[], &[]),
+            prover.learn_rat(3, &dimacs([1, 2]), Literal::new(1).unwrap(), &[], &[]),
             Err(Error::Classical {
                 source: ClassicalError::IncompleteRat { id: 1 }
             })
         ));
         assert_eq!(prover.refuter.state(), &before);
+        assert_eq!(prover.kernel().arena(), &kernel_before);
         assert_eq!(prover.high_water, 2);
 
         prover
             .learn_rat(
                 3,
-                &dimacs([1]),
+                &dimacs([1, 2]),
                 Literal::new(1).unwrap(),
                 &[],
                 &[crate::RatGroup {

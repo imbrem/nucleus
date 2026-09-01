@@ -20,6 +20,7 @@ checked-in Lean module should build continuously.
 - `crates/logic/`: checked logic and proof-format crates
 - `lean/Nucleus/`: specifications, metatheory, and design comparisons
 - `wit/`: component authority boundaries
+- `lexicons/`: portable leaf-object schemas
 - `crates/proof/`, `crates/repl/`, `crates/browser/`: proof guests and user surfaces
 - `apps/docs/`: generated repository documentation
 - `docs/research/`: scoped research notes, not a single normative roadmap

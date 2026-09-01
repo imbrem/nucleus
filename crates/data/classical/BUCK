@@ -21,24 +21,24 @@ filegroup(
 )
 
 rust_library(
-    name = "covalence_logic_classical",
-    crate = "covalence_logic_classical",
+    name = "covalence_data_classical",
+    crate = "covalence_data_classical",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    tests = [":covalence_logic_classical-unit-test"],
+    tests = [":covalence_data_classical-unit-test"],
     named_deps = {
+        "covalence_data_cbor": "nucleus//crates/data/cbor:covalence_data_cbor",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
-        "serde": "nucleus//buck/cargo/production:serde-1.0.229",
-        "smallvec": "nucleus//buck/cargo/production:smallvec-1.15.2",
+        "covalence_logic_classical": "nucleus//crates/logic/classical:covalence_logic_classical",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Tagged classical logic runtime and sealed theorem rules",
+        "CARGO_PKG_DESCRIPTION": "Untrusted wire formats for checked classical logic",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-logic-classical",
+        "CARGO_PKG_NAME": "covalence-data-classical",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
@@ -53,24 +53,23 @@ rust_library(
 )
 
 rust_test(
-    name = "covalence_logic_classical-unit-test",
-    crate = "covalence_logic_classical",
+    name = "covalence_data_classical-unit-test",
+    crate = "covalence_data_classical",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
-        "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
+        "covalence_data_cbor": "nucleus//crates/data/cbor:covalence_data_cbor",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
-        "serde": "nucleus//buck/cargo/production:serde-1.0.229",
-        "smallvec": "nucleus//buck/cargo/production:smallvec-1.15.2",
+        "covalence_logic_classical": "nucleus//crates/logic/classical:covalence_logic_classical",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Tagged classical logic runtime and sealed theorem rules",
+        "CARGO_PKG_DESCRIPTION": "Untrusted wire formats for checked classical logic",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-logic-classical",
+        "CARGO_PKG_NAME": "covalence-data-classical",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
