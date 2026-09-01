@@ -215,5 +215,61 @@ not have to be rebuilt per version. Widening the range means relaxing that
 feature in `covalence-lib-python`, which is also where the PyO3 version and the
 `extension-module` policy are pinned and explained.
 
-Wheels are built for whatever platform maturin is run on; there is no
-cross-platform release process yet.
+### Installing a wheel from a particular commit
+
+Successful `main` and pull-request runs of the **Python wheels** workflow build
+an experimental snapshot for Linux x86-64. The wheel uses the CPython 3.11
+stable ABI and the `manylinux_2_28_x86_64` platform tag: the same file supports
+ordinary CPython 3.11 and later, but only on compatible Linux x86-64 systems.
+Other operating systems, architectures, and free-threaded Python builds are not
+currently produced.
+
+Choose a commit, not merely the newest `main` run. In GitHub's web interface,
+open **Actions**, select **Python wheels**, and select a successful run whose
+commit is the one required. At the bottom of its summary, download
+`covalence-linux-x86_64-<full-commit-SHA>`, unzip it, then verify and install it:
+
+```sh
+cd path/to/unzipped-artifact
+sha256sum --check SHA256SUMS
+WHEEL=$(find . -maxdepth 1 -type f \
+  -name 'covalence-*-cp311-abi3-manylinux_2_28_x86_64.whl' -print -quit)
+test -n "$WHEEL"
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install "$WHEEL"
+python -c 'import covalence; print(covalence.__version__)'
+```
+
+Downloading an Actions artifact in the web interface generally requires a
+GitHub login, including for a public repository. The GitHub CLI makes selection
+by immutable source commit explicit. Substitute the required full commit SHA:
+
+```sh
+REPO=imbrem/nucleus
+FULL_SHA=0123456789abcdef0123456789abcdef01234567
+RUN_ID=$(gh run list --repo "$REPO" --workflow python-wheels.yml \
+  --commit "$FULL_SHA" --status success --limit 1 \
+  --json databaseId --jq '.[0].databaseId')
+test -n "$RUN_ID"
+gh run download "$RUN_ID" --repo "$REPO" \
+  --name "covalence-linux-x86_64-$FULL_SHA" --dir wheels
+sha256sum --check wheels/SHA256SUMS
+WHEEL=$(find wheels -maxdepth 1 -type f \
+  -name 'covalence-*-cp311-abi3-manylinux_2_28_x86_64.whl' -print -quit)
+test -n "$WHEEL"
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install "$WHEEL"
+python -c 'import covalence; print(covalence.__version__)'
+```
+
+Record the full commit SHA and the matching entry in `SHA256SUMS` when using a
+snapshot as a dependency. `BUILD-METADATA.json` also records the source commit
+and Actions run. Artifacts expire after 30 days, so retain the verified wheel
+and checksum when reproducibility is needed for longer.
+
+These snapshots are not releases, and Python API compatibility is not yet
+guaranteed. A production consumer should ultimately depend on an immutable
+package-index version or release asset with exact hashes rather than on a
+finite-lived Actions artifact.
