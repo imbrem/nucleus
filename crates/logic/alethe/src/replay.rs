@@ -878,6 +878,8 @@ mod tests {
             .args([
                 "--produce-proofs",
                 "--proof-format-mode=alethe",
+                "--proof-granularity=dsl-rewrite-strict",
+                "--no-proof-allow-trust",
                 "--dump-proofs",
                 "--lang=smt2",
             ])
