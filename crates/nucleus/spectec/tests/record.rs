@@ -4,9 +4,46 @@ use covalence_logic_hol::Kernel;
 use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
-    CoveragePlan, Disposition, KernelRoot, SelectedCompileError, SelectedCompiler, Source,
-    TYPE_NAME, TranslationCase,
+    CoveragePlan, Disposition, IndexErasure, KernelRoot, SelectedCompileError, SelectedCompiler,
+    Source, TYPE_NAME, TranslationCase, declare_hol_schema,
 };
+
+#[test]
+fn generic_hol_schema_declares_every_wasm3_signature() {
+    let source = Source::wasm3().unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let theorem_count = kernel.thm().live_theorems().count();
+
+    let schema = declare_hol_schema(&source, &mut kernel, value, bool_ty).unwrap();
+
+    assert_eq!(schema.policy(), IndexErasure::ValuePredicate);
+    assert_eq!(schema.value(), value);
+    assert_eq!(schema.bool_ty(), bool_ty);
+    assert_eq!(schema.len(), 980);
+    assert!(!schema.is_empty());
+    for declaration in source.declarations() {
+        let target = schema.declaration(declaration.id()).unwrap();
+        assert_eq!(target.kind(), declaration.kind());
+        kernel.classifier(target.reference()).unwrap();
+    }
+    assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+}
+
+#[test]
+fn generic_hol_schema_is_transactional_on_embedding_failure() {
+    let source = Source::wasm3().unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let not_a_type = kernel.bool(bool_ty, true).unwrap();
+    let before = kernel.arena().len();
+
+    assert!(declare_hol_schema(&source, &mut kernel, not_a_type, bool_ty).is_err());
+    assert_eq!(kernel.arena().len(), before);
+}
 
 #[test]
 fn add_slice_exhaustively_classifies_exact_structural_forms() {

@@ -9,6 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 mod add_slice;
+mod schema;
 mod selected;
 
 pub use add_slice::{
@@ -16,6 +17,7 @@ pub use add_slice::{
     ClauseCoverage, Coverage, CoverageArtifact, CoverageDisposition, CoverageParts, CoveragePlan,
     DeclarationCoverage, Disposition, Rejection, RuleCoverage, SourceSpan, TranslationCase,
 };
+pub use schema::{HolDeclaration, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema};
 pub use selected::{SelectedCompileError, SelectedCompiler, SelectedKernel, SelectedRoot};
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};
