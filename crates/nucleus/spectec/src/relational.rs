@@ -3,7 +3,7 @@
 use covalence_data_spectec::{IlBinding, IlExpression, IlExpressionKind, IlSchemaError};
 use covalence_logic_hol::{Kernel, KernelError, Ref};
 
-use crate::ExpressionAlgebra;
+use crate::{ExpressionAlgebra, HolRule};
 
 /// Relational meaning of one expression.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -41,6 +41,29 @@ impl RelationalTerm {
     pub fn premises(&self) -> &[Ref] {
         &self.premises
     }
+}
+
+/// Composes lowered terms and extra premises into one HOL closure rule.
+///
+/// Terms appear in exact conclusion-argument order. Their fresh binders and
+/// graph dependencies are accumulated before caller-supplied semantic
+/// premises, preserving deterministic source order.
+#[must_use]
+pub fn relational_hol_rule(
+    explicit_binders: &[Ref],
+    conclusion: &[RelationalTerm],
+    semantic_premises: &[Ref],
+) -> HolRule {
+    let mut binders = explicit_binders.to_vec();
+    let mut premises = Vec::new();
+    let mut arguments = Vec::with_capacity(conclusion.len());
+    for term in conclusion {
+        arguments.push(term.value);
+        binders.extend_from_slice(&term.binders);
+        premises.extend_from_slice(&term.premises);
+    }
+    premises.extend_from_slice(semantic_premises);
+    HolRule::new(binders, premises, arguments)
 }
 
 /// Supplies environment-dependent leaves and primitive meanings.

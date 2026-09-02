@@ -10,7 +10,7 @@ use covalence_nucleus_spectec::{
     CoveragePlan, Disposition, ExpressionAlgebra, HolRule, IndexErasure, KernelRoot,
     RelationalExpressionAlgebra, RelationalResolver, SelectedCompileError, SelectedCompiler,
     Source, TYPE_NAME, TranslationCase, close_hol_rule, close_hol_rules, declare_hol_schema,
-    fold_expression, least_closed_family, least_closed_predicate,
+    fold_expression, least_closed_family, least_closed_predicate, relational_hol_rule,
 };
 
 struct TestRelationalResolver {
@@ -137,6 +137,19 @@ fn relational_expression_fold_turns_calls_into_graph_premises() {
     assert!(
         kernel
             .equivalent(kernel.classifier(term.premises()[0]).unwrap(), bool_ty)
+            .unwrap()
+    );
+    let predicate_ty = kernel.ty_arr(value, bool_ty).unwrap();
+    let candidate = kernel.tm_fv(200, predicate_ty).unwrap();
+    let semantic_premise = kernel.bool(bool_ty, true).unwrap();
+    let rule = relational_hol_rule(&explicit, &[term], &[semantic_premise]);
+    assert_eq!(rule.binders.len(), 2);
+    assert_eq!(rule.premises.len(), 2);
+    assert_eq!(rule.conclusion.len(), 1);
+    let closure = close_hol_rule(&mut kernel, bool_ty, candidate, &rule).unwrap();
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(closure).unwrap(), bool_ty)
             .unwrap()
     );
 }

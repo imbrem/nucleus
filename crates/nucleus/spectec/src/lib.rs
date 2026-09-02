@@ -25,7 +25,9 @@ pub use closure::{
     least_closed_family, least_closed_predicate,
 };
 pub use expression::{ExpressionAlgebra, fold_expression};
-pub use relational::{RelationalExpressionAlgebra, RelationalResolver, RelationalTerm};
+pub use relational::{
+    RelationalExpressionAlgebra, RelationalResolver, RelationalTerm, relational_hol_rule,
+};
 pub use schema::{HolDeclaration, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema};
 pub use selected::{SelectedCompileError, SelectedCompiler, SelectedKernel, SelectedRoot};
 
