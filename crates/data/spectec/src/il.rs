@@ -886,6 +886,98 @@ pub enum IlExpressionKind {
     Subtype,
 }
 
+/// Validated constructor metadata for one IL expression.
+#[derive(Clone, Debug)]
+pub enum IlExpressionView<'a> {
+    /// Variable reference.
+    Variable(&'a str),
+    /// Boolean literal.
+    Boolean(bool),
+    /// Numeric literal family and exact spelling.
+    Number {
+        /// `nat`, `int`, `rat`, or `real`.
+        family: &'a str,
+        /// Exact numeric atom emitted by `SpecTec`.
+        spelling: &'a str,
+    },
+    /// Text literal.
+    Text(&'a str),
+    /// Unary primitive and operand type spelling.
+    Unary { operator: &'a str, operand: &'a str },
+    /// Binary primitive and operand type spelling.
+    Binary { operator: &'a str, operand: &'a str },
+    /// Comparison primitive and operand type spelling.
+    Comparison { operator: &'a str, operand: &'a str },
+    /// Tuple construction.
+    Tuple,
+    /// Tuple projection by exact numeric index.
+    Projection(&'a str),
+    /// Variant construction by mixfix operator.
+    Case(&'a str),
+    /// Variant elimination by mixfix operator.
+    Uncase(&'a str),
+    /// Optional construction.
+    Optional,
+    /// Optional-value extraction.
+    UnwrapOptional,
+    /// Record construction with fields in semantic-child order.
+    Struct(Vec<&'a str>),
+    /// Record field selection.
+    Dot(&'a str),
+    /// Record composition.
+    Compose,
+    /// List construction.
+    List,
+    /// Subtype lift.
+    Lift,
+    /// Membership test.
+    Membership,
+    /// Sequence length.
+    Length,
+    /// Sequence concatenation.
+    Concatenate,
+    /// Sequence indexing.
+    Index,
+    /// Sequence slice.
+    Slice,
+    /// Functional update with root-to-leaf path steps.
+    Update(Vec<IlPathStep<'a>>),
+    /// Functional extension with root-to-leaf path steps.
+    Extend(Vec<IlPathStep<'a>>),
+    /// Definition application with typed heterogeneous arguments.
+    Call {
+        /// Exact definition name.
+        name: &'a str,
+        /// Arguments in source order.
+        arguments: Vec<IlArgument<'a>>,
+    },
+    /// Iterated expression with typed domains.
+    Iterate {
+        /// Iteration shape.
+        iteration: IlIteration<'a>,
+        /// Named domains in source order.
+        domains: Vec<IlDomain<'a>>,
+    },
+    /// Numeric conversion.
+    Convert { source: &'a str, target: &'a str },
+    /// Type inclusion.
+    Subtype {
+        source: IlType<'a>,
+        target: IlType<'a>,
+    },
+}
+
+/// One root-to-leaf step in an update or extension path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IlPathStep<'a> {
+    /// Sequence index; its expression is the next folded semantic child.
+    Index,
+    /// Sequence slice; start and length are the next two folded children.
+    Slice,
+    /// Record field.
+    Field(&'a str),
+}
+
 /// One expression recognized by the generic elaborated-IL schema.
 #[derive(Clone, Debug)]
 pub struct IlExpression<'a> {
@@ -963,6 +1055,19 @@ impl<'a> IlExpression<'a> {
             .iter()
             .map(Self::decode)
             .collect()
+    }
+
+    /// Returns typed constructor metadata after full structural validation.
+    ///
+    /// Semantic child expressions remain available through [`children`](Self::children)
+    /// in the deterministic order described by the returned view.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error at the first malformed literal, operator, field, call
+    /// argument, iteration domain, type, or update path.
+    pub fn view(&self) -> Result<IlExpressionView<'a>, IlSchemaError> {
+        decode_expression_view(self)
     }
 }
 
@@ -1343,6 +1448,193 @@ fn validate_expression(expression: &IlExpression<'_>) -> Result<(), IlSchemaErro
             validate_expression_argument(&form, 2, "included expression")?;
         }
     }
+    Ok(())
+}
+
+#[allow(clippy::too_many_lines)] // One exhaustive match keeps constructor coverage auditable.
+fn decode_expression_view<'a>(
+    expression: &IlExpression<'a>,
+) -> Result<IlExpressionView<'a>, IlSchemaError> {
+    use IlExpressionKind as K;
+    use IlExpressionView as V;
+    expression.validate()?;
+    let form = required_form(expression.cursor(), "decoded expression")?;
+    Ok(match expression.kind() {
+        K::Variable => V::Variable(required_string(
+            form.argument(0),
+            expression.cursor().declaration(),
+            &child_path(&form, 0),
+            "variable identifier",
+        )?),
+        K::Boolean => V::Boolean(require_symbol_argument(&form, 0, "Boolean literal")? == "true"),
+        K::Number => {
+            let literal = required_form(
+                &required_argument(&form, 0, "numeric literal")?,
+                "numeric literal",
+            )?;
+            V::Number {
+                family: literal.head(),
+                spelling: numeric_atom(&required_argument(&literal, 0, "numeric spelling")?)?,
+            }
+        }
+        K::Text => V::Text(required_string(
+            form.argument(0),
+            expression.cursor().declaration(),
+            &child_path(&form, 0),
+            "text literal",
+        )?),
+        K::Unary => V::Unary {
+            operator: require_symbol_argument(&form, 0, "unary operator")?,
+            operand: require_symbol_argument(&form, 1, "unary operand type")?,
+        },
+        K::Binary => V::Binary {
+            operator: require_symbol_argument(&form, 0, "binary operator")?,
+            operand: require_symbol_argument(&form, 1, "binary operand type")?,
+        },
+        K::Comparison => V::Comparison {
+            operator: require_symbol_argument(&form, 0, "comparison operator")?,
+            operand: require_symbol_argument(&form, 1, "comparison operand type")?,
+        },
+        K::Tuple => V::Tuple,
+        K::Projection => V::Projection(required_number_atom(&required_argument(
+            &form,
+            1,
+            "tuple projection index",
+        )?)?),
+        K::Case => V::Case(required_string(
+            form.argument(0),
+            expression.cursor().declaration(),
+            &child_path(&form, 0),
+            "variant mixfix operator",
+        )?),
+        K::Uncase => V::Uncase(required_string(
+            form.argument(1),
+            expression.cursor().declaration(),
+            &child_path(&form, 1),
+            "variant mixfix operator",
+        )?),
+        K::Optional => V::Optional,
+        K::UnwrapOptional => V::UnwrapOptional,
+        K::Struct => V::Struct(
+            form.arguments()
+                .map(|field| {
+                    let field = required_form(&field, "record expression field")?;
+                    require_head(&field, "field")?;
+                    required_string(
+                        field.argument(0),
+                        expression.cursor().declaration(),
+                        &child_path(&field, 0),
+                        "record field name",
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        K::Dot => V::Dot(required_string(
+            form.argument(1),
+            expression.cursor().declaration(),
+            &child_path(&form, 1),
+            "record field operator",
+        )?),
+        K::Compose => V::Compose,
+        K::List => V::List,
+        K::Lift => V::Lift,
+        K::Membership => V::Membership,
+        K::Length => V::Length,
+        K::Concatenate => V::Concatenate,
+        K::Index => V::Index,
+        K::Slice => V::Slice,
+        K::Update | K::Extend => {
+            let mut steps = Vec::new();
+            collect_path_steps(&required_argument(&form, 1, "update path")?, &mut steps)?;
+            if expression.kind() == K::Update {
+                V::Update(steps)
+            } else {
+                V::Extend(steps)
+            }
+        }
+        K::Call => V::Call {
+            name: required_string(
+                form.argument(0),
+                expression.cursor().declaration(),
+                &child_path(&form, 0),
+                "definition identifier",
+            )?,
+            arguments: form
+                .arguments()
+                .skip(1)
+                .map(|argument| decode_argument(&argument))
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        K::Iterate => V::Iterate {
+            iteration: decode_iteration(&required_argument(&form, 1, "expression iteration")?)?,
+            domains: form
+                .arguments()
+                .skip(2)
+                .map(|domain| decode_domain(&domain))
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        K::Convert => V::Convert {
+            source: require_symbol_argument(&form, 0, "source numeric type")?,
+            target: require_symbol_argument(&form, 1, "target numeric type")?,
+        },
+        K::Subtype => V::Subtype {
+            source: IlType::decode(&required_argument(&form, 0, "source inclusion type")?)?,
+            target: IlType::decode(&required_argument(&form, 1, "target inclusion type")?)?,
+        },
+    })
+}
+
+fn numeric_atom<'a>(cursor: &IlCursor<'a>) -> Result<&'a str, IlSchemaError> {
+    match cursor.node() {
+        IlNode::Number(value) | IlNode::Symbol(value) => Ok(value),
+        _ => Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "numeric or symbolic atom",
+            describe(cursor),
+        )),
+    }
+}
+
+fn required_number_atom<'a>(cursor: &IlCursor<'a>) -> Result<&'a str, IlSchemaError> {
+    let IlNode::Number(value) = cursor.node() else {
+        return Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "numeric atom",
+            describe(cursor),
+        ));
+    };
+    Ok(value)
+}
+
+fn collect_path_steps<'a>(
+    cursor: &IlCursor<'a>,
+    output: &mut Vec<IlPathStep<'a>>,
+) -> Result<(), IlSchemaError> {
+    if cursor.node() == IlNode::Symbol("root") {
+        return Ok(());
+    }
+    let form = required_form(cursor, "update path")?;
+    collect_path_steps(&required_argument(&form, 0, "parent path")?, output)?;
+    output.push(match form.head() {
+        "idx" => IlPathStep::Index,
+        "slice" => IlPathStep::Slice,
+        "dot" => IlPathStep::Field(required_string(
+            form.argument(1),
+            cursor.declaration(),
+            &child_path(&form, 1),
+            "path field name",
+        )?),
+        _ => {
+            return Err(schema_error(
+                cursor.declaration(),
+                cursor.path(),
+                "path root, idx, slice, or dot",
+                describe(cursor),
+            ));
+        }
+    });
     Ok(())
 }
 

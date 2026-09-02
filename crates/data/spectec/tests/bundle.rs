@@ -372,6 +372,7 @@ fn official_il_clauses_and_productions_match_the_generic_schema() {
 }
 
 fn expression_nodes(expression: &IlExpression<'_>) -> usize {
+    expression.view().unwrap();
     1 + expression
         .children()
         .unwrap()
