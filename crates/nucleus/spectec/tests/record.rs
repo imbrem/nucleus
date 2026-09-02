@@ -16,7 +16,7 @@ use covalence_nucleus_spectec::{
     close_hol_theory, declare_hol_schema, fold_expression, fold_grammar, fold_type,
     least_closed_family, least_closed_predicate, ordered_cases, relational_definition,
     relational_definition_declaration, relational_definition_schema, relational_hol_case,
-    relational_hol_rule, relational_relations,
+    relational_hol_rule, relational_relation_declaration, relational_relations,
 };
 
 #[derive(Clone)]
@@ -566,21 +566,22 @@ fn complete_relation_rule_lowers_to_inductive_hol_rule() {
 #[allow(clippy::too_many_lines)] // Covers decoding, mutual scope, hygiene, and slot equations.
 fn mutually_recursive_relations_lower_to_one_least_hol_family() {
     let il = IlDocument::parse(
-        br#"(rel "R" "R" nat
+        br#"(rec
+            (rel "R" "R" nat
               (rule "r" (exp "x" nat) "R" (var "x")
                 (rule "S" "S" (var "x"))))
             (rel "S" "S" nat
               (rule "s" (exp "x" nat) "S" (var "x")
-                (rule "R" "R" (var "x"))))"#,
+                (rule "R" "R" (var "x")))))"#,
         Limits::default(),
     )
     .unwrap();
     let first = il
-        .schema(DeclarationId::new(1, None).unwrap())
+        .schema(DeclarationId::new(1, Some(1)).unwrap())
         .unwrap()
         .unwrap();
     let second = il
-        .schema(DeclarationId::new(2, None).unwrap())
+        .schema(DeclarationId::new(1, Some(2)).unwrap())
         .unwrap()
         .unwrap();
     let covalence_data_spectec::IlDeclarationBody::Relation {
@@ -671,6 +672,73 @@ fn mutually_recursive_relations_lower_to_one_least_hol_family() {
         );
     }
     assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+}
+
+#[test]
+fn exact_source_relation_selector_lowers_complete_recursive_root() {
+    let bytes = br#"(rec
+        (rel "R" "R" nat
+          (rule "r" (exp "x" nat) "R" (var "x") (rule "S" "S" (var "x"))))
+        (rel "S" "S" nat
+          (rule "s" (exp "x" nat) "S" (var "x") (rule "R" "R" (var "x")))))"#;
+    let il = IlDocument::parse(bytes, Limits::default()).unwrap();
+    let source = Source::new(
+        drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle"),
+        drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        "test",
+        "revision",
+        &il,
+    )
+    .unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let schema = declare_hol_schema(&source, &mut kernel, value, bool_ty).unwrap();
+    let binary_tail = kernel.ty_arr(value, value).unwrap();
+    let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
+    let graph_tail = kernel.ty_arr(value, bool_ty).unwrap();
+    let graph_ty = kernel.ty_arr(value, graph_tail).unwrap();
+    let x = kernel.tm_fv(10_000, value).unwrap();
+    let mut resolver = TestRelationalResolver {
+        x,
+        y: kernel.tm_fv(10_001, value).unwrap(),
+        add: kernel.tm_fv(10_002, binary_ty).unwrap(),
+        graph: kernel.tm_fv(10_003, graph_ty).unwrap(),
+        bool_ty,
+        bound: std::collections::BTreeMap::new(),
+        relations: std::collections::BTreeMap::new(),
+    };
+    let family = relational_relation_declaration(
+        &mut kernel,
+        &mut resolver,
+        &source,
+        &schema,
+        DeclarationId::new(1, Some(2)).unwrap(),
+        &[],
+    )
+    .unwrap();
+
+    assert_eq!(family.len(), 2);
+    assert_eq!(
+        family[0].predicate,
+        schema
+            .declaration(DeclarationId::new(1, Some(1)).unwrap())
+            .unwrap()
+            .reference()
+    );
+    assert_eq!(
+        family[1].predicate,
+        schema
+            .declaration(DeclarationId::new(1, Some(2)).unwrap())
+            .unwrap()
+            .reference()
+    );
+    assert!(family.iter().all(|definition| {
+        kernel
+            .equivalent(kernel.classifier(definition.equation).unwrap(), bool_ty)
+            .unwrap()
+    }));
 }
 
 #[test]

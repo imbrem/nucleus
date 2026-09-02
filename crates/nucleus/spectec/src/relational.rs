@@ -1,5 +1,7 @@
 //! Relational HOL expression lowering over the generic expression fold.
 
+use std::collections::BTreeSet;
+
 use covalence_data_spectec::{
     DeclarationId, IlArgument, IlBinding, IlClauseSchema, IlDeclarationBody, IlDomain,
     IlExpression, IlExpressionView, IlIteration, IlKind, IlPremise, IlRuleSchema, IlSchemaError,
@@ -686,6 +688,26 @@ pub fn relational_relations<R>(
 where
     R: RelationalResolver,
 {
+    relational_relations_avoiding(kernel, resolver, bool_ty, relations, &[])
+}
+
+/// Lowers a complete mutually recursive relation family while reserving names
+/// reachable from additional interpretation roots.
+///
+/// # Errors
+///
+/// Returns the same failures as [`relational_relations`]. `kernel` is unchanged
+/// on failure.
+pub fn relational_relations_avoiding<R>(
+    kernel: &mut Kernel,
+    resolver: &mut R,
+    bool_ty: Ref,
+    relations: &[RelationalRelation<'_>],
+    avoid: &[Ref],
+) -> Result<Vec<RelationalRelationDefinition>, R::Error>
+where
+    R: RelationalResolver,
+{
     let mut staged = kernel.fork();
     let predicate_types = relations
         .iter()
@@ -698,6 +720,7 @@ where
     let predicates = relations
         .iter()
         .map(|relation| relation.predicate)
+        .chain(avoid.iter().copied())
         .collect::<Vec<_>>();
     let mut builder =
         begin_least_closed_family_avoiding(&mut staged, bool_ty, &predicate_types, &predicates)
@@ -750,6 +773,136 @@ where
         .collect::<Result<Vec<_>, _>>()?;
     *kernel = staged;
     Ok(definitions)
+}
+
+/// Decodes and lowers the complete recursive relation root containing `id`.
+///
+/// Non-relation members of a mixed recursive root are left for their respective
+/// declaration lowerers. Every relation member is tied to its checked schema
+/// slot, and all schema slots plus `avoid` are reserved for name hygiene.
+///
+/// # Errors
+///
+/// Returns an error when `id` is absent or not a relation, a family member has
+/// no matching relation slot, relation names repeat within the root, a rule is
+/// malformed, or family lowering fails. `kernel` is unchanged on failure.
+#[allow(clippy::too_many_lines)] // Keeps exact root/schema checks at one authority boundary.
+pub fn relational_relation_declaration<R>(
+    kernel: &mut Kernel,
+    resolver: &mut R,
+    source: &Source,
+    schema: &HolSchema,
+    id: DeclarationId,
+    avoid: &[Ref],
+) -> Result<Vec<RelationalRelationDefinition>, R::Error>
+where
+    R: RelationalResolver,
+{
+    let selected = source
+        .il()
+        .declarations()
+        .iter()
+        .find(|declaration| declaration.id() == id)
+        .ok_or_else(|| {
+            resolver.schema_error(IlSchemaError::Shape {
+                id,
+                path: Vec::new(),
+                expected: "inventoried relation declaration",
+                actual: "missing declaration".to_owned(),
+            })
+        })?;
+    if selected.kind() != IlKind::Relation {
+        return Err(resolver.schema_error(IlSchemaError::Shape {
+            id,
+            path: Vec::new(),
+            expected: "relation declaration",
+            actual: format!("{:?} declaration", selected.kind()),
+        }));
+    }
+    let root = source
+        .il()
+        .roots()
+        .iter()
+        .find(|root| root.ordinal() == id.root())
+        .ok_or_else(|| {
+            resolver.schema_error(IlSchemaError::Shape {
+                id,
+                path: Vec::new(),
+                expected: "containing relation root",
+                actual: "missing root".to_owned(),
+            })
+        })?;
+    let mut decoded = Vec::new();
+    let mut names = BTreeSet::new();
+    for member in source.il().root_declarations(root) {
+        if member.kind() != IlKind::Relation {
+            continue;
+        }
+        if !names.insert(member.name()) {
+            return Err(resolver.schema_error(IlSchemaError::Shape {
+                id: member.id(),
+                path: Vec::new(),
+                expected: "unique relation name within recursive root",
+                actual: format!("duplicate name {:?}", member.name()),
+            }));
+        }
+        let declaration = source
+            .il()
+            .schema(member.id())
+            .map_err(|error| resolver.schema_error(error))?
+            .ok_or_else(|| {
+                resolver.schema_error(IlSchemaError::Shape {
+                    id: member.id(),
+                    path: Vec::new(),
+                    expected: "inventoried relation schema",
+                    actual: "missing declaration".to_owned(),
+                })
+            })?;
+        let IlDeclarationBody::Relation { rules, .. } = declaration.body() else {
+            return Err(resolver.schema_error(IlSchemaError::Shape {
+                id: member.id(),
+                path: Vec::new(),
+                expected: "relation declaration body",
+                actual: "different declaration body".to_owned(),
+            }));
+        };
+        let target = schema.declaration(member.id()).ok_or_else(|| {
+            resolver.schema_error(IlSchemaError::Shape {
+                id: member.id(),
+                path: Vec::new(),
+                expected: "checked HOL relation slot",
+                actual: "missing schema slot".to_owned(),
+            })
+        })?;
+        if target.kind() != IlKind::Relation {
+            return Err(resolver.schema_error(IlSchemaError::Shape {
+                id: member.id(),
+                path: Vec::new(),
+                expected: "HOL relation slot",
+                actual: format!("HOL {:?} slot", target.kind()),
+            }));
+        }
+        let rules = rules
+            .iter()
+            .map(IlRuleSchema::decode)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| resolver.schema_error(error))?;
+        decoded.push((member.name(), target.reference(), rules));
+    }
+    let relations = decoded
+        .iter()
+        .map(|(name, predicate, rules)| RelationalRelation {
+            name,
+            predicate: *predicate,
+            rules,
+        })
+        .collect::<Vec<_>>();
+    let reserved = schema
+        .declarations()
+        .map(|(_, declaration)| declaration.reference())
+        .chain(avoid.iter().copied())
+        .collect::<Vec<_>>();
+    relational_relations_avoiding(kernel, resolver, schema.bool_ty(), &relations, &reserved)
 }
 
 /// Concrete expression algebra producing relational HOL terms.
