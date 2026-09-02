@@ -14,6 +14,8 @@ mod table;
 pub mod wire;
 
 pub use arena::Arena;
+pub use bytes::Bytes;
+pub use covalence_data_num::{DecodeLimit, Int, Num};
 pub use kernel::{
     AX_INF, AX_SUB, AbsThm, ApTerm, ApThm, BINDER_COUNT, Binder, CheckedArena, CheckedPrefix,
     ChoiceThm, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, CopyMap, Dnf, DnfId,
@@ -24,6 +26,9 @@ pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 pub use syn::{SynFact, SynRel};
 pub use table::Table;
+
+/// Maximum payload accepted for one compact byte, natural, or integer literal.
+pub const MAX_LITERAL_BYTES: usize = row::MAX_LITERAL_BYTES;
 
 use std::{collections::BTreeSet, num::NonZeroI32};
 
@@ -622,6 +627,30 @@ impl Arena {
         }
     }
 
+    /// The bytes stored by a compact `tm.bytes` row.
+    #[must_use]
+    pub fn bytes_value(&self, reference: Ref) -> Option<&[u8]> {
+        self.bytes(reference).map(Bytes::as_ref)
+    }
+
+    /// The shared byte storage held by a compact `tm.bytes` row.
+    #[must_use]
+    pub fn bytes(&self, reference: Ref) -> Option<&Bytes> {
+        self.dense.row(reference)?.bytes_storage()
+    }
+
+    /// The arbitrary-precision value stored by a compact `tm.nat` row.
+    #[must_use]
+    pub fn nat_value(&self, reference: Ref) -> Option<&Num> {
+        self.dense.row(reference)?.nat_value()
+    }
+
+    /// The arbitrary-precision value stored by a compact `tm.int` row.
+    #[must_use]
+    pub fn int_value(&self, reference: Ref) -> Option<&Int> {
+        self.dense.row(reference)?.int_value()
+    }
+
     /// The unary builtin stored by a `tm.op1.v1` row.
     #[must_use]
     pub fn op1(&self, reference: Ref) -> Option<builtin::Op1> {
@@ -719,6 +748,45 @@ impl Arena {
     /// Append a raw Boolean literal row.
     pub fn push_bool(&mut self, value: bool) -> Option<Ref> {
         self.push_row(Row::new(row::Expr::Bool(value)), None)
+    }
+
+    /// Append a raw compact byte-string literal row.
+    ///
+    /// Existing [`Bytes`] storage is retained without copying; owned byte
+    /// vectors are also accepted through [`Into`].
+    ///
+    /// Returns `None` if the literal is longer than [`MAX_LITERAL_BYTES`], or
+    /// if the arena reference space is exhausted.
+    pub fn push_bytes(&mut self, value: impl Into<Bytes>) -> Option<Ref> {
+        let value = value.into();
+        if value.len() > row::MAX_LITERAL_BYTES {
+            return None;
+        }
+        self.push_row(Row::bytes(value), None)
+    }
+
+    /// Append a raw compact arbitrary-precision natural literal row.
+    ///
+    /// Returns `None` if the canonical encoding is longer than
+    /// [`MAX_LITERAL_BYTES`], or if the arena reference space is exhausted.
+    pub fn push_nat(&mut self, value: impl Into<Num>) -> Option<Ref> {
+        let value = value.into();
+        if value.to_canonical_bytes().len() > row::MAX_LITERAL_BYTES {
+            return None;
+        }
+        self.push_row(Row::nat(value), None)
+    }
+
+    /// Append a raw compact arbitrary-precision signed integer literal row.
+    ///
+    /// Returns `None` if the canonical encoding is longer than
+    /// [`MAX_LITERAL_BYTES`], or if the arena reference space is exhausted.
+    pub fn push_int(&mut self, value: impl Into<Int>) -> Option<Ref> {
+        let value = value.into();
+        if value.to_canonical_bytes().len() > row::MAX_LITERAL_BYTES {
+            return None;
+        }
+        self.push_row(Row::int(value), None)
     }
 
     /// Append a raw unary builtin row.
@@ -1151,6 +1219,32 @@ mod tests {
 
         arena.push_kind_star().unwrap();
         assert_ne!(arena.addr(), empty);
+    }
+
+    #[test]
+    fn raw_compact_literal_api_preserves_arbitrary_values() {
+        let mut arena = Arena::empty();
+        let shared = Bytes::from_static(&[0, 1, 0, 255]);
+        let bytes = arena.push_bytes(shared.clone()).unwrap();
+        let natural_value = Num::from_canonical_bytes(&[1; 33]).unwrap();
+        let natural = arena.push_nat(natural_value.clone()).unwrap();
+        let integer_value = Int::from_canonical_bytes(&[0x80; 33]).unwrap();
+        let integer = arena.push_int(integer_value.clone()).unwrap();
+
+        assert_eq!(arena.bytes_value(bytes), Some([0, 1, 0, 255].as_slice()));
+        assert_eq!(shared.as_ptr(), arena.bytes(bytes).unwrap().as_ptr());
+        assert_eq!(arena.nat_value(natural), Some(&natural_value));
+        assert_eq!(arena.int_value(integer), Some(&integer_value));
+        assert_eq!(arena.tag(bytes), Some(Tag::Tm(TmTag::Bytes)));
+        assert_eq!(arena.tag(natural), Some(Tag::Tm(TmTag::Nat)));
+        assert_eq!(arena.tag(integer), Some(Tag::Tm(TmTag::Int)));
+
+        let mut encoded = Vec::new();
+        wire::serialize(&arena, &mut encoded).unwrap();
+        let decoded = wire::deserialize(encoded.as_slice()).unwrap();
+        assert_eq!(decoded.bytes_value(bytes), arena.bytes_value(bytes));
+        assert_eq!(decoded.nat_value(natural), arena.nat_value(natural));
+        assert_eq!(decoded.int_value(integer), arena.int_value(integer));
     }
 
     #[test]

@@ -9544,7 +9544,7 @@
     {
       "id": "workspace#covalence-lib-bigint@0.0.0",
       "name": "covalence-lib-bigint",
-      "category": "product",
+      "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8"
       ]
@@ -9701,6 +9701,7 @@
       "name": "covalence-logic-hol",
       "category": "tcb",
       "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
         "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2"
       ]

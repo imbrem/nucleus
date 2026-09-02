@@ -284,6 +284,20 @@ mod tests {
     }
 
     #[test]
+    fn compact_literal_arena_is_strict_drisl() {
+        let mut arena = Arena::empty();
+        arena.push_bytes(vec![0, 1, 255]).unwrap();
+        arena.push_nat(crate::Num::from(1_u128 << 100)).unwrap();
+        arena.push_int(crate::Int::from(-(1_i128 << 100))).unwrap();
+
+        let mut bytes = Vec::new();
+        serialize(&arena, &mut bytes).unwrap();
+        covalence_data_cbor::drisl::decode(covalence_data_cbor::drisl::Policy::NUCLEUS, &bytes)
+            .expect("canonical literal arena must remain in the DRISL profile");
+        assert_eq!(deserialize(bytes.as_slice()).unwrap(), arena);
+    }
+
+    #[test]
     fn zero_references_and_unknown_metadata_are_rejected() {
         fn invalid(section: &str, field: &str, value: Value) -> bool {
             let mut encoded = Vec::new();

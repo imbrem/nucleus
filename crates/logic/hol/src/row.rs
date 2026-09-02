@@ -1,5 +1,9 @@
-//! Private rows for the complete Ethane arena vocabulary.
+//! Private rows for the complete Ethane and compact Propane arena vocabulary.
 
+use std::sync::Arc;
+
+use bytes::Bytes;
+use covalence_data_num::{DecodeLimit, Int, Num};
 use serde::{Deserialize, Serialize, de};
 use smallvec::SmallVec;
 
@@ -9,6 +13,7 @@ use crate::{
 };
 
 const MAX_CHILDREN: usize = 3;
+pub(crate) const MAX_LITERAL_BYTES: usize = 1024 * 1024;
 type Fields = (
     Tag,
     Option<SmallVec<[Ref; MAX_CHILDREN]>>,
@@ -52,6 +57,20 @@ pub(crate) enum Expr {
     /// The children are the binder variable and body, in that order.
     Lam(Ref, Ref),
     Bool(bool),
+    /// Versioned compact byte-string literal. Semantics are supplied by lowering.
+    ///
+    /// The payload lives in [`Row`], not here, so that this discriminant stays
+    /// `Copy`. Two rows holding different literals therefore have *equal*
+    /// expressions: never conclude that rows agree from their [`Expr`] alone.
+    Bytes,
+    /// Versioned compact arbitrary-precision natural literal.
+    ///
+    /// Carries no payload; see [`Expr::Bytes`].
+    Nat,
+    /// Versioned compact arbitrary-precision signed integer literal.
+    ///
+    /// Carries no payload; see [`Expr::Bytes`].
+    Int,
     /// Versioned compact unary syntax. Semantics are supplied by lowering.
     Op1(Op1, Ref),
     /// Versioned compact binary syntax. Operands are ordered left-to-right.
@@ -78,7 +97,7 @@ pub(crate) enum Expr {
 
 impl Expr {
     pub(crate) const fn tag(&self) -> Tag {
-        match self {
+        match *self {
             Self::KindStar => Tag::Kind(KindTag::Star),
             Self::KindArr(..) => Tag::Kind(KindTag::Arr),
             Self::BoolTy => Tag::Ty(TyTag::Bool),
@@ -93,6 +112,9 @@ impl Expr {
             Self::App(..) => Tag::Tm(TmTag::App),
             Self::Lam(..) => Tag::Tm(TmTag::Lam),
             Self::Bool(..) => Tag::Tm(TmTag::Bool),
+            Self::Bytes => Tag::Tm(TmTag::Bytes),
+            Self::Nat => Tag::Tm(TmTag::Nat),
+            Self::Int => Tag::Tm(TmTag::Int),
             Self::Op1(..) => Tag::Tm(TmTag::Op1),
             Self::Op2(..) => Tag::Tm(TmTag::Op2),
             Self::Eq(..) => Tag::Tm(TmTag::Eq),
@@ -108,6 +130,9 @@ impl Expr {
             Self::KindStar
             | Self::BoolTy
             | Self::Bool(_)
+            | Self::Bytes
+            | Self::Nat
+            | Self::Int
             | Self::TmRef { .. }
             | Self::TyRef { .. }
             | Self::KindRef { .. } => SmallVec::new(),
@@ -144,12 +169,53 @@ impl Expr {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Row {
     expr: Expr,
+    /// Present exactly when `expr` is a compact literal, and matching it.
+    ///
+    /// Shared behind an [`Arc`] so that the three literal rows cost one pointer
+    /// in every other row, and so that cloning an arena stays allocation-free.
+    literal: Option<Arc<Literal>>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum Literal {
+    Bytes(Bytes),
+    Nat(Num),
+    Int(Int),
 }
 
 impl Row {
+    /// Wraps an expression that carries no literal payload.
     #[must_use]
     pub(crate) const fn new(expr: Expr) -> Self {
-        Self { expr }
+        debug_assert!(
+            !matches!(expr, Expr::Bytes | Expr::Nat | Expr::Int),
+            "compact literal rows must be built by Row::bytes, Row::nat, or Row::int"
+        );
+        Self {
+            expr,
+            literal: None,
+        }
+    }
+
+    pub(crate) fn bytes(value: Bytes) -> Self {
+        Self {
+            expr: Expr::Bytes,
+            literal: Some(Arc::new(Literal::Bytes(value))),
+        }
+    }
+
+    pub(crate) fn nat(value: Num) -> Self {
+        Self {
+            expr: Expr::Nat,
+            literal: Some(Arc::new(Literal::Nat(value))),
+        }
+    }
+
+    pub(crate) fn int(value: Int) -> Self {
+        Self {
+            expr: Expr::Int,
+            literal: Some(Arc::new(Literal::Int(value))),
+        }
     }
 
     #[must_use]
@@ -159,6 +225,27 @@ impl Row {
 
     pub(crate) const fn expr(&self) -> &Expr {
         &self.expr
+    }
+
+    pub(crate) fn bytes_storage(&self) -> Option<&Bytes> {
+        match self.literal.as_deref() {
+            Some(Literal::Bytes(value)) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn nat_value(&self) -> Option<&Num> {
+        match self.literal.as_deref() {
+            Some(Literal::Nat(value)) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn int_value(&self) -> Option<&Int> {
+        match self.literal.as_deref() {
+            Some(Literal::Int(value)) => Some(value),
+            _ => None,
+        }
     }
 }
 
@@ -221,6 +308,9 @@ pub enum TmTag {
     App,
     Lam,
     Bool,
+    Bytes,
+    Nat,
+    Int,
     Op1,
     Op2,
     Eq,
@@ -238,6 +328,9 @@ impl TmTag {
             Self::App => "tm.app",
             Self::Lam => "tm.lam",
             Self::Bool => "tm.bool",
+            Self::Bytes => "tm.bytes",
+            Self::Nat => "tm.nat",
+            Self::Int => "tm.int",
             Self::Op1 => crate::builtin::OP1_ROW_TAG,
             Self::Op2 => crate::builtin::OP2_ROW_TAG,
             Self::Eq => "tm.eq",
@@ -293,6 +386,9 @@ impl Tag {
             "tm.app" => Self::Tm(TmTag::App),
             "tm.lam" => Self::Tm(TmTag::Lam),
             "tm.bool" => Self::Tm(TmTag::Bool),
+            "tm.bytes" => Self::Tm(TmTag::Bytes),
+            "tm.nat" => Self::Tm(TmTag::Nat),
+            "tm.int" => Self::Tm(TmTag::Int),
             crate::builtin::OP1_ROW_TAG => Self::Tm(TmTag::Op1),
             crate::builtin::OP2_ROW_TAG => Self::Tm(TmTag::Op2),
             "tm.eq" => Self::Tm(TmTag::Eq),
@@ -322,11 +418,52 @@ impl<'de> Deserialize<'de> for Tag {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 enum Value {
     Nat(u64),
     Bool(bool),
+    Bytes(#[serde(with = "byte_string")] Vec<u8>),
+}
+
+mod byte_string {
+    use serde::{Deserializer, Serializer, de};
+
+    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(bytes)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ByteString;
+
+        impl<'de> de::Visitor<'de> for ByteString {
+            type Value = Vec<u8>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a CBOR byte string")
+            }
+
+            fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E> {
+                Ok(value.to_vec())
+            }
+
+            fn visit_borrowed_bytes<E>(self, value: &'de [u8]) -> Result<Self::Value, E> {
+                Ok(value.to_vec())
+            }
+
+            fn visit_byte_buf<E>(self, value: Vec<u8>) -> Result<Self::Value, E> {
+                Ok(value)
+            }
+        }
+
+        deserializer.deserialize_bytes(ByteString)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -393,7 +530,8 @@ where
 
 impl From<Row> for RowSerde {
     fn from(row: Row) -> Self {
-        let (tag, ixs, val, src, ix) = match row.expr {
+        let Row { expr, literal } = row;
+        let (tag, ixs, val, src, ix) = match expr {
             Expr::KindStar => ordinary(Tag::Kind(KindTag::Star), [], None),
             Expr::KindArr(domain, codomain) => {
                 ordinary(Tag::Kind(KindTag::Arr), [domain, codomain], None)
@@ -428,6 +566,17 @@ impl From<Row> for RowSerde {
             }
             Expr::Lam(binder, body) => ordinary(Tag::Tm(TmTag::Lam), [binder, body], None),
             Expr::Bool(value) => ordinary(Tag::Tm(TmTag::Bool), [], Some(Value::Bool(value))),
+            Expr::Bytes | Expr::Nat | Expr::Int => {
+                // `Row::bytes`, `Row::nat`, and `Row::int` are the only way to
+                // build these expressions, and each pairs its own payload.
+                let payload = match (expr, literal.as_deref()) {
+                    (Expr::Bytes, Some(Literal::Bytes(value))) => value.to_vec(),
+                    (Expr::Nat, Some(Literal::Nat(value))) => value.to_canonical_bytes(),
+                    (Expr::Int, Some(Literal::Int(value))) => value.to_canonical_bytes(),
+                    _ => unreachable!("a compact literal row carries the matching payload"),
+                };
+                ordinary(expr.tag(), [], Some(Value::Bytes(payload)))
+            }
             Expr::Op1(op, operand) => ordinary(
                 Tag::Tm(TmTag::Op1),
                 [operand],
@@ -514,6 +663,30 @@ impl TryFrom<RowSerde> for Row {
                 Expr::Lam(*binder, *body)
             }
             (Tag::Tm(TmTag::Bool), None, Some(Value::Bool(value)), None, None) => Expr::Bool(value),
+            (Tag::Tm(TmTag::Bytes), None, Some(Value::Bytes(value)), None, None) => {
+                if value.len() > MAX_LITERAL_BYTES {
+                    return Err("byte literal exceeds the size limit");
+                }
+                return Ok(Self::bytes(value.into()));
+            }
+            (Tag::Tm(TmTag::Nat), None, Some(Value::Bytes(value)), None, None) => {
+                return Ok(Self::nat(
+                    Num::from_canonical_bytes_with_limit(
+                        &value,
+                        DecodeLimit::new(MAX_LITERAL_BYTES),
+                    )
+                    .map_err(|_| "natural literal is not canonical or exceeds the size limit")?,
+                ));
+            }
+            (Tag::Tm(TmTag::Int), None, Some(Value::Bytes(value)), None, None) => {
+                return Ok(Self::int(
+                    Int::from_canonical_bytes_with_limit(
+                        &value,
+                        DecodeLimit::new(MAX_LITERAL_BYTES),
+                    )
+                    .map_err(|_| "integer literal is not canonical or exceeds the size limit")?,
+                ));
+            }
             (Tag::Tm(TmTag::Op1), Some([operand]), Some(Value::Nat(code)), None, None) => {
                 Expr::Op1(
                     Op1::from_code(u8::try_from(code).map_err(|_| "unknown op1 code")?)
@@ -606,6 +779,9 @@ mod tests {
             Row::new(Expr::Lam(one, two)),
             Row::new(Expr::Bool(false)),
             Row::new(Expr::Bool(true)),
+            Row::bytes(Bytes::from_static(&[0, 1, 255])),
+            Row::nat(Num::from(1_u128 << 100)),
+            Row::int(Int::from(-129_i16)),
             Row::new(Expr::Op1(Op1::Not, one)),
             Row::new(Expr::Op2(Op2::And, one, two)),
             Row::new(Expr::Eq(one, one, two)),
@@ -691,6 +867,72 @@ mod tests {
                     .all(|(key, _)| key != &Cbor::Text("ixs".into()))
             );
         }
+    }
+
+    #[test]
+    fn compact_literals_use_distinct_tags_and_cbor_byte_strings() {
+        let cases = [
+            (
+                Row::bytes(Bytes::from_static(&[0, 255])),
+                "tm.bytes",
+                vec![0, 255],
+            ),
+            (Row::nat(Num::from(128_u16)), "tm.nat", vec![128]),
+            (Row::int(Int::from(128_i16)), "tm.int", vec![0, 128]),
+            (Row::int(Int::from(-129_i16)), "tm.int", vec![255, 127]),
+        ];
+        for (row, tag, payload) in cases {
+            let mut encoded = Vec::new();
+            into_writer(&row, &mut encoded).unwrap();
+            let Cbor::Map(fields) = from_reader(encoded.as_slice()).unwrap() else {
+                panic!("row must be a CBOR map")
+            };
+            assert_eq!(
+                fields,
+                [
+                    (Cbor::Text("tag".into()), Cbor::Text(tag.into())),
+                    (Cbor::Text("val".into()), Cbor::Bytes(payload)),
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn compact_numeric_literals_reject_noncanonical_bytes_and_wrong_shapes() {
+        for (tag, payload) in [
+            ("tm.nat", vec![]),
+            ("tm.nat", vec![0, 1]),
+            ("tm.int", vec![]),
+            ("tm.int", vec![0, 1]),
+            ("tm.int", vec![255, 255]),
+        ] {
+            assert!(decode_bad(vec![
+                (Cbor::Text("tag".into()), Cbor::Text(tag.into())),
+                (Cbor::Text("val".into()), Cbor::Bytes(payload)),
+            ]));
+        }
+        for tag in ["tm.bytes", "tm.nat", "tm.int"] {
+            assert!(decode_bad(vec![
+                (Cbor::Text("tag".into()), Cbor::Text(tag.into())),
+                (Cbor::Text("val".into()), Cbor::Integer(0.into())),
+            ]));
+            assert!(decode_bad(vec![
+                (Cbor::Text("tag".into()), Cbor::Text(tag.into())),
+                (Cbor::Text("ixs".into()), Cbor::Array(Vec::new())),
+                (Cbor::Text("val".into()), Cbor::Bytes(vec![0])),
+            ]));
+        }
+    }
+
+    #[test]
+    fn compact_literal_size_limit_is_enforced() {
+        assert!(decode_bad(vec![
+            (Cbor::Text("tag".into()), Cbor::Text("tm.bytes".into())),
+            (
+                Cbor::Text("val".into()),
+                Cbor::Bytes(vec![0; MAX_LITERAL_BYTES + 1]),
+            ),
+        ]));
     }
 
     fn decode_bad(fields: Vec<(Cbor, Cbor)>) -> bool {

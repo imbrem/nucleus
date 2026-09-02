@@ -1298,6 +1298,9 @@ impl Kernel {
             Node::KindStar
             | Node::BoolTy
             | Node::Bool(_)
+            | Node::Bytes
+            | Node::Nat
+            | Node::Int
             | Node::TmRef { .. }
             | Node::TyRef { .. }
             | Node::KindRef { .. } => Err(KernelError::WrongForm {
@@ -1688,6 +1691,18 @@ impl Kernel {
                 let sort = row_sort.ok_or(KernelError::MissingSort { reference })?;
                 self.require_bool_type::<Infallible>(sort)?;
                 Some(sort)
+            }
+            // A compact literal has no Ethane meaning until an init package
+            // lowers it, so no checked arena may contain one. That also keeps
+            // the syntactic relations honest: a literal's payload is not part
+            // of its `Node`, so the node comparisons in `syn_facts` could not
+            // tell two different literals apart.
+            Node::Bytes | Node::Nat | Node::Int => {
+                return Err(KernelError::WrongForm {
+                    reference,
+                    expected: "compact literal lowered through an init package",
+                    actual: row.tag(),
+                });
             }
             Node::Op1(_, operand) => Some(self.require_bool_term::<Infallible>(operand)?),
             Node::Op2(_, left, right) => {
@@ -2296,6 +2311,7 @@ fn remap_row(row: &Row, sort: Option<Ref>, map: &BTreeMap<Ref, Ref>) -> (Row, Op
         Node::App(a, b) => Node::App(remap(a), remap(b)),
         Node::Lam(a, b) => Node::Lam(remap(a), remap(b)),
         Node::Bool(value) => Node::Bool(value),
+        Node::Bytes | Node::Nat | Node::Int => return (row.clone(), sort),
         Node::Op1(op, operand) => Node::Op1(op, remap(operand)),
         Node::Op2(op, left, right) => Node::Op2(op, remap(left), remap(right)),
         Node::Eq(ty, a, b) => Node::Eq(remap(ty), remap(a), remap(b)),
@@ -2967,6 +2983,27 @@ mod tests {
             Err(KernelError::CyclicSyntax { .. })
         ));
         assert_eq!(destination.len(), before);
+        assert_eq!(destination.category(existing).unwrap(), Sort::Kind);
+    }
+
+    #[test]
+    fn unchecked_compact_literals_cannot_enter_checked_copy() {
+        let mut source = Kernel::new();
+        let star = source.star().unwrap();
+        let bool_ty = source.bool_ty(star).unwrap();
+        let literal = source
+            .arena
+            .push_row(Row::nat(crate::Num::from(42_u8)), Some(bool_ty))
+            .unwrap();
+        let mut destination = Kernel::new();
+        let existing = destination.star().unwrap();
+        let before = destination.arena.clone();
+
+        assert!(matches!(
+            destination.copy_term_from(&source, literal),
+            Err(KernelError::WrongForm { .. })
+        ));
+        assert_eq!(destination.arena, before);
         assert_eq!(destination.category(existing).unwrap(), Sort::Kind);
     }
 
