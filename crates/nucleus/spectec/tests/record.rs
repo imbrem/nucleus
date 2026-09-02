@@ -8,15 +8,16 @@ use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
     CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase,
-    HolEmbedding, HolRule, HolTheoryError, IndexErasure, KernelRoot, RelationalCall,
-    RelationalClause, RelationalCondition, RelationalDefinitionSchema, RelationalDefinitionSource,
-    RelationalExpressionAlgebra, RelationalRelation, RelationalResolver, RelationalTerm,
-    SelectedCompileError, SelectedCompiler, Source, TYPE_NAME, TranslationCase, TypeAlgebra,
-    TypeChildren, begin_least_closed_family, close_graph_equation, close_hol_rule, close_hol_rules,
-    close_hol_theory, declare_hol_schema, fold_expression, fold_grammar, fold_type,
-    least_closed_family, least_closed_predicate, ordered_cases, relational_definition,
-    relational_definition_declaration, relational_definition_schema, relational_hol_case,
-    relational_hol_rule, relational_relation_declaration, relational_relations,
+    HolEmbedding, HolFamilyBranch, HolRule, HolTheoryError, IndexErasure, KernelRoot,
+    RelationalCall, RelationalClause, RelationalCondition, RelationalDefinitionSchema,
+    RelationalDefinitionSource, RelationalExpressionAlgebra, RelationalRelation,
+    RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler, Source, TYPE_NAME,
+    TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family, close_family_definition,
+    close_graph_equation, close_hol_rule, close_hol_rules, close_hol_theory, declare_hol_schema,
+    fold_expression, fold_grammar, fold_type, least_closed_family, least_closed_predicate,
+    ordered_cases, relational_definition, relational_definition_declaration,
+    relational_definition_schema, relational_hol_case, relational_hol_rule,
+    relational_relation_declaration, relational_relations, relational_type_alias_declaration,
 };
 
 #[derive(Clone)]
@@ -74,6 +75,10 @@ impl RelationalResolver for TestRelationalResolver {
         source.to_string()
     }
 
+    fn family_error(&mut self, source: covalence_nucleus_spectec::HolFamilyError) -> Self::Error {
+        source.to_string()
+    }
+
     fn binding(
         &mut self,
         binding: &covalence_data_spectec::IlBinding<'_>,
@@ -117,6 +122,17 @@ impl RelationalResolver for TestRelationalResolver {
         _argument: &covalence_data_spectec::IlArgument<'_>,
     ) -> Result<covalence_logic_hol::Ref, Self::Error> {
         Err("unexpected non-expression argument".to_owned())
+    }
+
+    fn type_membership(
+        &mut self,
+        kernel: &mut Kernel,
+        _ty: &IlType<'_>,
+        _value: covalence_logic_hol::Ref,
+    ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        kernel
+            .bool(self.bool_ty, true)
+            .map_err(|error| error.to_string())
     }
 
     fn operation(
@@ -979,6 +995,44 @@ fn ordered_graph_constraints_encode_otherwise_without_minting_facts() {
 }
 
 #[test]
+fn exact_family_definition_matches_indices_and_existential_locals() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let tail = kernel.ty_arr(value, bool_ty).unwrap();
+    let predicate_ty = kernel.ty_arr(value, tail).unwrap();
+    let predicate = kernel.tm_fv(1, predicate_ty).unwrap();
+    let formal_index = kernel.tm_fv(2, value).unwrap();
+    let formal_value = kernel.tm_fv(3, value).unwrap();
+    let branch_index = kernel.tm_fv(4, value).unwrap();
+    let branch_value = kernel.tm_fv(5, value).unwrap();
+    let premise = kernel.bool(bool_ty, true).unwrap();
+    let theorem_count = kernel.thm().live_theorems().count();
+
+    let definition = close_family_definition(
+        &mut kernel,
+        bool_ty,
+        predicate,
+        &[formal_index, formal_value],
+        &[HolFamilyBranch {
+            binders: vec![branch_index, branch_value],
+            arguments: vec![branch_index, branch_value],
+            premises: vec![premise],
+        }],
+    )
+    .unwrap();
+
+    assert_eq!(definition.branches.len(), 1);
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(definition.equation).unwrap(), bool_ty)
+            .unwrap()
+    );
+    assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+}
+
+#[test]
 fn complete_hol_theory_requires_exact_structural_coverage() {
     let bytes = b"(typ \"A\" (inst (alias nat))) (typ \"B\" (inst (alias nat)))";
     let il = IlDocument::parse(bytes, Limits::default()).unwrap();
@@ -1269,6 +1323,59 @@ fn generic_hol_schema_preserves_kind_qualified_duplicate_names() {
         [DeclarationId::new(3, None).unwrap()]
     );
     assert!(schema.named(IlKind::Definition, "same").is_empty());
+}
+
+#[test]
+fn exact_alias_type_declaration_lowers_to_membership_equation() {
+    let bytes = b"(typ \"T\" (inst (alias nat)))";
+    let il = IlDocument::parse(bytes, Limits::default()).unwrap();
+    let source = Source::new(
+        drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle"),
+        drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        "test",
+        "revision",
+        &il,
+    )
+    .unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let schema = declare_hol_schema(&source, &mut kernel, value, bool_ty).unwrap();
+    let binary_tail = kernel.ty_arr(value, value).unwrap();
+    let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
+    let graph_tail = kernel.ty_arr(value, bool_ty).unwrap();
+    let graph_ty = kernel.ty_arr(value, graph_tail).unwrap();
+    let x = kernel.tm_fv(10_000, value).unwrap();
+    let mut resolver = TestRelationalResolver {
+        x,
+        y: kernel.tm_fv(10_001, value).unwrap(),
+        add: kernel.tm_fv(10_002, binary_ty).unwrap(),
+        graph: kernel.tm_fv(10_003, graph_ty).unwrap(),
+        bool_ty,
+        bound: std::collections::BTreeMap::new(),
+        relations: std::collections::BTreeMap::new(),
+    };
+    let definition = relational_type_alias_declaration(
+        &mut kernel,
+        &mut resolver,
+        &source,
+        &schema,
+        DeclarationId::new(1, None).unwrap(),
+        &[],
+    )
+    .unwrap();
+
+    assert_eq!(definition.formal_arguments.len(), 1);
+    assert_eq!(definition.definition.branches.len(), 1);
+    assert!(
+        kernel
+            .equivalent(
+                kernel.classifier(definition.definition.equation).unwrap(),
+                bool_ty
+            )
+            .unwrap()
+    );
 }
 
 #[test]

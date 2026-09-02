@@ -10,9 +10,9 @@ use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref, Tag, TyTag};
 
 use crate::{
-    ExpressionAlgebra, HolCase, HolRule, HolSchema, LeastPredicate, LeastPredicateError, Source,
-    begin_least_closed_family_avoiding, close_hol_rule, close_hol_rules, existential_case,
-    fold_expression,
+    ExpressionAlgebra, HolCase, HolFamilyError, HolRule, HolSchema, LeastPredicate,
+    LeastPredicateError, Source, begin_least_closed_family_avoiding, close_hol_rule,
+    close_hol_rules, existential_case, fold_expression,
 };
 
 /// Relational meaning of one expression.
@@ -334,6 +334,9 @@ pub trait RelationalResolver {
     /// Converts least-family construction failure.
     fn least_error(&mut self, source: LeastPredicateError) -> Self::Error;
 
+    /// Converts exact predicate-family assembly failure.
+    fn family_error(&mut self, source: HolFamilyError) -> Self::Error;
+
     /// Registers one checked term for an explicit IL binding.
     ///
     /// # Errors
@@ -371,6 +374,19 @@ pub trait RelationalResolver {
         &mut self,
         kernel: &mut Kernel,
         argument: &IlArgument<'_>,
+    ) -> Result<Ref, Self::Error>;
+
+    /// Applies the HOL membership interpretation of one decoded IL type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unresolved type family or an ill-typed checked
+    /// predicate application.
+    fn type_membership(
+        &mut self,
+        kernel: &mut Kernel,
+        ty: &covalence_data_spectec::IlType<'_>,
+        value: Ref,
     ) -> Result<Ref, Self::Error>;
 
     /// Lowers one non-variable, non-call constructor from child values.
@@ -640,7 +656,7 @@ where
     )
 }
 
-fn graph_domains(
+pub(crate) fn graph_domains(
     kernel: &Kernel,
     predicate_type: Ref,
     bool_ty: Ref,
@@ -967,6 +983,22 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
                 .argument(self.kernel, argument)
                 .map(|value| RelationalTerm::new(value, Vec::new(), Vec::new())),
         }
+    }
+
+    /// Applies the resolver's type-membership interpretation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unresolved-type or checked application failure.
+    pub fn type_membership(
+        &mut self,
+        ty: &covalence_data_spectec::IlType<'_>,
+        value: Ref,
+    ) -> Result<Ref, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        self.resolver.type_membership(self.kernel, ty, value)
     }
 
     /// Lowers one complete definition clause to an exact ordered graph case.

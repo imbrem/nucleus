@@ -68,6 +68,48 @@ pub struct HolCase {
     pub otherwise: bool,
 }
 
+/// One existential branch of an exact predicate-family definition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HolFamilyBranch {
+    /// Branch-local variables.
+    pub binders: Vec<Ref>,
+    /// Values matched against every formal predicate argument.
+    pub arguments: Vec<Ref>,
+    /// Additional Boolean conditions required by the branch.
+    pub premises: Vec<Ref>,
+}
+
+/// Checked exact definition assembled from predicate-family branches.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HolFamilyDefinition {
+    /// Existential branch propositions in source order.
+    pub branches: Vec<Ref>,
+    /// Their exact disjunction.
+    pub body: Ref,
+    /// Universally closed equation relating the schema slot to `body`.
+    pub equation: Ref,
+}
+
+/// Why exact family branches could not form a checked graph equation.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum HolFamilyError {
+    /// A branch did not match the predicate's formal arity.
+    #[snafu(display("family branch has {actual} arguments; expected {expected}"))]
+    Arity {
+        /// Number of universally quantified formal arguments.
+        expected: usize,
+        /// Number of branch arguments.
+        actual: usize,
+    },
+    /// A checked HOL constructor rejected the family definition.
+    #[snafu(display("could not construct exact HOL family definition: {source}"))]
+    Checked {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+}
+
 /// Builds an exact ordered-clause body for fixed graph inputs and result.
 ///
 /// An `otherwise` case is guarded by the negation of the disjunction of every
@@ -146,6 +188,75 @@ pub fn close_graph_equation(
         equation = kernel.forall_tm(bool_ty, variable, equation)?;
     }
     Ok(equation)
+}
+
+/// Transactionally defines one predicate family by an exact disjunction of
+/// existential branches.
+///
+/// For each branch this equates every formal argument with its corresponding
+/// branch argument, conjoins the branch premises, and existentially closes the
+/// local binders. Empty branch lists denote false. The result is checked syntax
+/// only and does not mint or assume a theorem fact.
+///
+/// # Errors
+///
+/// Returns an arity error or the first rejected equality, Boolean connective,
+/// quantifier, predicate application, or graph equation. `kernel` is unchanged
+/// on failure.
+pub fn close_family_definition(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    predicate: Ref,
+    formal_arguments: &[Ref],
+    branches: &[HolFamilyBranch],
+) -> Result<HolFamilyDefinition, HolFamilyError> {
+    let mut staged = kernel.fork();
+    let mut propositions = Vec::with_capacity(branches.len());
+    for branch in branches {
+        if branch.arguments.len() != formal_arguments.len() {
+            return Err(HolFamilyError::Arity {
+                expected: formal_arguments.len(),
+                actual: branch.arguments.len(),
+            });
+        }
+        let mut conditions = formal_arguments
+            .iter()
+            .zip(&branch.arguments)
+            .map(|(&formal, &actual)| {
+                staged
+                    .eq(bool_ty, formal, actual)
+                    .map_err(|source| HolFamilyError::Checked { source })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        conditions.extend_from_slice(&branch.premises);
+        propositions.push(
+            existential_case(&mut staged, bool_ty, &branch.binders, &conditions)
+                .map_err(|source| HolFamilyError::Checked { source })?,
+        );
+    }
+    let falsity = staged
+        .bool(bool_ty, false)
+        .map_err(|source| HolFamilyError::Checked { source })?;
+    let body = propositions.iter().try_fold(falsity, |left, &right| {
+        staged
+            .op2(Op2::Or, left, right)
+            .map_err(|source| HolFamilyError::Checked { source })
+    })?;
+    let equation = close_graph_equation(
+        &mut staged,
+        bool_ty,
+        predicate,
+        formal_arguments,
+        formal_arguments,
+        body,
+    )
+    .map_err(|source| HolFamilyError::Checked { source })?;
+    *kernel = staged;
+    Ok(HolFamilyDefinition {
+        branches: propositions,
+        body,
+        equation,
+    })
 }
 
 /// Conjoins exact declaration constraints into one model proposition.

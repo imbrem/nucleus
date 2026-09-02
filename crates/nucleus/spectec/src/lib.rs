@@ -17,6 +17,7 @@ mod relational;
 mod schema;
 mod selected;
 mod theory;
+mod type_definition;
 mod types;
 
 pub use add_slice::{
@@ -45,9 +46,11 @@ pub use schema::{
 };
 pub use selected::{SelectedCompileError, SelectedCompiler, SelectedKernel, SelectedRoot};
 pub use theory::{
-    HolCase, HolTheory, HolTheoryError, close_graph_equation, close_hol_theory,
-    conjoin_constraints, existential_case, ordered_cases,
+    HolCase, HolFamilyBranch, HolFamilyDefinition, HolFamilyError, HolTheory, HolTheoryError,
+    close_family_definition, close_graph_equation, close_hol_theory, conjoin_constraints,
+    existential_case, ordered_cases,
 };
+pub use type_definition::{RelationalTypeDefinition, relational_type_alias_declaration};
 pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};
