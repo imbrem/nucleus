@@ -2,12 +2,44 @@ use std::path::{Path, PathBuf};
 
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{
-    ArtifactError, AstError, AstSummary, BundleManifest, Limits, ManifestError, SPECTEC_VERSION,
-    WASM_3_RELEASE, WASM_3_REVISION, WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast, parse_ast,
+    ArtifactError, AstError, AstSummary, BundleManifest, IlDocument, IlKind, Limits, ManifestError,
+    SPECTEC_VERSION, WASM_3_RELEASE, WASM_3_REVISION, WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast,
+    parse_ast,
 };
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor/wasm-3.0")
+}
+
+#[test]
+fn official_il_declaration_inventory_is_exhaustive() {
+    let root = root();
+    let manifest = BundleManifest::decode(&read(&root, "manifest.drisl")).unwrap();
+    let bytes = read(&root, &manifest.ast.artifact.path);
+    let il = IlDocument::parse(&bytes, Limits::default()).unwrap();
+
+    assert_eq!(il.roots().len(), 926);
+    assert_eq!(il.declarations().len(), 980);
+    assert_eq!(
+        il.roots().iter().filter(|root| root.is_recursive()).count(),
+        79
+    );
+    let count = |kind| {
+        il.declarations()
+            .iter()
+            .filter(|declaration| declaration.kind() == kind)
+            .count()
+    };
+    assert_eq!(count(IlKind::Type), 206);
+    assert_eq!(count(IlKind::Definition), 458);
+    assert_eq!(count(IlKind::Grammar), 229);
+    assert_eq!(count(IlKind::Relation), 87);
+
+    assert!(
+        il.declarations()
+            .iter()
+            .all(|declaration| il.expression(declaration.id()).is_some())
+    );
 }
 
 fn read(root: &Path, path: &str) -> Vec<u8> {

@@ -897,6 +897,27 @@
       ]
     },
     {
+      "id": "workspace#covalence-nucleus-spectec@0.0.0",
+      "name": "covalence-nucleus-spectec",
+      "version": "0.0.0",
+      "path": "crates/nucleus/spectec",
+      "category": "product",
+      "targets": [
+        {
+          "name": "covalence_nucleus_spectec",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "record",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-nucleus-tactics@0.0.0",
       "name": "covalence-nucleus-tactics",
       "version": "0.0.0",
@@ -1789,6 +1810,34 @@
     {
       "source": "workspace#covalence-nucleus-server@0.0.0",
       "target": "workspace#covalence-nucleus-core@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-spectec@0.0.0",
+      "target": "workspace#covalence-data-cbor@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-spectec@0.0.0",
+      "target": "workspace#covalence-data-spectec@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-spectec@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-spectec@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
       "kinds": [
         "normal"
       ]
