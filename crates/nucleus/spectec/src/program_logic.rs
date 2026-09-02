@@ -66,6 +66,59 @@ pub struct CallsAssert<Program> {
     pub import: Symbol,
 }
 
+/// Immutable programs characterized only by whether they may call `assert`.
+///
+/// `Leaf` leaves room for exact WebAssembly modules. The four closed forms are
+/// deliberately tiny executable-specification examples: their behavior lowers
+/// compositionally to [`Proposition`] without consulting an evaluator.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AssertProgram<Leaf> {
+    /// A program whose behavior must be supplied by the Wasm interpretation.
+    Leaf(Leaf),
+    /// A program that never calls `assert`.
+    False,
+    /// A program that calls `assert`.
+    True,
+    /// A program that calls `assert` exactly when both operands may do so.
+    And(Arc<Self>, Arc<Self>),
+    /// A program that calls `assert` when either operand may do so.
+    Or(Arc<Self>, Arc<Self>),
+}
+
+impl<Leaf> AssertProgram<Leaf> {
+    /// Constructs a program leaf.
+    pub const fn leaf(leaf: Leaf) -> Self {
+        Self::Leaf(leaf)
+    }
+
+    /// Constructs the conjunction program without mutating either operand.
+    #[must_use]
+    pub fn and(self, other: Self) -> Self {
+        Self::And(Arc::new(self), Arc::new(other))
+    }
+
+    /// Constructs the disjunction program without mutating either operand.
+    #[must_use]
+    pub fn or(self, other: Self) -> Self {
+        Self::Or(Arc::new(self), Arc::new(other))
+    }
+
+    /// Derives the program's `CallsAssert` proposition by structural mapping.
+    #[must_use]
+    pub fn calls_assert(&self) -> Proposition<CallsAssert<Leaf>>
+    where
+        Leaf: Clone,
+    {
+        match self {
+            Self::Leaf(program) => Proposition::atom(CallsAssert::new(program.clone())),
+            Self::False => Proposition::False,
+            Self::True => Proposition::True,
+            Self::And(left, right) => left.calls_assert().and(right.calls_assert()),
+            Self::Or(left, right) => left.calls_assert().or(right.calls_assert()),
+        }
+    }
+}
+
 impl<Program> CallsAssert<Program> {
     /// Constructs the conventional `assert` observation.
     #[must_use]
@@ -267,5 +320,18 @@ mod tests {
             Proposition::atom(Symbol::new("module-a"))
                 .or(Proposition::atom(Symbol::new("module-b")))
         );
+    }
+
+    #[test]
+    fn closed_program_examples_derive_checked_behavior() {
+        for (program, expected) in [
+            (AssertProgram::True.and(AssertProgram::False), false),
+            (AssertProgram::True.or(AssertProgram::False), true),
+        ] {
+            let proposition: Proposition<CallsAssert<Infallible>> = program.calls_assert();
+            let closed = proposition.map(&mut |atom| match atom.program {});
+            let (kernel, result) = establish(&closed);
+            assert_exact(&kernel, result, expected);
+        }
     }
 }

@@ -42,7 +42,7 @@ pub use parameterized::{
     InterpretationSymbol, ParameterizedDocument, ParameterizedError, parameterized_document,
 };
 pub use premise::{PremiseAlgebra, PremiseChildren, fold_premise};
-pub use program_logic::{CallsAssert, Established, Proposition};
+pub use program_logic::{AssertProgram, CallsAssert, Established, Proposition};
 pub use relational::{
     RelationalCall, RelationalCaseError, RelationalClause, RelationalCondition,
     RelationalDefinition, RelationalDefinitionSchema, RelationalDefinitionSource,
