@@ -1,4 +1,4 @@
-name: Publish Python alpha
+name: Publish Python prerelease
 
 on:
   push:
@@ -14,7 +14,7 @@ jobs:
     outputs:
       python: ${{ steps.version.outputs.python }}
     steps:
-      - name: Validate alpha tag
+      - name: Validate prerelease tag
         id: version
         env:
           TAG: ${{ github.ref_name }}
@@ -25,10 +25,13 @@ jobs:
           import re
           import sys
 
-          match = re.fullmatch(r"covalence-v(\d+\.\d+\.\d+a\d+)", sys.argv[1])
+          match = re.fullmatch(
+              r"covalence-v(\d+\.\d+\.\d+(?:\.dev\d+|a\d+))", sys.argv[1]
+          )
           if match is None:
               raise SystemExit(
-                  "Python release tags must look like covalence-v0.1.0a1"
+                  "Python release tags must look like covalence-v0.1.0.dev1 "
+                  "or covalence-v0.1.0a1"
               )
           with pathlib.Path(sys.argv[2]).open("a") as output:
               print(f"python={match.group(1)}", file=output)

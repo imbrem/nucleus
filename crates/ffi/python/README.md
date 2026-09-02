@@ -230,21 +230,25 @@ example `covalence==0.1.0a1`. PyPI selects the compatible wheel and installs any
 declared Python dependencies automatically. At present Covalence has no
 third-party Python runtime dependencies.
 
-Maintainers publish an immutable alpha by tagging a green `main` commit with a
-PEP 440 alpha version:
+Maintainers publish an immutable prerelease by tagging a green `main` commit
+with a PEP 440 development or alpha version:
 
 ```sh
+git tag -a covalence-v0.1.0.dev1 -m 'Covalence Python 0.1.0.dev1'
+git push origin covalence-v0.1.0.dev1
+# Once distribution plumbing is established, publish alphas in the same way:
 git tag -a covalence-v0.1.0a1 -m 'Covalence Python 0.1.0a1'
 git push origin covalence-v0.1.0a1
 ```
 
-The **Publish Python alpha** workflow validates the tag, builds and tests the
-wheel through the ordinary wheel workflow, and publishes that exact artifact
-with a PyPI provenance attestation. Publishing uses OIDC trusted publishing;
-there is no repository token. The PyPI publisher is scoped to project
-`covalence`, owner `imbrem`, repository `nucleus`, workflow
+The **Publish Python prerelease** workflow validates the tag, builds and tests
+the wheel through the ordinary wheel workflow, and publishes that exact
+artifact with a PyPI provenance attestation. Publishing uses OIDC trusted
+publishing; there is no repository token. The PyPI publisher is scoped to
+project `covalence`, owner `imbrem`, repository `nucleus`, workflow
 `publish-python.yml`, and GitHub environment `pypi`. PyPI versions and Git tags
-are immutable: use a new alpha number rather than moving or rebuilding a tag.
+are immutable: use a new development or alpha number rather than moving or
+rebuilding a tag.
 
 Successful `main` and pull-request runs of the **Python wheels** workflow build
 an experimental snapshot for Linux x86-64. The wheel uses the CPython 3.11
