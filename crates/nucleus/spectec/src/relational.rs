@@ -348,6 +348,23 @@ pub trait RelationalResolver {
     /// with the binding category.
     fn binding(&mut self, binding: &IlBinding<'_>, reference: Ref) -> Result<(), Self::Error>;
 
+    /// Produces the semantic well-formedness premise for one registered
+    /// binding, if its category requires one.
+    ///
+    /// Expression bindings normally return membership in their decoded IL
+    /// type. Higher-order/type bindings may return `None` when their checked
+    /// classifier already expresses the complete requirement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unresolved-membership or checked application failure.
+    fn binding_premise(
+        &mut self,
+        kernel: &mut Kernel,
+        binding: &IlBinding<'_>,
+        reference: Ref,
+    ) -> Result<Option<Ref>, Self::Error>;
+
     /// Resolves the checked classifier of one explicit IL binding.
     ///
     /// # Errors
@@ -995,6 +1012,7 @@ pub struct RelationalExpressionAlgebra<'a, R> {
     resolver: R,
     bool_ty: Ref,
     next_name: u64,
+    binding_premises: Vec<Ref>,
 }
 
 impl<'a, R> RelationalExpressionAlgebra<'a, R> {
@@ -1006,6 +1024,7 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
             resolver,
             bool_ty,
             next_name: first_name,
+            binding_premises: Vec::new(),
         }
     }
 
@@ -1028,9 +1047,21 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
                 .tm_fv(name, classifier)
                 .map_err(|source| self.resolver.kernel_error(source))?;
             self.resolver.binding(binding, reference)?;
+            if let Some(premise) = self
+                .resolver
+                .binding_premise(self.kernel, binding, reference)?
+            {
+                self.binding_premises.push(premise);
+            }
             references.push(reference);
         }
         Ok(references)
+    }
+
+    /// Removes semantic premises accumulated by explicit bindings.
+    #[must_use]
+    pub fn take_binding_premises(&mut self) -> Vec<Ref> {
+        std::mem::take(&mut self.binding_premises)
     }
 
     /// Lowers one heterogeneous argument as a relational term.
@@ -1165,7 +1196,14 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
     where
         R: RelationalResolver,
     {
-        self.resolver.binding(binding, reference)
+        self.resolver.binding(binding, reference)?;
+        if let Some(premise) = self
+            .resolver
+            .binding_premise(self.kernel, binding, reference)?
+        {
+            self.binding_premises.push(premise);
+        }
+        Ok(())
     }
 
     /// Converts an unsupported structural `otherwise` premise.
@@ -1219,6 +1257,7 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
         R: RelationalResolver,
     {
         let explicit_locals = self.bindings(schema.bindings())?;
+        let binding_premises = self.take_binding_premises();
         let patterns = schema
             .arguments()
             .iter()
@@ -1234,9 +1273,13 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
             .iter()
             .flat_map(|condition| condition.binders().iter().copied())
             .collect::<Vec<_>>();
-        let semantic_premises = conditions
-            .iter()
-            .flat_map(|condition| condition.premises().iter().copied())
+        let semantic_premises = binding_premises
+            .into_iter()
+            .chain(
+                conditions
+                    .iter()
+                    .flat_map(|condition| condition.premises().iter().copied()),
+            )
             .collect::<Vec<_>>();
         let otherwise = conditions.iter().any(RelationalCondition::otherwise);
         relational_hol_case(
@@ -1268,9 +1311,10 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
         R: RelationalResolver,
     {
         let mut binders = self.bindings(schema.bindings())?;
+        let mut premises = self.take_binding_premises();
         let conclusion = fold_expression(schema.conclusion(), self)?;
         binders.extend_from_slice(conclusion.binders());
-        let mut premises = conclusion.premises().to_vec();
+        premises.extend_from_slice(conclusion.premises());
         for premise in schema.premises() {
             let condition = self.premise(premise)?;
             if condition.otherwise() {

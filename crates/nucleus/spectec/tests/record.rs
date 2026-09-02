@@ -93,6 +93,18 @@ impl RelationalResolver for TestRelationalResolver {
         Ok(())
     }
 
+    fn binding_premise(
+        &mut self,
+        kernel: &mut Kernel,
+        binding: &covalence_data_spectec::IlBinding<'_>,
+        reference: covalence_logic_hol::Ref,
+    ) -> Result<Option<covalence_logic_hol::Ref>, Self::Error> {
+        let covalence_data_spectec::IlBinding::Expression { ty, .. } = binding else {
+            return Ok(None);
+        };
+        self.type_membership(kernel, ty, reference).map(Some)
+    }
+
     fn binding_type(
         &mut self,
         kernel: &mut Kernel,
@@ -628,7 +640,7 @@ fn complete_relation_rule_lowers_to_inductive_hol_rule() {
     let closure = close_hol_rule(&mut kernel, bool_ty, candidate, &rule).unwrap();
 
     assert_eq!(rule.binders.len(), 1);
-    assert_eq!(rule.premises.len(), 1);
+    assert_eq!(rule.premises.len(), 2); // Binding membership and explicit `if`.
     assert!(
         kernel
             .equivalent(kernel.classifier(closure).unwrap(), bool_ty)

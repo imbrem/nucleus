@@ -127,7 +127,7 @@ where
                     next_name,
                 );
                 let mut binders = algebra.bindings(instance.bindings())?;
-                let mut premises = Vec::new();
+                let mut premises = algebra.take_binding_premises();
                 let mut actual = lower_indices(
                     &mut algebra,
                     instance,
@@ -155,7 +155,7 @@ where
                     );
                     let mut binders = algebra.bindings(instance.bindings())?;
                     binders.extend(algebra.bindings(case.bindings())?);
-                    let mut premises = Vec::new();
+                    let mut premises = algebra.take_binding_premises();
                     let mut actual = lower_indices(
                         &mut algebra,
                         instance,
@@ -189,7 +189,7 @@ where
                     next_name,
                 );
                 let mut binders = algebra.bindings(instance.bindings())?;
-                let mut premises = Vec::new();
+                let mut premises = algebra.take_binding_premises();
                 let mut actual = lower_indices(
                     &mut algebra,
                     instance,
@@ -209,6 +209,7 @@ where
                         }));
                     };
                     binders.push(*field_value);
+                    premises.extend(algebra.take_binding_premises());
                     premises.push(algebra.type_membership(field.value(), *field_value)?);
                     append_side_conditions(
                         &mut algebra,

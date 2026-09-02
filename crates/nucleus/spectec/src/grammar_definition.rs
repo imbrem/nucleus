@@ -138,11 +138,13 @@ where
             algebra.register_binding(binding, formal)?;
         }
         let mut binders = algebra.bindings(production.bindings())?;
+        let binding_premises = algebra.take_binding_premises();
         let symbol = lower_symbol(&mut algebra, production.symbol())?;
         let result = fold_expression(production.result(), &mut algebra)?;
         binders.extend_from_slice(symbol.binders());
         binders.extend_from_slice(result.binders());
-        let mut premises = symbol.premises().to_vec();
+        let mut premises = binding_premises;
+        premises.extend_from_slice(symbol.premises());
         premises.extend_from_slice(result.premises());
         append_side_conditions(
             &mut algebra,
