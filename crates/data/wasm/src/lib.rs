@@ -5,6 +5,7 @@
 
 use std::ops::Range;
 
+use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash};
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_wasm::wasmparser::{
     BinaryReader, Encoding, FunctionBody, Parser, Payload, Validator, WasmFeatures,
@@ -59,6 +60,7 @@ impl Function {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Module<'a> {
     bytes: &'a [u8],
+    cid: Cid,
     sections: Vec<Section>,
     functions: Vec<Function>,
 }
@@ -68,6 +70,25 @@ impl<'a> Module<'a> {
     #[must_use]
     pub fn bytes(&self) -> &'a [u8] {
         self.bytes
+    }
+
+    /// Returns the raw SHA-256 content address of the exact module bytes.
+    #[must_use]
+    pub const fn cid(&self) -> Cid {
+        self.cid
+    }
+
+    /// Streams every typed parser payload from the retained exact bytes.
+    ///
+    /// Section readers and function bodies borrow this module. The parser uses
+    /// exactly the standardized WebAssembly 3.0 feature profile.
+    pub fn payloads(
+        &self,
+    ) -> impl Iterator<Item = Result<Payload<'a>, covalence_lib_wasm::wasmparser::BinaryReaderError>> + 'a
+    {
+        let mut parser = Parser::new(0);
+        parser.set_features(WasmFeatures::WASM3);
+        parser.parse_all(self.bytes)
     }
 
     /// Returns all binary sections in source order.
@@ -188,6 +209,7 @@ pub fn parse(bytes: &[u8], limits: Limits) -> Result<Module<'_>, Error> {
 
     Ok(Module {
         bytes,
+        cid: drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
         sections,
         functions,
     })
@@ -196,6 +218,8 @@ pub fn parse(bytes: &[u8], limits: Limits) -> Result<Module<'_>, Error> {
 #[cfg(test)]
 mod tests {
     use covalence_lib_wasm::wasmparser::Operator;
+
+    use covalence_data_cbor::drisl::{self, CidCodec, CidHash};
 
     use super::{Error, Limits, parse};
 
@@ -207,6 +231,10 @@ mod tests {
         let module = parse(bytes, Limits::default()).expect("valid module");
 
         assert_eq!(module.bytes(), bytes);
+        assert_eq!(
+            module.cid(),
+            drisl::address(CidCodec::Raw, CidHash::Sha256, bytes)
+        );
         assert_eq!(module.sections().len(), 2);
         assert_eq!(module.sections()[0].id, 0);
         assert_eq!(module.payload(&module.sections()[0]), b"\x01x\x01y");
@@ -251,5 +279,6 @@ mod tests {
         let mut operators = body.get_operators_reader().expect("locals decode");
         assert!(matches!(operators.read(), Ok(Operator::End)));
         assert!(operators.eof());
+        assert_eq!(module.payloads().filter_map(Result::ok).count(), 6);
     }
 }

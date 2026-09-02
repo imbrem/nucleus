@@ -8,6 +8,7 @@ description = "Lossless, resource-bounded WebAssembly binary data"
 publish = false
 
 [dependencies]
+covalence-data-cbor = { path = "../cbor" }
 covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-wasm = { path = "../../lib/wasm", features = ["parser"] }
 

@@ -1083,6 +1083,7 @@ dependencies = [
 name = "covalence-data-wasm"
 version = "0.0.0"
 dependencies = [
+ "covalence-data-cbor",
  "covalence-lib-error",
  "covalence-lib-wasm",
 ]
