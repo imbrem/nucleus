@@ -1495,7 +1495,7 @@ fn generic_hol_schema_declares_every_wasm3_signature() {
 }
 
 #[test]
-#[ignore = "exhaustive debug-profile audit takes about 74 minutes"]
+#[ignore = "exhaustive audit; run explicitly in the release profile"]
 fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let source = Source::wasm3().unwrap();
     let mut kernel = Kernel::new();
