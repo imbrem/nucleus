@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{
     ArtifactError, AstError, AstSummary, BundleManifest, DeclarationId, IlDeclarationBody,
-    IlDocument, IlKind, IlNode, IlType, Limits, ManifestError, RuleId, SPECTEC_VERSION,
-    WASM_3_RELEASE, WASM_3_REVISION, WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast, parse_ast,
+    IlDocument, IlKind, IlNode, IlRuleSchema, IlType, Limits, ManifestError, RuleId,
+    SPECTEC_VERSION, WASM_3_RELEASE, WASM_3_REVISION, WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast,
+    parse_ast,
 };
 
 fn root() -> PathBuf {
@@ -70,6 +71,34 @@ fn official_il_rule_inventory_has_stable_nested_selectors() {
         malformed.rules(DeclarationId::new(1, None).unwrap()),
         Err(covalence_data_spectec::IlError::MissingRuleName { .. })
     ));
+}
+
+#[test]
+fn official_il_rules_all_match_the_generic_rule_schema() {
+    let bundle = covalence_data_spectec::wasm3_bundle().unwrap();
+    let il = bundle.il();
+    let mut decoded = 0;
+
+    for declaration in il.declarations() {
+        for rule in il.rules(declaration.id()).unwrap().unwrap() {
+            let cursor = il.rule_cursor(rule.id()).unwrap();
+            let schema = IlRuleSchema::decode(&cursor).unwrap();
+            assert_eq!(schema.name(), rule.name());
+            assert_eq!(schema.cursor().path(), rule.id().path().collect::<Vec<_>>());
+            decoded += 1;
+        }
+    }
+
+    assert_eq!(decoded, 781);
+
+    let malformed = IlDocument::parse(
+        b"(rel \"R\" \"%\" bool (rule \"bad\" \"%\" (unknown)))",
+        Limits::default(),
+    )
+    .unwrap();
+    let id = DeclarationId::new(1, None).unwrap();
+    let rule = malformed.rules(id).unwrap().unwrap().remove(0);
+    assert!(IlRuleSchema::decode(&malformed.rule_cursor(rule.id()).unwrap()).is_err());
 }
 
 #[test]

@@ -20,8 +20,9 @@ mod wasm3;
 
 pub use il::{
     ClauseId, DeclarationId, IlArgument, IlChildren, IlClause, IlCursor, IlDeclaration,
-    IlDeclarationBody, IlDeclarationSchema, IlDocument, IlError, IlForm, IlIteration, IlKind,
-    IlNode, IlRoot, IlRule, IlSchemaError, IlType, IlTypeBinding, RootOrdinal, RuleId,
+    IlDeclarationBody, IlDeclarationSchema, IlDocument, IlError, IlExpression, IlExpressionKind,
+    IlForm, IlIteration, IlKind, IlNode, IlPremise, IlRoot, IlRule, IlRuleSchema, IlSchemaError,
+    IlType, IlTypeBinding, RootOrdinal, RuleId,
 };
 pub use wasm3::{WASM_3_AST_BYTES, WASM_3_MANIFEST_BYTES, Wasm3Bundle, Wasm3Error, wasm3_bundle};
 

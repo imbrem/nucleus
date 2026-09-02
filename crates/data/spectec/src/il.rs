@@ -599,6 +599,436 @@ impl<'a> IlType<'a> {
     }
 }
 
+/// Contextual constructor of one elaborated IL expression.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IlExpressionKind {
+    /// Variable reference.
+    Variable,
+    /// Boolean literal.
+    Boolean,
+    /// Numeric literal.
+    Number,
+    /// Text literal.
+    Text,
+    /// Unary operation.
+    Unary,
+    /// Binary operation.
+    Binary,
+    /// Comparison.
+    Comparison,
+    /// Tuple expression.
+    Tuple,
+    /// Tuple projection.
+    Projection,
+    /// Variant construction.
+    Case,
+    /// Variant elimination.
+    Uncase,
+    /// Optional expression.
+    Optional,
+    /// Optional-value extraction.
+    UnwrapOptional,
+    /// Record expression.
+    Struct,
+    /// Record field selection.
+    Dot,
+    /// Record composition.
+    Compose,
+    /// List expression.
+    List,
+    /// Subtype lift.
+    Lift,
+    /// Membership expression.
+    Membership,
+    /// Sequence length.
+    Length,
+    /// Sequence concatenation.
+    Concatenate,
+    /// Sequence indexing.
+    Index,
+    /// Sequence slice.
+    Slice,
+    /// Functional path update.
+    Update,
+    /// Functional path extension.
+    Extend,
+    /// Definition application.
+    Call,
+    /// Iterated expression.
+    Iterate,
+    /// Numeric conversion.
+    Convert,
+    /// Type inclusion.
+    Subtype,
+}
+
+/// One expression recognized by the generic elaborated-IL schema.
+#[derive(Clone, Debug)]
+pub struct IlExpression<'a> {
+    cursor: IlCursor<'a>,
+    kind: IlExpressionKind,
+}
+
+impl<'a> IlExpression<'a> {
+    /// Decodes one contextual expression constructor.
+    ///
+    /// Child expressions remain addressable through [`arguments`](Self::arguments),
+    /// allowing semantic consumers to recurse according to the constructor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown expression form or wrong constructor
+    /// arity.
+    pub fn decode(cursor: &IlCursor<'a>) -> Result<Self, IlSchemaError> {
+        let form = required_form(cursor, "IL expression")?;
+        let (kind, arity) = expression_shape(form.head()).ok_or_else(|| {
+            schema_error(
+                cursor.declaration(),
+                cursor.path(),
+                "known IL expression constructor",
+                describe(cursor),
+            )
+        })?;
+        arity.require(&form)?;
+        Ok(Self {
+            cursor: cursor.clone(),
+            kind,
+        })
+    }
+
+    /// Returns the contextual expression constructor.
+    #[must_use]
+    pub const fn kind(&self) -> IlExpressionKind {
+        self.kind
+    }
+
+    /// Returns the exact structural cursor for this expression.
+    #[must_use]
+    pub const fn cursor(&self) -> &IlCursor<'a> {
+        &self.cursor
+    }
+
+    /// Iterates constructor arguments after the symbolic head.
+    #[must_use]
+    pub fn arguments(&self) -> impl ExactSizeIterator<Item = IlCursor<'a>> + '_ {
+        self.cursor.children().skip(1)
+    }
+}
+
+/// One relation rule or relation-valued premise.
+#[derive(Clone, Debug)]
+pub struct IlRuleSchema<'a> {
+    cursor: IlCursor<'a>,
+    name: &'a str,
+    bindings: Vec<IlCursor<'a>>,
+    notation: &'a str,
+    conclusion: IlExpression<'a>,
+    premises: Vec<IlPremise<'a>>,
+}
+
+impl<'a> IlRuleSchema<'a> {
+    /// Decodes the shared schema used by top-level relation rules and nested
+    /// relation premises.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed name, binding, notation, conclusion,
+    /// or premise.
+    pub fn decode(cursor: &IlCursor<'a>) -> Result<Self, IlSchemaError> {
+        decode_rule_schema(cursor)
+    }
+
+    /// Returns the exact rule name.
+    #[must_use]
+    pub const fn name(&self) -> &'a str {
+        self.name
+    }
+
+    /// Returns explicit rule bindings in source order.
+    #[must_use]
+    pub fn bindings(&self) -> &[IlCursor<'a>] {
+        &self.bindings
+    }
+
+    /// Returns the exact relation notation.
+    #[must_use]
+    pub const fn notation(&self) -> &'a str {
+        self.notation
+    }
+
+    /// Returns the rule conclusion expression.
+    #[must_use]
+    pub const fn conclusion(&self) -> &IlExpression<'a> {
+        &self.conclusion
+    }
+
+    /// Returns premises in exact source order.
+    #[must_use]
+    pub fn premises(&self) -> &[IlPremise<'a>] {
+        &self.premises
+    }
+
+    /// Returns the complete rule cursor.
+    #[must_use]
+    pub const fn cursor(&self) -> &IlCursor<'a> {
+        &self.cursor
+    }
+}
+
+/// One premise in an elaborated IL rule, clause, production, or type case.
+#[derive(Clone, Debug)]
+pub enum IlPremise<'a> {
+    /// Invocation of another relation.
+    Rule(Box<IlRuleSchema<'a>>),
+    /// Boolean side condition.
+    If(IlExpression<'a>),
+    /// Pattern binding `where left = right`.
+    Let {
+        /// Binding pattern.
+        left: IlExpression<'a>,
+        /// Bound expression.
+        right: IlExpression<'a>,
+    },
+    /// Fallback clause marker.
+    Otherwise,
+    /// Iterated premise; its iteration and domains retain structural cursors
+    /// for the expression lowerer.
+    Iterated {
+        /// Repeated premise.
+        premise: Box<IlPremise<'a>>,
+        /// Iteration shape.
+        iteration: IlIteration<'a>,
+        /// `dom` forms binding iteration variables.
+        domains: Vec<IlCursor<'a>>,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum SchemaArity {
+    Exact(usize),
+    Between(usize, usize),
+    AtLeast(usize),
+    Any,
+}
+
+impl SchemaArity {
+    fn require(self, form: &IlForm<'_>) -> Result<(), IlSchemaError> {
+        let valid = match self {
+            Self::Exact(value) => form.len() == value,
+            Self::Between(minimum, maximum) => (minimum..=maximum).contains(&form.len()),
+            Self::AtLeast(minimum) => form.len() >= minimum,
+            Self::Any => true,
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(schema_error(
+                form.cursor().declaration(),
+                form.cursor().path(),
+                "valid expression constructor arity",
+                format!("form {:?} with {} arguments", form.head(), form.len()),
+            ))
+        }
+    }
+}
+
+fn expression_shape(head: &str) -> Option<(IlExpressionKind, SchemaArity)> {
+    use IlExpressionKind as K;
+    use SchemaArity::{Any, AtLeast, Between, Exact};
+    Some(match head {
+        "var" => (K::Variable, Exact(1)),
+        "bool" => (K::Boolean, Exact(1)),
+        "num" => (K::Number, Exact(1)),
+        "text" => (K::Text, Exact(1)),
+        "un" => (K::Unary, Exact(3)),
+        "bin" => (K::Binary, Exact(4)),
+        "cmp" => (K::Comparison, Exact(4)),
+        "tup" => (K::Tuple, Any),
+        "proj" => (K::Projection, Exact(2)),
+        "case" => (K::Case, Exact(2)),
+        "uncase" => (K::Uncase, Exact(2)),
+        "opt" => (K::Optional, Between(0, 1)),
+        "unopt" => (K::UnwrapOptional, Exact(1)),
+        "struct" => (K::Struct, Any),
+        "dot" => (K::Dot, Exact(2)),
+        "comp" => (K::Compose, Exact(2)),
+        "list" => (K::List, Any),
+        "lift" => (K::Lift, Exact(1)),
+        "mem" => (K::Membership, Exact(2)),
+        "len" => (K::Length, Exact(1)),
+        "cat" => (K::Concatenate, Exact(2)),
+        "idx" => (K::Index, Exact(2)),
+        "slice" => (K::Slice, Exact(3)),
+        "upd" => (K::Update, Exact(3)),
+        "ext" => (K::Extend, Exact(3)),
+        "call" => (K::Call, AtLeast(1)),
+        "iter" => (K::Iterate, AtLeast(2)),
+        "cvt" => (K::Convert, Exact(3)),
+        "sub" => (K::Subtype, Exact(3)),
+        _ => return None,
+    })
+}
+
+fn decode_rule_schema<'a>(cursor: &IlCursor<'a>) -> Result<IlRuleSchema<'a>, IlSchemaError> {
+    let form = required_form(cursor, "relation rule")?;
+    require_head(&form, "rule")?;
+    require_min_arity(&form, 3, "rule name, notation, and conclusion")?;
+    let name = required_string(
+        form.argument(0),
+        cursor.declaration(),
+        &child_path(&form, 0),
+        "rule name",
+    )?;
+    let fields = form.arguments().skip(1).collect::<Vec<_>>();
+    let notation_index = fields
+        .iter()
+        .position(|field| matches!(field.node(), IlNode::String(_)))
+        .ok_or_else(|| {
+            schema_error(
+                cursor.declaration(),
+                cursor.path(),
+                "rule notation after explicit bindings",
+                "missing".to_owned(),
+            )
+        })?;
+    let (bindings, tail) = fields.split_at(notation_index);
+    require_bindings(bindings)?;
+    let notation_cursor = tail.first().ok_or_else(|| {
+        schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "rule notation",
+            "missing".to_owned(),
+        )
+    })?;
+    let IlNode::String(notation) = notation_cursor.node() else {
+        return Err(schema_error(
+            cursor.declaration(),
+            notation_cursor.path(),
+            "rule notation",
+            describe(notation_cursor),
+        ));
+    };
+    let conclusion_cursor = tail.get(1).ok_or_else(|| {
+        schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "rule conclusion",
+            "missing".to_owned(),
+        )
+    })?;
+    let conclusion = IlExpression::decode(conclusion_cursor)?;
+    let premises = tail
+        .iter()
+        .skip(2)
+        .map(decode_premise)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(IlRuleSchema {
+        cursor: cursor.clone(),
+        name,
+        bindings: bindings.to_vec(),
+        notation,
+        conclusion,
+        premises,
+    })
+}
+
+fn decode_premise<'a>(cursor: &IlCursor<'a>) -> Result<IlPremise<'a>, IlSchemaError> {
+    if cursor.node() == IlNode::Symbol("else") {
+        return Ok(IlPremise::Otherwise);
+    }
+    let form = required_form(cursor, "rule premise")?;
+    match form.head() {
+        "rule" => Ok(IlPremise::Rule(Box::new(decode_rule_schema(cursor)?))),
+        "if" => {
+            require_arity(&form, 1, "if premise with one expression")?;
+            Ok(IlPremise::If(IlExpression::decode(&required_argument(
+                &form,
+                0,
+                "if-premise expression",
+            )?)?))
+        }
+        "let" => {
+            require_arity(&form, 2, "let premise with pattern and expression")?;
+            Ok(IlPremise::Let {
+                left: IlExpression::decode(&required_argument(&form, 0, "let pattern")?)?,
+                right: IlExpression::decode(&required_argument(&form, 1, "let expression")?)?,
+            })
+        }
+        "iter" => {
+            require_min_arity(&form, 2, "iterated premise with iteration shape")?;
+            let premise = Box::new(decode_premise(&required_argument(
+                &form,
+                0,
+                "iterated premise",
+            )?)?);
+            let iteration_cursor = required_argument(&form, 1, "premise iteration")?;
+            let iteration = decode_iteration(&iteration_cursor)?;
+            let domains = form.arguments().skip(2).collect::<Vec<_>>();
+            for domain in &domains {
+                validate_domain(domain)?;
+            }
+            Ok(IlPremise::Iterated {
+                premise,
+                iteration,
+                domains,
+            })
+        }
+        _ => Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "premise rule, if, let, else, or iter",
+            describe(cursor),
+        )),
+    }
+}
+
+fn validate_domain(cursor: &IlCursor<'_>) -> Result<(), IlSchemaError> {
+    let form = required_form(cursor, "iteration domain")?;
+    require_head(&form, "dom")?;
+    require_arity(&form, 2, "domain with identifier and expression")?;
+    required_string(
+        form.argument(0),
+        cursor.declaration(),
+        &child_path(&form, 0),
+        "domain identifier",
+    )?;
+    IlExpression::decode(&required_argument(&form, 1, "domain expression")?)?;
+    Ok(())
+}
+
+fn require_bindings(bindings: &[IlCursor<'_>]) -> Result<(), IlSchemaError> {
+    for binding in bindings {
+        match binding.head() {
+            Some("exp" | "typ" | "def" | "gram") => {}
+            _ => {
+                return Err(schema_error(
+                    binding.declaration(),
+                    binding.path(),
+                    "binding form exp, typ, def, or gram",
+                    describe(binding),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn required_argument<'a>(
+    form: &IlForm<'a>,
+    index: usize,
+    expected: &'static str,
+) -> Result<IlCursor<'a>, IlSchemaError> {
+    form.argument(index).ok_or_else(|| {
+        schema_error(
+            form.cursor().declaration(),
+            form.cursor().path(),
+            expected,
+            "missing".to_owned(),
+        )
+    })
+}
+
 impl<'a> IlDeclarationSchema<'a> {
     /// Returns the stable declaration metadata.
     #[must_use]
@@ -820,6 +1250,17 @@ impl IlDocument {
         (symbol(list_items(expression)?.first()) == Some("rule")).then_some(expression)
     }
 
+    /// Resolves a parser-independent cursor for an exact rule selector.
+    #[must_use]
+    pub fn rule_cursor(&self, id: &RuleId) -> Option<IlCursor<'_>> {
+        let expression = self.rule(id)?;
+        Some(IlCursor {
+            expression,
+            declaration: id.declaration,
+            path: id.path().collect(),
+        })
+    }
+
     /// Inventories every nested `clause` form in deterministic tree order.
     #[must_use]
     pub fn clauses(&self, id: DeclarationId) -> Option<Vec<IlClause>> {
@@ -834,6 +1275,17 @@ impl IlDocument {
     pub fn clause(&self, id: &ClauseId) -> Option<&Expr> {
         let expression = resolve_path(self.expression(id.declaration)?, &id.path)?;
         (symbol(list_items(expression)?.first()) == Some("clause")).then_some(expression)
+    }
+
+    /// Resolves a parser-independent cursor for an exact clause selector.
+    #[must_use]
+    pub fn clause_cursor(&self, id: &ClauseId) -> Option<IlCursor<'_>> {
+        let expression = self.clause(id)?;
+        Some(IlCursor {
+            expression,
+            declaration: id.declaration,
+            path: id.path().collect(),
+        })
     }
 }
 
