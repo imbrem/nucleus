@@ -737,6 +737,27 @@
       ]
     },
     {
+      "id": "workspace#covalence-logic-lean@0.0.0",
+      "name": "covalence-logic-lean",
+      "version": "0.0.0",
+      "path": "crates/logic/lean",
+      "category": "product",
+      "targets": [
+        {
+          "name": "corpus",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "covalence_logic_lean",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-logic-lrat@0.0.0",
       "name": "covalence-logic-lrat",
       "version": "0.0.0",
@@ -1635,6 +1656,20 @@
     {
       "source": "workspace#covalence-logic-hol@0.0.0",
       "target": "workspace#covalence-logic-classical@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-lean@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-lean@0.0.0",
+      "target": "workspace#covalence-lib-json@0.0.0",
       "kinds": [
         "normal"
       ]
