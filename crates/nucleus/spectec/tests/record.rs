@@ -17,7 +17,7 @@ use covalence_nucleus_spectec::{
     fold_expression, fold_grammar, fold_type, least_closed_family, least_closed_predicate,
     ordered_cases, relational_definition, relational_definition_declaration,
     relational_definition_schema, relational_hol_case, relational_hol_rule,
-    relational_relation_declaration, relational_relations, relational_type_alias_declaration,
+    relational_relation_declaration, relational_relations, relational_type_declaration,
 };
 
 #[derive(Clone)]
@@ -133,6 +133,46 @@ impl RelationalResolver for TestRelationalResolver {
         kernel
             .bool(self.bool_ty, true)
             .map_err(|error| error.to_string())
+    }
+
+    fn type_classifier(
+        &mut self,
+        kernel: &mut Kernel,
+        ty: &IlType<'_>,
+    ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        let value = kernel
+            .classifier(self.x)
+            .map_err(|error| error.to_string())?;
+        Ok(HolEmbedding::new(value, self.bool_ty).ty(ty))
+    }
+
+    fn tuple_value(
+        &mut self,
+        _kernel: &mut Kernel,
+        _elements: &[covalence_logic_hol::Ref],
+    ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        Ok(self.x)
+    }
+
+    fn variant_value(
+        &mut self,
+        _kernel: &mut Kernel,
+        _constructor: &str,
+        _payload: covalence_logic_hol::Ref,
+    ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        Ok(self.x)
+    }
+
+    fn struct_value(
+        &mut self,
+        _kernel: &mut Kernel,
+        _fields: &[(&str, covalence_logic_hol::Ref)],
+    ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        Ok(self.x)
+    }
+
+    fn type_otherwise(&mut self) -> Self::Error {
+        "otherwise in structural type".to_owned()
     }
 
     fn operation(
@@ -1356,7 +1396,7 @@ fn exact_alias_type_declaration_lowers_to_membership_equation() {
         bound: std::collections::BTreeMap::new(),
         relations: std::collections::BTreeMap::new(),
     };
-    let definition = relational_type_alias_declaration(
+    let definition = relational_type_declaration(
         &mut kernel,
         &mut resolver,
         &source,
@@ -1375,6 +1415,72 @@ fn exact_alias_type_declaration_lowers_to_membership_equation() {
                 bool_ty
             )
             .unwrap()
+    );
+}
+
+#[test]
+fn exact_variant_and_struct_types_preserve_structural_branches() {
+    let bytes = br#"(typ "V"
+          (inst (variant
+            (case "%" (exp "i" nat) (tup (bind (var "i") nat))))))
+        (typ "S"
+          (inst (struct (field "X" (exp "x" nat) nat))))"#;
+    let il = IlDocument::parse(bytes, Limits::default()).unwrap();
+    let source = Source::new(
+        drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle"),
+        drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        "test",
+        "revision",
+        &il,
+    )
+    .unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let schema = declare_hol_schema(&source, &mut kernel, value, bool_ty).unwrap();
+    let binary_tail = kernel.ty_arr(value, value).unwrap();
+    let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
+    let graph_tail = kernel.ty_arr(value, bool_ty).unwrap();
+    let graph_ty = kernel.ty_arr(value, graph_tail).unwrap();
+    let x = kernel.tm_fv(10_000, value).unwrap();
+    let mut resolver = TestRelationalResolver {
+        x,
+        y: kernel.tm_fv(10_001, value).unwrap(),
+        add: kernel.tm_fv(10_002, binary_ty).unwrap(),
+        graph: kernel.tm_fv(10_003, graph_ty).unwrap(),
+        bool_ty,
+        bound: std::collections::BTreeMap::new(),
+        relations: std::collections::BTreeMap::new(),
+    };
+
+    let variant = relational_type_declaration(
+        &mut kernel,
+        &mut resolver,
+        &source,
+        &schema,
+        DeclarationId::new(1, None).unwrap(),
+        &[x],
+    )
+    .unwrap();
+    let structure = relational_type_declaration(
+        &mut kernel,
+        &mut resolver,
+        &source,
+        &schema,
+        DeclarationId::new(2, None).unwrap(),
+        &[x],
+    )
+    .unwrap();
+
+    assert_eq!(variant.definition.branches.len(), 1);
+    assert_eq!(structure.definition.branches.len(), 1);
+    assert!(
+        [variant.definition.equation, structure.definition.equation]
+            .into_iter()
+            .all(|equation| kernel
+                .equivalent(kernel.classifier(equation).unwrap(), bool_ty)
+                .unwrap())
     );
 }
 

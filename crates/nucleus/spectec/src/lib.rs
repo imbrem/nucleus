@@ -50,7 +50,7 @@ pub use theory::{
     close_family_definition, close_graph_equation, close_hol_theory, conjoin_constraints,
     existential_case, ordered_cases,
 };
-pub use type_definition::{RelationalTypeDefinition, relational_type_alias_declaration};
+pub use type_definition::{RelationalTypeDefinition, relational_type_declaration};
 pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};

@@ -389,6 +389,54 @@ pub trait RelationalResolver {
         value: Ref,
     ) -> Result<Ref, Self::Error>;
 
+    /// Resolves the checked classifier used for a witness of one IL type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the selected type embedding cannot classify the
+    /// witness.
+    fn type_classifier(
+        &mut self,
+        kernel: &mut Kernel,
+        ty: &covalence_data_spectec::IlType<'_>,
+    ) -> Result<Ref, Self::Error>;
+
+    /// Constructs the interpreted value of a tuple payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unavailable tuple interpretation or rejected
+    /// checked application.
+    fn tuple_value(&mut self, kernel: &mut Kernel, elements: &[Ref]) -> Result<Ref, Self::Error>;
+
+    /// Constructs one interpreted tagged-variant value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unavailable constructor interpretation or
+    /// rejected checked application.
+    fn variant_value(
+        &mut self,
+        kernel: &mut Kernel,
+        constructor: &str,
+        payload: Ref,
+    ) -> Result<Ref, Self::Error>;
+
+    /// Constructs one interpreted record value from exact field names/order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unavailable record interpretation or rejected
+    /// checked application.
+    fn struct_value(
+        &mut self,
+        kernel: &mut Kernel,
+        fields: &[(&str, Ref)],
+    ) -> Result<Ref, Self::Error>;
+
+    /// Reports an `otherwise` marker in a structural type side condition.
+    fn type_otherwise(&mut self) -> Self::Error;
+
     /// Lowers one non-variable, non-call constructor from child values.
     ///
     /// # Errors
@@ -999,6 +1047,97 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
         R: RelationalResolver,
     {
         self.resolver.type_membership(self.kernel, ty, value)
+    }
+
+    /// Allocates one deterministic fresh witness of `classifier`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on name exhaustion or rejected checked construction.
+    pub fn fresh_variable(&mut self, classifier: Ref) -> Result<Ref, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        let name = self.take_name()?;
+        self.kernel
+            .tm_fv(name, classifier)
+            .map_err(|source| self.resolver.kernel_error(source))
+    }
+
+    /// Resolves the embedded classifier of one IL type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the resolver cannot classify the decoded type.
+    pub fn type_classifier(
+        &mut self,
+        ty: &covalence_data_spectec::IlType<'_>,
+    ) -> Result<Ref, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        self.resolver.type_classifier(self.kernel, ty)
+    }
+
+    /// Constructs one interpreted tuple value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unavailable-interpretation or checked application failure.
+    pub fn tuple_value(&mut self, elements: &[Ref]) -> Result<Ref, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        self.resolver.tuple_value(self.kernel, elements)
+    }
+
+    /// Constructs one interpreted variant value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unavailable-constructor or checked application failure.
+    pub fn variant_value(&mut self, constructor: &str, payload: Ref) -> Result<Ref, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        self.resolver
+            .variant_value(self.kernel, constructor, payload)
+    }
+
+    /// Constructs one interpreted struct value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unavailable-record or checked application failure.
+    pub fn struct_value(&mut self, fields: &[(&str, Ref)]) -> Result<Ref, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        self.resolver.struct_value(self.kernel, fields)
+    }
+
+    /// Converts an unsupported structural `otherwise` premise.
+    pub fn type_otherwise(&mut self) -> R::Error
+    where
+        R: RelationalResolver,
+    {
+        self.resolver.type_otherwise()
+    }
+
+    /// Converts a structural schema failure through the resolver.
+    pub fn schema_error(&mut self, source: IlSchemaError) -> R::Error
+    where
+        R: RelationalResolver,
+    {
+        self.resolver.schema_error(source)
+    }
+
+    /// Converts an exact family-assembly failure through the resolver.
+    pub fn family_error(&mut self, source: HolFamilyError) -> R::Error
+    where
+        R: RelationalResolver,
+    {
+        self.resolver.family_error(source)
     }
 
     /// Lowers one complete definition clause to an exact ordered graph case.
