@@ -2830,38 +2830,55 @@ mod tests {
         )
         .expect("host call")
         .expect("truth");
-        let identity = state
-            .table
-            .get_mut(&resource)
-            .expect("kernel resource")
-            .0
-            .identity(covalence_logic_hol::Lit::positive(
-                i32::try_from(truth).expect("reference fits i32"),
-            ))
-            .expect("identity");
+        // `p` and `q` must differ for the marshalled operand order to be
+        // observable: `left` proves `q` and `right` proves `p`, and both
+        // premise-free theorems are accepted as the stronger evidence.
+        let reflexive = HostKernelApi::refl(
+            &mut state,
+            Resource::new_borrow(resource.rep()),
+            bool_ty,
+            truth,
+        )
+        .expect("host call")
+        .expect("truth equality");
+        let truth_thm = HostKernelApi::eqt_elim(
+            &mut state,
+            Resource::new_borrow(resource.rep()),
+            reflexive.theorem,
+        )
+        .expect("host call")
+        .expect("truth theorem");
         let result = HostKernelApi::deduct_antisym(
             &mut state,
             Resource::new_borrow(resource.rep()),
             bool_ty,
             truth,
-            truth,
-            u64::from(identity.get().unsigned_abs()),
-            u64::from(identity.get().unsigned_abs()),
+            reflexive.equality,
+            reflexive.theorem,
+            truth_thm,
         )
         .expect("host call")
         .expect("deduction antisymmetry");
         let kernel = &state.table.get(&resource).expect("kernel resource").0;
-        assert!(
-            kernel
-                .thm()
-                .get(theorem_id(result.theorem).expect("theorem ID"))
-                .is_some()
-        );
         assert_eq!(
             kernel
-                .arena()
-                .bool_value(reference(result.equality).expect("equality")),
-            None
+                .children(reference(result.equality).expect("equality"))
+                .expect("equality children")
+                .map(u64_from_ref)
+                .collect::<Vec<_>>(),
+            [bool_ty, truth, reflexive.equality]
+        );
+        let theorem = kernel
+            .thm()
+            .get(theorem_id(result.theorem).expect("theorem ID"))
+            .expect("theorem");
+        assert!(theorem.lhs.rows().next().is_none());
+        assert_eq!(
+            theorem.rhs.rows().collect::<Vec<_>>(),
+            [[covalence_logic_hol::Lit::positive(
+                i32::try_from(result.equality).expect("reference fits i32"),
+            )]
+            .as_slice()]
         );
     }
 

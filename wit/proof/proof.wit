@@ -351,6 +351,11 @@ interface host {
 
         /// From mutual entailments, discharge the opposed unit premises and
         /// conclude object-language Boolean equality.
+        ///
+        /// `left` must prove `q` from a possible unit premise `p`; `right`
+        /// must prove `p` from a possible unit premise `q`. Each theorem's
+        /// matching unit premise is discharged; a missing premise is accepted.
+        /// Concludes `p = q` at `bool-type`.
         deduct-antisym: func(bool-type: u64, p: u64, q: u64, left: u64, right: u64)
             -> result<antisymm-thm, string>;
 

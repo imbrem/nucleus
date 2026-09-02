@@ -1896,9 +1896,7 @@ mod tests {
 
     #[test]
     fn deduction_antisymmetry_discharges_unit_premises_transactionally() {
-        let Fixture {
-            mut kernel, p, q, ..
-        } = fixture();
+        let Fixture { mut kernel, p, q } = fixture();
         let bool_ty = kernel.classifier(reference(p)).unwrap();
         let left = kernel.identity(p).unwrap();
         let right = kernel.identity(p).unwrap();
@@ -1933,6 +1931,71 @@ mod tests {
                 .is_err()
         );
         assert_eq!(*kernel.arena(), before);
+    }
+
+    #[test]
+    fn deduction_antisymmetry_crosses_operands_and_unions_contexts() {
+        let Fixture { mut kernel, p, q } = fixture();
+        let bool_ty = kernel.classifier(reference(p)).unwrap();
+        // The generic sequent inserter is private to this module. It stands in
+        // for any earlier checked HOL rules proving the two entailments.
+        let left = kernel.push_sequent(&[p], &[q]).unwrap();
+        let right = kernel.push_sequent(&[q], &[p]).unwrap();
+
+        let result = kernel
+            .deduct_antisym(bool_ty, reference(p), reference(q), left, right)
+            .unwrap();
+        assert_eq!(
+            kernel
+                .arena()
+                .children(result.equality)
+                .unwrap()
+                .collect::<Vec<_>>(),
+            [bool_ty, reference(p), reference(q)]
+        );
+        let theorem = kernel.require_thm(result.theorem).unwrap();
+        assert!(theorem.lhs.rows().next().is_none());
+        assert_eq!(unit_conclusions(theorem), [positive(result.equality)]);
+
+        // `left` proves `q` and `right` proves `p`, so the same evidence
+        // supplied the other way round is not evidence.
+        let before = kernel.arena().clone();
+        assert!(matches!(
+            kernel.deduct_antisym(bool_ty, reference(p), reference(q), right, left),
+            Err(KernelError::InvalidTheoremRule {
+                rule: "DEDUCT_ANTISYM left conclusion"
+            })
+        ));
+        assert_eq!(*kernel.arena(), before);
+
+        // The right conclusion is checked on its own, not implied by the left.
+        let before = kernel.arena().clone();
+        assert!(matches!(
+            kernel.deduct_antisym(bool_ty, reference(p), reference(q), left, left),
+            Err(KernelError::InvalidTheoremRule {
+                rule: "DEDUCT_ANTISYM right conclusion"
+            })
+        ));
+        assert_eq!(*kernel.arena(), before);
+
+        // Premises other than the discharged pair survive, from both sides.
+        let spare_left = positive(kernel.tm_fv(3, bool_ty).unwrap());
+        let spare_right = positive(kernel.tm_fv(4, bool_ty).unwrap());
+        let contextual_left = kernel.push_sequent(&[p, spare_left], &[q]).unwrap();
+        let contextual_right = kernel.push_sequent(&[q, spare_right], &[p]).unwrap();
+        let contextual = kernel
+            .deduct_antisym(
+                bool_ty,
+                reference(p),
+                reference(q),
+                contextual_left,
+                contextual_right,
+            )
+            .unwrap();
+        assert_eq!(
+            unit_premises(kernel.require_thm(contextual.theorem).unwrap()),
+            [spare_left, spare_right]
+        );
     }
 
     #[test]
