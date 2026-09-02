@@ -1,4 +1,4 @@
-//! Checked Alethe QF_UF replay at the Python boundary.
+//! Checked Alethe `QF_UF` replay at the Python boundary.
 
 use covalence_lib_python::exceptions::create_exception;
 use covalence_lib_python::prelude::*;
@@ -16,7 +16,7 @@ fn rejection(error: impl std::fmt::Display) -> PyErr {
     AletheError::new_err(error.to_string())
 }
 
-/// An exact, kernel-checked `assertions |- false` QF_UF certificate.
+/// An exact, kernel-checked `assertions |- false` `QF_UF` certificate.
 #[pyclass(frozen, module = "covalence.logic.alethe", name = "QfUfRefutation")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 struct PyQfUfRefutation(Refutation);

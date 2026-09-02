@@ -16,6 +16,8 @@ __all__ = [
 _PROOF_OPTIONS = (
     "--produce-proofs",
     "--proof-format-mode=alethe",
+    "--proof-granularity=dsl-rewrite-strict",
+    "--no-proof-allow-trust",
     "--dump-proofs",
     "--lang=smt2",
 )
@@ -55,9 +57,7 @@ def solve_qf_uf(problem: str, executable: str = "cvc5") -> Cvc5Result:
         check=False,
     )
     version = (
-        version_result.stdout.splitlines()[0]
-        if version_result.stdout
-        else "unknown"
+        version_result.stdout.splitlines()[0] if version_result.stdout else "unknown"
     )
     return Cvc5Result(
         refutation=refutation,
