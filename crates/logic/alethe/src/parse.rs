@@ -1,6 +1,6 @@
 //! Strict Alethe command parsing.
 
-use covalence_data_sexpr::{Atom, Expr, ExprKind, Repr, SpannedRepr, parse_smt};
+use covalence_data_sexpr::{Atom, Document, Event, Expr, ExprKind, Parser, Repr, SpannedRepr};
 use covalence_lib_error::snafu::Snafu;
 
 /// One strictly parsed Alethe proof command.
@@ -84,6 +84,45 @@ pub enum ParseError {
     /// A required field was absent or had the wrong shape.
     #[snafu(display("malformed Alethe command: {message}"))]
     Malformed { message: String },
+    /// The input nests more deeply than the reader builds.
+    #[snafu(display("S-expression nesting exceeds the parse budget of {limit} levels"))]
+    TooDeep {
+        /// Greatest nesting depth the reader builds.
+        limit: usize,
+    },
+}
+
+/// Greatest S-expression nesting depth this parser builds.
+///
+/// The S-expression reader itself is iterative, but the tree it builds is
+/// dropped recursively and every consumer walks it recursively, so untrusted
+/// text is rejected before a tree deep enough to exhaust the stack exists.
+/// Replay applies its own tighter budget to the terms inside a command.
+const MAX_NESTING_DEPTH: usize = 1024;
+
+/// Reads `input` as one SMT-LIB/Alethe document under [`MAX_NESTING_DEPTH`].
+fn read_document(input: &str) -> Result<Document, ParseError> {
+    let mut depth = 0usize;
+    let mut events = Vec::new();
+    for event in Parser::new_smt(input) {
+        let event = event.map_err(|source| ParseError::Syntax { source })?;
+        match event {
+            Event::Open { .. } => {
+                depth += 1;
+                if depth > MAX_NESTING_DEPTH {
+                    return Err(ParseError::TooDeep {
+                        limit: MAX_NESTING_DEPTH,
+                    });
+                }
+            }
+            Event::Close { .. } => depth = depth.saturating_sub(1),
+            Event::Atom { .. } => {}
+        }
+        events.push(event);
+    }
+    Document::from_events(events).map_err(|source| ParseError::Syntax {
+        source: covalence_data_sexpr::ParseError::Structure { source },
+    })
 }
 
 fn list(expression: &Expr) -> Result<&[Expr], ParseError> {
@@ -149,9 +188,10 @@ fn symbols(expression: &Expr) -> Result<Vec<String>, ParseError> {
 /// # Errors
 ///
 /// Returns [`ParseError`] for malformed S-expressions, missing fields, unknown
-/// commands, duplicate attributes, or unsupported attributes.
+/// commands, duplicate attributes, unsupported attributes, or nesting past
+/// [`MAX_NESTING_DEPTH`].
 pub fn parse_alethe(input: &str) -> Result<AletheProof, ParseError> {
-    let document = parse_smt(input).map_err(|source| ParseError::Syntax { source })?;
+    let document = read_document(input)?;
     let mut expressions = document.expressions();
     if let [expression] = expressions
         && let ExprKind::List(node) = expression.node()
@@ -199,9 +239,9 @@ pub fn parse_cvc5_output(input: &str) -> Result<AletheProof, ParseError> {
 /// # Errors
 ///
 /// Returns [`ParseError`] for malformed input, unsupported commands, invalid
-/// arities, or extra fields.
+/// arities, extra fields, or nesting past [`MAX_NESTING_DEPTH`].
 pub fn parse_smtlib2(input: &str) -> Result<SmtProblem, ParseError> {
-    let document = parse_smt(input).map_err(|source| ParseError::Syntax { source })?;
+    let document = read_document(input)?;
     let mut commands = Vec::new();
     for expression in document.expressions() {
         let items = list(expression)?;
@@ -389,6 +429,32 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/../../proof/alethe/tests/fixtures/cvc5-qf-uf/proof.alethe"
     ));
+
+    #[test]
+    fn rejects_deeply_nested_input() {
+        let depth = MAX_NESTING_DEPTH + 1;
+        let source = format!(
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(assert {}p{})\n(check-sat)\n",
+            "(not ".repeat(depth),
+            ")".repeat(depth)
+        );
+        assert!(matches!(
+            parse_smtlib2(&source),
+            Err(ParseError::TooDeep {
+                limit: MAX_NESTING_DEPTH
+            })
+        ));
+        assert!(matches!(
+            parse_alethe(&format!(
+                "(assume a0 {}p{})",
+                "(not ".repeat(depth),
+                ")".repeat(depth)
+            )),
+            Err(ParseError::TooDeep {
+                limit: MAX_NESTING_DEPTH
+            })
+        ));
+    }
 
     #[test]
     fn parses_the_selected_cvc5_qf_uf_fixture() {
