@@ -1,0 +1,11 @@
+# SpecTec kernel frontend
+
+`covalence-nucleus-spectec` is the semi-trusted boundary between an untrusted
+SpecTec elaboration and a checked HOL kernel. A compiler records an exhaustive
+mapping from every SpecTec IL declaration to checked kernel rows. Finishing is
+impossible while a declaration is unaccounted for.
+
+The portable output is an ATProto DRISL object linking the exact source bundle
+and exact kernel CBOR bytes. The mapping is provenance and audit data, not
+theorem authority: only facts present in the linked arena and accepted through
+the checked kernel boundary are trusted.

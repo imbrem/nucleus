@@ -40,6 +40,7 @@ members = [
   "crates/proton",
   "crates/nucleus/core",
   "crates/nucleus/script",
+  "crates/nucleus/spectec",
   "crates/nucleus/tactics",
   "crates/nucleus/server",
   "crates/nucleus",
