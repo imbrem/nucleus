@@ -1,13 +1,16 @@
 //! One-shot parameterized HOL interpretation for complete `SpecTec` documents.
 
-use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+};
 
 use covalence_data_spectec::{
     DeclarationId, IlArgument, IlBinding, IlExpression, IlExpressionView, IlGrammarSymbol,
     IlIteration, IlKind, IlSchemaError, IlType,
 };
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref, Sort, Tag, TyTag};
+use covalence_logic_hol::{Kernel, KernelError, Ref, Tag, TyTag};
 
 use crate::{
     HolEmbedding, HolFamilyError, HolSchema, HolSchemaError, HolTheoryError, LeastPredicateError,
@@ -106,13 +109,14 @@ pub enum ParameterizedError {
 struct SharedInterpretation {
     next_name: u64,
     symbols: BTreeMap<String, InterpretationSymbol>,
-    canonical_types: BTreeMap<String, Ref>,
+    canonical_types: BTreeMap<(Ref, Ref), Ref>,
+    canonical_type_refs: BTreeMap<Ref, Ref>,
 }
 
 #[derive(Clone, Debug)]
 struct ParameterizedResolver {
     embedding: HolEmbedding,
-    schema: HolSchema,
+    schema: Arc<HolSchema>,
     bindings: BTreeMap<String, Ref>,
     type_bindings: BTreeMap<String, Ref>,
     definition_bindings: BTreeMap<String, Ref>,
@@ -120,7 +124,7 @@ struct ParameterizedResolver {
     relations: BTreeMap<String, Ref>,
     expression_scopes: Vec<Vec<(String, Option<Ref>, Ref)>>,
     implicit_binders: Vec<Ref>,
-    shared: Rc<RefCell<SharedInterpretation>>,
+    shared: Arc<Mutex<SharedInterpretation>>,
 }
 
 /// Transactionally declares generic slots and lowers an entire exact document
@@ -157,28 +161,15 @@ pub fn parameterized_document(
             .ok_or_else(|| ParameterizedError::Resolve {
                 message: "free-variable name range exhausted".to_owned(),
             })?;
-    let mut canonical_types = BTreeMap::new();
-    for raw in 1..=staged.arena().len() {
-        let Ok(raw) = i32::try_from(raw) else {
-            break;
-        };
-        let Some(reference) = Ref::new(raw) else {
-            continue;
-        };
-        if matches!(staged.category(reference), Ok(Sort::Ty)) {
-            canonical_types
-                .entry(type_shape(&staged, reference)?)
-                .or_insert(reference);
-        }
-    }
-    let shared = Rc::new(RefCell::new(SharedInterpretation {
+    let shared = Arc::new(Mutex::new(SharedInterpretation {
         next_name,
         symbols: BTreeMap::new(),
-        canonical_types,
+        canonical_types: BTreeMap::new(),
+        canonical_type_refs: BTreeMap::new(),
     }));
     let mut resolver = ParameterizedResolver {
         embedding: HolEmbedding::new(value, bool_ty),
-        schema: schema.clone(),
+        schema: Arc::new(schema.clone()),
         bindings: BTreeMap::new(),
         type_bindings: BTreeMap::new(),
         definition_bindings: BTreeMap::new(),
@@ -186,10 +177,16 @@ pub fn parameterized_document(
         relations: BTreeMap::new(),
         expression_scopes: Vec::new(),
         implicit_binders: Vec::new(),
-        shared: Rc::clone(&shared),
+        shared: Arc::clone(&shared),
     };
     let semantics = relational_document(&mut staged, &mut resolver, source, &schema, &[])?;
-    let interpretation = shared.borrow().symbols.values().cloned().collect();
+    let interpretation = shared
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .symbols
+        .values()
+        .cloned()
+        .collect();
     *kernel = staged;
     Ok(ParameterizedDocument {
         schema,
@@ -198,9 +195,12 @@ pub fn parameterized_document(
     })
 }
 
-fn type_shape(kernel: &Kernel, reference: Ref) -> Result<String, ParameterizedError> {
+fn arrow_children(
+    kernel: &Kernel,
+    reference: Ref,
+) -> Result<Option<(Ref, Ref)>, ParameterizedError> {
     if kernel.arena().tag(reference) != Some(Tag::Ty(TyTag::Arr)) {
-        return Ok(format!("atom:{reference:?}"));
+        return Ok(None);
     }
     let children = kernel
         .arena()
@@ -214,18 +214,30 @@ fn type_shape(kernel: &Kernel, reference: Ref) -> Result<String, ParameterizedEr
             message: format!("malformed arrow type {reference:?}"),
         });
     };
-    Ok(format!(
-        "arr({},{})",
-        type_shape(kernel, *domain)?,
-        type_shape(kernel, *codomain)?
-    ))
+    Ok(Some((*domain, *codomain)))
 }
 
 impl ParameterizedResolver {
+    fn shared(&self) -> MutexGuard<'_, SharedInterpretation> {
+        self.shared.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn canonical_type(&self, kernel: &Kernel, reference: Ref) -> Result<Ref, ParameterizedError> {
-        let shape = type_shape(kernel, reference)?;
-        let mut shared = self.shared.borrow_mut();
-        Ok(*shared.canonical_types.entry(shape).or_insert(reference))
+        if let Some(canonical) = self.shared().canonical_type_refs.get(&reference) {
+            return Ok(*canonical);
+        }
+        let Some((domain, codomain)) = arrow_children(kernel, reference)? else {
+            return Ok(reference);
+        };
+        let domain = self.canonical_type(kernel, domain)?;
+        let codomain = self.canonical_type(kernel, codomain)?;
+        let mut shared = self.shared();
+        let canonical = *shared
+            .canonical_types
+            .entry((domain, codomain))
+            .or_insert(reference);
+        shared.canonical_type_refs.insert(reference, canonical);
+        Ok(canonical)
     }
 
     fn resolve(&self, kind: IlKind, name: &str) -> Result<Ref, ParameterizedError> {
@@ -244,7 +256,7 @@ impl ParameterizedResolver {
     }
 
     fn take_name(&self) -> Result<u64, ParameterizedError> {
-        let mut shared = self.shared.borrow_mut();
+        let mut shared = self.shared();
         let name = shared.next_name;
         shared.next_name = name
             .checked_add(1)
@@ -262,7 +274,7 @@ impl ParameterizedResolver {
         codomain: Ref,
     ) -> Result<Ref, ParameterizedError> {
         let key = format!("{label}|{domains:?}->{codomain:?}");
-        if let Some(symbol) = self.shared.borrow().symbols.get(&key) {
+        if let Some(symbol) = self.shared().symbols.get(&key) {
             return Ok(symbol.reference);
         }
         let classifier = domains.iter().rev().try_fold(codomain, |tail, &domain| {
@@ -274,7 +286,7 @@ impl ParameterizedResolver {
         let reference = kernel
             .tm_fv(self.take_name()?, classifier)
             .map_err(|source| ParameterizedError::Kernel { source })?;
-        self.shared.borrow_mut().symbols.insert(
+        self.shared().symbols.insert(
             key,
             InterpretationSymbol {
                 label,
