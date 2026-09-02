@@ -5,7 +5,7 @@ use covalence_data_spectec::{
     IlPremise, IlRuleSchema, IlSchemaError,
 };
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref};
+use covalence_logic_hol::{Kernel, KernelError, Ref, Tag, TyTag};
 
 use crate::{
     ExpressionAlgebra, HolCase, HolRule, LeastPredicate, LeastPredicateError,
@@ -48,6 +48,9 @@ pub enum RelationalCaseError {
         /// Underlying checked failure.
         source: KernelError,
     },
+    /// A schema slot was not a curried graph predicate with a result argument.
+    #[snafu(display("definition schema slot is not a function ending in bool"))]
+    NotGraph,
 }
 
 /// Lowered ingredients of one source-ordered definition clause.
@@ -82,6 +85,10 @@ pub struct RelationalCondition {
 /// Checked result of lowering one complete ordered definition body.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelationalDefinition {
+    /// Universally quantified graph inputs derived from the schema slot.
+    pub formal_inputs: Vec<Ref>,
+    /// Universally quantified graph result derived from the schema slot.
+    pub formal_result: Ref,
     /// Exact source-ordered cases.
     pub cases: Vec<HolCase>,
     /// Ordered disjunction used as the graph body.
@@ -90,6 +97,19 @@ pub struct RelationalDefinition {
     pub equation: Ref,
     /// First unused deterministic free-variable name.
     pub next_name: u64,
+}
+
+/// Minimal inputs for lowering one complete checked definition schema.
+#[derive(Clone, Copy, Debug)]
+pub struct RelationalDefinitionSchema<'a> {
+    /// HOL Boolean classifier.
+    pub bool_ty: Ref,
+    /// Checked graph-predicate slot declared by the generic schema.
+    pub predicate: Ref,
+    /// Exact decoded clauses in source order.
+    pub clauses: &'a [IlClauseSchema<'a>],
+    /// Existing interpretation roots whose free-variable names are reserved.
+    pub avoid: &'a [Ref],
 }
 
 /// Inputs selecting one complete definition graph constraint.
@@ -461,11 +481,109 @@ where
     .map_err(|source| resolver.kernel_error(source))?;
     *kernel = staged;
     Ok(RelationalDefinition {
+        formal_inputs: source.formal_inputs.to_vec(),
+        formal_result: source.formal_result,
         cases,
         body,
         equation,
         next_name,
     })
+}
+
+/// Derives a definition's formal inputs, result, and fresh-name range directly
+/// from its checked schema slot, then lowers every decoded clause.
+///
+/// This is the whole-schema entry point. [`relational_definition`] remains the
+/// lower-level form for callers that already own formal variables.
+///
+/// # Errors
+///
+/// Returns an error when the slot is not a curried graph predicate with at
+/// least a result argument, name allocation fails, or clause lowering fails.
+/// `kernel` is unchanged on failure.
+pub fn relational_definition_schema<R>(
+    kernel: &mut Kernel,
+    resolver: &mut R,
+    source: &RelationalDefinitionSchema<'_>,
+) -> Result<RelationalDefinition, R::Error>
+where
+    R: RelationalResolver,
+{
+    let mut staged = kernel.fork();
+    let classifier = staged
+        .classifier(source.predicate)
+        .map_err(|error| resolver.kernel_error(error))?;
+    let domains = graph_domains(&staged, classifier, source.bool_ty)
+        .map_err(|error| resolver.case_error(error))?;
+    let Some((result_type, input_types)) = domains.split_last() else {
+        return Err(resolver.case_error(RelationalCaseError::NotGraph));
+    };
+    let roots = std::iter::once(source.predicate)
+        .chain(std::iter::once(source.bool_ty))
+        .chain(source.avoid.iter().copied())
+        .collect::<Vec<_>>();
+    let mut next_name = staged
+        .fresh_name(&roots)
+        .map_err(|error| resolver.kernel_error(error))?;
+    let mut formal_inputs = Vec::with_capacity(input_types.len());
+    for &input_type in input_types {
+        formal_inputs.push(
+            staged
+                .tm_fv(next_name, input_type)
+                .map_err(|error| resolver.kernel_error(error))?,
+        );
+        next_name = next_name
+            .checked_add(1)
+            .ok_or_else(|| resolver.name_exhausted())?;
+    }
+    let formal_result = staged
+        .tm_fv(next_name, *result_type)
+        .map_err(|error| resolver.kernel_error(error))?;
+    next_name = next_name
+        .checked_add(1)
+        .ok_or_else(|| resolver.name_exhausted())?;
+    let definition = relational_definition(
+        &mut staged,
+        resolver,
+        &RelationalDefinitionSource {
+            bool_ty: source.bool_ty,
+            predicate: source.predicate,
+            formal_inputs: &formal_inputs,
+            formal_result,
+            clauses: source.clauses,
+            first_name: next_name,
+        },
+    )?;
+    *kernel = staged;
+    Ok(definition)
+}
+
+fn graph_domains(
+    kernel: &Kernel,
+    predicate_type: Ref,
+    bool_ty: Ref,
+) -> Result<Vec<Ref>, RelationalCaseError> {
+    let mut domains = Vec::new();
+    let mut current = predicate_type;
+    while kernel.arena().tag(current) == Some(Tag::Ty(TyTag::Arr)) {
+        let children = kernel
+            .arena()
+            .children(current)
+            .ok_or(RelationalCaseError::NotGraph)?
+            .collect::<Vec<_>>();
+        let [domain, codomain] = children.as_slice() else {
+            return Err(RelationalCaseError::NotGraph);
+        };
+        domains.push(*domain);
+        current = *codomain;
+    }
+    if !kernel
+        .equivalent(current, bool_ty)
+        .map_err(|source| RelationalCaseError::Kernel { source })?
+    {
+        return Err(RelationalCaseError::NotGraph);
+    }
+    Ok(domains)
 }
 
 /// Transactionally lowers complete mutually recursive relation groups to their

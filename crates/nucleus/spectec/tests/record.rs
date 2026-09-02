@@ -9,13 +9,13 @@ use covalence_nucleus_spectec::{
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
     CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase,
     HolEmbedding, HolRule, HolTheoryError, IndexErasure, KernelRoot, RelationalCall,
-    RelationalClause, RelationalCondition, RelationalDefinitionSource, RelationalExpressionAlgebra,
-    RelationalRelation, RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler,
-    Source, TYPE_NAME, TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family,
-    close_graph_equation, close_hol_rule, close_hol_rules, close_hol_theory, declare_hol_schema,
-    fold_expression, fold_grammar, fold_type, least_closed_family, least_closed_predicate,
-    ordered_cases, relational_definition, relational_hol_case, relational_hol_rule,
-    relational_relations,
+    RelationalClause, RelationalCondition, RelationalDefinitionSchema, RelationalDefinitionSource,
+    RelationalExpressionAlgebra, RelationalRelation, RelationalResolver, RelationalTerm,
+    SelectedCompileError, SelectedCompiler, Source, TYPE_NAME, TranslationCase, TypeAlgebra,
+    TypeChildren, begin_least_closed_family, close_graph_equation, close_hol_rule, close_hol_rules,
+    close_hol_theory, declare_hol_schema, fold_expression, fold_grammar, fold_type,
+    least_closed_family, least_closed_predicate, ordered_cases, relational_definition,
+    relational_definition_schema, relational_hol_case, relational_hol_rule, relational_relations,
 };
 
 #[derive(Clone)]
@@ -333,6 +333,7 @@ fn relational_expression_fold_turns_calls_into_graph_premises() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Covers low-level and schema-derived definition APIs.
 fn complete_clause_api_lowers_patterns_result_and_premises() {
     let il = IlDocument::parse(
         b"(def \"pick\" (exp \"a\" nat) (exp \"b\" nat) nat (clause (exp (var \"x\")) (exp (var \"y\")) (var \"x\") (if (bool true)) else))",
@@ -399,6 +400,51 @@ fn complete_clause_api_lowers_patterns_result_and_premises() {
     )
     .unwrap();
     assert_eq!(definition.cases.len(), 1);
+    assert_eq!(definition.formal_inputs, formal_inputs);
+    assert_eq!(definition.formal_result, formal_result);
+    let schema_predicate = kernel.tm_fv(300, predicate_ty).unwrap();
+    let derived = relational_definition_schema(
+        &mut kernel,
+        &mut resolver,
+        &RelationalDefinitionSchema {
+            bool_ty,
+            predicate: schema_predicate,
+            clauses: std::slice::from_ref(&schema),
+            avoid: &[predicate, graph, x, y, add],
+        },
+    )
+    .unwrap();
+    assert_eq!(derived.formal_inputs.len(), 2);
+    assert!(
+        derived
+            .formal_inputs
+            .iter()
+            .chain(std::iter::once(&derived.formal_result))
+            .all(|&variable| kernel
+                .equivalent(kernel.classifier(variable).unwrap(), value)
+                .unwrap())
+    );
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(derived.equation).unwrap(), bool_ty)
+            .unwrap()
+    );
+    let not_graph = kernel.bool(bool_ty, true).unwrap();
+    let before = kernel.arena().len();
+    assert!(
+        relational_definition_schema(
+            &mut kernel,
+            &mut resolver,
+            &RelationalDefinitionSchema {
+                bool_ty,
+                predicate: not_graph,
+                clauses: std::slice::from_ref(&schema),
+                avoid: &[],
+            },
+        )
+        .is_err()
+    );
+    assert_eq!(kernel.arena().len(), before);
     assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
 }
 
