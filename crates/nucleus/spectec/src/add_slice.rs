@@ -5,12 +5,16 @@
 //! selectors. Selected cases carry raw-source audit locations; everything
 //! else is represented by an explicit rejection.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{ClauseId, DeclarationId, IlError, IlKind, RuleId};
 use covalence_lib_error::snafu::Snafu;
 
 use crate::Source;
+
+/// Closed-record discriminator for a parameter-only add slice.
+pub const ADD_SLICE_TYPE_NAME: &str = "io.github.imbrem.nucleus.spectecAddSliceV1";
 
 /// One exact translation case in the parameter-only add slice.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -146,6 +150,96 @@ pub struct AddSlicePlan {
     declarations: Vec<DeclarationCoverage>,
     clauses: Vec<ClauseCoverage>,
     rules: Vec<RuleCoverage>,
+}
+
+/// Canonical audit artifact linking exact inputs to one closed coverage plan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AddSliceArtifact {
+    bundle: Cid,
+    ast: Cid,
+    plan: AddSlicePlan,
+}
+
+impl AddSliceArtifact {
+    /// Builds the canonical plan for one exact verified source.
+    ///
+    /// # Errors
+    ///
+    /// Returns any structural coverage error from [`AddSlicePlan::build`].
+    pub fn build(source: &Source) -> Result<Self, AddSliceError> {
+        Ok(Self {
+            bundle: source.bundle(),
+            ast: source.ast(),
+            plan: AddSlicePlan::build(source)?,
+        })
+    }
+
+    /// Returns the exact source-bundle CID.
+    #[must_use]
+    pub const fn bundle(&self) -> Cid {
+        self.bundle
+    }
+
+    /// Returns the exact elaborated-AST CID.
+    #[must_use]
+    pub const fn ast(&self) -> Cid {
+        self.ast
+    }
+
+    /// Returns the closed coverage plan.
+    #[must_use]
+    pub const fn plan(&self) -> &AddSlicePlan {
+        &self.plan
+    }
+
+    /// Encodes the artifact as canonical ATProto-profile DRISL.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if canonical DRISL encoding rejects the closed value.
+    pub fn encode(&self) -> Result<Vec<u8>, AddSliceError> {
+        drisl::encode(Policy::ATPROTO, &self.to_value())
+            .map_err(|source| AddSliceError::RecordEncode { source })
+    }
+
+    /// Returns the SHA-256 DRISL CID of the exact canonical artifact bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if canonical DRISL encoding rejects the closed value.
+    pub fn cid(&self) -> Result<Cid, AddSliceError> {
+        Ok(drisl::address(
+            CidCodec::Drisl,
+            CidHash::Sha256,
+            &self.encode()?,
+        ))
+    }
+
+    fn to_value(&self) -> Value {
+        Value::Map(BTreeMap::from([
+            value_field("$type", Value::Text(ADD_SLICE_TYPE_NAME.to_owned())),
+            value_field("bundle", Value::Link(self.bundle)),
+            value_field("ast", Value::Link(self.ast)),
+            value_field(
+                "declarations",
+                Value::Array(
+                    self.plan
+                        .declarations
+                        .iter()
+                        .map(declaration_value)
+                        .collect(),
+                ),
+            ),
+            value_field(
+                "clauses",
+                Value::Array(self.plan.clauses.iter().map(clause_value).collect()),
+            ),
+            value_field(
+                "rules",
+                Value::Array(self.plan.rules.iter().map(rule_value).collect()),
+            ),
+        ]))
+    }
 }
 
 impl AddSlicePlan {
@@ -300,6 +394,12 @@ pub enum AddSliceError {
         expected: usize,
         /// Cases observed in the supplied source.
         actual: usize,
+    },
+    /// Canonical coverage-record encoding failed.
+    #[snafu(display("could not encode SpecTec add-slice record: {source}"))]
+    RecordEncode {
+        /// Underlying deterministic encoding error.
+        source: drisl::EncodeError,
     },
 }
 
@@ -740,4 +840,124 @@ fn translated(
         return Err(AddSliceError::DuplicateCase { case });
     }
     Ok(Disposition::Translate { case, source })
+}
+
+fn declaration_value(coverage: &DeclarationCoverage) -> Value {
+    let (root, member) = declaration_parts(coverage.id);
+    Value::Map(BTreeMap::from([
+        value_field("root", Value::Integer(i64::from(root))),
+        value_field("member", Value::Integer(i64::from(member))),
+        value_field("disposition", disposition_value(coverage.disposition)),
+    ]))
+}
+
+fn clause_value(coverage: &ClauseCoverage) -> Value {
+    let (root, member) = declaration_parts(coverage.id.declaration());
+    Value::Map(BTreeMap::from([
+        value_field("root", Value::Integer(i64::from(root))),
+        value_field("member", Value::Integer(i64::from(member))),
+        value_field(
+            "path",
+            Value::Array(
+                coverage
+                    .id
+                    .path()
+                    .map(|position| Value::Integer(i64::from(position)))
+                    .collect(),
+            ),
+        ),
+        value_field("disposition", disposition_value(coverage.disposition)),
+    ]))
+}
+
+fn rule_value(coverage: &RuleCoverage) -> Value {
+    let (root, member) = declaration_parts(coverage.id.declaration());
+    Value::Map(BTreeMap::from([
+        value_field("root", Value::Integer(i64::from(root))),
+        value_field("member", Value::Integer(i64::from(member))),
+        value_field(
+            "path",
+            Value::Array(
+                coverage
+                    .id
+                    .path()
+                    .map(|position| Value::Integer(i64::from(position)))
+                    .collect(),
+            ),
+        ),
+        value_field("disposition", disposition_value(coverage.disposition)),
+    ]))
+}
+
+fn disposition_value(disposition: Disposition) -> Value {
+    let (status, case, rejection, source_path, first_line, last_line) = match disposition {
+        Disposition::Translate { case, source } => (
+            "translate",
+            case_name(case),
+            "",
+            source.path,
+            source.first_line,
+            source.last_line,
+        ),
+        Disposition::Reject(rejection) => ("reject", "", rejection_name(rejection), "", 0, 0),
+    };
+    Value::Map(BTreeMap::from([
+        value_field("status", Value::Text(status.to_owned())),
+        value_field("case", Value::Text(case.to_owned())),
+        value_field("rejection", Value::Text(rejection.to_owned())),
+        value_field("sourcePath", Value::Text(source_path.to_owned())),
+        value_field("firstLine", Value::Integer(i64::from(first_line))),
+        value_field("lastLine", Value::Integer(i64::from(last_line))),
+    ]))
+}
+
+fn declaration_parts(id: DeclarationId) -> (u32, u32) {
+    (id.root().get(), id.member().unwrap_or(0))
+}
+
+const fn rejection_name(rejection: Rejection) -> &'static str {
+    match rejection {
+        Rejection::DeclarationOutsideSlice => "declaration-outside-slice",
+        Rejection::AlternativeOutsideSlice => "alternative-outside-slice",
+    }
+}
+
+const fn case_name(case: TranslationCase) -> &'static str {
+    match case {
+        TranslationCase::IntegerCarrier => "integer-carrier",
+        TranslationCase::NumericType => "numeric-type",
+        TranslationCase::Size => "size",
+        TranslationCase::SizeNn => "size-nn",
+        TranslationCase::BinaryOperationSyntax => "binary-operation-syntax",
+        TranslationCase::Value => "value",
+        TranslationCase::Frame => "frame",
+        TranslationCase::Instruction => "instruction",
+        TranslationCase::IntegerAdd => "integer-add",
+        TranslationCase::BinaryOperation => "binary-operation",
+        TranslationCase::Local => "local",
+        TranslationCase::StepPure => "step-pure",
+        TranslationCase::StepRead => "step-read",
+        TranslationCase::Step => "step",
+        TranslationCase::Steps => "steps",
+        TranslationCase::SizeI32Clause => "size-i32-clause",
+        TranslationCase::SizeNnClause => "size-nn-clause",
+        TranslationCase::IntegerAddClause => "integer-add-clause",
+        TranslationCase::BinaryOperationI32AddClause => "binary-operation-i32-add-clause",
+        TranslationCase::LocalClause => "local-clause",
+        TranslationCase::BinaryOperationValueRule => "binary-operation-value-rule",
+        TranslationCase::ReturnFrameRule => "return-frame-rule",
+        TranslationCase::LocalGetRule => "local-get-rule",
+        TranslationCase::StepPureRule => "step-pure-rule",
+        TranslationCase::StepPurePremise => "step-pure-premise",
+        TranslationCase::StepReadRule => "step-read-rule",
+        TranslationCase::StepReadPremise => "step-read-premise",
+        TranslationCase::StepsReflexiveRule => "steps-reflexive-rule",
+        TranslationCase::StepsTransitiveRule => "steps-transitive-rule",
+        TranslationCase::StepsStepPremise => "steps-step-premise",
+        TranslationCase::StepsTailPremise => "steps-tail-premise",
+    }
+}
+
+fn value_field(name: &str, value: Value) -> (String, Value) {
+    (name.to_owned(), value)
 }

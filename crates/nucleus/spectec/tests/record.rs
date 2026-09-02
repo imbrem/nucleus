@@ -2,8 +2,8 @@ use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
 use covalence_data_spectec::{DeclarationId, IlDocument, Limits};
 use covalence_logic_hol::Kernel;
 use covalence_nucleus_spectec::{
-    AddSlicePlan, ArtifactError, CompilationRecord, CompileError, Compiler, Disposition,
-    KernelRoot, Source, TYPE_NAME, TranslationCase,
+    ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSlicePlan, ArtifactError, CompilationRecord,
+    CompileError, Compiler, Disposition, KernelRoot, Source, TYPE_NAME, TranslationCase,
 };
 
 #[test]
@@ -74,6 +74,29 @@ fn add_slice_exhaustively_classifies_exact_structural_forms() {
             .count();
         assert!(usize::try_from(span.last_line).unwrap() <= line_count);
     }
+}
+
+#[test]
+fn add_slice_has_canonical_translation_cid() {
+    let source = Source::wasm3().unwrap();
+    let artifact = AddSliceArtifact::build(&source).unwrap();
+    let bytes = artifact.encode().unwrap();
+    assert_eq!(artifact.encode().unwrap(), bytes);
+    assert_eq!(artifact.bundle(), source.bundle());
+    assert_eq!(artifact.ast(), source.ast());
+    assert_eq!(artifact.plan(), &AddSlicePlan::build(&source).unwrap());
+    assert_eq!(
+        artifact.cid().unwrap(),
+        drisl::address(CidCodec::Drisl, CidHash::Sha256, &bytes)
+    );
+    assert_eq!(artifact.cid().unwrap().codec(), CidCodec::Drisl);
+    assert_eq!(artifact.cid().unwrap().hash(), CidHash::Sha256);
+    assert!(Policy::ATPROTO.accepts(artifact.cid().unwrap()));
+    assert!(drisl::addresses(artifact.cid().unwrap(), &bytes));
+    assert_eq!(
+        ADD_SLICE_TYPE_NAME,
+        "io.github.imbrem.nucleus.spectecAddSliceV1"
+    );
 }
 
 #[test]

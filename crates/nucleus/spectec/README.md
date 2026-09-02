@@ -15,3 +15,7 @@ theorem. It classifies every elaborated declaration, nested clause, and nested
 rule by structural selector as one translation case or an explicit rejection.
 Selected cases carry pinned raw-source line mappings. The plan assigns no HOL
 meaning and cannot create facts.
+
+`AddSliceArtifact` encodes that plan as a closed ATProto-profile DRISL record
+linked to the exact bundle and elaborated-AST CIDs. Its SHA-256 DRISL CID is the
+translation CID; it remains provenance rather than theorem authority.

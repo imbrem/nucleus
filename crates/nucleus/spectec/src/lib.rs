@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 mod add_slice;
 
 pub use add_slice::{
-    AddSliceError, AddSlicePlan, ClauseCoverage, DeclarationCoverage, Disposition, Rejection,
-    RuleCoverage, SourceSpan, TranslationCase,
+    ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceError, AddSlicePlan, ClauseCoverage,
+    DeclarationCoverage, Disposition, Rejection, RuleCoverage, SourceSpan, TranslationCase,
 };
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};
