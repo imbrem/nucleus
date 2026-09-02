@@ -18,6 +18,7 @@ members = [
   "crates/logic/cas",
   "crates/logic/classical",
   "crates/logic/lrat",
+  "crates/logic/lean",
   "crates/logic/metamath",
   "crates/logic/sat",
   "crates/logic/hol",

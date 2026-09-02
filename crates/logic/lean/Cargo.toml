@@ -1,0 +1,15 @@
+[package]
+name = "covalence-logic-lean"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Lean logic frontend and export format reader"
+publish = false
+
+[dependencies]
+covalence-lib-error = { path = "../../lib/error" }
+covalence-lib-json = { path = "../../lib/json" }
+
+[lints]
+workspace = true
