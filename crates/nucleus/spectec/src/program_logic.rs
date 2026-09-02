@@ -103,26 +103,26 @@ pub struct CallsAssert<Program> {
     pub import: Symbol,
 }
 
-/// Immutable programs characterized only by whether they may call `assert`.
+/// Immutable Boolean scaffolding for composing assertion propositions.
 ///
-/// `Leaf` leaves room for exact WebAssembly modules. The four closed forms are
-/// deliberately tiny executable-specification examples: their behavior lowers
-/// compositionally to [`Proposition`] without consulting an evaluator.
+/// This is not a WebAssembly syntax or semantics. `Leaf` leaves room for a
+/// separately grounded WebAssembly proposition; the four closed forms only
+/// exercise propositional composition without consulting an evaluator.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AssertProgram<Leaf> {
-    /// A program whose behavior must be supplied by the Wasm interpretation.
+pub enum AssertCombinator<Leaf> {
+    /// A proposition whose behavior must be supplied by a Wasm interpretation.
     Leaf(Leaf),
-    /// A program that never calls `assert`.
+    /// A proposition that is false.
     False,
-    /// A program that calls `assert`.
+    /// A proposition that is true.
     True,
-    /// A program that calls `assert` exactly when both operands may do so.
+    /// Conjunction of two assertion propositions.
     And(Arc<Self>, Arc<Self>),
-    /// A program that calls `assert` when either operand may do so.
+    /// Disjunction of two assertion propositions.
     Or(Arc<Self>, Arc<Self>),
 }
 
-impl<Leaf> AssertProgram<Leaf> {
+impl<Leaf> AssertCombinator<Leaf> {
     /// Constructs a program leaf.
     pub const fn leaf(leaf: Leaf) -> Self {
         Self::Leaf(leaf)
@@ -375,8 +375,8 @@ mod tests {
     #[test]
     fn closed_program_examples_derive_checked_behavior() {
         for (program, expected) in [
-            (AssertProgram::True.and(AssertProgram::False), false),
-            (AssertProgram::True.or(AssertProgram::False), true),
+            (AssertCombinator::True.and(AssertCombinator::False), false),
+            (AssertCombinator::True.or(AssertCombinator::False), true),
         ] {
             let proposition: Proposition<CallsAssert<Infallible>> = program.calls_assert();
             let closed = proposition.map(&mut |atom| match atom.program {});
