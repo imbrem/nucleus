@@ -9,7 +9,7 @@ use smallvec::SmallVec;
 
 use crate::{
     ImportId, Ref,
-    builtin::{Op1, Op2},
+    builtin::{Num1, Num2, Op1, Op2},
 };
 
 const MAX_CHILDREN: usize = 3;
@@ -111,6 +111,10 @@ pub(crate) enum Expr {
     Op1(Op1, Ref),
     /// Versioned compact binary syntax. Operands are ordered left-to-right.
     Op2(Op2, Ref, Ref),
+    /// Versioned compact unary numeric syntax.
+    Num1(Num1, Ref),
+    /// Versioned compact binary numeric syntax. Operands are left-to-right.
+    Num2(Num2, Ref, Ref),
     /// Equality: left and right operands. Their common type is inferred.
     Eq(Ref, Ref, Ref),
     Eps {
@@ -153,6 +157,8 @@ impl Expr {
             Self::Int(..) | Self::IntBig(..) => Tag::Tm(TmTag::Int),
             Self::Op1(..) => Tag::Tm(TmTag::Op1),
             Self::Op2(..) => Tag::Tm(TmTag::Op2),
+            Self::Num1(..) => Tag::Tm(TmTag::Num1),
+            Self::Num2(..) => Tag::Tm(TmTag::Num2),
             Self::Eq(..) => Tag::Tm(TmTag::Eq),
             Self::Eps { .. } => Tag::Tm(TmTag::Eps),
             Self::TmRef { .. } => Tag::Tm(TmTag::Ref),
@@ -180,9 +186,10 @@ impl Expr {
             | Self::TyLam(left, right)
             | Self::App(left, right)
             | Self::Lam(left, right)
-            | Self::Op2(_, left, right) => SmallVec::from_slice(&[left, right]),
+            | Self::Op2(_, left, right)
+            | Self::Num2(_, left, right) => SmallVec::from_slice(&[left, right]),
             Self::Eq(ty, left, right) => SmallVec::from_slice(&[ty, left, right]),
-            Self::Op1(_, operand) => SmallVec::from_slice(&[operand]),
+            Self::Op1(_, operand) | Self::Num1(_, operand) => SmallVec::from_slice(&[operand]),
             Self::Eps { ty, predicate } => SmallVec::from_slice(&[ty, predicate]),
             Self::TyFv { kind: child, .. }
             | Self::TyExists {
@@ -344,6 +351,8 @@ pub enum TmTag {
     Int,
     Op1,
     Op2,
+    Num1,
+    Num2,
     Eq,
     Eps,
     Ref,
@@ -364,6 +373,8 @@ impl TmTag {
             Self::Int => "tm.int",
             Self::Op1 => crate::builtin::OP1_ROW_TAG,
             Self::Op2 => crate::builtin::OP2_ROW_TAG,
+            Self::Num1 => crate::builtin::NUM1_ROW_TAG,
+            Self::Num2 => crate::builtin::NUM2_ROW_TAG,
             Self::Eq => "tm.eq",
             Self::Eps => "tm.eps",
             Self::Ref => "tm.ref",
@@ -422,6 +433,8 @@ impl Tag {
             "tm.int" => Self::Tm(TmTag::Int),
             crate::builtin::OP1_ROW_TAG => Self::Tm(TmTag::Op1),
             crate::builtin::OP2_ROW_TAG => Self::Tm(TmTag::Op2),
+            crate::builtin::NUM1_ROW_TAG => Self::Tm(TmTag::Num1),
+            crate::builtin::NUM2_ROW_TAG => Self::Tm(TmTag::Num2),
             "tm.eq" => Self::Tm(TmTag::Eq),
             "tm.eps" => Self::Tm(TmTag::Eps),
             "tm.ref" => Self::Tm(TmTag::Ref),
@@ -644,6 +657,16 @@ impl Row {
                 [left, right],
                 Some(Value::Nat(u64::from(op.code()))),
             ),
+            Expr::Num1(op, operand) => ordinary(
+                Tag::Tm(TmTag::Num1),
+                [operand],
+                Some(Value::Nat(u64::from(op.code()))),
+            ),
+            Expr::Num2(op, left, right) => ordinary(
+                Tag::Tm(TmTag::Num2),
+                [left, right],
+                Some(Value::Nat(u64::from(op.code()))),
+            ),
             Expr::Eq(ty, left, right) => ordinary(Tag::Tm(TmTag::Eq), [ty, left, right], None),
             Expr::Eps { ty, predicate } => ordinary(Tag::Tm(TmTag::Eps), [ty, predicate], None),
             Expr::TmRef { src, ix } => foreign(Tag::Tm(TmTag::Ref), src, ix),
@@ -773,6 +796,21 @@ impl Row {
                 Expr::Op2(
                     Op2::from_code(u8::try_from(code).map_err(|_| "unknown op2 code")?)
                         .ok_or("unknown op2 code")?,
+                    *left,
+                    *right,
+                )
+            }
+            (Tag::Tm(TmTag::Num1), Some([operand]), Some(Value::Nat(code)), None, None) => {
+                Expr::Num1(
+                    Num1::from_code(u8::try_from(code).map_err(|_| "unknown num1 code")?)
+                        .ok_or("unknown num1 code")?,
+                    *operand,
+                )
+            }
+            (Tag::Tm(TmTag::Num2), Some([left, right]), Some(Value::Nat(code)), None, None) => {
+                Expr::Num2(
+                    Num2::from_code(u8::try_from(code).map_err(|_| "unknown num2 code")?)
+                        .ok_or("unknown num2 code")?,
                     *left,
                     *right,
                 )
