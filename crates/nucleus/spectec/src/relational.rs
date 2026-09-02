@@ -3,9 +3,10 @@
 use covalence_data_spectec::{
     IlArgument, IlBinding, IlExpression, IlExpressionView, IlSchemaError,
 };
+use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref};
 
-use crate::{ExpressionAlgebra, HolRule};
+use crate::{ExpressionAlgebra, HolCase, HolRule, existential_case};
 
 /// Relational meaning of one expression.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,6 +23,47 @@ pub struct RelationalCall {
     pub predicate: Ref,
     /// Classifier of the fresh result accepted by `predicate`.
     pub result_type: Ref,
+}
+
+/// Why lowered clause terms could not form one exact HOL graph case.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum RelationalCaseError {
+    /// Clause patterns did not cover the declaration's formal inputs exactly.
+    #[snafu(display("clause has {actual} patterns; definition has {expected} inputs"))]
+    Arity {
+        /// Number of declaration inputs.
+        expected: usize,
+        /// Number of clause patterns.
+        actual: usize,
+    },
+    /// A checked HOL constructor rejected the case.
+    #[snafu(display("could not construct relational HOL clause case: {source}"))]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+}
+
+/// Lowered ingredients of one source-ordered definition clause.
+#[derive(Clone, Copy, Debug)]
+pub struct RelationalClause<'a> {
+    /// Universally bound declaration inputs.
+    pub formal_inputs: &'a [Ref],
+    /// Universally bound graph result.
+    pub formal_result: Ref,
+    /// Clause-local variables decoded from explicit bindings.
+    pub explicit_locals: &'a [Ref],
+    /// Lowered left-hand-side patterns in input order.
+    pub patterns: &'a [RelationalTerm],
+    /// Lowered right-hand-side result expression.
+    pub result: &'a RelationalTerm,
+    /// Fresh binders introduced while lowering semantic premises.
+    pub semantic_binders: &'a [Ref],
+    /// Lowered semantic premise propositions.
+    pub semantic_premises: &'a [Ref],
+    /// Whether this clause carries `otherwise`.
+    pub otherwise: bool,
 }
 
 impl RelationalTerm {
@@ -75,6 +117,66 @@ pub fn relational_hol_rule(
     }
     premises.extend_from_slice(semantic_premises);
     HolRule::new(binders, premises, arguments)
+}
+
+/// Builds one exact ordered graph case from lowered clause terms.
+///
+/// Applicability includes pattern matching, pattern dependencies, and semantic
+/// premises, but deliberately excludes evaluation of the right-hand side. A
+/// selected partial clause therefore still blocks a later `otherwise` clause.
+/// Production additionally requires right-hand-side dependencies and equality
+/// with `formal_result`. All clause-local and relationally introduced values
+/// are existentially closed.
+///
+/// # Errors
+///
+/// Returns an error when pattern and formal-input arities differ, an equality
+/// is ill-typed, a premise is not Boolean, or existential construction fails.
+pub fn relational_hol_case(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    clause: &RelationalClause<'_>,
+) -> Result<HolCase, RelationalCaseError> {
+    if clause.formal_inputs.len() != clause.patterns.len() {
+        return Err(RelationalCaseError::Arity {
+            expected: clause.formal_inputs.len(),
+            actual: clause.patterns.len(),
+        });
+    }
+
+    let mut locals = clause.explicit_locals.to_vec();
+    let mut applicability = Vec::new();
+    for (&formal, pattern) in clause.formal_inputs.iter().zip(clause.patterns) {
+        locals.extend_from_slice(pattern.binders());
+        applicability.extend_from_slice(pattern.premises());
+        applicability.push(
+            kernel
+                .eq(bool_ty, formal, pattern.value())
+                .map_err(|source| RelationalCaseError::Kernel { source })?,
+        );
+    }
+    locals.extend_from_slice(clause.semantic_binders);
+    applicability.extend_from_slice(clause.semantic_premises);
+    let applicable = existential_case(kernel, bool_ty, &locals, &applicability)
+        .map_err(|source| RelationalCaseError::Kernel { source })?;
+
+    let mut production_locals = locals;
+    production_locals.extend_from_slice(clause.result.binders());
+    let mut production = applicability;
+    production.extend_from_slice(clause.result.premises());
+    production.push(
+        kernel
+            .eq(bool_ty, clause.formal_result, clause.result.value())
+            .map_err(|source| RelationalCaseError::Kernel { source })?,
+    );
+    let produces = existential_case(kernel, bool_ty, &production_locals, &production)
+        .map_err(|source| RelationalCaseError::Kernel { source })?;
+
+    Ok(HolCase {
+        applicable,
+        produces,
+        otherwise: clause.otherwise,
+    })
 }
 
 /// Supplies environment-dependent leaves and primitive meanings.

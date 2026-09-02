@@ -8,11 +8,12 @@ use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
     CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase,
-    HolEmbedding, HolRule, IndexErasure, KernelRoot, RelationalCall, RelationalExpressionAlgebra,
-    RelationalResolver, SelectedCompileError, SelectedCompiler, Source, TYPE_NAME, TranslationCase,
-    TypeAlgebra, TypeChildren, close_graph_equation, close_hol_rule, close_hol_rules,
-    declare_hol_schema, fold_expression, fold_grammar, fold_type, least_closed_family,
-    least_closed_predicate, ordered_cases, relational_hol_rule,
+    HolEmbedding, HolRule, IndexErasure, KernelRoot, RelationalCall, RelationalClause,
+    RelationalExpressionAlgebra, RelationalResolver, RelationalTerm, SelectedCompileError,
+    SelectedCompiler, Source, TYPE_NAME, TranslationCase, TypeAlgebra, TypeChildren,
+    close_graph_equation, close_hol_rule, close_hol_rules, declare_hol_schema, fold_expression,
+    fold_grammar, fold_type, least_closed_family, least_closed_predicate, ordered_cases,
+    relational_hol_case, relational_hol_rule,
 };
 
 struct TestRelationalResolver {
@@ -122,6 +123,7 @@ impl RelationalResolver for TestRelationalResolver {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Exercises binding, call, rule, and exact-clause composition.
 fn relational_expression_fold_turns_calls_into_graph_premises() {
     let il = IlDocument::parse(
         b"(def \"g\" nat (clause (exp \"z\" nat) (exp \"flag\" bool) (call \"f\" (exp (bin add nat (var \"x\") (var \"y\"))))))",
@@ -181,6 +183,35 @@ fn relational_expression_fold_turns_calls_into_graph_premises() {
     assert!(
         kernel
             .equivalent(kernel.classifier(term.premises()[0]).unwrap(), bool_ty)
+            .unwrap()
+    );
+    let formal_value = kernel.tm_fv(300, value).unwrap();
+    let formal_bool = kernel.tm_fv(301, bool_ty).unwrap();
+    let formal_result = kernel.tm_fv(302, value).unwrap();
+    let formal_inputs = [formal_value, formal_bool];
+    let patterns = [
+        RelationalTerm::new(explicit[0], Vec::new(), Vec::new()),
+        RelationalTerm::new(explicit[1], Vec::new(), Vec::new()),
+    ];
+    let case = relational_hol_case(
+        &mut kernel,
+        bool_ty,
+        &RelationalClause {
+            formal_inputs: &formal_inputs,
+            formal_result,
+            explicit_locals: &explicit,
+            patterns: &patterns,
+            result: &term,
+            semantic_binders: &[],
+            semantic_premises: &[],
+            otherwise: true,
+        },
+    )
+    .unwrap();
+    assert!(case.otherwise);
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(case.applicable).unwrap(), bool_ty)
             .unwrap()
     );
     let predicate_ty = kernel.ty_arr(value, bool_ty).unwrap();
