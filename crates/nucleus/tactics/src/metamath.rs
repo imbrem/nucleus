@@ -758,4 +758,28 @@ mod tests {
         }
         assert_eq!(logical.len(), verified);
     }
+
+    #[test]
+    #[ignore = "requires NUCLEUS_METAMATH_CORPUS; full set.mm verification and HOL replay"]
+    fn set_mm_two_plus_two_becomes_a_checked_hol_derivation() {
+        let root = std::env::var("NUCLEUS_METAMATH_CORPUS").expect("corpus checkout");
+        let source = std::fs::read_to_string(std::path::Path::new(&root).join("set.mm"))
+            .expect("read set.mm");
+        let db = parse(&source).expect("parse set.mm");
+        verify_all(&db).expect("independently verify all of set.mm");
+        let mut session = GroundSession::new(&db).expect("session");
+        let imported = session
+            .import(assertion(&db, "2p2e4"))
+            .expect("HOL replay of 2p2e4");
+        let theorem = session
+            .kernel()
+            .thm()
+            .get(imported.theorem)
+            .expect("checked theorem");
+        assert!(theorem.lhs.rows().next().is_none());
+        assert_eq!(
+            theorem.rhs.rows().next(),
+            Some(&[positive(imported.proposition)][..])
+        );
+    }
 }
