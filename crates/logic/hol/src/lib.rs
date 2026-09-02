@@ -14,6 +14,8 @@ mod table;
 pub mod wire;
 
 pub use arena::Arena;
+pub use bytes::Bytes;
+pub use covalence_data_num::{DecodeLimit, Int, Num};
 pub use kernel::{
     AX_INF, AX_SUB, AbsThm, ApTerm, ApThm, BINDER_COUNT, Binder, CheckedArena, CheckedPrefix,
     ChoiceThm, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, CopyMap, Dnf, DnfId,
@@ -25,11 +27,14 @@ pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 pub use syn::{SynFact, SynRel};
 pub use table::Table;
 
+/// Maximum payload accepted for one compact byte, natural, or integer literal.
+pub const MAX_LITERAL_BYTES: usize = row::MAX_LITERAL_BYTES;
+
 use std::{collections::BTreeSet, num::NonZeroI32};
 
 use arena::{Dense, EqColumn};
 use covalence_lib_hash::O256;
-use row::Row;
+use row::{Row, RowSerde};
 use serde::{Deserialize, Serialize};
 use syn::{SynFree, SynSlot};
 
@@ -385,6 +390,7 @@ impl Arena {
     pub const fn empty() -> Self {
         Self {
             imports: Vec::new(),
+            blobs: Vec::new(),
             axs: BTreeSet::new(),
             dense: Dense {
                 defs: Vec::new(),
@@ -622,6 +628,51 @@ impl Arena {
         }
     }
 
+    /// The bytes stored by a compact `tm.bytes` row.
+    #[must_use]
+    pub fn bytes_value(&self, reference: Ref) -> Option<&[u8]> {
+        self.bytes(reference).map(Bytes::as_ref)
+    }
+
+    /// The shared byte storage held by a compact `tm.bytes` row.
+    #[must_use]
+    pub fn bytes(&self, reference: Ref) -> Option<&Bytes> {
+        match *self.dense.row(reference)?.expr() {
+            row::Expr::Bytes(blob) => self.blobs.get(blob.position()),
+            _ => None,
+        }
+    }
+
+    /// The value stored by a compact `tm.nat` row.
+    ///
+    /// A value within 64 bits is held inline, so this builds a [`Num`] rather
+    /// than borrowing one.
+    #[must_use]
+    pub fn nat_value(&self, reference: Ref) -> Option<Num> {
+        match *self.dense.row(reference)?.expr() {
+            row::Expr::Nat(value) => Some(Num::from(value)),
+            row::Expr::NatBig(blob) => {
+                Num::from_canonical_bytes(self.blobs.get(blob.position())?).ok()
+            }
+            _ => None,
+        }
+    }
+
+    /// The value stored by a compact `tm.int` row.
+    ///
+    /// A value within 64 bits is held inline, so this builds an [`Int`] rather
+    /// than borrowing one.
+    #[must_use]
+    pub fn int_value(&self, reference: Ref) -> Option<Int> {
+        match *self.dense.row(reference)?.expr() {
+            row::Expr::Int(value) => Some(Int::from(value)),
+            row::Expr::IntBig(blob) => {
+                Int::from_canonical_bytes(self.blobs.get(blob.position())?).ok()
+            }
+            _ => None,
+        }
+    }
+
     /// The unary builtin stored by a `tm.op1.v1` row.
     #[must_use]
     pub fn op1(&self, reference: Ref) -> Option<builtin::Op1> {
@@ -719,6 +770,65 @@ impl Arena {
     /// Append a raw Boolean literal row.
     pub fn push_bool(&mut self, value: bool) -> Option<Ref> {
         self.push_row(Row::new(row::Expr::Bool(value)), None)
+    }
+
+    /// Appends a literal row whose payload lives in the byte table.
+    ///
+    /// The row lands first, so the table never grows without a row that reads
+    /// it. Arena equality therefore stays a function of the rows alone.
+    fn push_literal(
+        &mut self,
+        value: Bytes,
+        expr: impl FnOnce(row::Blob) -> row::Expr,
+    ) -> Option<Ref> {
+        if value.len() > row::MAX_LITERAL_BYTES {
+            return None;
+        }
+        let blob = row::Blob::new(self.blobs.len())?;
+        let reference = self.push_row(Row::new(expr(blob)), None)?;
+        self.blobs.push(value);
+        Some(reference)
+    }
+
+    /// Append a raw compact byte-string literal row.
+    ///
+    /// A [`Bytes`] argument is stored without copying; `Vec<u8>` converts
+    /// through [`Into`].
+    ///
+    /// Returns `None` if the literal is longer than [`MAX_LITERAL_BYTES`], or
+    /// if the arena reference space is exhausted.
+    pub fn push_bytes(&mut self, value: impl Into<Bytes>) -> Option<Ref> {
+        self.push_literal(value.into(), row::Expr::Bytes)
+    }
+
+    /// Append a raw compact arbitrary-precision natural literal row.
+    ///
+    /// A value within 64 bits is held inline; anything wider spills to the
+    /// byte table as its canonical unsigned big-endian encoding.
+    ///
+    /// Returns `None` if the canonical encoding is longer than
+    /// [`MAX_LITERAL_BYTES`], or if the arena reference space is exhausted.
+    pub fn push_nat(&mut self, value: impl Into<Num>) -> Option<Ref> {
+        let value = value.into();
+        match u64::try_from(&value) {
+            Ok(inline) => self.push_row(Row::new(row::Expr::Nat(inline)), None),
+            Err(_) => self.push_literal(Bytes::from(value.to_canonical_bytes()), row::Expr::NatBig),
+        }
+    }
+
+    /// Append a raw compact arbitrary-precision signed integer literal row.
+    ///
+    /// A value within 64 bits is held inline; anything wider spills to the
+    /// byte table as its canonical two's-complement encoding.
+    ///
+    /// Returns `None` if the canonical encoding is longer than
+    /// [`MAX_LITERAL_BYTES`], or if the arena reference space is exhausted.
+    pub fn push_int(&mut self, value: impl Into<Int>) -> Option<Ref> {
+        let value = value.into();
+        match i64::try_from(&value) {
+            Ok(inline) => self.push_row(Row::new(row::Expr::Int(inline)), None),
+            Err(_) => self.push_literal(Bytes::from(value.to_canonical_bytes()), row::Expr::IntBig),
+        }
     }
 
     /// Append a raw unary builtin row.
@@ -906,6 +1016,7 @@ impl Arena {
     ) -> Self {
         let mut arena = Self {
             imports,
+            blobs: Vec::new(),
             axs: axs.into_iter().collect(),
             dense: Dense::default(),
             syn_facts: Vec::new(),
@@ -969,7 +1080,7 @@ struct PredSerde {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct HolSerde {
-    defs: Vec<Row>,
+    defs: Vec<RowSerde>,
     ax: Vec<String>,
     ctx: Vec<Ref>,
     thm: ClassicalArena,
@@ -995,9 +1106,17 @@ struct HolSynSerde {
     conv: Vec<Option<Ref>>,
 }
 
-impl From<Arena> for ArenaSerde {
-    fn from(arena: Arena) -> Self {
-        Self {
+impl TryFrom<Arena> for ArenaSerde {
+    type Error = &'static str;
+
+    fn try_from(arena: Arena) -> Result<Self, Self::Error> {
+        let defs = arena
+            .dense
+            .defs
+            .iter()
+            .map(|row| row.encode(&arena.blobs))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
             tag: ArenaTag::Arena,
             imports: arena.imports,
             amb: AmbSerde {
@@ -1008,7 +1127,7 @@ impl From<Arena> for ArenaSerde {
             },
             pred: PredSerde { syl: arena.syl },
             hol: HolSerde {
-                defs: arena.dense.defs,
+                defs,
                 ax: arena.axs.into_iter().collect(),
                 ctx: arena.ctx.into_iter().collect(),
                 thm: arena.thm,
@@ -1020,7 +1139,7 @@ impl From<Arena> for ArenaSerde {
                     conv: arena.dense.conv,
                 },
             },
-        }
+        })
     }
 }
 
@@ -1056,6 +1175,11 @@ impl TryFrom<ArenaSerde> for Arena {
             eq,
             mut syn,
         } = arena.hol;
+        let mut blobs = Vec::new();
+        let defs = defs
+            .into_iter()
+            .map(|row| Row::decode(row, &mut blobs))
+            .collect::<Result<Vec<_>, _>>()?;
         let mut eq = eq;
         for column in [&eq, &syn.eq, &syn.conv] {
             if !column_is_resident(column, defs.len()) {
@@ -1067,6 +1191,7 @@ impl TryFrom<ArenaSerde> for Arena {
         normalize_column(&mut syn.conv);
         Ok(Self {
             imports: arena.imports,
+            blobs,
             axs: ax.into_iter().collect(),
             dense: Dense {
                 defs,
@@ -1092,7 +1217,9 @@ impl Serialize for Arena {
     where
         S: serde::Serializer,
     {
-        ArenaSerde::from(self.clone()).serialize(serializer)
+        ArenaSerde::try_from(self.clone())
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
     }
 }
 
@@ -1151,6 +1278,77 @@ mod tests {
 
         arena.push_kind_star().unwrap();
         assert_ne!(arena.addr(), empty);
+    }
+
+    #[test]
+    fn raw_compact_literal_api_preserves_arbitrary_values() {
+        let mut arena = Arena::empty();
+        let shared = Bytes::from_static(&[0, 1, 0, 255]);
+        let bytes = arena.push_bytes(shared.clone()).unwrap();
+        let natural_value = Num::from_canonical_bytes(&[1; 33]).unwrap();
+        let natural = arena.push_nat(natural_value.clone()).unwrap();
+        let integer_value = Int::from_canonical_bytes(&[0x80; 33]).unwrap();
+        let integer = arena.push_int(integer_value.clone()).unwrap();
+
+        assert_eq!(arena.bytes_value(bytes), Some([0, 1, 0, 255].as_slice()));
+        assert_eq!(shared.as_ptr(), arena.bytes(bytes).unwrap().as_ptr());
+        assert_eq!(arena.nat_value(natural), Some(natural_value.clone()));
+        assert_eq!(arena.int_value(integer), Some(integer_value.clone()));
+        assert_eq!(arena.tag(bytes), Some(Tag::Tm(TmTag::Bytes)));
+        assert_eq!(arena.tag(natural), Some(Tag::Tm(TmTag::Nat)));
+        assert_eq!(arena.tag(integer), Some(Tag::Tm(TmTag::Int)));
+
+        let mut encoded = Vec::new();
+        wire::serialize(&arena, &mut encoded).unwrap();
+        let decoded = wire::deserialize(encoded.as_slice()).unwrap();
+        assert_eq!(decoded.bytes_value(bytes), arena.bytes_value(bytes));
+        assert_eq!(decoded.nat_value(natural), arena.nat_value(natural));
+        assert_eq!(decoded.int_value(integer), arena.int_value(integer));
+        assert_eq!(decoded.addr(), arena.addr());
+    }
+
+    /// A rejected literal must not leave an entry behind, or two arenas with
+    /// the same rows would stop comparing equal.
+    #[test]
+    fn a_rejected_literal_leaves_the_byte_table_untouched() {
+        let mut arena = Arena::empty();
+        assert_eq!(arena.push_bytes(vec![0; MAX_LITERAL_BYTES + 1]), None);
+        assert!(arena.blobs.is_empty());
+        assert_eq!(arena.len(), 0);
+        assert_eq!(arena, Arena::empty());
+    }
+
+    #[test]
+    fn numeric_literals_have_one_representation_whatever_their_width() {
+        let mut arena = Arena::empty();
+        let inline = arena.push_nat(u64::MAX).unwrap();
+        let spilled = arena.push_nat(Num::from(1_u128 << 64)).unwrap();
+        let negative = arena.push_int(i64::MIN).unwrap();
+
+        // Only values beyond 64 bits reach the byte table.
+        assert!(matches!(
+            *arena.row(inline).unwrap().expr(),
+            row::Expr::Nat(_)
+        ));
+        assert!(matches!(
+            *arena.row(spilled).unwrap().expr(),
+            row::Expr::NatBig(_)
+        ));
+        assert!(matches!(
+            *arena.row(negative).unwrap().expr(),
+            row::Expr::Int(_)
+        ));
+        assert_eq!(arena.blobs.len(), 1);
+
+        // Decoding normalizes the same way, so the arena that comes back is
+        // the one that went out and its address is stable.
+        let mut encoded = Vec::new();
+        wire::serialize(&arena, &mut encoded).unwrap();
+        let decoded = wire::deserialize(encoded.as_slice()).unwrap();
+        assert_eq!(decoded, arena);
+        assert_eq!(decoded.addr(), arena.addr());
+        assert_eq!(decoded.nat_value(inline), Some(Num::from(u64::MAX)));
+        assert_eq!(decoded.int_value(negative), Some(Int::from(i64::MIN)));
     }
 
     #[test]

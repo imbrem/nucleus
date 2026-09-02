@@ -1,5 +1,9 @@
-//! Private rows for the complete Ethane arena vocabulary.
+//! Private rows for the complete Ethane arena vocabulary, compact literal and
+//! builtin rows included.
 
+use std::num::NonZeroI32;
+
+use bytes::Bytes;
 use serde::{Deserialize, Serialize, de};
 use smallvec::SmallVec;
 
@@ -9,6 +13,39 @@ use crate::{
 };
 
 const MAX_CHILDREN: usize = 3;
+pub(crate) const MAX_LITERAL_BYTES: usize = 1024 * 1024;
+
+/// Canonical numeric encodings up to this length are held in the expression.
+///
+/// Eight bytes is the width of `u64` and `i64`, so only a value wider than 64
+/// bits reaches the byte table.
+const INLINE_LITERAL_BYTES: usize = 8;
+
+/// A one-based index into an arena's byte table.
+///
+/// Like [`Ref`], an index may have no entry behind it. The raw arena checks
+/// representation only, so a dangling index reads as absent instead of failing
+/// at construction.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[repr(transparent)]
+pub(crate) struct Blob(NonZeroI32);
+
+impl Blob {
+    /// Addresses the byte-table entry at `position`.
+    pub(crate) fn new(position: usize) -> Option<Self> {
+        let value = i32::try_from(position).ok()?.checked_add(1)?;
+        if value == i32::MAX {
+            return None;
+        }
+        NonZeroI32::new(value).map(Self)
+    }
+
+    /// The zero-based byte-table position this index addresses.
+    pub(crate) const fn position(self) -> usize {
+        // One-based and positive by construction, so the cast cannot lose a sign.
+        self.0.get().unsigned_abs() as usize - 1
+    }
+}
 type Fields = (
     Tag,
     Option<SmallVec<[Ref; MAX_CHILDREN]>>,
@@ -52,6 +89,24 @@ pub(crate) enum Expr {
     /// The children are the binder variable and body, in that order.
     Lam(Ref, Ref),
     Bool(bool),
+    /// Versioned compact byte-string literal. Semantics are supplied by lowering.
+    ///
+    /// The bytes live in the owning arena's byte table, so two expressions
+    /// compare only within one arena. Equal indices name equal bytes, but two
+    /// separately interned copies of the same bytes compare unequal.
+    Bytes(Blob),
+    /// Versioned compact natural literal within 64 bits.
+    Nat(u64),
+    /// Versioned compact natural literal wider than 64 bits.
+    ///
+    /// Its canonical unsigned big-endian bytes live in the byte table.
+    NatBig(Blob),
+    /// Versioned compact signed integer literal within 64 bits.
+    Int(i64),
+    /// Versioned compact signed integer literal wider than 64 bits.
+    ///
+    /// Its canonical two's-complement bytes live in the byte table.
+    IntBig(Blob),
     /// Versioned compact unary syntax. Semantics are supplied by lowering.
     Op1(Op1, Ref),
     /// Versioned compact binary syntax. Operands are ordered left-to-right.
@@ -78,7 +133,7 @@ pub(crate) enum Expr {
 
 impl Expr {
     pub(crate) const fn tag(&self) -> Tag {
-        match self {
+        match *self {
             Self::KindStar => Tag::Kind(KindTag::Star),
             Self::KindArr(..) => Tag::Kind(KindTag::Arr),
             Self::BoolTy => Tag::Ty(TyTag::Bool),
@@ -93,6 +148,9 @@ impl Expr {
             Self::App(..) => Tag::Tm(TmTag::App),
             Self::Lam(..) => Tag::Tm(TmTag::Lam),
             Self::Bool(..) => Tag::Tm(TmTag::Bool),
+            Self::Bytes(..) => Tag::Tm(TmTag::Bytes),
+            Self::Nat(..) | Self::NatBig(..) => Tag::Tm(TmTag::Nat),
+            Self::Int(..) | Self::IntBig(..) => Tag::Tm(TmTag::Int),
             Self::Op1(..) => Tag::Tm(TmTag::Op1),
             Self::Op2(..) => Tag::Tm(TmTag::Op2),
             Self::Eq(..) => Tag::Tm(TmTag::Eq),
@@ -108,6 +166,11 @@ impl Expr {
             Self::KindStar
             | Self::BoolTy
             | Self::Bool(_)
+            | Self::Bytes(..)
+            | Self::Nat(..)
+            | Self::NatBig(..)
+            | Self::Int(..)
+            | Self::IntBig(..)
             | Self::TmRef { .. }
             | Self::TyRef { .. }
             | Self::KindRef { .. } => SmallVec::new(),
@@ -141,7 +204,7 @@ impl Expr {
 /// Classifiers and equality links are stored in arena-level dense columns;
 /// keeping them out of the row makes the expression table representation
 /// independent of which checked relations an arena elects to materialize.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Row {
     expr: Expr,
 }
@@ -160,6 +223,61 @@ impl Row {
     pub(crate) const fn expr(&self) -> &Expr {
         &self.expr
     }
+}
+
+/// Whether `bytes` is the unique unsigned big-endian encoding of its value.
+///
+/// Zero is `[0]`; nothing else may carry a leading zero byte.
+pub(crate) const fn nat_is_canonical(bytes: &[u8]) -> bool {
+    !bytes.is_empty() && (bytes.len() == 1 || bytes[0] != 0)
+}
+
+/// Whether `bytes` is the shortest two's-complement encoding of its value.
+///
+/// A leading byte is redundant when the next byte already carries the sign.
+pub(crate) const fn int_is_canonical(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    if bytes.len() == 1 {
+        return true;
+    }
+    !((bytes[0] == 0 && bytes[1] & 0x80 == 0) || (bytes[0] == u8::MAX && bytes[1] & 0x80 != 0))
+}
+
+/// The canonical unsigned big-endian encoding of `value`.
+pub(crate) fn nat_to_bytes(value: u64) -> Vec<u8> {
+    let bytes = value.to_be_bytes();
+    let start = bytes.iter().position(|&byte| byte != 0).unwrap_or(7);
+    bytes[start..].to_vec()
+}
+
+/// The canonical two's-complement big-endian encoding of `value`.
+pub(crate) fn int_to_bytes(value: i64) -> Vec<u8> {
+    let bytes = value.to_be_bytes();
+    let mut start = 0;
+    while start + 1 < bytes.len()
+        && ((bytes[start] == 0 && bytes[start + 1] & 0x80 == 0)
+            || (bytes[start] == u8::MAX && bytes[start + 1] & 0x80 != 0))
+    {
+        start += 1;
+    }
+    bytes[start..].to_vec()
+}
+
+/// Widens a canonical unsigned encoding of at most eight bytes.
+fn nat_from_bytes(bytes: &[u8]) -> u64 {
+    let mut widened = [0; INLINE_LITERAL_BYTES];
+    widened[INLINE_LITERAL_BYTES - bytes.len()..].copy_from_slice(bytes);
+    u64::from_be_bytes(widened)
+}
+
+/// Sign-extends a canonical two's-complement encoding of at most eight bytes.
+fn int_from_bytes(bytes: &[u8]) -> i64 {
+    let sign = if bytes[0] & 0x80 == 0 { 0 } else { u8::MAX };
+    let mut widened = [sign; INLINE_LITERAL_BYTES];
+    widened[INLINE_LITERAL_BYTES - bytes.len()..].copy_from_slice(bytes);
+    i64::from_be_bytes(widened)
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -221,6 +339,9 @@ pub enum TmTag {
     App,
     Lam,
     Bool,
+    Bytes,
+    Nat,
+    Int,
     Op1,
     Op2,
     Eq,
@@ -238,6 +359,9 @@ impl TmTag {
             Self::App => "tm.app",
             Self::Lam => "tm.lam",
             Self::Bool => "tm.bool",
+            Self::Bytes => "tm.bytes",
+            Self::Nat => "tm.nat",
+            Self::Int => "tm.int",
             Self::Op1 => crate::builtin::OP1_ROW_TAG,
             Self::Op2 => crate::builtin::OP2_ROW_TAG,
             Self::Eq => "tm.eq",
@@ -293,6 +417,9 @@ impl Tag {
             "tm.app" => Self::Tm(TmTag::App),
             "tm.lam" => Self::Tm(TmTag::Lam),
             "tm.bool" => Self::Tm(TmTag::Bool),
+            "tm.bytes" => Self::Tm(TmTag::Bytes),
+            "tm.nat" => Self::Tm(TmTag::Nat),
+            "tm.int" => Self::Tm(TmTag::Int),
             crate::builtin::OP1_ROW_TAG => Self::Tm(TmTag::Op1),
             crate::builtin::OP2_ROW_TAG => Self::Tm(TmTag::Op2),
             "tm.eq" => Self::Tm(TmTag::Eq),
@@ -322,16 +449,57 @@ impl<'de> Deserialize<'de> for Tag {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 enum Value {
     Nat(u64),
     Bool(bool),
+    Bytes(#[serde(with = "byte_string")] Vec<u8>),
+}
+
+mod byte_string {
+    use serde::{Deserializer, Serializer, de};
+
+    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(bytes)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ByteString;
+
+        impl<'de> de::Visitor<'de> for ByteString {
+            type Value = Vec<u8>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a CBOR byte string")
+            }
+
+            fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E> {
+                Ok(value.to_vec())
+            }
+
+            fn visit_borrowed_bytes<E>(self, value: &'de [u8]) -> Result<Self::Value, E> {
+                Ok(value.to_vec())
+            }
+
+            fn visit_byte_buf<E>(self, value: Vec<u8>) -> Result<Self::Value, E> {
+                Ok(value)
+            }
+        }
+
+        deserializer.deserialize_bytes(ByteString)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct RowSerde {
+pub(crate) struct RowSerde {
     tag: Tag,
     #[serde(
         default,
@@ -391,9 +559,47 @@ where
     deserializer.deserialize_option(ChildrenVisitor)
 }
 
-impl From<Row> for RowSerde {
-    fn from(row: Row) -> Self {
-        let (tag, ixs, val, src, ix) = match row.expr {
+impl Row {
+    /// Builds the wire form, resolving any blob against `blobs`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the row names a byte-table entry that `blobs` does
+    /// not hold. Only a raw arena assembled outside its own constructors can
+    /// be in that state; see [`Blob`].
+    pub(crate) fn encode(self, blobs: &[Bytes]) -> Result<RowSerde, &'static str> {
+        let blob = |blob: Blob| {
+            blobs
+                .get(blob.position())
+                .ok_or("row names a missing byte-table entry")
+        };
+        let Row { expr } = self;
+        let (tag, ixs, val, src, ix) = match expr {
+            Expr::Bytes(index) => ordinary(
+                Tag::Tm(TmTag::Bytes),
+                [],
+                Some(Value::Bytes(blob(index)?.to_vec())),
+            ),
+            Expr::Nat(value) => ordinary(
+                Tag::Tm(TmTag::Nat),
+                [],
+                Some(Value::Bytes(nat_to_bytes(value))),
+            ),
+            Expr::Int(value) => ordinary(
+                Tag::Tm(TmTag::Int),
+                [],
+                Some(Value::Bytes(int_to_bytes(value))),
+            ),
+            Expr::NatBig(index) => ordinary(
+                Tag::Tm(TmTag::Nat),
+                [],
+                Some(Value::Bytes(blob(index)?.to_vec())),
+            ),
+            Expr::IntBig(index) => ordinary(
+                Tag::Tm(TmTag::Int),
+                [],
+                Some(Value::Bytes(blob(index)?.to_vec())),
+            ),
             Expr::KindStar => ordinary(Tag::Kind(KindTag::Star), [], None),
             Expr::KindArr(domain, codomain) => {
                 ordinary(Tag::Kind(KindTag::Arr), [domain, codomain], None)
@@ -444,13 +650,56 @@ impl From<Row> for RowSerde {
             Expr::TyRef { src, ix } => foreign(Tag::Ty(TyTag::Ref), src, ix),
             Expr::KindRef { src, ix } => foreign(Tag::Kind(KindTag::Ref), src, ix),
         };
-        Self {
+        Ok(RowSerde {
             tag,
             ixs,
             val,
             src,
             ix,
+        })
+    }
+
+    /// Reads the wire form, interning any literal payload into `blobs`.
+    ///
+    /// A canonical numeric encoding of at most eight bytes is normalized into
+    /// the expression itself, so one value has exactly one representation and
+    /// re-encoding is byte-identical.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the fields do not form an Ethane row, if a literal
+    /// payload is not canonical, or if it exceeds [`MAX_LITERAL_BYTES`].
+    pub(crate) fn decode(row: RowSerde, blobs: &mut Vec<Bytes>) -> Result<Self, &'static str> {
+        let Tag::Tm(kind @ (TmTag::Bytes | TmTag::Nat | TmTag::Int)) = row.tag else {
+            return Self::decode_ordinary(row);
+        };
+        let (None, Some(Value::Bytes(value)), None, None) =
+            (row.ixs.as_deref(), row.val, row.src, row.ix)
+        else {
+            return Err("fields do not form a compact literal row");
+        };
+        if value.len() > MAX_LITERAL_BYTES {
+            return Err("compact literal exceeds the size limit");
         }
+        let mut intern = |value: Vec<u8>| {
+            let index = Blob::new(blobs.len()).ok_or("byte table is exhausted")?;
+            blobs.push(Bytes::from(value));
+            Ok::<_, &'static str>(index)
+        };
+        let expression = match kind {
+            TmTag::Bytes => Expr::Bytes(intern(value)?),
+            TmTag::Nat if !nat_is_canonical(&value) => {
+                return Err("natural literal is not canonical");
+            }
+            TmTag::Nat if value.len() <= INLINE_LITERAL_BYTES => Expr::Nat(nat_from_bytes(&value)),
+            TmTag::Nat => Expr::NatBig(intern(value)?),
+            TmTag::Int if !int_is_canonical(&value) => {
+                return Err("integer literal is not canonical");
+            }
+            TmTag::Int if value.len() <= INLINE_LITERAL_BYTES => Expr::Int(int_from_bytes(&value)),
+            _ => Expr::IntBig(intern(value)?),
+        };
+        Ok(Self::new(expression))
     }
 }
 
@@ -464,10 +713,9 @@ const fn foreign(tag: Tag, src: ImportId, ix: Ref) -> Fields {
     (tag, None, None, Some(src), Some(ix))
 }
 
-impl TryFrom<RowSerde> for Row {
-    type Error = &'static str;
-
-    fn try_from(row: RowSerde) -> Result<Self, Self::Error> {
+impl Row {
+    /// Reads every row whose payload is held entirely in the expression.
+    fn decode_ordinary(row: RowSerde) -> Result<Self, &'static str> {
         let expression = match (row.tag, row.ixs.as_deref(), row.val, row.src, row.ix) {
             (Tag::Kind(KindTag::Star), None, None, None, None) => Expr::KindStar,
             (Tag::Kind(KindTag::Arr), Some([domain, codomain]), None, None, None) => {
@@ -545,26 +793,6 @@ impl TryFrom<RowSerde> for Row {
     }
 }
 
-impl Serialize for Row {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        RowSerde::from(self.clone()).serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Row {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        RowSerde::deserialize(deserializer)?
-            .try_into()
-            .map_err(de::Error::custom)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -578,10 +806,18 @@ mod tests {
         ImportId::new(value).unwrap()
     }
 
-    fn all_rows() -> Vec<Row> {
+    /// One row of every shape, plus the byte table its literal rows index.
+    fn all_rows() -> (Vec<Row>, Vec<Bytes>) {
         let one = reference(1);
         let two = reference(2);
-        vec![
+        let blobs = vec![
+            Bytes::from_static(&[0, 1, 255]),
+            // Canonical encodings that need more than sixty-four bits.
+            Bytes::from_static(&[1; 33]),
+            Bytes::from_static(&[0x80; 33]),
+        ];
+        let blob = |position| Blob::new(position).unwrap();
+        let rows = vec![
             Row::new(Expr::KindStar),
             Row::new(Expr::KindArr(one, two)),
             Row::new(Expr::BoolTy),
@@ -606,6 +842,11 @@ mod tests {
             Row::new(Expr::Lam(one, two)),
             Row::new(Expr::Bool(false)),
             Row::new(Expr::Bool(true)),
+            Row::new(Expr::Bytes(blob(0))),
+            Row::new(Expr::Nat(1 << 40)),
+            Row::new(Expr::NatBig(blob(1))),
+            Row::new(Expr::Int(-129)),
+            Row::new(Expr::IntBig(blob(2))),
             Row::new(Expr::Op1(Op1::Not, one)),
             Row::new(Expr::Op2(Op2::And, one, two)),
             Row::new(Expr::Eq(one, one, two)),
@@ -625,15 +866,32 @@ mod tests {
                 src: import(1),
                 ix: one,
             }),
-        ]
+        ];
+        (rows, blobs)
+    }
+
+    /// Encodes one row against a byte table, the way an arena does.
+    fn encoded(row: Row, blobs: &[Bytes]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        into_writer(&row.encode(blobs).unwrap(), &mut bytes).unwrap();
+        bytes
+    }
+
+    /// Decodes one row, interning any payload into a fresh byte table.
+    fn decoded(bytes: &[u8]) -> Option<(Row, Vec<Bytes>)> {
+        let mut blobs = Vec::new();
+        let wire = from_reader::<RowSerde, _>(bytes).ok()?;
+        let row = Row::decode(wire, &mut blobs).ok()?;
+        Some((row, blobs))
     }
 
     #[test]
-    fn every_row_round_trips_through_serde_cbor() {
-        for row in all_rows() {
-            let mut bytes = Vec::new();
-            into_writer(&row, &mut bytes).unwrap();
-            assert_eq!(from_reader::<Row, _>(bytes.as_slice()).unwrap(), row);
+    fn every_row_round_trips_to_the_same_bytes() {
+        let (rows, blobs) = all_rows();
+        for row in rows {
+            let bytes = encoded(row, &blobs);
+            let (row, blobs) = decoded(&bytes).unwrap();
+            assert_eq!(encoded(row, &blobs), bytes);
         }
     }
 
@@ -650,8 +908,7 @@ mod tests {
                 vec![one, one, two],
             ),
         ] {
-            let mut bytes = Vec::new();
-            into_writer(&row, &mut bytes).unwrap();
+            let bytes = encoded(row, &[]);
             let Cbor::Map(fields) = from_reader(bytes.as_slice()).unwrap() else {
                 panic!("row must be a CBOR map")
             };
@@ -680,8 +937,7 @@ mod tests {
             Row::new(Expr::BoolTy),
             Row::new(Expr::Bool(false)),
         ] {
-            let mut bytes = Vec::new();
-            into_writer(&row, &mut bytes).unwrap();
+            let bytes = encoded(row, &[]);
             let Cbor::Map(fields) = from_reader(bytes.as_slice()).unwrap() else {
                 panic!("row must be a CBOR map")
             };
@@ -693,10 +949,147 @@ mod tests {
         }
     }
 
+    #[test]
+    fn compact_literals_use_distinct_tags_and_cbor_byte_strings() {
+        // Inline and spilled storage must reach the same bytes, so the pair of
+        // oversized values below encodes exactly like a small one.
+        let blobs = vec![
+            Bytes::from_static(&[0, 255]),
+            Bytes::from_static(&[1; 9]),
+            Bytes::from_static(&[0x80; 9]),
+        ];
+        let blob = |position| Blob::new(position).unwrap();
+        let cases = [
+            (Row::new(Expr::Bytes(blob(0))), "tm.bytes", vec![0, 255]),
+            (Row::new(Expr::Nat(128)), "tm.nat", vec![128]),
+            (Row::new(Expr::Int(128)), "tm.int", vec![0, 128]),
+            (Row::new(Expr::Int(-129)), "tm.int", vec![255, 127]),
+            (Row::new(Expr::Nat(0)), "tm.nat", vec![0]),
+            (Row::new(Expr::Int(0)), "tm.int", vec![0]),
+            (Row::new(Expr::Int(-1)), "tm.int", vec![255]),
+            (Row::new(Expr::NatBig(blob(1))), "tm.nat", vec![1; 9]),
+            (Row::new(Expr::IntBig(blob(2))), "tm.int", vec![0x80; 9]),
+        ];
+        for (row, tag, payload) in cases {
+            let bytes = encoded(row, &blobs);
+            let Cbor::Map(fields) = from_reader(bytes.as_slice()).unwrap() else {
+                panic!("row must be a CBOR map")
+            };
+            assert_eq!(
+                fields,
+                [
+                    (Cbor::Text("tag".into()), Cbor::Text(tag.into())),
+                    (Cbor::Text("val".into()), Cbor::Bytes(payload)),
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn sixty_four_bit_literals_are_held_inline_and_wider_ones_spill() {
+        let mut blobs = Vec::new();
+        let inline = |bytes: Vec<u8>, tag: &str| {
+            let wire = RowSerde {
+                tag: Tag::from_name(tag).unwrap(),
+                ixs: None,
+                val: Some(Value::Bytes(bytes)),
+                src: None,
+                ix: None,
+            };
+            Row::decode(wire, &mut Vec::new()).unwrap()
+        };
+        // Eight bytes is the widest inline form; nine spills to the table.
+        assert_eq!(
+            inline(vec![255; 8], "tm.nat"),
+            Row::new(Expr::Nat(u64::MAX))
+        );
+        assert_eq!(
+            inline(vec![0x7f, 255, 255, 255, 255, 255, 255, 255], "tm.int"),
+            Row::new(Expr::Int(i64::MAX))
+        );
+        assert_eq!(
+            inline(vec![0x80, 0, 0, 0, 0, 0, 0, 0], "tm.int"),
+            Row::new(Expr::Int(i64::MIN))
+        );
+        assert!(matches!(
+            *inline(vec![1; 9], "tm.nat").expr(),
+            Expr::NatBig(..)
+        ));
+        assert!(matches!(
+            *inline(vec![0x80; 9], "tm.int").expr(),
+            Expr::IntBig(..)
+        ));
+        // A byte literal always spills, whatever its length.
+        let wire = RowSerde {
+            tag: Tag::Tm(TmTag::Bytes),
+            ixs: None,
+            val: Some(Value::Bytes(vec![7])),
+            src: None,
+            ix: None,
+        };
+        assert_eq!(
+            Row::decode(wire, &mut blobs).unwrap(),
+            Row::new(Expr::Bytes(Blob::new(0).unwrap()))
+        );
+        assert_eq!(blobs, vec![Bytes::from_static(&[7])]);
+    }
+
+    #[test]
+    fn inline_numeric_encodings_agree_with_their_canonical_form() {
+        for value in [0, 1, 127, 128, 255, 256, u64::MAX, u64::MAX - 1] {
+            let bytes = nat_to_bytes(value);
+            assert!(nat_is_canonical(&bytes));
+            assert_eq!(nat_from_bytes(&bytes), value);
+        }
+        for value in [0, 1, -1, 127, 128, -128, -129, i64::MAX, i64::MIN] {
+            let bytes = int_to_bytes(value);
+            assert!(int_is_canonical(&bytes));
+            assert_eq!(int_from_bytes(&bytes), value);
+        }
+    }
+
+    #[test]
+    fn compact_numeric_literals_reject_noncanonical_bytes_and_wrong_shapes() {
+        for (tag, payload) in [
+            ("tm.nat", vec![]),
+            ("tm.nat", vec![0, 1]),
+            ("tm.int", vec![]),
+            ("tm.int", vec![0, 1]),
+            ("tm.int", vec![255, 255]),
+        ] {
+            assert!(decode_bad(vec![
+                (Cbor::Text("tag".into()), Cbor::Text(tag.into())),
+                (Cbor::Text("val".into()), Cbor::Bytes(payload)),
+            ]));
+        }
+        for tag in ["tm.bytes", "tm.nat", "tm.int"] {
+            assert!(decode_bad(vec![
+                (Cbor::Text("tag".into()), Cbor::Text(tag.into())),
+                (Cbor::Text("val".into()), Cbor::Integer(0.into())),
+            ]));
+            assert!(decode_bad(vec![
+                (Cbor::Text("tag".into()), Cbor::Text(tag.into())),
+                (Cbor::Text("ixs".into()), Cbor::Array(Vec::new())),
+                (Cbor::Text("val".into()), Cbor::Bytes(vec![0])),
+            ]));
+        }
+    }
+
+    #[test]
+    fn compact_literal_size_limit_is_enforced() {
+        assert!(decode_bad(vec![
+            (Cbor::Text("tag".into()), Cbor::Text("tm.bytes".into())),
+            (
+                Cbor::Text("val".into()),
+                Cbor::Bytes(vec![0; MAX_LITERAL_BYTES + 1]),
+            ),
+        ]));
+    }
+
     fn decode_bad(fields: Vec<(Cbor, Cbor)>) -> bool {
         let mut bytes = Vec::new();
         into_writer(&Cbor::Map(fields), &mut bytes).unwrap();
-        from_reader::<Row, _>(bytes.as_slice()).is_err()
+        decoded(bytes.as_slice()).is_none()
     }
 
     #[test]

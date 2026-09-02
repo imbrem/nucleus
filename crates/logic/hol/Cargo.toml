@@ -15,6 +15,8 @@ buck-test-mapped-srcs = { "nucleus//:hol_init_checked_manifest" = "theories/init
 buck-test-fixtures = []
 
 [dependencies]
+bytes = "1"
+covalence-data-num = { path = "../../data/num" }
 covalence-lib-cbor = { path = "../../lib/cbor" }
 covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["serde"] }
@@ -24,6 +26,7 @@ serde = { version = "1", features = ["derive"] }
 smallvec = { version = "1", features = ["serde"] }
 
 [dev-dependencies]
+covalence-data-cbor = { path = "../../data/cbor" }
 covalence-lib-json = { path = "../../lib/json" }
 
 [lints]

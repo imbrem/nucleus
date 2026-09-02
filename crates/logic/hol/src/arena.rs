@@ -6,6 +6,8 @@
 
 use std::collections::BTreeSet;
 
+use bytes::Bytes;
+
 use crate::{AmbPred, ClassicalArena, Cnf, Import, Ref, SynFactId, row::Row, syn::SynSlot};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -91,6 +93,11 @@ impl Dense {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Arena {
     pub(crate) imports: Vec<Import>,
+    /// Byte-string payloads addressed by compact literal rows.
+    ///
+    /// Entries are appended in row order, so an arena decoded from one
+    /// encoding always rebuilds the same table.
+    pub(crate) blobs: Vec<Bytes>,
     pub(crate) axs: BTreeSet<String>,
     pub(crate) dense: Dense,
     pub(crate) syn_facts: Vec<SynSlot>,
