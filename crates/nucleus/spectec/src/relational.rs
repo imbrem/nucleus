@@ -75,6 +75,36 @@ pub struct RelationalCondition {
     otherwise: bool,
 }
 
+/// Checked result of lowering one complete ordered definition body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelationalDefinition {
+    /// Exact source-ordered cases.
+    pub cases: Vec<HolCase>,
+    /// Ordered disjunction used as the graph body.
+    pub body: Ref,
+    /// Universally closed exact graph equation.
+    pub equation: Ref,
+    /// First unused deterministic free-variable name.
+    pub next_name: u64,
+}
+
+/// Inputs selecting one complete definition graph constraint.
+#[derive(Clone, Copy, Debug)]
+pub struct RelationalDefinitionSource<'a> {
+    /// HOL Boolean classifier.
+    pub bool_ty: Ref,
+    /// Candidate graph predicate supplied by the checked schema.
+    pub predicate: Ref,
+    /// Universally quantified declaration inputs.
+    pub formal_inputs: &'a [Ref],
+    /// Universally quantified graph result.
+    pub formal_result: Ref,
+    /// Decoded clauses in exact source order.
+    pub clauses: &'a [IlClauseSchema<'a>],
+    /// First deterministic name available to clause-local lowering.
+    pub first_name: u64,
+}
+
 impl RelationalCondition {
     /// Constructs a lowered premise condition.
     #[must_use]
@@ -229,6 +259,12 @@ pub trait RelationalResolver {
     /// Lowering failure type.
     type Error;
 
+    /// Creates an isolated clause-local resolver retaining global meanings.
+    #[must_use]
+    fn clause_scope(&mut self) -> Self
+    where
+        Self: Sized;
+
     /// Converts a structural schema failure.
     fn schema_error(&mut self, source: IlSchemaError) -> Self::Error;
 
@@ -337,6 +373,61 @@ pub trait RelationalResolver {
 
     /// Reports nested relation-premise binders unsupported by this lowering.
     fn nested_premise_bindings(&mut self, count: usize) -> Self::Error;
+}
+
+/// Transactionally lowers a complete ordered definition to one exact graph
+/// equation.
+///
+/// Each clause receives a fresh resolver scope, preventing pattern bindings
+/// from leaking between siblings. `formal_inputs` and `formal_result` are
+/// universally closed in predicate-application order.
+///
+/// # Errors
+///
+/// Returns the first clause-lowering or checked HOL failure through the
+/// resolver's typed error vocabulary. `kernel` is unchanged on failure.
+pub fn relational_definition<R>(
+    kernel: &mut Kernel,
+    resolver: &mut R,
+    source: &RelationalDefinitionSource<'_>,
+) -> Result<RelationalDefinition, R::Error>
+where
+    R: RelationalResolver,
+{
+    let mut staged = kernel.fork();
+    let mut cases = Vec::with_capacity(source.clauses.len());
+    let mut next_name = source.first_name;
+    for clause in source.clauses {
+        let clause_resolver = resolver.clause_scope();
+        let mut algebra = RelationalExpressionAlgebra::new(
+            &mut staged,
+            clause_resolver,
+            source.bool_ty,
+            next_name,
+        );
+        cases.push(algebra.clause(clause, source.formal_inputs, source.formal_result)?);
+        next_name = algebra.next_name();
+    }
+    let body = crate::ordered_cases(&mut staged, source.bool_ty, &cases)
+        .map_err(|source| resolver.kernel_error(source))?;
+    let mut arguments = source.formal_inputs.to_vec();
+    arguments.push(source.formal_result);
+    let equation = crate::close_graph_equation(
+        &mut staged,
+        source.bool_ty,
+        source.predicate,
+        &arguments,
+        &arguments,
+        body,
+    )
+    .map_err(|source| resolver.kernel_error(source))?;
+    *kernel = staged;
+    Ok(RelationalDefinition {
+        cases,
+        body,
+        equation,
+        next_name,
+    })
 }
 
 /// Concrete expression algebra producing relational HOL terms.

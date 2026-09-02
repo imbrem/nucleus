@@ -33,7 +33,8 @@ pub use grammar::{GrammarAlgebra, GrammarArgument, GrammarChildren, fold_grammar
 pub use premise::{PremiseAlgebra, PremiseChildren, fold_premise};
 pub use relational::{
     RelationalCall, RelationalCaseError, RelationalClause, RelationalCondition,
-    RelationalExpressionAlgebra, RelationalResolver, RelationalTerm, relational_hol_case,
+    RelationalDefinition, RelationalDefinitionSource, RelationalExpressionAlgebra,
+    RelationalResolver, RelationalTerm, relational_definition, relational_hol_case,
     relational_hol_rule,
 };
 pub use schema::{

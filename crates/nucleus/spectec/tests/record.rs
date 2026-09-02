@@ -9,13 +9,15 @@ use covalence_nucleus_spectec::{
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
     CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase,
     HolEmbedding, HolRule, IndexErasure, KernelRoot, RelationalCall, RelationalClause,
-    RelationalCondition, RelationalExpressionAlgebra, RelationalResolver, RelationalTerm,
-    SelectedCompileError, SelectedCompiler, Source, TYPE_NAME, TranslationCase, TypeAlgebra,
-    TypeChildren, close_graph_equation, close_hol_rule, close_hol_rules, declare_hol_schema,
-    fold_expression, fold_grammar, fold_type, least_closed_family, least_closed_predicate,
-    ordered_cases, relational_hol_case, relational_hol_rule,
+    RelationalCondition, RelationalDefinitionSource, RelationalExpressionAlgebra,
+    RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler, Source, TYPE_NAME,
+    TranslationCase, TypeAlgebra, TypeChildren, close_graph_equation, close_hol_rule,
+    close_hol_rules, declare_hol_schema, fold_expression, fold_grammar, fold_type,
+    least_closed_family, least_closed_predicate, ordered_cases, relational_definition,
+    relational_hol_case, relational_hol_rule,
 };
 
+#[derive(Clone)]
 struct TestRelationalResolver {
     x: covalence_logic_hol::Ref,
     y: covalence_logic_hol::Ref,
@@ -26,6 +28,10 @@ struct TestRelationalResolver {
 
 impl RelationalResolver for TestRelationalResolver {
     type Error = String;
+
+    fn clause_scope(&mut self) -> Self {
+        self.clone()
+    }
 
     fn schema_error(&mut self, source: IlSchemaError) -> Self::Error {
         source.to_string()
@@ -319,14 +325,14 @@ fn complete_clause_api_lowers_patterns_result_and_premises() {
         kernel.tm_fv(11, value).unwrap(),
     ];
     let formal_result = kernel.tm_fv(12, value).unwrap();
-    let resolver = TestRelationalResolver {
+    let mut resolver = TestRelationalResolver {
         x,
         y,
         add,
         graph,
         bool_ty,
     };
-    let case = RelationalExpressionAlgebra::new(&mut kernel, resolver, bool_ty, 100)
+    let case = RelationalExpressionAlgebra::new(&mut kernel, resolver.clone(), bool_ty, 100)
         .clause(&schema, &formal_inputs, formal_result)
         .unwrap();
 
@@ -336,6 +342,26 @@ fn complete_clause_api_lowers_patterns_result_and_premises() {
             .equivalent(kernel.classifier(case.produces).unwrap(), bool_ty)
             .unwrap()
     );
+    let result_tail = kernel.ty_arr(value, bool_ty).unwrap();
+    let second_tail = kernel.ty_arr(value, result_tail).unwrap();
+    let predicate_ty = kernel.ty_arr(value, second_tail).unwrap();
+    let predicate = kernel.tm_fv(20, predicate_ty).unwrap();
+    let theorem_count = kernel.thm().live_theorems().count();
+    let definition = relational_definition(
+        &mut kernel,
+        &mut resolver,
+        &RelationalDefinitionSource {
+            bool_ty,
+            predicate,
+            formal_inputs: &formal_inputs,
+            formal_result,
+            clauses: std::slice::from_ref(&schema),
+            first_name: 200,
+        },
+    )
+    .unwrap();
+    assert_eq!(definition.cases.len(), 1);
+    assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
 }
 
 #[test]
