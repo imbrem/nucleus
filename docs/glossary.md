@@ -50,3 +50,18 @@ call exposed kernel operations but cannot create theorems on its own.
 **WIT (WebAssembly Interface Type)**
 : The interface language used to describe capabilities available across a Wasm
 component boundary.
+
+**Compact row**
+: An arena row that stands for a larger opcode-free term. Compact rows are
+macros: a literal (`tm.nat`, `tm.int`, `tm.bytes`) or a builtin opcode
+(`tm.op1.v1`, `tm.op2.v1`, `tm.num1.v1`, `tm.num2.v1`). They carry no meaning
+of their own.
+
+**Init slice**
+: The checked, opcode-free prefix of definitions and theorems every kernel
+starts from. Compact rows name constants in it.
+
+**Lowering**
+: Expanding a compact row into the opcode-free init definitions it stands for.
+A compact row only has a meaning once it lowers, so the kernel rejects one
+whose definition the init slice does not yet contain.

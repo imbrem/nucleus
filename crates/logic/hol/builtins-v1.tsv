@@ -1,6 +1,34 @@
 # Ethane compact builtin registry v1. This is syntax, not the init manifest.
-# version	family	code	name	operands	result
-1	op1	0	not	bool	bool
-1	op2	0	and	bool,bool	bool
-1	op2	1	or	bool,bool	bool
-1	op2	2	imp	bool,bool	bool
+# Families are grouped by arity and by whether the kernel can type them:
+# op1/op2 are the Boolean connectives; num1/num2 are numeric and are rejected
+# until the init slice defines nat and int. The total column gives the value a
+# partial operation takes, since Ethane has no partiality.
+# version	family	code	name	operands	result	total
+1	op1	0	not	bool	bool	-
+1	op2	0	and	bool,bool	bool	-
+1	op2	1	or	bool,bool	bool	-
+1	op2	2	imp	bool,bool	bool	-
+1	num1	0	nat.succ	nat	nat	-
+1	num1	1	nat.pred	nat	nat	zero
+1	num1	2	int.succ	int	int	-
+1	num1	3	int.pred	int	int	-
+1	num1	4	int.abs	int	nat	-
+1	num1	5	int.sign	int	int	-
+1	num1	6	nat.to_int	nat	int	-
+1	num1	7	int.to_nat.zigzag	int	nat	-
+1	num1	8	nat.to_int.zigzag	nat	int	-
+1	num1	9	int.neg	int	int	-
+1	num2	0	nat.add	nat,nat	nat	-
+1	num2	1	nat.sub	nat,nat	nat	zero
+1	num2	2	nat.mul	nat,nat	nat	-
+1	num2	3	nat.div	nat,nat	nat	zero
+1	num2	4	nat.mod	nat,nat	nat	dividend
+1	num2	5	nat.le	nat,nat	bool	-
+1	num2	6	nat.lt	nat,nat	bool	-
+1	num2	7	int.add	int,int	int	-
+1	num2	8	int.sub	int,int	int	-
+1	num2	9	int.mul	int,int	int	-
+1	num2	10	int.div	int,int	int	zero
+1	num2	11	int.mod	int,int	int	dividend
+1	num2	12	int.le	int,int	bool	-
+1	num2	13	int.lt	int,int	bool	-

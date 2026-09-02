@@ -1295,7 +1295,9 @@ impl Kernel {
                 self.eq_at(bool_ty, child(ty)?, child(left)?, child(right)?)
             }
             Node::Eps { ty, predicate } => self.eps(child(ty)?, child(predicate)?),
-            Node::KindStar
+            Node::Num1(..)
+            | Node::Num2(..)
+            | Node::KindStar
             | Node::BoolTy
             | Node::Bool(_)
             | Node::Bytes(..)
@@ -1694,8 +1696,8 @@ impl Kernel {
                 self.require_bool_type::<Infallible>(sort)?;
                 Some(sort)
             }
-            // A compact literal has no Ethane meaning until an init package
-            // lowers it, so no checked arena may contain one.
+            // A literal has no Ethane meaning until the init slice supplies
+            // one, so no checked arena may contain one.
             Node::Bytes(..)
             | Node::Nat(..)
             | Node::NatBig(..)
@@ -1703,7 +1705,16 @@ impl Kernel {
             | Node::IntBig(..) => {
                 return Err(KernelError::WrongForm {
                     reference,
-                    expected: "compact literal lowered through an init package",
+                    expected: "compact literal lowered through an init slice",
+                    actual: row.tag(),
+                });
+            }
+            // A numeric opcode names an init constant, so until lowering
+            // relates the row to it the kernel has nothing to type.
+            Node::Num1(..) | Node::Num2(..) => {
+                return Err(KernelError::WrongForm {
+                    reference,
+                    expected: "compact builtin lowered through an init slice",
                     actual: row.tag(),
                 });
             }
@@ -2314,13 +2325,15 @@ fn remap_row(row: &Row, sort: Option<Ref>, map: &BTreeMap<Ref, Ref>) -> (Row, Op
         Node::App(a, b) => Node::App(remap(a), remap(b)),
         Node::Lam(a, b) => Node::Lam(remap(a), remap(b)),
         Node::Bool(value) => Node::Bool(value),
-        // A literal never reaches a checked arena, so it is never remapped: a
-        // blob index only means anything inside the arena that owns the byte
-        // table. `validate_copy_row` rejects the staged row before it commits.
+        // A blob index means something only in the arena that owns the byte
+        // table, so a literal is copied unchanged; `validate_copy_row` rejects
+        // the staged row before it commits.
         Node::Bytes(..) | Node::Nat(..) | Node::NatBig(..) | Node::Int(..) | Node::IntBig(..) => {
             return (*row, sort);
         }
         Node::Op1(op, operand) => Node::Op1(op, remap(operand)),
+        // A numeric row never reaches a checked arena, so it is never remapped.
+        Node::Num1(..) | Node::Num2(..) => return (*row, sort),
         Node::Op2(op, left, right) => Node::Op2(op, remap(left), remap(right)),
         Node::Eq(ty, a, b) => Node::Eq(remap(ty), remap(a), remap(b)),
         Node::Eps { ty, predicate } => Node::Eps {
@@ -2991,6 +3004,37 @@ mod tests {
             Err(KernelError::CyclicSyntax { .. })
         ));
         assert_eq!(destination.len(), before);
+        assert_eq!(destination.category(existing).unwrap(), Sort::Kind);
+    }
+
+    /// A numeric opcode has no kernel constructor and no meaning until the
+    /// init slice defines its sorts, so a decoded row carrying one is refused.
+    #[test]
+    fn numeric_builtin_rows_cannot_enter_a_checked_arena() {
+        let mut source = Kernel::new();
+        let star = source.star().unwrap();
+        let bool_ty = source.bool_ty(star).unwrap();
+        let truth = source.bool(bool_ty, true).unwrap();
+        let sum = source
+            .arena
+            .push_row(
+                Row::new(crate::row::Expr::Num2(
+                    crate::builtin::Num2::NatAdd,
+                    truth,
+                    truth,
+                )),
+                Some(bool_ty),
+            )
+            .unwrap();
+
+        let mut destination = Kernel::new();
+        let existing = destination.star().unwrap();
+        let before = destination.arena.clone();
+        assert!(matches!(
+            destination.copy_term_from(&source, sum),
+            Err(KernelError::WrongForm { .. })
+        ));
+        assert_eq!(destination.arena, before);
         assert_eq!(destination.category(existing).unwrap(), Sort::Kind);
     }
 
