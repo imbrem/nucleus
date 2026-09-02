@@ -717,7 +717,11 @@ fn extract_clause(
         .ok_or_else(|| trace_error("rule extraction path is absent"))?;
     for &(sibling, parent) in path {
         kernel.weaken(theorem, &[positive(sibling)], &[])?;
-        theorem = kernel.and_left(theorem, positive(parent))?;
+        let previous = theorem;
+        theorem = kernel.and_left(previous, positive(parent))?;
+        if !kernel.remove_theorem(previous) {
+            return Err(trace_error("consumed conjunction theorem is absent"));
+        }
     }
     Ok(theorem)
 }
@@ -749,6 +753,9 @@ fn modus_ponens(
     let identity = kernel.identity(positive(consequent))?;
     let applied = kernel.imp_left(premise_theorem, identity, positive(implication))?;
     let theorem = kernel.cut(implication_theorem, applied, positive(implication))?;
+    if !kernel.remove_theorem(identity) || !kernel.remove_theorem(applied) {
+        return Err(trace_error("consumed modus ponens theorem is absent"));
+    }
     kernel.contract_theorem(theorem)?;
     Ok(theorem)
 }
@@ -836,6 +843,12 @@ mod tests {
                 .map(|artifact| {
                     let artifact = artifact.expect("HOL replay");
                     assert_eq!(artifact.arena.addr(), artifact.record.arena);
+                    let mut arena_bytes = Vec::new();
+                    covalence_logic_hol::wire::serialize(&artifact.arena, &mut arena_bytes)
+                        .expect("encode arena");
+                    let decoded = covalence_logic_hol::wire::deserialize(arena_bytes.as_slice())
+                        .expect("decode arena");
+                    assert!(decoded.theorems().get(artifact.record.theorem).is_some());
                     artifact.record.encode().expect("encode record")
                 })
                 .collect::<Vec<_>>()
@@ -930,11 +943,18 @@ mod tests {
                 .expect("checked HOL replay");
             let replay_ms = started.elapsed().as_secs_f64() * 1_000.0;
             let arena = session.kernel.into_arena();
+            let address_started = std::time::Instant::now();
+            let address = arena.addr();
+            let address_ms = address_started.elapsed().as_secs_f64() * 1_000.0;
+            let mut encoded = Vec::new();
+            covalence_logic_hol::wire::serialize(&arena, &mut encoded).expect("encode arena");
+            let decoded =
+                covalence_logic_hol::wire::deserialize(encoded.as_slice()).expect("decode arena");
+            assert!(decoded.theorems().get(imported.theorem).is_some());
             eprintln!(
-                "{{\"label\":{label:?},\"repetition\":{repetition},\"replay_ms\":{replay_ms:.3},\"rule_instances\":{},\"arena_rows\":{},\"arena\":\"{}\"}}",
+                "{{\"label\":{label:?},\"repetition\":{repetition},\"replay_ms\":{replay_ms:.3},\"address_ms\":{address_ms:.3},\"rule_instances\":{},\"arena_rows\":{},\"arena\":\"{address}\"}}",
                 imported.rule_instances,
                 arena.len(),
-                arena.addr()
             );
         }
     }
