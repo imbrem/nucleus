@@ -35,3 +35,6 @@ the selected result directly and independently interprets the parameter-add
 instruction data, then asks the public HOL kernel to check their syntactic
 congruence and premise-free equality theorem. The word carrier and addition
 operation remain abstract; this first theorem adds no integer axiom.
+`prove_add_slice_agreement` is the source-level composition: it first rebuilds
+the exhaustive plan and validates selected rule bodies against the exact IL,
+then retains that plan and the interpreted program beside the checked theorem.

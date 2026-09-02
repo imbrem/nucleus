@@ -17,8 +17,9 @@ pub use add_slice::{
     DeclarationCoverage, Disposition, Rejection, RuleCoverage, SourceSpan, TranslationCase,
 };
 pub use semantics::{
-    AddOperation, AddRouteAgreement, AddSemanticsError, EvaluationError, ParameterInstruction,
-    Program, ProgramError, parameter_add_program, prove_parameter_add_agreement,
+    AddOperation, AddRouteAgreement, AddSemanticsError, AddSliceAgreement, AddSliceAgreementError,
+    EvaluationError, ParameterInstruction, Program, ProgramError, parameter_add_program,
+    prove_add_program_agreement, prove_add_slice_agreement, prove_parameter_add_agreement,
 };
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};

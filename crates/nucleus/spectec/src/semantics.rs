@@ -10,6 +10,8 @@
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref, SynRel, ThmId};
 
+use crate::{AddSliceError, AddSlicePlan, Source};
+
 /// An ordered program over an arbitrary instruction schema.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Program<Instruction> {
@@ -139,6 +141,34 @@ pub struct AddRouteAgreement {
     pub theorem: ThmId,
 }
 
+/// Source-derived add plan, executable schema, and checked route theorem.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AddSliceAgreement {
+    plan: AddSlicePlan,
+    program: Program<ParameterInstruction<AddOperation>>,
+    checked: AddRouteAgreement,
+}
+
+impl AddSliceAgreement {
+    /// Returns the exhaustive source coverage used by both routes.
+    #[must_use]
+    pub const fn plan(&self) -> &AddSlicePlan {
+        &self.plan
+    }
+
+    /// Returns the executable instruction data consumed by Route B.
+    #[must_use]
+    pub const fn program(&self) -> &Program<ParameterInstruction<AddOperation>> {
+        &self.program
+    }
+
+    /// Returns the checked route roots and agreement theorem.
+    #[must_use]
+    pub const fn checked(&self) -> AddRouteAgreement {
+        self.checked
+    }
+}
+
 /// Why the checked add-route package could not be constructed.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
@@ -163,6 +193,52 @@ pub enum AddSemanticsError {
     },
 }
 
+/// Why a source-derived add agreement package could not be constructed.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum AddSliceAgreementError {
+    /// The source did not match the closed add-slice coverage and body shapes.
+    #[snafu(display("could not derive parameter-add coverage: {source}"))]
+    Plan {
+        /// Structural coverage failure.
+        source: AddSliceError,
+    },
+    /// Public checked HOL operations rejected the two-route construction.
+    #[snafu(display("could not prove parameter-add route agreement: {source}"))]
+    Semantics {
+        /// Checked semantic construction failure.
+        source: AddSemanticsError,
+    },
+}
+
+/// Derives the closed add slice and checks both semantic routes in one step.
+///
+/// # Errors
+///
+/// Returns an error if exhaustive source coverage or selected rule-body shape
+/// validation fails, or if [`prove_add_program_agreement`] rejects the checked
+/// construction. The kernel is unchanged on any failure.
+pub fn prove_add_slice_agreement(
+    source: &Source,
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    word_ty: Ref,
+    add: Ref,
+    left: Ref,
+    right: Ref,
+) -> Result<AddSliceAgreement, AddSliceAgreementError> {
+    let plan =
+        AddSlicePlan::build(source).map_err(|source| AddSliceAgreementError::Plan { source })?;
+    let program = parameter_add_program();
+    let checked = prove_add_program_agreement(kernel, &program, bool_ty, word_ty, add, left, right)
+        .map_err(|source| AddSliceAgreementError::Semantics { source })?;
+    Ok(AddSliceAgreement {
+        plan,
+        program,
+        checked,
+    })
+}
+
 /// Constructs both add routes and proves their equality through checked HOL.
 ///
 /// `word_ty` is deliberately abstract, and `add` supplies all arithmetic
@@ -185,6 +261,32 @@ pub fn prove_parameter_add_agreement(
     left: Ref,
     right: Ref,
 ) -> Result<AddRouteAgreement, AddSemanticsError> {
+    prove_add_program_agreement(
+        kernel,
+        &parameter_add_program(),
+        bool_ty,
+        word_ty,
+        add,
+        left,
+        right,
+    )
+}
+
+/// Constructs a direct add route and proves equality with one program route.
+///
+/// # Errors
+///
+/// Returns an error under the same conditions as
+/// [`prove_parameter_add_agreement`]. The kernel is unchanged on failure.
+pub fn prove_add_program_agreement(
+    kernel: &mut Kernel,
+    program: &Program<ParameterInstruction<AddOperation>>,
+    bool_ty: Ref,
+    word_ty: Ref,
+    add: Ref,
+    left: Ref,
+    right: Ref,
+) -> Result<AddRouteAgreement, AddSemanticsError> {
     let mut staged = kernel.fork();
 
     // Route A is authored directly from the selected semantic operation.
@@ -198,7 +300,7 @@ pub fn prove_parameter_add_agreement(
     // Route B consumes the instruction schema as data through the generic
     // evaluator.
     let (interpreted_partial, interpreted) =
-        interpret_parameter_add(&mut staged, add, left, right)?;
+        interpret_parameter_add(program, &mut staged, add, left, right)?;
 
     let add_same = staged
         .syn_refl(None, SynRel::Syn, add)
@@ -275,13 +377,14 @@ pub fn prove_parameter_add_agreement(
 }
 
 fn interpret_parameter_add(
+    program: &Program<ParameterInstruction<AddOperation>>,
     kernel: &mut Kernel,
     add: Ref,
     left: Ref,
     right: Ref,
 ) -> Result<(Ref, Ref), AddSemanticsError> {
     let mut partial = None;
-    let result = parameter_add_program()
+    let result = program
         .evaluate(
             |index| match index {
                 0 => Ok(left),

@@ -5,7 +5,8 @@ use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoveragePlan,
     Disposition, KernelRoot, ParameterInstruction, Program, ProgramError, Source, TYPE_NAME,
-    TranslationCase, parameter_add_program, prove_parameter_add_agreement,
+    TranslationCase, parameter_add_program, prove_add_slice_agreement,
+    prove_parameter_add_agreement,
 };
 
 #[test]
@@ -221,6 +222,28 @@ fn checked_add_agreement_is_transactional() {
     );
     assert_eq!(kernel.len(), before_rows);
     assert_eq!(kernel.thm().live_theorems().count(), before_theorems);
+}
+
+#[test]
+fn source_level_add_agreement_retains_plan_and_program() {
+    let source = Source::wasm3().unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let word_ty = kernel.ty_fv(10, star).unwrap();
+    let unary = kernel.ty_arr(word_ty, word_ty).unwrap();
+    let binary = kernel.ty_arr(word_ty, unary).unwrap();
+    let add = kernel.tm_fv(11, binary).unwrap();
+    let left = kernel.tm_fv(12, word_ty).unwrap();
+    let right = kernel.tm_fv(13, word_ty).unwrap();
+
+    let package =
+        prove_add_slice_agreement(&source, &mut kernel, bool_ty, word_ty, add, left, right)
+            .unwrap();
+
+    assert_eq!(package.plan(), &AddSlicePlan::build(&source).unwrap());
+    assert_eq!(package.program(), &parameter_add_program());
+    assert!(kernel.thm().get(package.checked().theorem).is_some());
 }
 
 #[test]
