@@ -103,54 +103,59 @@ pub struct SourceSpan {
     pub last_line: u32,
 }
 
-/// Classification shared by declarations, clauses, and rules.
+/// Generic classification shared by structurally selected source forms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Disposition {
+pub enum CoverageDisposition<Case, Reject, Source> {
     /// This form has exactly one translation case and raw-source mapping.
     Translate {
         /// Closed translator dispatch case.
-        case: TranslationCase,
+        case: Case,
         /// Independent raw-source audit location.
-        source: SourceSpan,
+        source: Source,
     },
     /// This form must be rejected by the first slice.
-    Reject(Rejection),
+    Reject(Reject),
+}
+
+/// Add-slice specialization of the generic coverage disposition.
+pub type Disposition = CoverageDisposition<TranslationCase, Rejection, SourceSpan>;
+
+/// One generic selector and its complete coverage disposition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Coverage<Selector, Classification> {
+    /// Exact structural selector.
+    pub id: Selector,
+    /// Classification for the slice.
+    pub disposition: Classification,
 }
 
 /// Coverage for one elaborated declaration.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DeclarationCoverage {
-    /// Exact elaborated selector.
-    pub id: DeclarationId,
-    /// Classification for the slice.
-    pub disposition: Disposition,
-}
+pub type DeclarationCoverage = Coverage<DeclarationId, Disposition>;
 
 /// Coverage for one elaborated definition clause.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ClauseCoverage {
-    /// Exact elaborated selector.
-    pub id: ClauseId,
-    /// Classification for the slice.
-    pub disposition: Disposition,
-}
+pub type ClauseCoverage = Coverage<ClauseId, Disposition>;
 
 /// Coverage for one elaborated relation rule.
+pub type RuleCoverage = Coverage<RuleId, Disposition>;
+
+/// Generic deterministic coverage schema for elaborated declarations and
+/// their nested clauses and rules.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RuleCoverage {
-    /// Exact elaborated selector.
-    pub id: RuleId,
-    /// Classification for the slice.
-    pub disposition: Disposition,
+pub struct CoveragePlan<Classification> {
+    declarations: Vec<Coverage<DeclarationId, Classification>>,
+    clauses: Vec<Coverage<ClauseId, Classification>>,
+    rules: Vec<Coverage<RuleId, Classification>>,
 }
 
+/// Owned declaration, clause, and rule parts of a generic coverage plan.
+pub type CoverageParts<Classification> = (
+    Vec<Coverage<DeclarationId, Classification>>,
+    Vec<Coverage<ClauseId, Classification>>,
+    Vec<Coverage<RuleId, Classification>>,
+);
+
 /// Deterministic, exhaustive coverage plan for the first add slice.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AddSlicePlan {
-    declarations: Vec<DeclarationCoverage>,
-    clauses: Vec<ClauseCoverage>,
-    rules: Vec<RuleCoverage>,
-}
+pub type AddSlicePlan = CoveragePlan<Disposition>;
 
 /// Canonical audit artifact linking exact inputs to one closed coverage plan.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -215,6 +220,61 @@ impl AddSliceArtifact {
         ))
     }
 
+    /// Decodes one exact canonical add-slice audit artifact.
+    ///
+    /// This checks the closed schema, CID profiles, selector domains,
+    /// disposition invariants, unique coverage, and closed translator case
+    /// vocabulary. It does not establish that the coverage matches an input;
+    /// use [`verify_source`](Self::verify_source) for that comparison.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for noncanonical DRISL or any schema/local-invariant
+    /// violation.
+    pub fn decode(bytes: &[u8]) -> Result<Self, AddSliceArtifactError> {
+        let value = drisl::decode(Policy::ATPROTO, bytes)
+            .map_err(|source| AddSliceArtifactError::RecordDecode { source })?;
+        artifact_from_value(&value)
+    }
+
+    /// Decodes an artifact and verifies it against one exact source.
+    ///
+    /// # Errors
+    ///
+    /// Returns any decoding, schema, input-identity, or coverage mismatch.
+    pub fn decode_for_source(bytes: &[u8], source: &Source) -> Result<Self, AddSliceArtifactError> {
+        let artifact = Self::decode(bytes)?;
+        artifact.verify_source(source)?;
+        Ok(artifact)
+    }
+
+    /// Verifies this artifact against one exact verified source.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either input CID differs, deriving the expected
+    /// closed plan fails, or any decoded coverage entry differs.
+    pub fn verify_source(&self, source: &Source) -> Result<(), AddSliceArtifactError> {
+        if self.bundle != source.bundle() {
+            return Err(AddSliceArtifactError::SourceMismatch {
+                reason: "bundle CID differs",
+            });
+        }
+        if self.ast != source.ast() {
+            return Err(AddSliceArtifactError::SourceMismatch {
+                reason: "AST CID differs",
+            });
+        }
+        let expected =
+            AddSlicePlan::build(source).map_err(|source| AddSliceArtifactError::Plan { source })?;
+        if self.plan != expected {
+            return Err(AddSliceArtifactError::SourceMismatch {
+                reason: "coverage plan differs",
+            });
+        }
+        Ok(())
+    }
+
     fn to_value(&self) -> Value {
         Value::Map(BTreeMap::from([
             value_field("$type", Value::Text(ADD_SLICE_TYPE_NAME.to_owned())),
@@ -242,7 +302,7 @@ impl AddSliceArtifact {
     }
 }
 
-impl AddSlicePlan {
+impl CoveragePlan<Disposition> {
     /// Validates the exact selected forms and classifies the complete input.
     ///
     /// Selection is by structural IDs. Expected names and kinds are checked as
@@ -273,7 +333,7 @@ impl AddSlicePlan {
                 }
                 None => Disposition::Reject(Rejection::DeclarationOutsideSlice),
             };
-            declarations.push(DeclarationCoverage {
+            declarations.push(Coverage {
                 id: declaration.id(),
                 disposition,
             });
@@ -290,7 +350,7 @@ impl AddSlicePlan {
                     Some((case, span)) => translated(case, span, &mut seen)?,
                     None => Disposition::Reject(Rejection::AlternativeOutsideSlice),
                 };
-                clauses.push(ClauseCoverage {
+                clauses.push(Coverage {
                     id: clause.id().clone(),
                     disposition,
                 });
@@ -314,7 +374,7 @@ impl AddSlicePlan {
                     }
                     None => Disposition::Reject(Rejection::AlternativeOutsideSlice),
                 };
-                rules.push(RuleCoverage {
+                rules.push(Coverage {
                     id: rule.id().clone(),
                     disposition,
                 });
@@ -333,23 +393,45 @@ impl AddSlicePlan {
             rules,
         })
     }
+}
+
+impl<Classification> CoveragePlan<Classification> {
+    /// Composes a generic plan from declaration, clause, and rule coverage.
+    #[must_use]
+    pub fn new(
+        declarations: Vec<Coverage<DeclarationId, Classification>>,
+        clauses: Vec<Coverage<ClauseId, Classification>>,
+        rules: Vec<Coverage<RuleId, Classification>>,
+    ) -> Self {
+        Self {
+            declarations,
+            clauses,
+            rules,
+        }
+    }
 
     /// Returns declaration coverage in elaborated source order.
     #[must_use]
-    pub fn declarations(&self) -> &[DeclarationCoverage] {
+    pub fn declarations(&self) -> &[Coverage<DeclarationId, Classification>] {
         &self.declarations
     }
 
     /// Returns clause coverage in deterministic tree order.
     #[must_use]
-    pub fn clauses(&self) -> &[ClauseCoverage] {
+    pub fn clauses(&self) -> &[Coverage<ClauseId, Classification>] {
         &self.clauses
     }
 
     /// Returns rule coverage in deterministic tree order.
     #[must_use]
-    pub fn rules(&self) -> &[RuleCoverage] {
+    pub fn rules(&self) -> &[Coverage<RuleId, Classification>] {
         &self.rules
+    }
+
+    /// Decomposes a plan without cloning its coverage entries.
+    #[must_use]
+    pub fn into_parts(self) -> CoverageParts<Classification> {
+        (self.declarations, self.clauses, self.rules)
     }
 }
 
@@ -400,6 +482,36 @@ pub enum AddSliceError {
     RecordEncode {
         /// Underlying deterministic encoding error.
         source: drisl::EncodeError,
+    },
+}
+
+/// Why stored add-slice audit bytes were rejected.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum AddSliceArtifactError {
+    /// The bytes were not one canonical ATProto-profile DRISL item.
+    #[snafu(display("could not decode SpecTec add-slice record: {source}"))]
+    RecordDecode {
+        /// Underlying deterministic decoder failure.
+        source: drisl::DecodeError,
+    },
+    /// The closed schema or a local invariant was violated.
+    #[snafu(display("invalid SpecTec add-slice record: {reason}"))]
+    Schema {
+        /// Exact rejected invariant.
+        reason: &'static str,
+    },
+    /// Rebuilding the expected plan from the verified source failed.
+    #[snafu(display("could not derive expected SpecTec add-slice plan: {source}"))]
+    Plan {
+        /// Underlying structural coverage failure.
+        source: AddSliceError,
+    },
+    /// The artifact did not describe the supplied source exactly.
+    #[snafu(display("SpecTec add-slice record does not match its source: {reason}"))]
+    SourceMismatch {
+        /// First failed identity or coverage invariant.
+        reason: &'static str,
     },
 }
 
@@ -960,4 +1072,283 @@ const fn case_name(case: TranslationCase) -> &'static str {
 
 fn value_field(name: &str, value: Value) -> (String, Value) {
     (name.to_owned(), value)
+}
+
+fn artifact_from_value(value: &Value) -> Result<AddSliceArtifact, AddSliceArtifactError> {
+    let fields = artifact_map(value, 6, "top-level item must have exactly six fields")?;
+    if artifact_text(artifact_required(fields, "$type")?)? != ADD_SLICE_TYPE_NAME {
+        return artifact_schema("$type must be the exact add-slice discriminator");
+    }
+    let bundle = artifact_link(artifact_required(fields, "bundle")?)?;
+    if bundle.codec() != CidCodec::Drisl || bundle.hash() != CidHash::Sha256 {
+        return artifact_schema("bundle must be a SHA-256 DRISL CID");
+    }
+    let ast = artifact_link(artifact_required(fields, "ast")?)?;
+    if ast.codec() != CidCodec::Raw || ast.hash() != CidHash::Sha256 {
+        return artifact_schema("ast must be a SHA-256 raw CID");
+    }
+    let declarations = declaration_array(artifact_required(fields, "declarations")?)?;
+    let clauses = clause_array(artifact_required(fields, "clauses")?)?;
+    let rules = rule_array(artifact_required(fields, "rules")?)?;
+    require_unique(declarations.iter().map(|coverage| coverage.id))?;
+    require_unique(clauses.iter().map(|coverage| coverage.id.clone()))?;
+    require_unique(rules.iter().map(|coverage| coverage.id.clone()))?;
+    let cases = declarations
+        .iter()
+        .map(|coverage| coverage.disposition)
+        .chain(clauses.iter().map(|coverage| coverage.disposition))
+        .chain(rules.iter().map(|coverage| coverage.disposition))
+        .filter_map(|disposition| match disposition {
+            Disposition::Translate { case, .. } => Some(case),
+            Disposition::Reject(_) => None,
+        })
+        .collect::<Vec<_>>();
+    if cases.len() != TRANSLATION_CASE_COUNT
+        || cases.iter().copied().collect::<BTreeSet<_>>().len() != cases.len()
+    {
+        return artifact_schema("translation cases must occur exactly once");
+    }
+    Ok(AddSliceArtifact {
+        bundle,
+        ast,
+        plan: CoveragePlan {
+            declarations,
+            clauses,
+            rules,
+        },
+    })
+}
+
+fn declaration_array(value: &Value) -> Result<Vec<DeclarationCoverage>, AddSliceArtifactError> {
+    let Value::Array(values) = value else {
+        return artifact_schema("declarations must be an array");
+    };
+    values.iter().map(declaration_from_value).collect()
+}
+
+fn clause_array(value: &Value) -> Result<Vec<ClauseCoverage>, AddSliceArtifactError> {
+    let Value::Array(values) = value else {
+        return artifact_schema("clauses must be an array");
+    };
+    values.iter().map(clause_from_value).collect()
+}
+
+fn rule_array(value: &Value) -> Result<Vec<RuleCoverage>, AddSliceArtifactError> {
+    let Value::Array(values) = value else {
+        return artifact_schema("rules must be an array");
+    };
+    values.iter().map(rule_from_value).collect()
+}
+
+fn declaration_from_value(value: &Value) -> Result<DeclarationCoverage, AddSliceArtifactError> {
+    let fields = artifact_map(value, 3, "declaration must have exactly three fields")?;
+    Ok(Coverage {
+        id: decoded_declaration(fields)?,
+        disposition: disposition_from_value(artifact_required(fields, "disposition")?)?,
+    })
+}
+
+fn clause_from_value(value: &Value) -> Result<ClauseCoverage, AddSliceArtifactError> {
+    let fields = artifact_map(value, 4, "clause must have exactly four fields")?;
+    let declaration = decoded_declaration(fields)?;
+    let path = decoded_path(artifact_required(fields, "path")?)?;
+    let id = ClauseId::new(declaration, path).ok_or(AddSliceArtifactError::Schema {
+        reason: "clause path must be nonempty and one-based",
+    })?;
+    Ok(Coverage {
+        id,
+        disposition: disposition_from_value(artifact_required(fields, "disposition")?)?,
+    })
+}
+
+fn rule_from_value(value: &Value) -> Result<RuleCoverage, AddSliceArtifactError> {
+    let fields = artifact_map(value, 4, "rule must have exactly four fields")?;
+    let declaration = decoded_declaration(fields)?;
+    let path = decoded_path(artifact_required(fields, "path")?)?;
+    let id = RuleId::new(declaration, path).ok_or(AddSliceArtifactError::Schema {
+        reason: "rule path must be nonempty and one-based",
+    })?;
+    Ok(Coverage {
+        id,
+        disposition: disposition_from_value(artifact_required(fields, "disposition")?)?,
+    })
+}
+
+fn decoded_declaration(
+    fields: &BTreeMap<String, Value>,
+) -> Result<DeclarationId, AddSliceArtifactError> {
+    let root = artifact_positive_u32(artifact_required(fields, "root")?)?;
+    let member = artifact_nonnegative_u32(artifact_required(fields, "member")?)?;
+    DeclarationId::new(root, (member != 0).then_some(member)).ok_or(AddSliceArtifactError::Schema {
+        reason: "declaration selector must be one-based",
+    })
+}
+
+fn decoded_path(value: &Value) -> Result<Vec<u32>, AddSliceArtifactError> {
+    let Value::Array(values) = value else {
+        return artifact_schema("selector path must be an array");
+    };
+    if values.is_empty() {
+        return artifact_schema("selector path must not be empty");
+    }
+    values.iter().map(artifact_positive_u32).collect()
+}
+
+fn disposition_from_value(value: &Value) -> Result<Disposition, AddSliceArtifactError> {
+    let fields = artifact_map(value, 6, "disposition must have exactly six fields")?;
+    let status = artifact_text(artifact_required(fields, "status")?)?;
+    let case = artifact_text(artifact_required(fields, "case")?)?;
+    let rejection = artifact_text(artifact_required(fields, "rejection")?)?;
+    let source_path = artifact_text(artifact_required(fields, "sourcePath")?)?;
+    let first_line = artifact_nonnegative_u32(artifact_required(fields, "firstLine")?)?;
+    let last_line = artifact_nonnegative_u32(artifact_required(fields, "lastLine")?)?;
+    match status {
+        "translate" => {
+            if !rejection.is_empty() || first_line == 0 || first_line > last_line {
+                return artifact_schema("translated disposition fields are inconsistent");
+            }
+            Ok(Disposition::Translate {
+                case: case_from_name(case)?,
+                source: SourceSpan {
+                    path: source_path_from_name(source_path)?,
+                    first_line,
+                    last_line,
+                },
+            })
+        }
+        "reject" => {
+            if !case.is_empty() || !source_path.is_empty() || first_line != 0 || last_line != 0 {
+                return artifact_schema("rejected disposition fields are inconsistent");
+            }
+            Ok(Disposition::Reject(rejection_from_name(rejection)?))
+        }
+        _ => artifact_schema("disposition status is not recognized"),
+    }
+}
+
+fn case_from_name(name: &str) -> Result<TranslationCase, AddSliceArtifactError> {
+    let case = match name {
+        "integer-carrier" => TranslationCase::IntegerCarrier,
+        "numeric-type" => TranslationCase::NumericType,
+        "size" => TranslationCase::Size,
+        "size-nn" => TranslationCase::SizeNn,
+        "binary-operation-syntax" => TranslationCase::BinaryOperationSyntax,
+        "value" => TranslationCase::Value,
+        "frame" => TranslationCase::Frame,
+        "instruction" => TranslationCase::Instruction,
+        "integer-add" => TranslationCase::IntegerAdd,
+        "binary-operation" => TranslationCase::BinaryOperation,
+        "local" => TranslationCase::Local,
+        "step-pure" => TranslationCase::StepPure,
+        "step-read" => TranslationCase::StepRead,
+        "step" => TranslationCase::Step,
+        "steps" => TranslationCase::Steps,
+        "size-i32-clause" => TranslationCase::SizeI32Clause,
+        "size-nn-clause" => TranslationCase::SizeNnClause,
+        "integer-add-clause" => TranslationCase::IntegerAddClause,
+        "binary-operation-i32-add-clause" => TranslationCase::BinaryOperationI32AddClause,
+        "local-clause" => TranslationCase::LocalClause,
+        "binary-operation-value-rule" => TranslationCase::BinaryOperationValueRule,
+        "return-frame-rule" => TranslationCase::ReturnFrameRule,
+        "local-get-rule" => TranslationCase::LocalGetRule,
+        "step-pure-rule" => TranslationCase::StepPureRule,
+        "step-pure-premise" => TranslationCase::StepPurePremise,
+        "step-read-rule" => TranslationCase::StepReadRule,
+        "step-read-premise" => TranslationCase::StepReadPremise,
+        "steps-reflexive-rule" => TranslationCase::StepsReflexiveRule,
+        "steps-transitive-rule" => TranslationCase::StepsTransitiveRule,
+        "steps-step-premise" => TranslationCase::StepsStepPremise,
+        "steps-tail-premise" => TranslationCase::StepsTailPremise,
+        _ => return artifact_schema("translation case is not recognized"),
+    };
+    Ok(case)
+}
+
+fn rejection_from_name(name: &str) -> Result<Rejection, AddSliceArtifactError> {
+    match name {
+        "declaration-outside-slice" => Ok(Rejection::DeclarationOutsideSlice),
+        "alternative-outside-slice" => Ok(Rejection::AlternativeOutsideSlice),
+        _ => artifact_schema("rejection reason is not recognized"),
+    }
+}
+
+fn source_path_from_name(name: &str) -> Result<&'static str, AddSliceArtifactError> {
+    match name {
+        TYPES => Ok(TYPES),
+        INSTRUCTIONS => Ok(INSTRUCTIONS),
+        NUMERICS => Ok(NUMERICS),
+        CONFIGURATIONS => Ok(CONFIGURATIONS),
+        EXECUTION => Ok(EXECUTION),
+        VALUES => Ok(VALUES),
+        _ => artifact_schema("source path is not recognized"),
+    }
+}
+
+fn require_unique<T: Ord>(
+    values: impl IntoIterator<Item = T>,
+) -> Result<(), AddSliceArtifactError> {
+    let mut seen = BTreeSet::new();
+    if values.into_iter().all(|value| seen.insert(value)) {
+        Ok(())
+    } else {
+        artifact_schema("coverage selectors must be unique")
+    }
+}
+
+fn artifact_map<'a>(
+    value: &'a Value,
+    length: usize,
+    reason: &'static str,
+) -> Result<&'a BTreeMap<String, Value>, AddSliceArtifactError> {
+    let Value::Map(fields) = value else {
+        return artifact_schema(reason);
+    };
+    if fields.len() != length {
+        return artifact_schema(reason);
+    }
+    Ok(fields)
+}
+
+fn artifact_required<'a>(
+    fields: &'a BTreeMap<String, Value>,
+    name: &'static str,
+) -> Result<&'a Value, AddSliceArtifactError> {
+    fields
+        .get(name)
+        .ok_or(AddSliceArtifactError::Schema { reason: name })
+}
+
+fn artifact_text(value: &Value) -> Result<&str, AddSliceArtifactError> {
+    let Value::Text(value) = value else {
+        return artifact_schema("field must be text");
+    };
+    Ok(value)
+}
+
+fn artifact_link(value: &Value) -> Result<Cid, AddSliceArtifactError> {
+    let Value::Link(value) = value else {
+        return artifact_schema("field must be a CID link");
+    };
+    Ok(*value)
+}
+
+fn artifact_positive_u32(value: &Value) -> Result<u32, AddSliceArtifactError> {
+    let value = artifact_nonnegative_u32(value)?;
+    if value == 0 {
+        return artifact_schema("integer must be positive");
+    }
+    Ok(value)
+}
+
+fn artifact_nonnegative_u32(value: &Value) -> Result<u32, AddSliceArtifactError> {
+    let Value::Integer(value) = value else {
+        return artifact_schema("field must be an integer");
+    };
+    u32::try_from(*value).map_err(|_| AddSliceArtifactError::Schema {
+        reason: "integer must fit the nonnegative u32 domain",
+    })
+}
+
+fn artifact_schema<T>(reason: &'static str) -> Result<T, AddSliceArtifactError> {
+    Err(AddSliceArtifactError::Schema { reason })
 }

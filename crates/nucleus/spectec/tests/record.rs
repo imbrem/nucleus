@@ -2,8 +2,9 @@ use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
 use covalence_data_spectec::{DeclarationId, IlDocument, Limits};
 use covalence_logic_hol::Kernel;
 use covalence_nucleus_spectec::{
-    ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSlicePlan, ArtifactError, CompilationRecord,
-    CompileError, Compiler, Disposition, KernelRoot, Source, TYPE_NAME, TranslationCase,
+    ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
+    CompilationRecord, CompileError, Compiler, Disposition, KernelRoot, Source, TYPE_NAME,
+    TranslationCase,
 };
 
 #[test]
@@ -97,6 +98,55 @@ fn add_slice_has_canonical_translation_cid() {
         ADD_SLICE_TYPE_NAME,
         "io.github.imbrem.nucleus.spectecAddSliceV1"
     );
+
+    let decoded = AddSliceArtifact::decode(&bytes).unwrap();
+    assert_eq!(decoded, artifact);
+    assert_eq!(decoded.encode().unwrap(), bytes);
+    decoded.verify_source(&source).unwrap();
+    assert_eq!(
+        AddSliceArtifact::decode_for_source(&bytes, &source).unwrap(),
+        artifact
+    );
+
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(matches!(
+        AddSliceArtifact::decode(&trailing),
+        Err(AddSliceArtifactError::RecordDecode { .. })
+    ));
+
+    let mut reordered_value = drisl::decode(Policy::ATPROTO, &bytes).unwrap();
+    let covalence_data_cbor::drisl::Value::Map(fields) = &mut reordered_value else {
+        panic!("artifact is a map");
+    };
+    let covalence_data_cbor::drisl::Value::Array(declarations) =
+        fields.get_mut("declarations").unwrap()
+    else {
+        panic!("declarations is an array");
+    };
+    declarations.swap(0, 1);
+    let reordered = drisl::encode(Policy::ATPROTO, &reordered_value).unwrap();
+    let reordered = AddSliceArtifact::decode(&reordered).unwrap();
+    assert!(matches!(
+        reordered.verify_source(&source),
+        Err(AddSliceArtifactError::SourceMismatch { .. })
+    ));
+
+    let mut value = drisl::decode(Policy::ATPROTO, &bytes).unwrap();
+    let covalence_data_cbor::drisl::Value::Map(fields) = &mut value else {
+        panic!("artifact is a map");
+    };
+    let covalence_data_cbor::drisl::Value::Array(declarations) =
+        fields.get_mut("declarations").unwrap()
+    else {
+        panic!("declarations is an array");
+    };
+    declarations[1] = declarations[0].clone();
+    let duplicate = drisl::encode(Policy::ATPROTO, &value).unwrap();
+    assert!(matches!(
+        AddSliceArtifact::decode(&duplicate),
+        Err(AddSliceArtifactError::Schema { .. })
+    ));
 }
 
 #[test]
