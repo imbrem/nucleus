@@ -717,6 +717,12 @@
           ]
         },
         {
+          "name": "lambda_seq",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "model",
           "kinds": [
             "test"
