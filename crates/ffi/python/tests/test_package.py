@@ -33,8 +33,17 @@ def test_public_apis_follow_their_crate_paths() -> None:
     assert not hasattr(covalence, "hash")
 
 
-def test_lrat_follows_its_crate_path() -> None:
-    assert covalence.logic.__all__ == ["classical", "hol", "lrat", "metamath", "sat"]
+def test_logic_apis_follow_their_crate_paths() -> None:
+    assert covalence.logic.__all__ == [
+        "alethe",
+        "classical",
+        "hol",
+        "lrat",
+        "metamath",
+        "sat",
+    ]
+    assert covalence.logic.alethe.__name__ == "covalence.logic.alethe"
+    assert covalence.logic.alethe.QfUfRefutation is _covalence.QfUfRefutation
     assert covalence.logic.hol.__name__ == "covalence.logic.hol"
     assert covalence.logic.hol.Arena is _covalence.HolArena
     assert covalence.logic.lrat.__name__ == "covalence.logic.lrat"

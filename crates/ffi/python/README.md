@@ -131,6 +131,30 @@ evidence from being reused after its slot is overwritten or across kernels.
 True
 ```
 
+`covalence.logic.alethe.solve_qf_uf` runs cvc5 with Alethe proof output enabled,
+lowers the SMT and proof terms to checked Ethane row indices, and returns only
+after the proof establishes the exact sequent `assertions |- false`. The solver
+argv is fixed by the module rather than the caller: the problem goes on stdin,
+`--proof-granularity=dsl-rewrite` is what keeps cvc5 from emitting `hole`
+steps, and the run is bounded by `timeout` seconds. The result also retains the
+problem, raw proof output, solver version, executable, and options as untrusted
+provenance. `check_qf_uf` checks already captured cvc5 stdout without starting
+a process. A refutation's indices address its own checked arena, which
+`refutation.kernel()` returns; `theorem_in` and `assertions_in` reject a kernel
+those indices do not address.
+
+```python
+>>> from covalence.logic.alethe import solve_qf_uf
+>>> result = solve_qf_uf("""(set-logic QF_UF)
+... (declare-const p Bool)
+... (assert p)
+... (assert (not p))
+... (check-sat)
+... """)
+>>> result.refutation.theorem > 0
+True
+```
+
 `Strategy` instantiates a portable WASM component implementing the
 `nucleus:proof/proof` world once and may be called repeatedly. Its one portable
 operation applies a numeric tactic with small byte arguments to an optional

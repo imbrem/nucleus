@@ -355,10 +355,10 @@ impl PyArena {
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-struct KernelId(NonZeroU64);
+pub(crate) struct KernelId(NonZeroU64);
 
 impl KernelId {
-    fn fresh() -> Self {
+    pub(crate) fn fresh() -> Self {
         let value = NEXT_KERNEL_ID
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, checked_add_one)
             .expect("Python kernel identifier space is exhausted");
@@ -542,6 +542,21 @@ impl PyRewriteResult {
 }
 
 impl PyKernel {
+    /// Wraps an already-checked kernel under a caller-chosen identity.
+    ///
+    /// The identity is what binds handles to the arena they index, so a
+    /// caller adopting a kernel must either mint a fresh identity or reuse
+    /// the one already recorded by the evidence it is adopting the kernel
+    /// for.
+    pub(crate) const fn adopt(kernel: Kernel, id: KernelId) -> Self {
+        Self { kernel, id }
+    }
+
+    /// Returns the identity handles must carry to index this arena.
+    pub(crate) const fn id(&self) -> KernelId {
+        self.id
+    }
+
     fn checked_fact(&self, fact: &PySynFact) -> PyResult<SynFactId> {
         if self.id != fact.owner {
             return Err(PyValueError::new_err(
