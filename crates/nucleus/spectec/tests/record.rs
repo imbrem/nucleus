@@ -1,12 +1,59 @@
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
 use covalence_data_spectec::{ClauseId, DeclarationId, IlDocument, Limits};
-use covalence_logic_hol::Kernel;
+use covalence_logic_hol::{Kernel, Tag, TmTag};
 use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
     CoveragePlan, Disposition, IndexErasure, KernelRoot, SelectedCompileError, SelectedCompiler,
-    Source, TYPE_NAME, TranslationCase, declare_hol_schema,
+    Source, TYPE_NAME, TranslationCase, declare_hol_schema, least_closed_predicate,
 };
+
+#[test]
+fn least_closed_predicate_builds_direct_hol_definition() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let predicate_ty = kernel.ty_arr(value, bool_ty).unwrap();
+    let theorem_count = kernel.thm().live_theorems().count();
+
+    let least = least_closed_predicate(&mut kernel, bool_ty, predicate_ty, |kernel, _candidate| {
+        kernel.bool(bool_ty, true)
+    })
+    .unwrap();
+
+    assert_eq!(least.predicate_ty, predicate_ty);
+    assert_eq!(
+        kernel.arena().tag(least.predicate),
+        Some(Tag::Tm(TmTag::Lam))
+    );
+    let value_term = kernel.tm_fv(100, value).unwrap();
+    let proposition = kernel.app(least.predicate, value_term).unwrap();
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(proposition).unwrap(), bool_ty)
+            .unwrap()
+    );
+    assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+}
+
+#[test]
+fn least_closed_predicate_is_transactional() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let predicate_ty = kernel.ty_arr(value, bool_ty).unwrap();
+    let before = kernel.arena().len();
+
+    assert!(
+        least_closed_predicate(&mut kernel, bool_ty, predicate_ty, |kernel, candidate| {
+            kernel.app(candidate, candidate)
+        })
+        .is_err()
+    );
+    assert_eq!(kernel.arena().len(), before);
+}
 
 #[test]
 fn generic_hol_schema_declares_every_wasm3_signature() {
@@ -29,6 +76,32 @@ fn generic_hol_schema_declares_every_wasm3_signature() {
         assert_eq!(target.kind(), declaration.kind());
         kernel.classifier(target.reference()).unwrap();
     }
+    let x = kernel.tm_fv(10_000, value).unwrap();
+    let y = kernel.tm_fv(10_001, value).unwrap();
+    let result = kernel.tm_fv(10_002, value).unwrap();
+    let min = schema
+        .declaration(DeclarationId::new(6, None).unwrap())
+        .unwrap()
+        .reference();
+    let min_at_x = kernel.app(min, x).unwrap();
+    let min_at_y = kernel.app(min_at_x, y).unwrap();
+    let min_graph = kernel.app(min_at_y, result).unwrap();
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(min_graph).unwrap(), bool_ty)
+            .unwrap()
+    );
+
+    let n_membership = schema
+        .declaration(DeclarationId::new(1, None).unwrap())
+        .unwrap()
+        .reference();
+    let n_holds = kernel.app(n_membership, x).unwrap();
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(n_holds).unwrap(), bool_ty)
+            .unwrap()
+    );
     assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
 }
 

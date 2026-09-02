@@ -30,7 +30,7 @@ impl HolDeclaration {
         self.kind
     }
 
-    /// Returns the checked predicate or function slot.
+    /// Returns the checked semantic-predicate slot.
     #[must_use]
     pub const fn reference(self) -> Ref {
         self.reference
@@ -106,9 +106,9 @@ pub enum HolSchemaError {
 ///
 /// This is a transactional preparation stage, not a completed semantics. Type
 /// declarations become parameterized membership predicates; definitions become
-/// curried functions; grammars become input/output predicates; and relations
-/// become predicates. Semantic bodies must replace these slots before a direct
-/// compilation can finish.
+/// input/output graph predicates; grammars become input/output predicates; and
+/// relations become predicates. Semantic bodies must replace these slots before
+/// a direct compilation can finish.
 ///
 /// # Errors
 ///
@@ -185,7 +185,9 @@ fn signature_type(
                 value,
                 bool_ty,
             );
-            (vec![value; parameters.len()], result)
+            let mut domains = vec![value; parameters.len()];
+            domains.push(result);
+            (domains, bool_ty)
         }
         IlDeclarationBody::Grammar {
             parameters, result, ..
