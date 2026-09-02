@@ -95,6 +95,40 @@ fn il_nodes_have_a_parser_independent_structural_view() {
 }
 
 #[test]
+fn il_cursors_compose_over_the_parser_independent_tree() {
+    let il = IlDocument::parse(
+        b"(rel \"R\" (rule \"step\" (call \"f\" (var \"x\"))))",
+        Limits::default(),
+    )
+    .unwrap();
+    let declaration = DeclarationId::new(1, None).unwrap();
+    let root = il.cursor(declaration).unwrap();
+
+    assert_eq!(root.declaration(), declaration);
+    assert!(root.path().is_empty());
+    assert_eq!(root.head(), Some("rel"));
+    assert_eq!(root.children().len(), 3);
+
+    let rule = root.child(2).unwrap();
+    assert_eq!(rule.path(), &[3]);
+    assert_eq!(rule.head(), Some("rule"));
+    assert_eq!(rule.children().len(), 3);
+    let call = rule.child(2).unwrap();
+    assert_eq!(call.path(), &[3, 3]);
+    assert_eq!(call.head(), Some("call"));
+    assert_eq!(
+        call.children()
+            .map(|child| child.node())
+            .collect::<Vec<_>>(),
+        vec![IlNode::Symbol("call"), IlNode::String("f"), IlNode::List(2)]
+    );
+
+    assert!(root.child(3).is_none());
+    assert!(root.child(0).unwrap().child(0).is_none());
+    assert!(il.cursor(DeclarationId::new(2, None).unwrap()).is_none());
+}
+
+#[test]
 fn official_il_declaration_inventory_is_exhaustive() {
     let root = root();
     let manifest = BundleManifest::decode(&read(&root, "manifest.drisl")).unwrap();

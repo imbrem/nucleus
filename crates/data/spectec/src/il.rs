@@ -162,6 +162,107 @@ pub enum IlNode<'a> {
     Other,
 }
 
+/// Parser-independent cursor into one elaborated IL declaration.
+///
+/// A cursor is a cheap structural address. It composes without exposing the
+/// backing S-expression representation, so semantic schemas can be written in
+/// terms of lists and atoms and retain an exact source path for diagnostics.
+#[derive(Clone, Debug)]
+pub struct IlCursor<'a> {
+    expression: &'a Expr,
+    declaration: DeclarationId,
+    path: Vec<u32>,
+}
+
+impl<'a> IlCursor<'a> {
+    /// Returns the containing declaration selector.
+    #[must_use]
+    pub const fn declaration(&self) -> DeclarationId {
+        self.declaration
+    }
+
+    /// Returns the one-based child path from the declaration root.
+    #[must_use]
+    pub fn path(&self) -> &[u32] {
+        &self.path
+    }
+
+    /// Returns this node's parser-independent shape.
+    #[must_use]
+    pub fn node(&self) -> IlNode<'a> {
+        node_view(self.expression)
+    }
+
+    /// Resolves a zero-based list child.
+    #[must_use]
+    pub fn child(&self, index: usize) -> Option<Self> {
+        let items = list_items(self.expression)?;
+        let arity = items.len();
+        if index >= arity {
+            return None;
+        }
+        let position = u32::try_from(index).ok()?.checked_add(1)?;
+        let mut path = self.path.clone();
+        path.push(position);
+        Some(Self {
+            expression: &items[index],
+            declaration: self.declaration,
+            path,
+        })
+    }
+
+    /// Iterates direct list children in exact source order.
+    #[must_use]
+    pub fn children(&self) -> IlChildren<'a> {
+        let arity = match self.node() {
+            IlNode::List(arity) => arity,
+            _ => 0,
+        };
+        IlChildren {
+            parent: self.clone(),
+            next: 0,
+            arity,
+        }
+    }
+
+    /// Returns the first child when it is an ordinary identifier.
+    #[must_use]
+    pub fn head(&self) -> Option<&'a str> {
+        match self.child(0)?.node() {
+            IlNode::Symbol(value) => Some(value),
+            _ => None,
+        }
+    }
+}
+
+/// Exact-size iterator over the direct children of an [`IlCursor`].
+#[derive(Clone, Debug)]
+pub struct IlChildren<'a> {
+    parent: IlCursor<'a>,
+    next: usize,
+    arity: usize,
+}
+
+impl<'a> Iterator for IlChildren<'a> {
+    type Item = IlCursor<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let index = self.next;
+        if index >= self.arity {
+            return None;
+        }
+        self.next += 1;
+        self.parent.child(index)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.arity - self.next;
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for IlChildren<'_> {}
+
 impl IlClause {
     /// Returns the stable structural selector.
     #[must_use]
@@ -391,6 +492,17 @@ impl IlDocument {
                 items.get(member_index)
             }
         }
+    }
+
+    /// Returns a parser-independent cursor at one declaration root.
+    #[must_use]
+    pub fn cursor(&self, id: DeclarationId) -> Option<IlCursor<'_>> {
+        let expression = self.expression(id)?;
+        Some(IlCursor {
+            expression,
+            declaration: id,
+            path: Vec::new(),
+        })
     }
 
     /// Views one node selected by a declaration and a one-based child path.
