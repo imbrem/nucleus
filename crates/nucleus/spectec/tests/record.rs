@@ -1,7 +1,7 @@
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
 use covalence_data_spectec::{
     ClauseId, DeclarationId, IlClauseSchema, IlDocument, IlExpression, IlExpressionKind,
-    IlGrammarSymbol, IlProductionSchema, IlSchemaError, IlType, Limits,
+    IlGrammarSymbol, IlProductionSchema, IlRuleSchema, IlSchemaError, IlType, Limits,
 };
 use covalence_logic_hol::{Kernel, Tag, TmTag};
 use covalence_nucleus_spectec::{
@@ -24,13 +24,16 @@ struct TestRelationalResolver {
     add: covalence_logic_hol::Ref,
     graph: covalence_logic_hol::Ref,
     bool_ty: covalence_logic_hol::Ref,
+    bound: std::collections::BTreeMap<String, covalence_logic_hol::Ref>,
 }
 
 impl RelationalResolver for TestRelationalResolver {
     type Error = String;
 
     fn clause_scope(&mut self) -> Self {
-        self.clone()
+        let mut child = self.clone();
+        child.bound.clear();
+        child
     }
 
     fn schema_error(&mut self, source: IlSchemaError) -> Self::Error {
@@ -54,9 +57,10 @@ impl RelationalResolver for TestRelationalResolver {
 
     fn binding(
         &mut self,
-        _binding: &covalence_data_spectec::IlBinding<'_>,
-        _reference: covalence_logic_hol::Ref,
+        binding: &covalence_data_spectec::IlBinding<'_>,
+        reference: covalence_logic_hol::Ref,
     ) -> Result<(), Self::Error> {
+        self.bound.insert(binding.name().to_owned(), reference);
         Ok(())
     }
 
@@ -78,6 +82,9 @@ impl RelationalResolver for TestRelationalResolver {
         _kernel: &mut Kernel,
         name: &str,
     ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        if let Some(reference) = self.bound.get(name) {
+            return Ok(*reference);
+        }
         match name {
             "x" => Ok(self.x),
             "y" => Ok(self.y),
@@ -171,6 +178,10 @@ impl RelationalResolver for TestRelationalResolver {
     fn nested_premise_bindings(&mut self, count: usize) -> Self::Error {
         format!("unsupported nested premise bindings: {count}")
     }
+
+    fn relation_otherwise(&mut self) -> Self::Error {
+        "otherwise in relation rule".to_owned()
+    }
 }
 
 #[test]
@@ -205,6 +216,7 @@ fn relational_expression_fold_turns_calls_into_graph_premises() {
         add,
         graph,
         bool_ty,
+        bound: std::collections::BTreeMap::new(),
     };
     let (term, explicit, conditions) = {
         let mut algebra = RelationalExpressionAlgebra::new(&mut kernel, resolver, bool_ty, 100);
@@ -331,6 +343,7 @@ fn complete_clause_api_lowers_patterns_result_and_premises() {
         add,
         graph,
         bool_ty,
+        bound: std::collections::BTreeMap::new(),
     };
     let case = RelationalExpressionAlgebra::new(&mut kernel, resolver.clone(), bool_ty, 100)
         .clause(&schema, &formal_inputs, formal_result)
@@ -362,6 +375,55 @@ fn complete_clause_api_lowers_patterns_result_and_premises() {
     .unwrap();
     assert_eq!(definition.cases.len(), 1);
     assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+}
+
+#[test]
+fn complete_relation_rule_lowers_to_inductive_hol_rule() {
+    let il = IlDocument::parse(
+        b"(rel \"R\" \"R\" nat (rule \"base\" (exp \"x\" nat) \"R\" (var \"x\") (if (bool true))))",
+        Limits::default(),
+    )
+    .unwrap();
+    let declaration = il
+        .schema(DeclarationId::new(1, None).unwrap())
+        .unwrap()
+        .unwrap();
+    let covalence_data_spectec::IlDeclarationBody::Relation { rules, .. } = declaration.body()
+    else {
+        panic!("expected relation")
+    };
+    let schema = IlRuleSchema::decode(&rules[0]).unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let binary_tail = kernel.ty_arr(value, value).unwrap();
+    let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
+    let graph_tail = kernel.ty_arr(value, bool_ty).unwrap();
+    let graph_ty = kernel.ty_arr(value, graph_tail).unwrap();
+    let x = kernel.tm_fv(1, value).unwrap();
+    let resolver = TestRelationalResolver {
+        x,
+        y: kernel.tm_fv(2, value).unwrap(),
+        add: kernel.tm_fv(3, binary_ty).unwrap(),
+        graph: kernel.tm_fv(4, graph_ty).unwrap(),
+        bool_ty,
+        bound: std::collections::BTreeMap::new(),
+    };
+    let rule = RelationalExpressionAlgebra::new(&mut kernel, resolver, bool_ty, 100)
+        .rule(&schema)
+        .unwrap();
+    let predicate_ty = kernel.ty_arr(value, bool_ty).unwrap();
+    let candidate = kernel.tm_fv(20, predicate_ty).unwrap();
+    let closure = close_hol_rule(&mut kernel, bool_ty, candidate, &rule).unwrap();
+
+    assert_eq!(rule.binders.len(), 1);
+    assert_eq!(rule.premises.len(), 1);
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(closure).unwrap(), bool_ty)
+            .unwrap()
+    );
 }
 
 #[test]

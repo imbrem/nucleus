@@ -2,7 +2,7 @@
 
 use covalence_data_spectec::{
     IlArgument, IlBinding, IlClauseSchema, IlDomain, IlExpression, IlExpressionView, IlIteration,
-    IlPremise, IlSchemaError,
+    IlPremise, IlRuleSchema, IlSchemaError,
 };
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref};
@@ -373,6 +373,9 @@ pub trait RelationalResolver {
 
     /// Reports nested relation-premise binders unsupported by this lowering.
     fn nested_premise_bindings(&mut self, count: usize) -> Self::Error;
+
+    /// Reports an `otherwise` marker in an inductive relation rule.
+    fn relation_otherwise(&mut self) -> Self::Error;
 }
 
 /// Transactionally lowers a complete ordered definition to one exact graph
@@ -548,6 +551,32 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
             },
         )
         .map_err(|source| self.resolver.case_error(source))
+    }
+
+    /// Lowers one complete relation rule to an inductive HOL rule.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first binding, conclusion, premise, relation, iteration, or
+    /// checked HOL failure. `otherwise` is rejected because negative ordered
+    /// fallback is not a monotone inductive rule.
+    pub fn rule(&mut self, schema: &IlRuleSchema<'_>) -> Result<HolRule, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        let mut binders = self.bindings(schema.bindings())?;
+        let conclusion = fold_expression(schema.conclusion(), self)?;
+        binders.extend_from_slice(conclusion.binders());
+        let mut premises = conclusion.premises().to_vec();
+        for premise in schema.premises() {
+            let condition = self.premise(premise)?;
+            if condition.otherwise() {
+                return Err(self.resolver.relation_otherwise());
+            }
+            binders.extend_from_slice(condition.binders());
+            premises.extend_from_slice(condition.premises());
+        }
+        Ok(HolRule::new(binders, premises, vec![conclusion.value()]))
     }
 
     /// Returns the next unused name after lowering.
