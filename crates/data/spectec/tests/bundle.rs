@@ -2,10 +2,10 @@ use std::path::{Path, PathBuf};
 
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{
-    ArtifactError, AstError, AstSummary, BundleManifest, DeclarationId, IlDeclarationBody,
-    IlDocument, IlKind, IlNode, IlRuleSchema, IlType, Limits, ManifestError, RuleId,
-    SPECTEC_VERSION, WASM_3_RELEASE, WASM_3_REVISION, WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast,
-    parse_ast,
+    ArtifactError, AstError, AstSummary, BundleManifest, DeclarationId, IlClauseSchema,
+    IlDeclarationBody, IlDocument, IlKind, IlNode, IlProductionSchema, IlRuleSchema, IlType,
+    Limits, ManifestError, RuleId, SPECTEC_VERSION, WASM_3_RELEASE, WASM_3_REVISION,
+    WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast, parse_ast,
 };
 
 fn root() -> PathBuf {
@@ -269,6 +269,50 @@ fn official_il_signatures_all_use_the_generic_type_schema() {
         panic!("expected definition schema");
     };
     assert!(IlType::decode(result).is_err());
+}
+
+#[test]
+fn official_il_clauses_and_productions_match_the_generic_schema() {
+    let bundle = covalence_data_spectec::wasm3_bundle().unwrap();
+    let il = bundle.il();
+    let mut clauses = 0;
+    let mut productions = 0;
+
+    for declaration in il.declarations() {
+        let schema = il.schema(declaration.id()).unwrap().unwrap();
+        match schema.body() {
+            IlDeclarationBody::Definition {
+                clauses: cursors, ..
+            } => {
+                for cursor in cursors {
+                    IlClauseSchema::decode(cursor).unwrap();
+                    clauses += 1;
+                }
+            }
+            IlDeclarationBody::Grammar {
+                productions: cursors,
+                ..
+            } => {
+                for cursor in cursors {
+                    IlProductionSchema::decode(cursor).unwrap();
+                    productions += 1;
+                }
+            }
+            IlDeclarationBody::Type { .. } | IlDeclarationBody::Relation { .. } => {}
+        }
+    }
+
+    assert_eq!(clauses, 793);
+    assert_eq!(productions, 1_432);
+
+    let malformed = IlDocument::parse(
+        b"(def \"f\" bool (clause (exp (var \"x\"))))",
+        Limits::default(),
+    )
+    .unwrap();
+    let id = DeclarationId::new(1, None).unwrap();
+    let clause = malformed.clauses(id).unwrap().remove(0);
+    assert!(IlClauseSchema::decode(&malformed.clause_cursor(clause.id()).unwrap()).is_err());
 }
 
 fn read(root: &Path, path: &str) -> Vec<u8> {

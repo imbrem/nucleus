@@ -803,6 +803,110 @@ pub enum IlPremise<'a> {
     },
 }
 
+/// One equational definition clause.
+#[derive(Clone, Debug)]
+pub struct IlClauseSchema<'a> {
+    cursor: IlCursor<'a>,
+    bindings: Vec<IlCursor<'a>>,
+    arguments: Vec<IlArgument<'a>>,
+    result: IlExpression<'a>,
+    premises: Vec<IlPremise<'a>>,
+}
+
+impl<'a> IlClauseSchema<'a> {
+    /// Decodes one `clause` form.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed bindings, arguments, result expression,
+    /// or premises.
+    pub fn decode(cursor: &IlCursor<'a>) -> Result<Self, IlSchemaError> {
+        decode_clause_schema(cursor)
+    }
+
+    /// Returns explicit clause bindings.
+    #[must_use]
+    pub fn bindings(&self) -> &[IlCursor<'a>] {
+        &self.bindings
+    }
+
+    /// Returns left-hand-side arguments.
+    #[must_use]
+    pub fn arguments(&self) -> &[IlArgument<'a>] {
+        &self.arguments
+    }
+
+    /// Returns the right-hand-side expression.
+    #[must_use]
+    pub const fn result(&self) -> &IlExpression<'a> {
+        &self.result
+    }
+
+    /// Returns side conditions in source order.
+    #[must_use]
+    pub fn premises(&self) -> &[IlPremise<'a>] {
+        &self.premises
+    }
+
+    /// Returns the complete clause cursor.
+    #[must_use]
+    pub const fn cursor(&self) -> &IlCursor<'a> {
+        &self.cursor
+    }
+}
+
+/// One attribute-grammar production.
+#[derive(Clone, Debug)]
+pub struct IlProductionSchema<'a> {
+    cursor: IlCursor<'a>,
+    bindings: Vec<IlCursor<'a>>,
+    symbol: IlCursor<'a>,
+    result: IlExpression<'a>,
+    premises: Vec<IlPremise<'a>>,
+}
+
+impl<'a> IlProductionSchema<'a> {
+    /// Decodes one `prod` form.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed bindings, a missing grammar symbol,
+    /// malformed result expression, or premises.
+    pub fn decode(cursor: &IlCursor<'a>) -> Result<Self, IlSchemaError> {
+        decode_production_schema(cursor)
+    }
+
+    /// Returns explicit production bindings.
+    #[must_use]
+    pub fn bindings(&self) -> &[IlCursor<'a>] {
+        &self.bindings
+    }
+
+    /// Returns the grammar-symbol subtree.
+    #[must_use]
+    pub const fn symbol(&self) -> &IlCursor<'a> {
+        &self.symbol
+    }
+
+    /// Returns the synthesized result expression.
+    #[must_use]
+    pub const fn result(&self) -> &IlExpression<'a> {
+        &self.result
+    }
+
+    /// Returns production side conditions in source order.
+    #[must_use]
+    pub fn premises(&self) -> &[IlPremise<'a>] {
+        &self.premises
+    }
+
+    /// Returns the complete production cursor.
+    #[must_use]
+    pub const fn cursor(&self) -> &IlCursor<'a> {
+        &self.cursor
+    }
+}
+
 #[derive(Clone, Copy)]
 enum SchemaArity {
     Exact(usize),
@@ -931,6 +1035,110 @@ fn decode_rule_schema<'a>(cursor: &IlCursor<'a>) -> Result<IlRuleSchema<'a>, IlS
         conclusion,
         premises,
     })
+}
+
+fn decode_clause_schema<'a>(cursor: &IlCursor<'a>) -> Result<IlClauseSchema<'a>, IlSchemaError> {
+    let form = required_form(cursor, "definition clause")?;
+    require_head(&form, "clause")?;
+    require_min_arity(&form, 1, "clause result expression")?;
+    let fields = form.arguments().collect::<Vec<_>>();
+    let binding_count = fields.iter().take_while(|field| is_binding(field)).count();
+    let (bindings, tail) = fields.split_at(binding_count);
+    require_bindings(bindings)?;
+    let argument_count = tail
+        .iter()
+        .take_while(|field| is_argument_wrapper(field))
+        .count();
+    let (argument_cursors, tail) = tail.split_at(argument_count);
+    let arguments = argument_cursors
+        .iter()
+        .map(decode_argument)
+        .collect::<Result<Vec<_>, _>>()?;
+    let result_cursor = tail.first().ok_or_else(|| {
+        schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "clause result expression",
+            "missing".to_owned(),
+        )
+    })?;
+    let result = IlExpression::decode(result_cursor)?;
+    let premises = tail
+        .iter()
+        .skip(1)
+        .map(decode_premise)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(IlClauseSchema {
+        cursor: cursor.clone(),
+        bindings: bindings.to_vec(),
+        arguments,
+        result,
+        premises,
+    })
+}
+
+fn decode_production_schema<'a>(
+    cursor: &IlCursor<'a>,
+) -> Result<IlProductionSchema<'a>, IlSchemaError> {
+    let form = required_form(cursor, "grammar production")?;
+    require_head(&form, "prod")?;
+    require_min_arity(&form, 2, "production symbol and result expression")?;
+    let fields = form.arguments().collect::<Vec<_>>();
+    let binding_count = fields.iter().take_while(|field| is_binding(field)).count();
+    let (bindings, tail) = fields.split_at(binding_count);
+    require_bindings(bindings)?;
+    let symbol = tail.first().cloned().ok_or_else(|| {
+        schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "production grammar symbol",
+            "missing".to_owned(),
+        )
+    })?;
+    let result_cursor = tail.get(1).ok_or_else(|| {
+        schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "production result expression",
+            "missing".to_owned(),
+        )
+    })?;
+    let result = IlExpression::decode(result_cursor)?;
+    let premises = tail
+        .iter()
+        .skip(2)
+        .map(decode_premise)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(IlProductionSchema {
+        cursor: cursor.clone(),
+        bindings: bindings.to_vec(),
+        symbol,
+        result,
+        premises,
+    })
+}
+
+fn is_binding(cursor: &IlCursor<'_>) -> bool {
+    let Some(form) = cursor.form() else {
+        return false;
+    };
+    let first_is_name = matches!(
+        form.argument(0).map(|value| value.node()),
+        Some(IlNode::String(_))
+    );
+    match form.head() {
+        "exp" => form.len() == 2 && first_is_name,
+        "typ" => form.len() == 1 && first_is_name,
+        "def" | "gram" => form.len() >= 2 && first_is_name,
+        _ => false,
+    }
+}
+
+fn is_argument_wrapper(cursor: &IlCursor<'_>) -> bool {
+    let Some(form) = cursor.form() else {
+        return false;
+    };
+    matches!(form.head(), "exp" | "typ" | "def" | "gram") && form.len() == 1
 }
 
 fn decode_premise<'a>(cursor: &IlCursor<'a>) -> Result<IlPremise<'a>, IlSchemaError> {
