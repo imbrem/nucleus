@@ -70,7 +70,7 @@
           # `pyo3-build-config` interrogates an interpreter to decide how to
           # link, and the test binaries then embed the one it found. Both
           # phases need it, so it is a build input as well as a native one.
-          nativeBuildInputs = [ python ];
+          nativeBuildInputs = [ python pkgs.cvc5 ];
           buildInputs = [ python ];
           installPhase = "mkdir -p $out";
         };
@@ -78,6 +78,7 @@
           buck2
           cargo-component
           caddy
+          cvc5
           clang
           chromium
           devcontainer

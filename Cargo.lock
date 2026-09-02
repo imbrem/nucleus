@@ -1230,6 +1230,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-logic-alethe"
+version = "0.0.0"
+dependencies = [
+ "covalence-data-sexpr",
+ "covalence-lib-error",
+ "covalence-lib-json",
+ "covalence-logic-hol",
+ "covalence-logic-hol-derived",
+]
+
+[[package]]
 name = "covalence-logic-cas"
 version = "0.0.0"
 dependencies = [
@@ -1370,6 +1381,14 @@ dependencies = [
  "covalence-lib-error",
  "covalence-logic-hol",
  "covalence-logic-hol-derived",
+]
+
+[[package]]
+name = "covalence-proof-alethe"
+version = "0.0.0"
+dependencies = [
+ "covalence-logic-alethe",
+ "wit-bindgen 0.61.1",
 ]
 
 [[package]]

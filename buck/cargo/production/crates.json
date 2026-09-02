@@ -581,6 +581,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-logic-alethe@0.0.0",
+      "name": "covalence-logic-alethe",
+      "version": "0.0.0",
+      "path": "crates/logic/alethe",
+      "category": "product",
+      "targets": [
+        {
+          "name": "covalence_logic_alethe",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-logic-cas@0.0.0",
       "name": "covalence-logic-cas",
       "version": "0.0.0",
@@ -928,6 +943,22 @@
           "name": "covalence_nucleus_tactics",
           "kinds": [
             "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-proof-alethe@0.0.0",
+      "name": "covalence-proof-alethe",
+      "version": "0.0.0",
+      "path": "crates/proof/alethe",
+      "category": "product",
+      "targets": [
+        {
+          "name": "covalence_proof_alethe",
+          "kinds": [
+            "cdylib",
+            "rlib"
           ]
         }
       ]
@@ -1577,6 +1608,41 @@
       ]
     },
     {
+      "source": "workspace#covalence-logic-alethe@0.0.0",
+      "target": "workspace#covalence-data-sexpr@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-alethe@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-alethe@0.0.0",
+      "target": "workspace#covalence-lib-json@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-alethe@0.0.0",
+      "target": "workspace#covalence-logic-hol-derived@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-alethe@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-logic-cas@0.0.0",
       "target": "workspace#covalence-lib-error@0.0.0",
       "kinds": [
@@ -1929,6 +1995,13 @@
     {
       "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-nucleus-tactics@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-proof-alethe@0.0.0",
+      "target": "workspace#covalence-logic-alethe@0.0.0",
       "kinds": [
         "normal"
       ]

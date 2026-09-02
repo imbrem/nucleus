@@ -9741,6 +9741,14 @@
       ]
     },
     {
+      "id": "workspace#covalence-proof-alethe@0.0.0",
+      "name": "covalence-proof-alethe",
+      "category": "product",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#wit-bindgen@0.61.1"
+      ]
+    },
+    {
       "id": "workspace#covalence-proof-demo@0.0.0",
       "name": "covalence-proof-demo",
       "category": "product",
