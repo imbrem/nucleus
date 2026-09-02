@@ -871,7 +871,7 @@ mod tests {
     use super::*;
     use covalence_logic_metamath::{Proof, Statement, parse, verify_all};
 
-    const DEMO0: &str = include_str!("../../../logic/metamath/tests/fixtures/demo0.mm");
+    const DEMO0: &str = include_str!("../tests/fixtures/demo0.mm");
 
     fn assertion<'a>(db: &'a Database, label: &str) -> &'a Assertion {
         match db.statement_by_label(label) {
