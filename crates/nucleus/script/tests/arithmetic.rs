@@ -227,7 +227,6 @@ fn the_headline_expression_normalizes() {
 fn the_standard_laws_are_reachable_through_the_normalizer() {
     let (mut kernel, naturals, ring, _) = subtraction_kernel();
     let [x, y, z] = variables(&mut kernel, &naturals);
-    let normalizer = NaturalNormalizer::new(&naturals, ring);
     let (x, y, z) = (Expr::atom(x), Expr::atom(y), Expr::atom(z));
 
     for (left, right) in [
@@ -246,10 +245,15 @@ fn the_standard_laws_are_reachable_through_the_normalizer() {
         (&x + &x, &x * 2),
         (&x * &x + &x * &x, &x * &x * 2),
     ] {
+        // A fresh fork per case: the arena only grows, and a proof costs time
+        // proportional to its size, so sharing one kernel makes later cases
+        // pay for earlier ones.
+        let mut case = kernel.fork();
+        let normalizer = NaturalNormalizer::new(&naturals, ring);
         let proof = normalizer
-            .prove_equal(&mut kernel, &left, &right)
+            .prove_equal(&mut case, &left, &right)
             .expect("equal normal forms");
-        check_proved(&kernel, &proof);
+        check_proved(&case, &proof);
     }
 }
 

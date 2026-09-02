@@ -75,6 +75,11 @@ impl Calc<'_> {
     }
 
     /// Chains a non-empty run of equalities end to end.
+    ///
+    /// Each intermediate this builds is dropped once the next step consumes
+    /// it. Every kernel rule stages a copy of the theorem table, so leaving
+    /// spent theorems in it makes the whole chain quadratic. Only theorems
+    /// created here are dropped; the caller's steps are left alone.
     pub(crate) fn chain(
         &self,
         kernel: &mut Kernel,
@@ -84,8 +89,13 @@ impl Calc<'_> {
             expected: "at least one rewrite step",
         })?;
         let mut theorem = *first;
+        let mut spent = None;
         for step in rest {
-            theorem = self.trans(kernel, theorem, *step)?;
+            let next = self.trans(kernel, theorem, *step)?;
+            if let Some(previous) = spent.replace(next) {
+                let _ = kernel.remove_theorem(previous);
+            }
+            theorem = next;
         }
         Ok(theorem)
     }
