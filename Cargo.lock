@@ -1080,6 +1080,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-data-wasm"
+version = "0.0.0"
+dependencies = [
+ "covalence-lib-error",
+ "covalence-lib-wasm",
+]
+
+[[package]]
 name = "covalence-ffi-python"
 version = "0.0.0"
 dependencies = [
@@ -1224,6 +1232,7 @@ name = "covalence-lib-wasm"
 version = "0.0.0"
 dependencies = [
  "wasm-bindgen",
+ "wasmparser 0.254.0",
  "wasmtime",
  "wasmtime-wasi",
  "wit-bindgen-rt",

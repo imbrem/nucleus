@@ -8293,6 +8293,7 @@
       "edition": "2024",
       "features": [
         "component-model",
+        "default",
         "features",
         "hash-collections",
         "serde",
@@ -9675,6 +9676,7 @@
       "name": "covalence-lib-wasm",
       "category": "product",
       "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.254.0",
         "registry+https://github.com/rust-lang/crates.io-index#wasmtime-wasi@48.0.1",
         "registry+https://github.com/rust-lang/crates.io-index#wasmtime@48.0.1"
       ]

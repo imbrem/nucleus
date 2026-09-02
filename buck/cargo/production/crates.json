@@ -328,6 +328,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-wasm@0.0.0",
+      "name": "covalence-data-wasm",
+      "version": "0.0.0",
+      "path": "crates/data/wasm",
+      "category": "product",
+      "targets": [
+        {
+          "name": "covalence_data_wasm",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-ffi-python@0.0.0",
       "name": "covalence-ffi-python",
       "version": "0.0.0",
@@ -1467,6 +1482,20 @@
     {
       "source": "workspace#covalence-data-sqlite@0.0.0",
       "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-wasm@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-wasm@0.0.0",
+      "target": "workspace#covalence-lib-wasm@0.0.0",
       "kinds": [
         "normal"
       ]

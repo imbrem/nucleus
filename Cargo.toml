@@ -29,6 +29,7 @@ members = [
   "crates/data/num",
   "crates/data/sexpr",
   "crates/data/spectec",
+  "crates/data/wasm",
   "crates/data/vfs",
   "crates/data/sqlite",
   "crates/data/cas",

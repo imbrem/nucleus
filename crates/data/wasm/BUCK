@@ -21,29 +21,23 @@ filegroup(
 )
 
 rust_library(
-    name = "covalence_lib_wasm",
-    crate = "covalence_lib_wasm",
+    name = "covalence_data_wasm",
+    crate = "covalence_data_wasm",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    features = [
-        "component-host",
-        "default",
-        "parser",
-    ],
-    tests = [":covalence_lib_wasm-unit-test"],
+    tests = [":covalence_data_wasm-unit-test"],
     named_deps = {
-        "wasmparser": "nucleus//buck/cargo/production:wasmparser-0.254.0",
-        "wasmtime": "nucleus//buck/cargo/production:wasmtime-48.0.1",
-        "wasmtime_wasi": "nucleus//buck/cargo/production:wasmtime-wasi-48.0.1",
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_wasm": "nucleus//crates/lib/wasm:covalence_lib_wasm",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "WebAssembly runtimes shared by Covalence hosts and guests",
+        "CARGO_PKG_DESCRIPTION": "Lossless, resource-bounded WebAssembly binary data",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-lib-wasm",
+        "CARGO_PKG_NAME": "covalence-data-wasm",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
@@ -58,28 +52,22 @@ rust_library(
 )
 
 rust_test(
-    name = "covalence_lib_wasm-unit-test",
-    crate = "covalence_lib_wasm",
+    name = "covalence_data_wasm-unit-test",
+    crate = "covalence_data_wasm",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    features = [
-        "component-host",
-        "default",
-        "parser",
-    ],
     named_deps = {
-        "wasmparser": "nucleus//buck/cargo/production:wasmparser-0.254.0",
-        "wasmtime": "nucleus//buck/cargo/production:wasmtime-48.0.1",
-        "wasmtime_wasi": "nucleus//buck/cargo/production:wasmtime-wasi-48.0.1",
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_wasm": "nucleus//crates/lib/wasm:covalence_lib_wasm",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "WebAssembly runtimes shared by Covalence hosts and guests",
+        "CARGO_PKG_DESCRIPTION": "Lossless, resource-bounded WebAssembly binary data",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-lib-wasm",
+        "CARGO_PKG_NAME": "covalence-data-wasm",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
