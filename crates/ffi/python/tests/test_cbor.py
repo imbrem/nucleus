@@ -7,7 +7,7 @@ from covalence.data.cbor import Cbor
 
 
 def test_every_integer_round_trips_without_narrowing() -> None:
-    for value in (0, -1, 2**64 - 1, 2**256, -(2**256)):
+    for value in (0, -1, 127, 128, -128, -129, 2**64 - 1, 2**256, -(2**256)):
         encoded = Cbor.integer(value)
         assert encoded.kind == "integer"
         assert encoded.value == value

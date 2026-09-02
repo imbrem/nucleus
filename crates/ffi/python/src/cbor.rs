@@ -37,14 +37,26 @@ impl PyCbor {
     }
 }
 
+/// Converts a Python `int` to an exact integer.
+///
+/// `int.to_bytes` pads to whatever width it is given, so the result is trimmed
+/// to the shortest sign-preserving form before decoding. Without that,
+/// `-2**k` — whose padded form carries a redundant `0xff` — would be rejected
+/// as non-canonical.
 fn python_int(value: &Bound<'_, PyInt>) -> PyResult<Int> {
     let bits: usize = value.call_method0("bit_length")?.extract()?;
     let length = bits / 8 + 1;
     let kwargs = PyDict::new(value.py());
     kwargs.set_item("signed", true)?;
     let bytes = value.call_method("to_bytes", (length, "big"), Some(&kwargs))?;
-    Int::from_canonical_bytes(bytes.cast::<PyBytes>()?.as_bytes())
-        .map_err(|error| PyValueError::new_err(error.to_string()))
+    let mut bytes = bytes.cast::<PyBytes>()?.as_bytes();
+    while bytes.len() > 1
+        && ((bytes[0] == 0 && bytes[1] & 0x80 == 0)
+            || (bytes[0] == u8::MAX && bytes[1] & 0x80 != 0))
+    {
+        bytes = &bytes[1..];
+    }
+    Int::from_canonical_bytes(bytes).map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
 fn rust_int<'py>(python: Python<'py>, value: &Int) -> PyResult<Bound<'py, PyAny>> {
