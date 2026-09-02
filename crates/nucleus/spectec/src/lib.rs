@@ -15,6 +15,7 @@ mod premise;
 mod relational;
 mod schema;
 mod selected;
+mod types;
 
 pub use add_slice::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSliceError, AddSlicePlan,
@@ -32,6 +33,7 @@ pub use relational::{
 };
 pub use schema::{HolDeclaration, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema};
 pub use selected::{SelectedCompileError, SelectedCompiler, SelectedKernel, SelectedRoot};
+pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{

@@ -1,7 +1,7 @@
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
 use covalence_data_spectec::{
     ClauseId, DeclarationId, IlClauseSchema, IlDocument, IlExpression, IlExpressionKind, IlNode,
-    IlSchemaError, Limits,
+    IlSchemaError, IlType, Limits,
 };
 use covalence_logic_hol::{Kernel, Tag, TmTag};
 use covalence_nucleus_spectec::{
@@ -9,8 +9,9 @@ use covalence_nucleus_spectec::{
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
     CoveragePlan, Disposition, ExpressionAlgebra, HolRule, IndexErasure, KernelRoot,
     RelationalExpressionAlgebra, RelationalResolver, SelectedCompileError, SelectedCompiler,
-    Source, TYPE_NAME, TranslationCase, close_hol_rule, close_hol_rules, declare_hol_schema,
-    fold_expression, least_closed_family, least_closed_predicate, relational_hol_rule,
+    Source, TYPE_NAME, TranslationCase, TypeAlgebra, TypeChildren, close_hol_rule, close_hol_rules,
+    declare_hol_schema, fold_expression, fold_type, least_closed_family, least_closed_predicate,
+    relational_hol_rule,
 };
 
 struct TestRelationalResolver {
@@ -198,6 +199,70 @@ fn expression_fold_is_bottom_up_and_target_independent() {
             IlExpressionKind::Binary,
         ]
     );
+}
+
+#[test]
+fn type_fold_composes_with_dependent_expression_indices() {
+    struct CountExpressions(usize);
+
+    impl ExpressionAlgebra for CountExpressions {
+        type Term = ();
+        type Error = String;
+
+        fn schema_error(&mut self, source: IlSchemaError) -> Self::Error {
+            source.to_string()
+        }
+
+        fn expression(
+            &mut self,
+            _expression: &IlExpression<'_>,
+            _children: Vec<Self::Term>,
+        ) -> Result<Self::Term, Self::Error> {
+            self.0 += 1;
+            Ok(())
+        }
+    }
+
+    struct CountTypes(usize);
+
+    impl TypeAlgebra<()> for CountTypes {
+        type Type = ();
+        type Error = String;
+
+        fn schema_error(&mut self, source: IlSchemaError) -> Self::Error {
+            source.to_string()
+        }
+
+        fn ty(
+            &mut self,
+            _source: &IlType<'_>,
+            _children: TypeChildren<'_, (), Self::Type>,
+        ) -> Result<Self::Type, Self::Error> {
+            self.0 += 1;
+            Ok(())
+        }
+    }
+
+    let il = IlDocument::parse(
+        b"(def \"f\" (tup (bind (var \"n\") nat) (bind _ (iter nat (listn (var \"n\") \"i\")))) (clause (num (nat 0))))",
+        Limits::default(),
+    )
+    .unwrap();
+    let schema = il
+        .schema(DeclarationId::new(1, None).unwrap())
+        .unwrap()
+        .unwrap();
+    let covalence_data_spectec::IlDeclarationBody::Definition { result, .. } = schema.body() else {
+        panic!("expected definition")
+    };
+    let ty = IlType::decode(result).unwrap();
+    let mut expressions = CountExpressions(0);
+    let mut types = CountTypes(0);
+
+    fold_type(&ty, &mut expressions, &mut types).unwrap();
+
+    assert_eq!(expressions.0, 2);
+    assert_eq!(types.0, 4);
 }
 
 #[test]
