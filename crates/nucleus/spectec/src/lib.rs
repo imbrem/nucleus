@@ -34,8 +34,8 @@ pub use premise::{PremiseAlgebra, PremiseChildren, fold_premise};
 pub use relational::{
     RelationalCall, RelationalCaseError, RelationalClause, RelationalCondition,
     RelationalDefinition, RelationalDefinitionSource, RelationalExpressionAlgebra,
-    RelationalResolver, RelationalTerm, relational_definition, relational_hol_case,
-    relational_hol_rule,
+    RelationalRelation, RelationalResolver, RelationalTerm, relational_definition,
+    relational_hol_case, relational_hol_rule, relational_relations,
 };
 pub use schema::{
     HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,

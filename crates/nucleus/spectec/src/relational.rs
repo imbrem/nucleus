@@ -7,7 +7,10 @@ use covalence_data_spectec::{
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref};
 
-use crate::{ExpressionAlgebra, HolCase, HolRule, existential_case, fold_expression};
+use crate::{
+    ExpressionAlgebra, HolCase, HolRule, LeastPredicate, LeastPredicateError,
+    begin_least_closed_family, close_hol_rule, close_hol_rules, existential_case, fold_expression,
+};
 
 /// Relational meaning of one expression.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -103,6 +106,17 @@ pub struct RelationalDefinitionSource<'a> {
     pub clauses: &'a [IlClauseSchema<'a>],
     /// First deterministic name available to clause-local lowering.
     pub first_name: u64,
+}
+
+/// One member of a mutually recursive relation group.
+#[derive(Clone, Copy, Debug)]
+pub struct RelationalRelation<'a> {
+    /// Exact relation name used by nested rule premises.
+    pub name: &'a str,
+    /// Checked curried predicate classifier.
+    pub predicate_type: Ref,
+    /// Decoded source rules in exact order.
+    pub rules: &'a [IlRuleSchema<'a>],
 }
 
 impl RelationalCondition {
@@ -265,6 +279,12 @@ pub trait RelationalResolver {
     where
         Self: Sized;
 
+    /// Creates a resolver scope binding a complete recursive relation family.
+    #[must_use]
+    fn relation_scope(&mut self, candidates: &[(&str, Ref)]) -> Self
+    where
+        Self: Sized;
+
     /// Converts a structural schema failure.
     fn schema_error(&mut self, source: IlSchemaError) -> Self::Error;
 
@@ -276,6 +296,9 @@ pub trait RelationalResolver {
 
     /// Converts exact-clause assembly failure.
     fn case_error(&mut self, source: RelationalCaseError) -> Self::Error;
+
+    /// Converts least-family construction failure.
+    fn least_error(&mut self, source: LeastPredicateError) -> Self::Error;
 
     /// Registers one checked term for an explicit IL binding.
     ///
@@ -431,6 +454,66 @@ where
         equation,
         next_name,
     })
+}
+
+/// Transactionally lowers complete mutually recursive relation groups to their
+/// simultaneous least HOL predicates.
+///
+/// Every nested relation premise resolves against the checked candidate family
+/// during rule lowering. Rule-local bindings are isolated from sibling rules.
+///
+/// # Errors
+///
+/// Returns the first candidate-family, rule-lowering, relation-resolution, or
+/// checked closure failure through the resolver's typed error vocabulary.
+/// `kernel` is unchanged on failure.
+pub fn relational_relations<R>(
+    kernel: &mut Kernel,
+    resolver: &mut R,
+    bool_ty: Ref,
+    relations: &[RelationalRelation<'_>],
+) -> Result<Vec<LeastPredicate>, R::Error>
+where
+    R: RelationalResolver,
+{
+    let predicate_types = relations
+        .iter()
+        .map(|relation| relation.predicate_type)
+        .collect::<Vec<_>>();
+    let mut builder = begin_least_closed_family(kernel, bool_ty, &predicate_types)
+        .map_err(|source| resolver.least_error(source))?;
+    let closure = {
+        let (staged, candidates) = builder.parts();
+        let candidate_names = relations
+            .iter()
+            .zip(candidates)
+            .map(|(relation, &candidate)| (relation.name, candidate))
+            .collect::<Vec<_>>();
+        let mut scoped = resolver.relation_scope(&candidate_names);
+        let roots = candidates.to_vec();
+        let mut next_name = staged
+            .fresh_name(&roots)
+            .map_err(|source| resolver.kernel_error(source))?;
+        let mut closures = Vec::new();
+        for (relation, &candidate) in relations.iter().zip(candidates) {
+            for schema in relation.rules {
+                let rule_resolver = scoped.clause_scope();
+                let mut algebra =
+                    RelationalExpressionAlgebra::new(staged, rule_resolver, bool_ty, next_name);
+                let rule = algebra.rule(schema)?;
+                next_name = algebra.next_name();
+                closures.push(
+                    close_hol_rule(staged, bool_ty, candidate, &rule)
+                        .map_err(|source| resolver.kernel_error(source))?,
+                );
+            }
+        }
+        close_hol_rules(staged, bool_ty, &closures)
+            .map_err(|source| resolver.kernel_error(source))?
+    };
+    builder
+        .finish(closure)
+        .map_err(|source| resolver.least_error(source))
 }
 
 /// Concrete expression algebra producing relational HOL terms.

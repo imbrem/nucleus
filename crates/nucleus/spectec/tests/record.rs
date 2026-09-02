@@ -10,11 +10,11 @@ use covalence_nucleus_spectec::{
     CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase,
     HolEmbedding, HolRule, IndexErasure, KernelRoot, RelationalCall, RelationalClause,
     RelationalCondition, RelationalDefinitionSource, RelationalExpressionAlgebra,
-    RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler, Source, TYPE_NAME,
-    TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family, close_graph_equation,
-    close_hol_rule, close_hol_rules, declare_hol_schema, fold_expression, fold_grammar, fold_type,
-    least_closed_family, least_closed_predicate, ordered_cases, relational_definition,
-    relational_hol_case, relational_hol_rule,
+    RelationalRelation, RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler,
+    Source, TYPE_NAME, TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family,
+    close_graph_equation, close_hol_rule, close_hol_rules, declare_hol_schema, fold_expression,
+    fold_grammar, fold_type, least_closed_family, least_closed_predicate, ordered_cases,
+    relational_definition, relational_hol_case, relational_hol_rule, relational_relations,
 };
 
 #[derive(Clone)]
@@ -25,6 +25,7 @@ struct TestRelationalResolver {
     graph: covalence_logic_hol::Ref,
     bool_ty: covalence_logic_hol::Ref,
     bound: std::collections::BTreeMap<String, covalence_logic_hol::Ref>,
+    relations: std::collections::BTreeMap<String, covalence_logic_hol::Ref>,
 }
 
 impl RelationalResolver for TestRelationalResolver {
@@ -33,6 +34,15 @@ impl RelationalResolver for TestRelationalResolver {
     fn clause_scope(&mut self) -> Self {
         let mut child = self.clone();
         child.bound.clear();
+        child
+    }
+
+    fn relation_scope(&mut self, candidates: &[(&str, covalence_logic_hol::Ref)]) -> Self {
+        let mut child = self.clause_scope();
+        child.relations = candidates
+            .iter()
+            .map(|(name, candidate)| ((*name).to_owned(), *candidate))
+            .collect();
         child
     }
 
@@ -51,6 +61,13 @@ impl RelationalResolver for TestRelationalResolver {
     fn case_error(
         &mut self,
         source: covalence_nucleus_spectec::RelationalCaseError,
+    ) -> Self::Error {
+        source.to_string()
+    }
+
+    fn least_error(
+        &mut self,
+        source: covalence_nucleus_spectec::LeastPredicateError,
     ) -> Self::Error {
         source.to_string()
     }
@@ -157,9 +174,14 @@ impl RelationalResolver for TestRelationalResolver {
     fn relation(
         &mut self,
         kernel: &mut Kernel,
-        _name: &str,
-        _argument: covalence_logic_hol::Ref,
+        name: &str,
+        argument: covalence_logic_hol::Ref,
     ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        if let Some(candidate) = self.relations.get(name) {
+            return kernel
+                .app(*candidate, argument)
+                .map_err(|error| error.to_string());
+        }
         kernel
             .bool(self.bool_ty, true)
             .map_err(|error| error.to_string())
@@ -217,6 +239,7 @@ fn relational_expression_fold_turns_calls_into_graph_premises() {
         graph,
         bool_ty,
         bound: std::collections::BTreeMap::new(),
+        relations: std::collections::BTreeMap::new(),
     };
     let (term, explicit, conditions) = {
         let mut algebra = RelationalExpressionAlgebra::new(&mut kernel, resolver, bool_ty, 100);
@@ -344,6 +367,7 @@ fn complete_clause_api_lowers_patterns_result_and_premises() {
         graph,
         bool_ty,
         bound: std::collections::BTreeMap::new(),
+        relations: std::collections::BTreeMap::new(),
     };
     let case = RelationalExpressionAlgebra::new(&mut kernel, resolver.clone(), bool_ty, 100)
         .clause(&schema, &formal_inputs, formal_result)
@@ -409,6 +433,7 @@ fn complete_relation_rule_lowers_to_inductive_hol_rule() {
         graph: kernel.tm_fv(4, graph_ty).unwrap(),
         bool_ty,
         bound: std::collections::BTreeMap::new(),
+        relations: std::collections::BTreeMap::new(),
     };
     let rule = RelationalExpressionAlgebra::new(&mut kernel, resolver, bool_ty, 100)
         .rule(&schema)
@@ -424,6 +449,100 @@ fn complete_relation_rule_lowers_to_inductive_hol_rule() {
             .equivalent(kernel.classifier(closure).unwrap(), bool_ty)
             .unwrap()
     );
+}
+
+#[test]
+fn mutually_recursive_relations_lower_to_one_least_hol_family() {
+    let il = IlDocument::parse(
+        br#"(rel "R" "R" nat
+              (rule "r" (exp "x" nat) "R" (var "x")
+                (rule "S" "S" (var "x"))))
+            (rel "S" "S" nat
+              (rule "s" (exp "x" nat) "S" (var "x")
+                (rule "R" "R" (var "x"))))"#,
+        Limits::default(),
+    )
+    .unwrap();
+    let first = il
+        .schema(DeclarationId::new(1, None).unwrap())
+        .unwrap()
+        .unwrap();
+    let second = il
+        .schema(DeclarationId::new(2, None).unwrap())
+        .unwrap()
+        .unwrap();
+    let covalence_data_spectec::IlDeclarationBody::Relation {
+        rules: first_rules, ..
+    } = first.body()
+    else {
+        panic!("expected first relation")
+    };
+    let covalence_data_spectec::IlDeclarationBody::Relation {
+        rules: second_rules,
+        ..
+    } = second.body()
+    else {
+        panic!("expected second relation")
+    };
+    let first_rules = first_rules
+        .iter()
+        .map(IlRuleSchema::decode)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let second_rules = second_rules
+        .iter()
+        .map(IlRuleSchema::decode)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let predicate_ty = kernel.ty_arr(value, bool_ty).unwrap();
+    let binary_tail = kernel.ty_arr(value, value).unwrap();
+    let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
+    let graph_tail = kernel.ty_arr(value, bool_ty).unwrap();
+    let graph_ty = kernel.ty_arr(value, graph_tail).unwrap();
+    let x = kernel.tm_fv(1, value).unwrap();
+    let mut resolver = TestRelationalResolver {
+        x,
+        y: kernel.tm_fv(2, value).unwrap(),
+        add: kernel.tm_fv(3, binary_ty).unwrap(),
+        graph: kernel.tm_fv(4, graph_ty).unwrap(),
+        bool_ty,
+        bound: std::collections::BTreeMap::new(),
+        relations: std::collections::BTreeMap::new(),
+    };
+    let theorem_count = kernel.thm().live_theorems().count();
+    let family = relational_relations(
+        &mut kernel,
+        &mut resolver,
+        bool_ty,
+        &[
+            RelationalRelation {
+                name: "R",
+                predicate_type: predicate_ty,
+                rules: &first_rules,
+            },
+            RelationalRelation {
+                name: "S",
+                predicate_type: predicate_ty,
+                rules: &second_rules,
+            },
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(family.len(), 2);
+    for relation in family {
+        assert!(
+            kernel
+                .equivalent(kernel.classifier(relation.predicate).unwrap(), predicate_ty)
+                .unwrap()
+        );
+    }
+    assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
 }
 
 #[test]
