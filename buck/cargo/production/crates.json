@@ -754,6 +754,12 @@
           "kinds": [
             "lib"
           ]
+        },
+        {
+          "name": "import",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     },
@@ -1670,6 +1676,13 @@
     {
       "source": "workspace#covalence-logic-lean@0.0.0",
       "target": "workspace#covalence-lib-json@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-lean@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
       "kinds": [
         "normal"
       ]

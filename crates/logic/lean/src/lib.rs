@@ -6,5 +6,11 @@
 
 pub mod lean4export;
 pub mod stream;
+pub mod syntax;
 
+mod decode;
+pub mod direct;
+pub mod import;
+
+pub use import::{Artifacts, Backend, BackendArtifacts, ImportError, Imported, import};
 pub use lean4export::{Error, Export, FORMAT_VERSION, Metadata, read};

@@ -1,0 +1,471 @@
+//! An intentionally small direct lowering from non-dependent Lean to HOL.
+//!
+//! This backend is a first consumer of the generic import API, not the intended
+//! full Lean embedding. It supports monomorphic simple types, constants,
+//! applications, lambdas, and non-dependent `forallE` arrows. Definitions are
+//! eagerly delta-lowered to their values. Conversion beyond equality already
+//! known to the kernel is delegated to [`ConversionTactic`].
+
+use std::collections::BTreeMap;
+use std::error::Error as StdError;
+
+use covalence_lib_error::snafu::Snafu;
+use covalence_logic_hol::{Kernel, KernelError, Ref, SynFactId, ThmId};
+
+use crate::import::{Artifacts, Backend};
+use crate::lean4export::Metadata;
+use crate::syntax::{Declaration, Expr, ExprId, Level, NameId, Record, Tables};
+
+/// Checked evidence returned by a conversion tactic.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Conversion {
+    /// Left side requested by the lowering backend.
+    pub left: Ref,
+    /// Right side requested by the lowering backend.
+    pub right: Ref,
+    /// LCF syntactic facts used to establish conversion before quotienting.
+    pub facts: Vec<SynFactId>,
+}
+
+/// Proof-producing conversion strategy used by a direct lowering backend.
+///
+/// Implementations may use normalization, an e-graph, or any other search
+/// strategy. Search is outside the TCB: successful calls must establish the
+/// conversion through checked kernel rules before returning.
+pub trait ConversionTactic {
+    /// Search or kernel failure.
+    type Error: StdError + 'static;
+
+    /// Establish that two already-typed HOL objects are convertible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when conversion search fails or its proposed LCF steps
+    /// are rejected by the kernel.
+    fn prove(
+        &mut self,
+        kernel: &mut Kernel,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Conversion, Self::Error>;
+}
+
+/// Conversion tactic accepting only equality already present in the kernel.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoConversion;
+
+/// Failure from [`NoConversion`].
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum NoConversionError {
+    /// A kernel query failed.
+    #[snafu(display("could not query HOL conversion: {source}"))]
+    Query { source: KernelError },
+    /// The conversion quotient did not already relate the objects.
+    #[snafu(display("HOL objects {left:?} and {right:?} are not already convertible"))]
+    NotConvertible { left: Ref, right: Ref },
+}
+
+impl ConversionTactic for NoConversion {
+    type Error = NoConversionError;
+
+    fn prove(
+        &mut self,
+        kernel: &mut Kernel,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Conversion, Self::Error> {
+        let equivalent = kernel
+            .equivalent_mut(left, right)
+            .map_err(|source| NoConversionError::Query { source })?;
+        if !equivalent {
+            return Err(NoConversionError::NotConvertible { left, right });
+        }
+        Ok(Conversion {
+            left,
+            right,
+            facts: Vec::new(),
+        })
+    }
+}
+
+/// Why the direct backend accepted one declaration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DirectDerivation {
+    /// Kernel construction established that the lowered value has this type.
+    HasType { term: Ref, ty: Ref },
+    /// A conversion tactic established equality of two classifiers.
+    Conversion(Conversion),
+}
+
+/// Failure to lower the deliberately small direct-HOL fragment.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum DirectError<E: StdError + 'static> {
+    /// Syntax lies outside the direct backend's current fragment.
+    #[snafu(display("direct HOL lowering does not support {feature}"))]
+    Unsupported { feature: String },
+    /// A constant has not been introduced by an earlier declaration.
+    #[snafu(display("Lean constant name index {name} has no direct HOL lowering"))]
+    MissingConstant { name: usize },
+    /// An expression was used in the wrong direct-HOL category.
+    #[snafu(display("expected {expected}, found {actual}"))]
+    Category {
+        expected: &'static str,
+        actual: &'static str,
+    },
+    /// A bound variable was outside the current lambda context.
+    #[snafu(display("bound variable {index} is outside a context of depth {depth}"))]
+    BoundVariable { index: usize, depth: usize },
+    /// A checked HOL constructor rejected the proposed lowering.
+    #[snafu(display("HOL construction failed: {source}"))]
+    Construction { source: KernelError },
+    /// The selected conversion tactic could not justify classifier equality.
+    #[snafu(display("HOL conversion failed: {source}"))]
+    Conversion { source: E },
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Lowered {
+    Kind(Ref),
+    Type(Ref),
+    Term(Ref),
+}
+
+impl Lowered {
+    const fn category(self) -> &'static str {
+        match self {
+            Self::Kind(_) => "kind",
+            Self::Type(_) => "type",
+            Self::Term(_) => "term",
+        }
+    }
+}
+
+/// Direct, monomorphic, non-dependent Lean-to-HOL backend.
+#[derive(Debug)]
+pub struct DirectHol<C = NoConversion> {
+    kernel: Kernel,
+    conversion: C,
+    star: Option<Ref>,
+    bool_ty: Option<Ref>,
+    constants: BTreeMap<NameId, Lowered>,
+    conversions: Vec<Conversion>,
+    next_binder: u64,
+}
+
+impl DirectHol<NoConversion> {
+    /// Start with an empty HOL kernel and no nontrivial conversion tactic.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::with_conversion(Kernel::new(), NoConversion)
+    }
+}
+
+impl Default for DirectHol<NoConversion> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<C> DirectHol<C> {
+    /// Use an explicit kernel and proof-producing conversion tactic.
+    #[must_use]
+    pub fn with_conversion(kernel: Kernel, conversion: C) -> Self {
+        Self {
+            kernel,
+            conversion,
+            star: None,
+            bool_ty: None,
+            constants: BTreeMap::new(),
+            conversions: Vec::new(),
+            next_binder: u64::MAX,
+        }
+    }
+
+    /// Borrow the checked HOL state accumulated so far.
+    #[must_use]
+    pub const fn kernel(&self) -> &Kernel {
+        &self.kernel
+    }
+
+    /// Consume the backend and recover its checked HOL kernel.
+    #[must_use]
+    pub fn into_kernel(self) -> Kernel {
+        self.kernel
+    }
+
+    /// Conversion evidence used during this import.
+    #[must_use]
+    pub fn conversions(&self) -> &[Conversion] {
+        &self.conversions
+    }
+}
+
+impl<C: ConversionTactic> Backend for DirectHol<C> {
+    type Object = Ref;
+    type Theorem = ThmId;
+    type Derivation = DirectDerivation;
+    type Error = DirectError<C::Error>;
+
+    fn begin(
+        &mut self,
+        _metadata: &Metadata,
+        _tables: &Tables,
+    ) -> Result<Artifacts<Ref, ThmId, DirectDerivation>, Self::Error> {
+        let star = self
+            .kernel
+            .star()
+            .map_err(|source| DirectError::Construction { source })?;
+        let bool_ty = self
+            .kernel
+            .bool_ty(star)
+            .map_err(|source| DirectError::Construction { source })?;
+        self.star = Some(star);
+        self.bool_ty = Some(bool_ty);
+        Ok(Artifacts::default())
+    }
+
+    fn lower(
+        &mut self,
+        record: &Record,
+        tables: &Tables,
+    ) -> Result<Artifacts<Ref, ThmId, DirectDerivation>, Self::Error> {
+        let Record::Declaration(ordinal) = *record else {
+            return Ok(Artifacts::default());
+        };
+        let declaration = &tables.declarations[ordinal];
+        let syntax = record.syntax(tables);
+        let (name, lowered, derivation) = match declaration {
+            Declaration::Axiom { header, .. } => {
+                Self::require_monomorphic(&header.level_params)?;
+                let declared = self.lower_expr(header.ty, tables, &mut Vec::new())?;
+                let name = u64::try_from(header.name.0).map_err(|_| DirectError::Unsupported {
+                    feature: "name indices beyond u64".to_owned(),
+                })?;
+                let object = match declared {
+                    Lowered::Kind(kind) => Lowered::Type(
+                        self.kernel
+                            .ty_fv(name, kind)
+                            .map_err(|source| DirectError::Construction { source })?,
+                    ),
+                    Lowered::Type(ty) => Lowered::Term(
+                        self.kernel
+                            .tm_fv(name, ty)
+                            .map_err(|source| DirectError::Construction { source })?,
+                    ),
+                    Lowered::Term(_) => {
+                        return Err(DirectError::Category {
+                            expected: "type or kind",
+                            actual: "term",
+                        });
+                    }
+                };
+                (header.name, object, None)
+            }
+            Declaration::Definition { header, value, .. }
+            | Declaration::Opaque { header, value, .. } => {
+                Self::require_monomorphic(&header.level_params)?;
+                let declared_value = self.lower_expr(header.ty, tables, &mut Vec::new())?;
+                let declared = Self::expect_type(declared_value)?;
+                let term_value = self.lower_expr(*value, tables, &mut Vec::new())?;
+                let term = Self::expect_term(term_value)?;
+                let actual = self
+                    .kernel
+                    .classifier(term)
+                    .map_err(|source| DirectError::Construction { source })?;
+                if actual != declared {
+                    let evidence = self
+                        .conversion
+                        .prove(&mut self.kernel, actual, declared)
+                        .map_err(|source| DirectError::Conversion { source })?;
+                    self.conversions.push(evidence);
+                }
+                (
+                    header.name,
+                    Lowered::Term(term),
+                    Some(DirectDerivation::HasType { term, ty: declared }),
+                )
+            }
+            Declaration::Theorem { .. } => {
+                return Self::unsupported("proposition and theorem lowering");
+            }
+            Declaration::Quotient { .. } => return Self::unsupported("quotient declarations"),
+            Declaration::Inductive { .. } => return Self::unsupported("inductive declarations"),
+        };
+        self.constants.insert(name, lowered);
+        let object = match lowered {
+            Lowered::Kind(value) | Lowered::Type(value) | Lowered::Term(value) => value,
+        };
+        let artifacts = Artifacts {
+            objects: vec![(object, syntax)],
+            theorems: Vec::new(),
+        };
+        // Direct construction validates typing but does not itself create a HOL
+        // theorem. A deep-embedding backend will populate theorem artifacts.
+        let _ = derivation;
+        Ok(artifacts)
+    }
+}
+
+impl<C: ConversionTactic> DirectHol<C> {
+    fn lower_expr(
+        &mut self,
+        id: ExprId,
+        tables: &Tables,
+        context: &mut Vec<Ref>,
+    ) -> Result<Lowered, DirectError<C::Error>> {
+        match &tables.expressions[id.0] {
+            Expr::BVar(index) => {
+                let position =
+                    context
+                        .len()
+                        .checked_sub(index + 1)
+                        .ok_or(DirectError::BoundVariable {
+                            index: *index,
+                            depth: context.len(),
+                        })?;
+                Ok(Lowered::Term(context[position]))
+            }
+            Expr::Sort(level) => match &tables.levels[level.0] {
+                Level::Zero => Ok(Lowered::Type(self.bool_type()?)),
+                Level::Succ(inner) if matches!(tables.levels[inner.0], Level::Zero) => {
+                    Ok(Lowered::Kind(self.star()?))
+                }
+                _ => Self::unsupported("universe levels above Type or universe polymorphism"),
+            },
+            Expr::Const { name, universes } => {
+                if !universes.is_empty() {
+                    return Self::unsupported("universe-instantiated constants");
+                }
+                self.constants
+                    .get(name)
+                    .copied()
+                    .ok_or(DirectError::MissingConstant { name: name.0 })
+            }
+            Expr::App { function, argument } => {
+                let function_value = self.lower_expr(*function, tables, context)?;
+                let function = Self::expect_term(function_value)?;
+                let argument_value = self.lower_expr(*argument, tables, context)?;
+                let argument = Self::expect_term(argument_value)?;
+                self.kernel
+                    .app(function, argument)
+                    .map(Lowered::Term)
+                    .map_err(|source| DirectError::Construction { source })
+            }
+            Expr::Lam { ty, body, .. } => {
+                let ty_value = self.lower_expr(*ty, tables, context)?;
+                let ty = Self::expect_type(ty_value)?;
+                let name = self.next_binder;
+                self.next_binder =
+                    self.next_binder
+                        .checked_sub(1)
+                        .ok_or_else(|| DirectError::Unsupported {
+                            feature: "exhausted direct-HOL binder names".to_owned(),
+                        })?;
+                let binder = self
+                    .kernel
+                    .tm_fv(name, ty)
+                    .map_err(|source| DirectError::Construction { source })?;
+                context.push(binder);
+                let body_result = self.lower_expr(*body, tables, context);
+                context.pop();
+                let body = Self::expect_term(body_result?)?;
+                self.kernel
+                    .lam(binder, body)
+                    .map(Lowered::Term)
+                    .map_err(|source| DirectError::Construction { source })
+            }
+            Expr::Forall { body, ty, .. } => {
+                if occurs_bound(*body, 0, tables, 0) {
+                    return Self::unsupported("dependent forallE");
+                }
+                let domain_value = self.lower_expr(*ty, tables, context)?;
+                let domain = Self::expect_type(domain_value)?;
+                let codomain_value = self.lower_expr(*body, tables, context)?;
+                let codomain = Self::expect_type(codomain_value)?;
+                self.kernel
+                    .ty_arr(domain, codomain)
+                    .map(Lowered::Type)
+                    .map_err(|source| DirectError::Construction { source })
+            }
+            Expr::MData { expression, .. } => self.lower_expr(*expression, tables, context),
+            Expr::Let { .. } => {
+                Self::unsupported("let expressions before a zeta conversion tactic")
+            }
+            Expr::Proj { .. } => Self::unsupported("projections before an iota conversion tactic"),
+            Expr::NatLit(_) => Self::unsupported("natural literals"),
+            Expr::StrLit(_) => Self::unsupported("string literals"),
+        }
+    }
+
+    fn expect_type(value: Lowered) -> Result<Ref, DirectError<C::Error>> {
+        match value {
+            Lowered::Type(value) => Ok(value),
+            other => Err(DirectError::Category {
+                expected: "type",
+                actual: other.category(),
+            }),
+        }
+    }
+
+    fn expect_term(value: Lowered) -> Result<Ref, DirectError<C::Error>> {
+        match value {
+            Lowered::Term(value) => Ok(value),
+            other => Err(DirectError::Category {
+                expected: "term",
+                actual: other.category(),
+            }),
+        }
+    }
+
+    fn star(&self) -> Result<Ref, DirectError<C::Error>> {
+        self.star.ok_or_else(|| DirectError::Unsupported {
+            feature: "backend use before metadata".to_owned(),
+        })
+    }
+
+    fn bool_type(&self) -> Result<Ref, DirectError<C::Error>> {
+        self.bool_ty.ok_or_else(|| DirectError::Unsupported {
+            feature: "backend use before metadata".to_owned(),
+        })
+    }
+
+    fn require_monomorphic(params: &[NameId]) -> Result<(), DirectError<C::Error>> {
+        if params.is_empty() {
+            Ok(())
+        } else {
+            Self::unsupported("universe-polymorphic declarations")
+        }
+    }
+
+    fn unsupported<T>(feature: &str) -> Result<T, DirectError<C::Error>> {
+        Err(DirectError::Unsupported {
+            feature: feature.to_owned(),
+        })
+    }
+}
+
+fn occurs_bound(id: ExprId, target: usize, tables: &Tables, depth: usize) -> bool {
+    match &tables.expressions[id.0] {
+        Expr::BVar(index) => *index == target + depth,
+        Expr::App { function, argument } => {
+            occurs_bound(*function, target, tables, depth)
+                || occurs_bound(*argument, target, tables, depth)
+        }
+        Expr::Lam { ty, body, .. } | Expr::Forall { ty, body, .. } => {
+            occurs_bound(*ty, target, tables, depth)
+                || occurs_bound(*body, target, tables, depth + 1)
+        }
+        Expr::Let {
+            ty, value, body, ..
+        } => {
+            occurs_bound(*ty, target, tables, depth)
+                || occurs_bound(*value, target, tables, depth)
+                || occurs_bound(*body, target, tables, depth + 1)
+        }
+        Expr::Proj { structure, .. } => occurs_bound(*structure, target, tables, depth),
+        Expr::MData { expression, .. } => occurs_bound(*expression, target, tables, depth),
+        Expr::Sort(_) | Expr::Const { .. } | Expr::NatLit(_) | Expr::StrLit(_) => false,
+    }
+}

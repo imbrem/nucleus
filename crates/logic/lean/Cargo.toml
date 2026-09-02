@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-json = { path = "../../lib/json" }
+covalence-logic-hol = { path = "../hol" }
 
 [lints]
 workspace = true
