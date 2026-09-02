@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      python-version:
+        description: PEP 440 version to embed in a release wheel
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,17 +27,40 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
+      # Development wheels inherit the workspace's Cargo version. A tagged
+      # Python release supplies its PEP 440 version without changing the shared
+      # version of every Rust crate in the workspace.
+      - name: Set release version
+        if: inputs.python-version != ''
+        env:
+          COVALENCE_PYTHON_VERSION: ${{ inputs.python-version }}
+        shell: bash
+        run: |
+          python - "${COVALENCE_PYTHON_VERSION}" <<'PY'
+          import pathlib
+          import sys
+
+          path = pathlib.Path("crates/ffi/python/pyproject.toml")
+          source = path.read_text()
+          marker = 'dynamic = ["version"]'
+          assert source.count(marker) == 1
+          path.write_text(source.replace(marker, f'version = "{sys.argv[1]}"'))
+          PY
+
       # An explicit policy avoids silently raising the oldest supported glibc.
       # maturin runs in the matching official manylinux container and repairs
       # the wheel before returning it to the runner.
       - name: Build manylinux wheel
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        env:
+          COVALENCE_PYTHON_VERSION: ${{ inputs.python-version }}
         with:
           command: build
           maturin-version: v1.11.5
           rust-toolchain: 1.97.1
           target: x86_64
           manylinux: 2_28
+          docker-options: -e COVALENCE_PYTHON_VERSION
           args: >-
             --release
             --locked
@@ -52,10 +82,11 @@ jobs:
           )
           jq --null-input \
             --arg commit "${GITHUB_SHA}" \
+            --arg python_version "${{ inputs.python-version }}" \
             --arg run_id "${GITHUB_RUN_ID}" \
             --arg run_attempt "${GITHUB_RUN_ATTEMPT}" \
             --arg repository "${GITHUB_REPOSITORY}" \
-            '{commit: $commit, run_id: $run_id, run_attempt: $run_attempt, repository: $repository, platform: "linux-x86_64", manylinux: "2_28"}' \
+            '{commit: $commit, python_version: (if $python_version == "" then null else $python_version end), run_id: $run_id, run_attempt: $run_attempt, repository: $repository, platform: "linux-x86_64", manylinux: "2_28"}' \
             > dist/BUILD-METADATA.json
 
       # Install the completed artifact into a venv outside the checkout. Running

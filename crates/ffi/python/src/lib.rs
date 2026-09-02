@@ -29,7 +29,13 @@ mod sexpr;
 #[pymodule]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 fn _covalence(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    // Release wheels carry a Python-specific PEP 440 version. Development
+    // builds retain the workspace Cargo version without requiring every Rust
+    // crate to adopt the Python release cadence.
+    let version = option_env!("COVALENCE_PYTHON_VERSION")
+        .filter(|version| !version.is_empty())
+        .unwrap_or(env!("CARGO_PKG_VERSION"));
+    module.add("__version__", version)?;
     cbor::register(module)?;
     hash::register(module)?;
     cas::register(module)?;
