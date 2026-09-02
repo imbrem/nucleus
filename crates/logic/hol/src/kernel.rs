@@ -1046,7 +1046,7 @@ impl Kernel {
         if let Some(&result) = memo.get(&input) {
             return Ok(result);
         }
-        let row = self.row::<Infallible>(input)?.clone();
+        let row = *self.row::<Infallible>(input)?;
         if matches!(*row.expr(), Node::TmFv { .. } | Node::TyFv { .. }) {
             let fact = self.syn_refl(None, crate::SynRel::Syn, input)?;
             memo.insert(input, (input, fact));
@@ -1154,7 +1154,7 @@ impl Kernel {
         if let Some(&result) = memo.get(&input) {
             return Ok(result);
         }
-        let row = self.row::<Infallible>(input)?.clone();
+        let row = *self.row::<Infallible>(input)?;
         let node = *row.expr();
         if matches!(
             node,
@@ -1298,9 +1298,11 @@ impl Kernel {
             Node::KindStar
             | Node::BoolTy
             | Node::Bool(_)
-            | Node::Bytes
-            | Node::Nat
-            | Node::Int
+            | Node::Bytes(..)
+            | Node::Nat(..)
+            | Node::NatBig(..)
+            | Node::Int(..)
+            | Node::IntBig(..)
             | Node::TmRef { .. }
             | Node::TyRef { .. }
             | Node::KindRef { .. } => Err(KernelError::WrongForm {
@@ -1693,11 +1695,12 @@ impl Kernel {
                 Some(sort)
             }
             // A compact literal has no Ethane meaning until an init package
-            // lowers it, so no checked arena may contain one. That also keeps
-            // the syntactic relations honest: a literal's payload is not part
-            // of its `Node`, so the node comparisons in `syn_facts` could not
-            // tell two different literals apart.
-            Node::Bytes | Node::Nat | Node::Int => {
+            // lowers it, so no checked arena may contain one.
+            Node::Bytes(..)
+            | Node::Nat(..)
+            | Node::NatBig(..)
+            | Node::Int(..)
+            | Node::IntBig(..) => {
                 return Err(KernelError::WrongForm {
                     reference,
                     expected: "compact literal lowered through an init package",
@@ -2311,7 +2314,12 @@ fn remap_row(row: &Row, sort: Option<Ref>, map: &BTreeMap<Ref, Ref>) -> (Row, Op
         Node::App(a, b) => Node::App(remap(a), remap(b)),
         Node::Lam(a, b) => Node::Lam(remap(a), remap(b)),
         Node::Bool(value) => Node::Bool(value),
-        Node::Bytes | Node::Nat | Node::Int => return (row.clone(), sort),
+        // A literal never reaches a checked arena, so it is never remapped: a
+        // blob index only means anything inside the arena that owns the byte
+        // table. `validate_copy_row` rejects the staged row before it commits.
+        Node::Bytes(..) | Node::Nat(..) | Node::NatBig(..) | Node::Int(..) | Node::IntBig(..) => {
+            return (*row, sort);
+        }
         Node::Op1(op, operand) => Node::Op1(op, remap(operand)),
         Node::Op2(op, left, right) => Node::Op2(op, remap(left), remap(right)),
         Node::Eq(ty, a, b) => Node::Eq(remap(ty), remap(a), remap(b)),
@@ -2993,7 +3001,7 @@ mod tests {
         let bool_ty = source.bool_ty(star).unwrap();
         let literal = source
             .arena
-            .push_row(Row::nat(crate::Num::from(42_u8)), Some(bool_ty))
+            .push_row(Row::new(crate::row::Expr::Nat(42)), Some(bool_ty))
             .unwrap();
         let mut destination = Kernel::new();
         let existing = destination.star().unwrap();

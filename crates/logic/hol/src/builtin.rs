@@ -88,7 +88,7 @@ mod tests {
 
     use super::*;
     use crate::Ref;
-    use crate::row::{Expr, Row};
+    use crate::row::{Expr, Row, RowSerde};
     use covalence_lib_cbor::{from_reader, into_writer};
 
     const MANIFEST: &str = include_str!("../builtins-v1.tsv");
@@ -169,9 +169,10 @@ mod tests {
             ),
         ] {
             let mut bytes = Vec::new();
-            into_writer(&row, &mut bytes).unwrap();
+            into_writer(&row.encode(&[]).unwrap(), &mut bytes).unwrap();
             assert_eq!(hex(&bytes), golden);
-            assert_eq!(from_reader::<Row, _>(bytes.as_slice()).unwrap(), row);
+            let wire = from_reader::<RowSerde, _>(bytes.as_slice()).unwrap();
+            assert_eq!(Row::decode(wire, &mut Vec::new()).unwrap(), row);
         }
     }
 
