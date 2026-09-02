@@ -48,7 +48,14 @@
     },
     "disposition": {
       "type": "object",
-      "required": ["status", "case", "rejection", "sourcePath", "firstLine", "lastLine"],
+      "required": [
+        "status",
+        "case",
+        "rejection",
+        "sourcePath",
+        "firstLine",
+        "lastLine"
+      ],
       "properties": {
         "status": { "type": "string", "knownValues": ["translate", "reject"] },
         "case": { "type": "string" },
