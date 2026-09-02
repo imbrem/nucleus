@@ -1,6 +1,6 @@
 //! Relational HOL expression lowering over the generic expression fold.
 
-use covalence_data_spectec::{IlExpression, IlExpressionKind, IlSchemaError};
+use covalence_data_spectec::{IlBinding, IlExpression, IlExpressionKind, IlSchemaError};
 use covalence_logic_hol::{Kernel, KernelError, Ref};
 
 use crate::ExpressionAlgebra;
@@ -57,6 +57,14 @@ pub trait RelationalResolver {
     /// Reports exhaustion of the caller-selected name range.
     fn name_exhausted(&mut self) -> Self::Error;
 
+    /// Registers one checked term for an explicit IL binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for duplicate names or a target classifier incompatible
+    /// with the binding category.
+    fn binding(&mut self, binding: &IlBinding<'_>, reference: Ref) -> Result<(), Self::Error>;
+
     /// Resolves one variable expression to a checked term.
     ///
     /// # Errors
@@ -101,19 +109,51 @@ pub struct RelationalExpressionAlgebra<'a, R> {
     kernel: &'a mut Kernel,
     resolver: R,
     value_ty: Ref,
+    bool_ty: Ref,
     next_name: u64,
 }
 
 impl<'a, R> RelationalExpressionAlgebra<'a, R> {
     /// Starts a lowering with an explicit deterministic name range.
     #[must_use]
-    pub const fn new(kernel: &'a mut Kernel, resolver: R, value_ty: Ref, first_name: u64) -> Self {
+    pub const fn new(
+        kernel: &'a mut Kernel,
+        resolver: R,
+        value_ty: Ref,
+        bool_ty: Ref,
+        first_name: u64,
+    ) -> Self {
         Self {
             kernel,
             resolver,
             value_ty,
+            bool_ty,
             next_name: first_name,
         }
+    }
+
+    /// Declares and registers explicit bindings in exact source order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on name exhaustion, rejected checked classifiers, or a
+    /// resolver registration failure.
+    pub fn bindings(&mut self, bindings: &[IlBinding<'_>]) -> Result<Vec<Ref>, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        let mut references = Vec::with_capacity(bindings.len());
+        for binding in bindings {
+            let classifier = self.binding_type(binding)?;
+            let name = self.take_name()?;
+            let reference = self
+                .kernel
+                .tm_fv(name, classifier)
+                .map_err(|source| self.resolver.kernel_error(source))?;
+            self.resolver.binding(binding, reference)?;
+            references.push(reference);
+        }
+        Ok(references)
     }
 
     /// Returns the next unused name after lowering.
@@ -126,6 +166,42 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
     #[must_use]
     pub fn into_resolver(self) -> R {
         self.resolver
+    }
+
+    fn binding_type(&mut self, binding: &IlBinding<'_>) -> Result<Ref, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        let domains = match binding {
+            IlBinding::Expression { .. } => return Ok(self.value_ty),
+            IlBinding::Type { .. } => vec![self.value_ty],
+            IlBinding::Definition { parameters, .. } => {
+                vec![self.value_ty; parameters.len() + 1]
+            }
+            IlBinding::Grammar { parameters, .. } => {
+                vec![self.value_ty; parameters.len() + 2]
+            }
+        };
+        domains
+            .iter()
+            .rev()
+            .try_fold(self.bool_ty, |tail, &domain| {
+                self.kernel
+                    .ty_arr(domain, tail)
+                    .map_err(|source| self.resolver.kernel_error(source))
+            })
+    }
+
+    fn take_name(&mut self) -> Result<u64, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        let name = self.next_name;
+        self.next_name = self
+            .next_name
+            .checked_add(1)
+            .ok_or_else(|| self.resolver.name_exhausted())?;
+        Ok(name)
     }
 }
 
@@ -154,11 +230,7 @@ impl<R: RelationalResolver> ExpressionAlgebra for RelationalExpressionAlgebra<'_
             IlExpressionKind::Variable => self.resolver.variable(self.kernel, expression)?,
             IlExpressionKind::Call => {
                 let prefix = self.resolver.call(self.kernel, expression, &values)?;
-                let name = self.next_name;
-                self.next_name = self
-                    .next_name
-                    .checked_add(1)
-                    .ok_or_else(|| self.resolver.name_exhausted())?;
+                let name = self.take_name()?;
                 let result = self
                     .kernel
                     .tm_fv(name, self.value_ty)

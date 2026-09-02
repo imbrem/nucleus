@@ -13,76 +13,84 @@ use covalence_nucleus_spectec::{
     fold_expression, least_closed_family, least_closed_predicate,
 };
 
+struct TestRelationalResolver {
+    x: covalence_logic_hol::Ref,
+    y: covalence_logic_hol::Ref,
+    add: covalence_logic_hol::Ref,
+    graph: covalence_logic_hol::Ref,
+}
+
+impl RelationalResolver for TestRelationalResolver {
+    type Error = String;
+
+    fn schema_error(&mut self, source: IlSchemaError) -> Self::Error {
+        source.to_string()
+    }
+
+    fn kernel_error(&mut self, source: covalence_logic_hol::KernelError) -> Self::Error {
+        source.to_string()
+    }
+
+    fn name_exhausted(&mut self) -> Self::Error {
+        "name range exhausted".to_owned()
+    }
+
+    fn binding(
+        &mut self,
+        _binding: &covalence_data_spectec::IlBinding<'_>,
+        _reference: covalence_logic_hol::Ref,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn variable(
+        &mut self,
+        _kernel: &mut Kernel,
+        expression: &IlExpression<'_>,
+    ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        match expression.cursor().child(1).map(|cursor| cursor.node()) {
+            Some(IlNode::String("x")) => Ok(self.x),
+            Some(IlNode::String("y")) => Ok(self.y),
+            _ => Err("unbound variable".to_owned()),
+        }
+    }
+
+    fn operation(
+        &mut self,
+        kernel: &mut Kernel,
+        expression: &IlExpression<'_>,
+        children: &[covalence_logic_hol::Ref],
+    ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        if expression.kind() != IlExpressionKind::Binary || children.len() != 2 {
+            return Err("unexpected primitive".to_owned());
+        }
+        let partial = kernel
+            .app(self.add, children[0])
+            .map_err(|error| error.to_string())?;
+        kernel
+            .app(partial, children[1])
+            .map_err(|error| error.to_string())
+    }
+
+    fn call(
+        &mut self,
+        kernel: &mut Kernel,
+        _expression: &IlExpression<'_>,
+        arguments: &[covalence_logic_hol::Ref],
+    ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        let [argument] = arguments else {
+            return Err("call arity mismatch".to_owned());
+        };
+        kernel
+            .app(self.graph, *argument)
+            .map_err(|error| error.to_string())
+    }
+}
+
 #[test]
 fn relational_expression_fold_turns_calls_into_graph_premises() {
-    struct Resolver {
-        x: covalence_logic_hol::Ref,
-        y: covalence_logic_hol::Ref,
-        add: covalence_logic_hol::Ref,
-        graph: covalence_logic_hol::Ref,
-    }
-
-    impl RelationalResolver for Resolver {
-        type Error = String;
-
-        fn schema_error(&mut self, source: IlSchemaError) -> Self::Error {
-            source.to_string()
-        }
-
-        fn kernel_error(&mut self, source: covalence_logic_hol::KernelError) -> Self::Error {
-            source.to_string()
-        }
-
-        fn name_exhausted(&mut self) -> Self::Error {
-            "name range exhausted".to_owned()
-        }
-
-        fn variable(
-            &mut self,
-            _kernel: &mut Kernel,
-            expression: &IlExpression<'_>,
-        ) -> Result<covalence_logic_hol::Ref, Self::Error> {
-            match expression.cursor().child(1).map(|cursor| cursor.node()) {
-                Some(IlNode::String("x")) => Ok(self.x),
-                Some(IlNode::String("y")) => Ok(self.y),
-                _ => Err("unbound variable".to_owned()),
-            }
-        }
-
-        fn operation(
-            &mut self,
-            kernel: &mut Kernel,
-            expression: &IlExpression<'_>,
-            children: &[covalence_logic_hol::Ref],
-        ) -> Result<covalence_logic_hol::Ref, Self::Error> {
-            if expression.kind() != IlExpressionKind::Binary || children.len() != 2 {
-                return Err("unexpected primitive".to_owned());
-            }
-            let partial = kernel
-                .app(self.add, children[0])
-                .map_err(|error| error.to_string())?;
-            kernel
-                .app(partial, children[1])
-                .map_err(|error| error.to_string())
-        }
-
-        fn call(
-            &mut self,
-            kernel: &mut Kernel,
-            _expression: &IlExpression<'_>,
-            arguments: &[covalence_logic_hol::Ref],
-        ) -> Result<covalence_logic_hol::Ref, Self::Error> {
-            let [argument] = arguments else {
-                return Err("call arity mismatch".to_owned());
-            };
-            kernel
-                .app(self.graph, *argument)
-                .map_err(|error| error.to_string())
-        }
-    }
-
     let il = IlDocument::parse(
-        b"(def \"g\" nat (clause (call \"f\" (exp (bin add nat (var \"x\") (var \"y\"))))))",
+        b"(def \"g\" nat (clause (exp \"z\" nat) (call \"f\" (exp (bin add nat (var \"x\") (var \"y\"))))))",
         Limits::default(),
     )
     .unwrap();
@@ -104,13 +112,21 @@ fn relational_expression_fold_turns_calls_into_graph_premises() {
     let y = kernel.tm_fv(2, value).unwrap();
     let add = kernel.tm_fv(3, binary_ty).unwrap();
     let graph = kernel.tm_fv(4, graph_ty).unwrap();
-    let resolver = Resolver { x, y, add, graph };
-    let term = {
-        let mut algebra = RelationalExpressionAlgebra::new(&mut kernel, resolver, value, 100);
+    let resolver = TestRelationalResolver { x, y, add, graph };
+    let (term, explicit) = {
+        let mut algebra =
+            RelationalExpressionAlgebra::new(&mut kernel, resolver, value, bool_ty, 100);
+        let explicit = algebra.bindings(schema.bindings()).unwrap();
         let term = fold_expression(schema.result(), &mut algebra).unwrap();
-        assert_eq!(algebra.next_name(), 101);
-        term
+        assert_eq!(algebra.next_name(), 102);
+        (term, explicit)
     };
+    assert_eq!(explicit.len(), 1);
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(explicit[0]).unwrap(), value)
+            .unwrap()
+    );
     assert_eq!(term.binders().len(), 1);
     assert_eq!(term.premises().len(), 1);
     assert!(
