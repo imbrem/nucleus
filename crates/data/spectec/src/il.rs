@@ -457,14 +457,14 @@ pub enum IlDeclarationBody<'a> {
     /// `typ`: parameters followed by family instances.
     Type {
         /// Declaration parameters.
-        parameters: Vec<IlCursor<'a>>,
+        parameters: Vec<IlBinding<'a>>,
         /// `inst` forms defining the type family.
-        instances: Vec<IlCursor<'a>>,
+        instances: Vec<IlTypeInstance<'a>>,
     },
     /// `def`: parameters, result type, and equational clauses.
     Definition {
         /// Declaration parameters.
-        parameters: Vec<IlCursor<'a>>,
+        parameters: Vec<IlBinding<'a>>,
         /// Declared result type.
         result: IlCursor<'a>,
         /// `clause` forms defining the function.
@@ -473,7 +473,7 @@ pub enum IlDeclarationBody<'a> {
     /// `gram`: parameters, result type, and productions.
     Grammar {
         /// Declaration parameters.
-        parameters: Vec<IlCursor<'a>>,
+        parameters: Vec<IlBinding<'a>>,
         /// Synthesized attribute type.
         result: IlCursor<'a>,
         /// `prod` forms defining the grammar.
@@ -488,6 +488,115 @@ pub enum IlDeclarationBody<'a> {
         /// `rule` forms defining the relation.
         rules: Vec<IlCursor<'a>>,
     },
+}
+
+/// One instantiated branch of a type-family declaration.
+#[derive(Clone, Debug)]
+pub struct IlTypeInstance<'a> {
+    bindings: Vec<IlBinding<'a>>,
+    arguments: Vec<IlArgument<'a>>,
+    definition: IlTypeDefinition<'a>,
+}
+
+impl<'a> IlTypeInstance<'a> {
+    /// Returns locally quantified bindings in source order.
+    #[must_use]
+    pub fn bindings(&self) -> &[IlBinding<'a>] {
+        &self.bindings
+    }
+
+    /// Returns type-family indices selecting this instance.
+    #[must_use]
+    pub fn arguments(&self) -> &[IlArgument<'a>] {
+        &self.arguments
+    }
+
+    /// Returns the structural definition of the selected type.
+    #[must_use]
+    pub const fn definition(&self) -> &IlTypeDefinition<'a> {
+        &self.definition
+    }
+}
+
+/// Structural body of one type-family instance.
+#[derive(Clone, Debug)]
+pub enum IlTypeDefinition<'a> {
+    /// Alias of another IL type.
+    Alias(IlType<'a>),
+    /// Tagged alternatives.
+    Variant(Vec<IlTypeCase<'a>>),
+    /// Named record fields.
+    Struct(Vec<IlTypeField<'a>>),
+}
+
+/// One tagged alternative in a variant type.
+#[derive(Clone, Debug)]
+pub struct IlTypeCase<'a> {
+    name: &'a str,
+    bindings: Vec<IlBinding<'a>>,
+    payload: IlType<'a>,
+    premises: Vec<IlPremise<'a>>,
+}
+
+impl<'a> IlTypeCase<'a> {
+    /// Returns the exact constructor spelling.
+    #[must_use]
+    pub const fn name(&self) -> &'a str {
+        self.name
+    }
+
+    /// Returns constructor-local bindings in source order.
+    #[must_use]
+    pub fn bindings(&self) -> &[IlBinding<'a>] {
+        &self.bindings
+    }
+
+    /// Returns the type of the constructor payload.
+    #[must_use]
+    pub const fn payload(&self) -> &IlType<'a> {
+        &self.payload
+    }
+
+    /// Returns constructor side conditions in source order.
+    #[must_use]
+    pub fn premises(&self) -> &[IlPremise<'a>] {
+        &self.premises
+    }
+}
+
+/// One named field in a structural record type.
+#[derive(Clone, Debug)]
+pub struct IlTypeField<'a> {
+    name: &'a str,
+    bindings: Vec<IlBinding<'a>>,
+    value: IlType<'a>,
+    premises: Vec<IlPremise<'a>>,
+}
+
+impl<'a> IlTypeField<'a> {
+    /// Returns the exact field spelling.
+    #[must_use]
+    pub const fn name(&self) -> &'a str {
+        self.name
+    }
+
+    /// Returns field-local bindings in source order.
+    #[must_use]
+    pub fn bindings(&self) -> &[IlBinding<'a>] {
+        &self.bindings
+    }
+
+    /// Returns the type of the field value.
+    #[must_use]
+    pub const fn value(&self) -> &IlType<'a> {
+        &self.value
+    }
+
+    /// Returns field side conditions in source order.
+    #[must_use]
+    pub fn premises(&self) -> &[IlPremise<'a>] {
+        &self.premises
+    }
 }
 
 /// One declaration partitioned according to the authoritative IL schema.
@@ -2306,7 +2415,7 @@ fn decode_type<'a>(form: &IlForm<'a>) -> Result<IlDeclarationBody<'a>, IlSchemaE
         .position(|field| field.head() == Some("inst"))
         .unwrap_or(fields.len());
     let (parameters, instances) = fields.split_at(first_instance);
-    require_parameters(parameters)?;
+    let parameters = decode_bindings(parameters)?;
     require_repeated(instances, "inst", "type-family instance")?;
     if instances.is_empty() {
         return Err(schema_error(
@@ -2317,8 +2426,11 @@ fn decode_type<'a>(form: &IlForm<'a>) -> Result<IlDeclarationBody<'a>, IlSchemaE
         ));
     }
     Ok(IlDeclarationBody::Type {
-        parameters: parameters.to_vec(),
-        instances: instances.to_vec(),
+        parameters,
+        instances: instances
+            .iter()
+            .map(decode_type_instance)
+            .collect::<Result<Vec<_>, _>>()?,
     })
 }
 
@@ -2380,7 +2492,7 @@ fn decode_relation<'a>(form: &IlForm<'a>) -> Result<IlDeclarationBody<'a>, IlSch
 fn signature_and_repeated<'a>(
     form: &IlForm<'a>,
     repeated_head: &'static str,
-) -> Result<(Vec<IlCursor<'a>>, IlCursor<'a>, Vec<IlCursor<'a>>), IlSchemaError> {
+) -> Result<(Vec<IlBinding<'a>>, IlCursor<'a>, Vec<IlCursor<'a>>), IlSchemaError> {
     let id = form.cursor().declaration();
     let fields = form.arguments().skip(1).collect::<Vec<_>>();
     let first_repeated = fields
@@ -2396,9 +2508,128 @@ fn signature_and_repeated<'a>(
             "missing".to_owned(),
         ));
     };
-    require_parameters(parameters)?;
+    let parameters = decode_bindings(parameters)?;
     require_repeated(repeated, repeated_head, repeated_head)?;
-    Ok((parameters.to_vec(), result.clone(), repeated.to_vec()))
+    Ok((parameters, result.clone(), repeated.to_vec()))
+}
+
+fn decode_bindings<'a>(values: &[IlCursor<'a>]) -> Result<Vec<IlBinding<'a>>, IlSchemaError> {
+    require_parameters(values)?;
+    values.iter().map(decode_binding).collect()
+}
+
+fn decode_type_instance<'a>(cursor: &IlCursor<'a>) -> Result<IlTypeInstance<'a>, IlSchemaError> {
+    let form = required_form(cursor, "type-family instance")?;
+    require_head(&form, "inst")?;
+    require_min_arity(&form, 1, "instance definition")?;
+    let fields = form.arguments().collect::<Vec<_>>();
+    let binding_count = fields.iter().take_while(|field| is_binding(field)).count();
+    let (bindings, tail) = fields.split_at(binding_count);
+    let argument_count = tail
+        .iter()
+        .take_while(|field| is_argument_wrapper(field))
+        .count();
+    let (arguments, definition) = tail.split_at(argument_count);
+    let [definition] = definition else {
+        return Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "one alias, variant, or struct instance definition",
+            format!("{} trailing forms", definition.len()),
+        ));
+    };
+    Ok(IlTypeInstance {
+        bindings: decode_bindings(bindings)?,
+        arguments: arguments
+            .iter()
+            .map(decode_argument)
+            .collect::<Result<Vec<_>, _>>()?,
+        definition: decode_type_definition(definition)?,
+    })
+}
+
+fn decode_type_definition<'a>(
+    cursor: &IlCursor<'a>,
+) -> Result<IlTypeDefinition<'a>, IlSchemaError> {
+    let form = required_form(cursor, "type instance definition")?;
+    match form.head() {
+        "alias" => {
+            require_arity(&form, 1, "alias with one type")?;
+            Ok(IlTypeDefinition::Alias(IlType::decode(
+                &required_argument(&form, 0, "alias type")?,
+            )?))
+        }
+        "variant" => Ok(IlTypeDefinition::Variant(
+            form.arguments()
+                .map(|case| decode_type_case(&case))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        "struct" => Ok(IlTypeDefinition::Struct(
+            form.arguments()
+                .map(|field| decode_type_field(&field))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        _ => Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "alias, variant, or struct instance definition",
+            describe(cursor),
+        )),
+    }
+}
+
+fn decode_type_case<'a>(cursor: &IlCursor<'a>) -> Result<IlTypeCase<'a>, IlSchemaError> {
+    let (name, bindings, value, premises) = decode_type_member(cursor, "case")?;
+    Ok(IlTypeCase {
+        name,
+        bindings,
+        payload: value,
+        premises,
+    })
+}
+
+fn decode_type_field<'a>(cursor: &IlCursor<'a>) -> Result<IlTypeField<'a>, IlSchemaError> {
+    let (name, bindings, value, premises) = decode_type_member(cursor, "field")?;
+    Ok(IlTypeField {
+        name,
+        bindings,
+        value,
+        premises,
+    })
+}
+
+type TypeMember<'a> = (&'a str, Vec<IlBinding<'a>>, IlType<'a>, Vec<IlPremise<'a>>);
+
+fn decode_type_member<'a>(
+    cursor: &IlCursor<'a>,
+    head: &'static str,
+) -> Result<TypeMember<'a>, IlSchemaError> {
+    let form = required_form(cursor, "type member")?;
+    require_head(&form, head)?;
+    require_min_arity(&form, 2, "type member name and value")?;
+    let name = required_string(
+        form.argument(0),
+        cursor.declaration(),
+        &child_path(&form, 0),
+        "type member name",
+    )?;
+    let fields = form.arguments().skip(1).collect::<Vec<_>>();
+    let binding_count = fields.iter().take_while(|field| is_binding(field)).count();
+    let (bindings, tail) = fields.split_at(binding_count);
+    let Some((value, premises)) = tail.split_first() else {
+        return Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "type member value type",
+            "missing".to_owned(),
+        ));
+    };
+    let value = IlType::decode(value)?;
+    let premises = premises
+        .iter()
+        .map(decode_premise)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((name, decode_bindings(bindings)?, value, premises))
 }
 
 fn require_parameters(parameters: &[IlCursor<'_>]) -> Result<(), IlSchemaError> {

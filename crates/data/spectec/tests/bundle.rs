@@ -4,8 +4,8 @@ use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{
     ArtifactError, AstError, AstSummary, BundleManifest, DeclarationId, IlClauseSchema,
     IlDeclarationBody, IlDocument, IlExpression, IlKind, IlNode, IlPremise, IlProductionSchema,
-    IlRuleSchema, IlType, Limits, ManifestError, RuleId, SPECTEC_VERSION, WASM_3_RELEASE,
-    WASM_3_REVISION, WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast, parse_ast,
+    IlRuleSchema, IlType, IlTypeDefinition, Limits, ManifestError, RuleId, SPECTEC_VERSION,
+    WASM_3_RELEASE, WASM_3_REVISION, WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast, parse_ast,
 };
 
 fn root() -> PathBuf {
@@ -238,6 +238,49 @@ fn official_il_declarations_all_match_the_generic_schema() {
             .schema(DeclarationId::new(1, None).unwrap())
             .is_err()
     );
+}
+
+#[test]
+fn official_type_instances_all_match_the_generic_schema() {
+    let bundle = covalence_data_spectec::wasm3_bundle().unwrap();
+    let mut instances = 0;
+    let mut aliases = 0;
+    let mut variants = 0;
+    let mut structs = 0;
+    let mut cases = 0;
+    let mut fields = 0;
+
+    for declaration in bundle.il().declarations() {
+        let schema = bundle.il().schema(declaration.id()).unwrap().unwrap();
+        let IlDeclarationBody::Type {
+            instances: type_instances,
+            ..
+        } = schema.body()
+        else {
+            continue;
+        };
+        instances += type_instances.len();
+        for instance in type_instances {
+            match instance.definition() {
+                IlTypeDefinition::Alias(_) => aliases += 1,
+                IlTypeDefinition::Variant(type_cases) => {
+                    variants += 1;
+                    cases += type_cases.len();
+                }
+                IlTypeDefinition::Struct(type_fields) => {
+                    structs += 1;
+                    fields += type_fields.len();
+                }
+            }
+        }
+    }
+
+    assert!(instances >= 206);
+    assert!(aliases > 0);
+    assert!(variants > 0);
+    assert!(structs > 0);
+    assert!(cases > variants);
+    assert!(fields > structs);
 }
 
 #[test]
