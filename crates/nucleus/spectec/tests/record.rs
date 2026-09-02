@@ -1,7 +1,8 @@
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
 use covalence_data_spectec::{
     ClauseId, DeclarationId, IlClauseSchema, IlDocument, IlExpression, IlExpressionKind,
-    IlGrammarSymbol, IlKind, IlProductionSchema, IlRuleSchema, IlSchemaError, IlType, Limits,
+    IlGrammarSymbol, IlKind, IlPremise, IlProductionSchema, IlRuleSchema, IlSchemaError, IlType,
+    Limits,
 };
 use covalence_logic_hol::{Kernel, Tag, TmTag};
 use covalence_nucleus_spectec::{
@@ -1536,6 +1537,76 @@ fn parameterized_relations_encode_consecutive_otherwise_fallback() {
 
     assert_eq!(document.semantics.constraints().len(), 1);
     assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+}
+
+#[test]
+fn pinned_otherwise_chains_do_not_negate_recursive_candidates() {
+    let source = Source::wasm3().unwrap();
+    for root in source.il().roots() {
+        let family = source
+            .il()
+            .root_declarations(root)
+            .iter()
+            .filter(|declaration| declaration.kind() == IlKind::Relation)
+            .map(covalence_data_spectec::IlDeclaration::name)
+            .collect::<std::collections::BTreeSet<_>>();
+        for declaration in source.il().root_declarations(root) {
+            if declaration.kind() != IlKind::Relation {
+                continue;
+            }
+            let schema = source.il().schema(declaration.id()).unwrap().unwrap();
+            let covalence_data_spectec::IlDeclarationBody::Relation { rules, .. } = schema.body()
+            else {
+                unreachable!()
+            };
+            let rules = rules
+                .iter()
+                .map(IlRuleSchema::decode)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            let mut chain = Vec::new();
+            for rule in &rules {
+                let otherwise = rule.premises().iter().any(premise_has_otherwise);
+                if otherwise {
+                    assert!(chain.iter().all(|earlier: &&IlRuleSchema<'_>| {
+                        earlier
+                            .premises()
+                            .iter()
+                            .all(|premise| !premise_mentions_relation(premise, &family))
+                    }));
+                } else {
+                    chain.clear();
+                }
+                chain.push(rule);
+            }
+        }
+    }
+}
+
+fn premise_has_otherwise(premise: &IlPremise<'_>) -> bool {
+    match premise {
+        IlPremise::Otherwise => true,
+        IlPremise::Iterated { premise, .. } => premise_has_otherwise(premise),
+        IlPremise::Rule(rule) => rule.premises().iter().any(premise_has_otherwise),
+        IlPremise::If(_) | IlPremise::Let { .. } => false,
+    }
+}
+
+fn premise_mentions_relation(
+    premise: &IlPremise<'_>,
+    family: &std::collections::BTreeSet<&str>,
+) -> bool {
+    match premise {
+        IlPremise::Rule(rule) => {
+            family.contains(rule.name())
+                || rule
+                    .premises()
+                    .iter()
+                    .any(|premise| premise_mentions_relation(premise, family))
+        }
+        IlPremise::Iterated { premise, .. } => premise_mentions_relation(premise, family),
+        IlPremise::If(_) | IlPremise::Let { .. } | IlPremise::Otherwise => false,
+    }
 }
 
 #[test]
