@@ -233,6 +233,19 @@ impl<'a> IlCursor<'a> {
             _ => None,
         }
     }
+
+    /// Views this list as a symbolic-head schema form.
+    #[must_use]
+    pub fn form(&self) -> Option<IlForm<'a>> {
+        let IlNode::List(arity) = self.node() else {
+            return None;
+        };
+        Some(IlForm {
+            cursor: self.clone(),
+            head: self.head()?,
+            arguments: arity - 1,
+        })
+    }
 }
 
 /// Exact-size iterator over the direct children of an [`IlCursor`].
@@ -241,6 +254,56 @@ pub struct IlChildren<'a> {
     parent: IlCursor<'a>,
     next: usize,
     arity: usize,
+}
+
+/// A symbolic-head list viewed as one schema form.
+///
+/// The same head may have different meanings in different IL categories. This
+/// view therefore exposes structure without assigning a global interpretation;
+/// category-specific decoders compose over its arguments.
+#[derive(Clone, Debug)]
+pub struct IlForm<'a> {
+    cursor: IlCursor<'a>,
+    head: &'a str,
+    arguments: usize,
+}
+
+impl<'a> IlForm<'a> {
+    /// Returns the exact symbolic head.
+    #[must_use]
+    pub const fn head(&self) -> &'a str {
+        self.head
+    }
+
+    /// Returns the cursor for the complete form.
+    #[must_use]
+    pub fn cursor(&self) -> &IlCursor<'a> {
+        &self.cursor
+    }
+
+    /// Returns the number of arguments after the symbolic head.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.arguments
+    }
+
+    /// Returns whether the form has no arguments.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Resolves a zero-based argument after the symbolic head.
+    #[must_use]
+    pub fn argument(&self, index: usize) -> Option<IlCursor<'a>> {
+        self.cursor.child(index.checked_add(1)?)
+    }
+
+    /// Iterates arguments after the symbolic head in exact source order.
+    #[must_use]
+    pub fn arguments(&self) -> impl ExactSizeIterator<Item = IlCursor<'a>> + '_ {
+        self.cursor.children().skip(1)
+    }
 }
 
 impl<'a> Iterator for IlChildren<'a> {

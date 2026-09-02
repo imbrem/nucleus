@@ -113,6 +113,19 @@ fn il_cursors_compose_over_the_parser_independent_tree() {
     assert_eq!(rule.path(), &[3]);
     assert_eq!(rule.head(), Some("rule"));
     assert_eq!(rule.children().len(), 3);
+    let form = rule.form().unwrap();
+    assert_eq!(form.head(), "rule");
+    assert_eq!(form.len(), 2);
+    assert!(!form.is_empty());
+    assert_eq!(form.cursor().path(), &[3]);
+    assert_eq!(form.argument(0).unwrap().node(), IlNode::String("step"));
+    assert_eq!(
+        form.arguments()
+            .map(|argument| argument.node())
+            .collect::<Vec<_>>(),
+        vec![IlNode::String("step"), IlNode::List(3)]
+    );
+    assert!(form.argument(2).is_none());
     let call = rule.child(2).unwrap();
     assert_eq!(call.path(), &[3, 3]);
     assert_eq!(call.head(), Some("call"));
