@@ -30,6 +30,7 @@ rust_library(
     named_deps = {
         "covalence_data_sexpr": "nucleus//crates/data/sexpr:covalence_data_sexpr",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_json": "nucleus//crates/lib/json:covalence_lib_json",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
         "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
     },
@@ -62,6 +63,7 @@ rust_test(
     named_deps = {
         "covalence_data_sexpr": "nucleus//crates/data/sexpr:covalence_data_sexpr",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_json": "nucleus//crates/lib/json:covalence_lib_json",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
         "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
     },

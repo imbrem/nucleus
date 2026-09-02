@@ -6,5 +6,10 @@
 //! result is produced through checked HOL kernel operations.
 
 mod parse;
+mod replay;
 
-pub use parse::{AletheCommand, AletheProof, ParseError, parse_alethe};
+pub use parse::{
+    AletheCommand, AletheProof, ParseError, SmtCommand, SmtProblem, parse_alethe,
+    parse_cvc5_output, parse_smtlib2,
+};
+pub use replay::{Error, Refutation, replay_qf_uf};

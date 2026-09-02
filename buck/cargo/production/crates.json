@@ -1623,6 +1623,13 @@
     },
     {
       "source": "workspace#covalence-logic-alethe@0.0.0",
+      "target": "workspace#covalence-lib-json@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-alethe@0.0.0",
       "target": "workspace#covalence-logic-hol-derived@0.0.0",
       "kinds": [
         "normal"
