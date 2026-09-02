@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod add_slice;
 mod closure;
 mod expression;
+mod relational;
 mod schema;
 mod selected;
 
@@ -24,6 +25,7 @@ pub use closure::{
     least_closed_family, least_closed_predicate,
 };
 pub use expression::{ExpressionAlgebra, fold_expression};
+pub use relational::{RelationalExpressionAlgebra, RelationalResolver, RelationalTerm};
 pub use schema::{HolDeclaration, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema};
 pub use selected::{SelectedCompileError, SelectedCompiler, SelectedKernel, SelectedRoot};
 

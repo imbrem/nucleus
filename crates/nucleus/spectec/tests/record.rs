@@ -1,6 +1,6 @@
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
 use covalence_data_spectec::{
-    ClauseId, DeclarationId, IlClauseSchema, IlDocument, IlExpression, IlExpressionKind,
+    ClauseId, DeclarationId, IlClauseSchema, IlDocument, IlExpression, IlExpressionKind, IlNode,
     IlSchemaError, Limits,
 };
 use covalence_logic_hol::{Kernel, Tag, TmTag};
@@ -8,10 +8,122 @@ use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
     CoveragePlan, Disposition, ExpressionAlgebra, HolRule, IndexErasure, KernelRoot,
-    SelectedCompileError, SelectedCompiler, Source, TYPE_NAME, TranslationCase, close_hol_rule,
-    close_hol_rules, declare_hol_schema, fold_expression, least_closed_family,
-    least_closed_predicate,
+    RelationalExpressionAlgebra, RelationalResolver, SelectedCompileError, SelectedCompiler,
+    Source, TYPE_NAME, TranslationCase, close_hol_rule, close_hol_rules, declare_hol_schema,
+    fold_expression, least_closed_family, least_closed_predicate,
 };
+
+#[test]
+fn relational_expression_fold_turns_calls_into_graph_premises() {
+    struct Resolver {
+        x: covalence_logic_hol::Ref,
+        y: covalence_logic_hol::Ref,
+        add: covalence_logic_hol::Ref,
+        graph: covalence_logic_hol::Ref,
+    }
+
+    impl RelationalResolver for Resolver {
+        type Error = String;
+
+        fn schema_error(&mut self, source: IlSchemaError) -> Self::Error {
+            source.to_string()
+        }
+
+        fn kernel_error(&mut self, source: covalence_logic_hol::KernelError) -> Self::Error {
+            source.to_string()
+        }
+
+        fn name_exhausted(&mut self) -> Self::Error {
+            "name range exhausted".to_owned()
+        }
+
+        fn variable(
+            &mut self,
+            _kernel: &mut Kernel,
+            expression: &IlExpression<'_>,
+        ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+            match expression.cursor().child(1).map(|cursor| cursor.node()) {
+                Some(IlNode::String("x")) => Ok(self.x),
+                Some(IlNode::String("y")) => Ok(self.y),
+                _ => Err("unbound variable".to_owned()),
+            }
+        }
+
+        fn operation(
+            &mut self,
+            kernel: &mut Kernel,
+            expression: &IlExpression<'_>,
+            children: &[covalence_logic_hol::Ref],
+        ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+            if expression.kind() != IlExpressionKind::Binary || children.len() != 2 {
+                return Err("unexpected primitive".to_owned());
+            }
+            let partial = kernel
+                .app(self.add, children[0])
+                .map_err(|error| error.to_string())?;
+            kernel
+                .app(partial, children[1])
+                .map_err(|error| error.to_string())
+        }
+
+        fn call(
+            &mut self,
+            kernel: &mut Kernel,
+            _expression: &IlExpression<'_>,
+            arguments: &[covalence_logic_hol::Ref],
+        ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+            let [argument] = arguments else {
+                return Err("call arity mismatch".to_owned());
+            };
+            kernel
+                .app(self.graph, *argument)
+                .map_err(|error| error.to_string())
+        }
+    }
+
+    let il = IlDocument::parse(
+        b"(def \"g\" nat (clause (call \"f\" (exp (bin add nat (var \"x\") (var \"y\"))))))",
+        Limits::default(),
+    )
+    .unwrap();
+    let clause = il
+        .clauses(DeclarationId::new(1, None).unwrap())
+        .unwrap()
+        .remove(0);
+    let cursor = il.clause_cursor(clause.id()).unwrap();
+    let schema = IlClauseSchema::decode(&cursor).unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let binary_tail = kernel.ty_arr(value, value).unwrap();
+    let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
+    let graph_tail = kernel.ty_arr(value, bool_ty).unwrap();
+    let graph_ty = kernel.ty_arr(value, graph_tail).unwrap();
+    let x = kernel.tm_fv(1, value).unwrap();
+    let y = kernel.tm_fv(2, value).unwrap();
+    let add = kernel.tm_fv(3, binary_ty).unwrap();
+    let graph = kernel.tm_fv(4, graph_ty).unwrap();
+    let resolver = Resolver { x, y, add, graph };
+    let term = {
+        let mut algebra = RelationalExpressionAlgebra::new(&mut kernel, resolver, value, 100);
+        let term = fold_expression(schema.result(), &mut algebra).unwrap();
+        assert_eq!(algebra.next_name(), 101);
+        term
+    };
+    assert_eq!(term.binders().len(), 1);
+    assert_eq!(term.premises().len(), 1);
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(term.value()).unwrap(), value)
+            .unwrap()
+    );
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(term.premises()[0]).unwrap(), bool_ty)
+            .unwrap()
+    );
+}
 
 #[test]
 fn expression_fold_is_bottom_up_and_target_independent() {
