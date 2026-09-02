@@ -717,7 +717,11 @@ fn extract_clause(
         .ok_or_else(|| trace_error("rule extraction path is absent"))?;
     for &(sibling, parent) in path {
         kernel.weaken(theorem, &[positive(sibling)], &[])?;
-        theorem = kernel.and_left(theorem, positive(parent))?;
+        let previous = theorem;
+        theorem = kernel.and_left(previous, positive(parent))?;
+        if !kernel.remove_theorem(previous) {
+            return Err(trace_error("consumed conjunction theorem is absent"));
+        }
     }
     Ok(theorem)
 }
@@ -749,6 +753,9 @@ fn modus_ponens(
     let identity = kernel.identity(positive(consequent))?;
     let applied = kernel.imp_left(premise_theorem, identity, positive(implication))?;
     let theorem = kernel.cut(implication_theorem, applied, positive(implication))?;
+    if !kernel.remove_theorem(identity) || !kernel.remove_theorem(applied) {
+        return Err(trace_error("consumed modus ponens theorem is absent"));
+    }
     kernel.contract_theorem(theorem)?;
     Ok(theorem)
 }
