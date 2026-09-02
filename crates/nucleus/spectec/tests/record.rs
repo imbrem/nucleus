@@ -1837,15 +1837,15 @@ fn add_slice_exhaustively_classifies_exact_structural_forms() {
             .any(|entry| matches!(entry.disposition, Disposition::Reject(_)))
     );
 
-    let data_root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/spectec/vendor/wasm-3.0");
     for (_, span) in translated {
         assert!(span.first_line > 0);
         assert!(span.first_line <= span.last_line);
-        let line_count = std::fs::read_to_string(data_root.join(span.path))
-            .unwrap()
-            .lines()
-            .count();
+        let line_count = std::str::from_utf8(
+            covalence_data_spectec::wasm3_source(span.path).expect("known pinned source path"),
+        )
+        .unwrap()
+        .lines()
+        .count();
         assert!(usize::try_from(span.last_line).unwrap() <= line_count);
     }
 }
