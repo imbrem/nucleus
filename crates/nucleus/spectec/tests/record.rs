@@ -15,10 +15,10 @@ use covalence_nucleus_spectec::{
     TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family, close_family_definition,
     close_graph_equation, close_hol_rule, close_hol_rules, close_hol_theory, declare_hol_schema,
     fold_expression, fold_grammar, fold_type, least_closed_family, least_closed_predicate,
-    ordered_cases, relational_definition, relational_definition_declaration,
-    relational_definition_schema, relational_document, relational_grammar_declaration,
-    relational_hol_case, relational_hol_rule, relational_relation_declaration,
-    relational_relations, relational_type_declaration,
+    ordered_cases, parameterized_document, relational_definition,
+    relational_definition_declaration, relational_definition_schema, relational_document,
+    relational_grammar_declaration, relational_hol_case, relational_hol_rule,
+    relational_relation_declaration, relational_relations, relational_type_declaration,
 };
 
 #[derive(Clone)]
@@ -35,10 +35,33 @@ struct TestRelationalResolver {
 impl RelationalResolver for TestRelationalResolver {
     type Error = String;
 
+    fn declaration_error(&mut self, _id: DeclarationId, source: Self::Error) -> Self::Error {
+        source
+    }
+
     fn clause_scope(&mut self) -> Self {
         let mut child = self.clone();
         child.bound.clear();
         child
+    }
+
+    fn enter_expression(
+        &mut self,
+        _kernel: &mut Kernel,
+        _expression: &IlExpression<'_>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn leave_expression(&mut self, _expression: &IlExpression<'_>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn expression_binders(
+        &mut self,
+        _expression: &IlExpression<'_>,
+    ) -> Result<Vec<covalence_logic_hol::Ref>, Self::Error> {
+        Ok(Vec::new())
     }
 
     fn relation_scope(&mut self, candidates: &[(&str, covalence_logic_hol::Ref)]) -> Self {
@@ -1467,6 +1490,25 @@ fn generic_hol_schema_declares_every_wasm3_signature() {
             .equivalent(kernel.classifier(n_holds).unwrap(), bool_ty)
             .unwrap()
     );
+    assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+}
+
+#[test]
+fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
+    let source = Source::wasm3().unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let theorem_count = kernel.thm().live_theorems().count();
+
+    let document = parameterized_document(&source, &mut kernel, value, bool_ty).unwrap();
+
+    assert_eq!(
+        document.semantics.constraints().len(),
+        source.declaration_count()
+    );
+    assert!(!document.interpretation.is_empty());
     assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
 }
 

@@ -12,6 +12,29 @@ pub trait ExpressionAlgebra {
     /// Converts a structural schema failure into the algebra's error type.
     fn schema_error(&mut self, source: IlSchemaError) -> Self::Error;
 
+    /// Enters the lexical scope of one expression before visiting children.
+    ///
+    /// The default has no effect. Binder-aware algebras can use this for
+    /// iteration domains and restore their environment in [`leave`](Self::leave).
+    ///
+    /// # Errors
+    ///
+    /// Returns a target-specific scope-establishment failure.
+    fn enter(&mut self, _expression: &IlExpression<'_>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Leaves a scope previously established by [`enter`](Self::enter).
+    ///
+    /// This is called even when child lowering fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns a target-specific scope-restoration failure.
+    fn leave(&mut self, _expression: &IlExpression<'_>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     /// Combines one validated node with already-folded direct children.
     ///
     /// # Errors
@@ -35,11 +58,19 @@ pub fn fold_expression<A: ExpressionAlgebra>(
     expression: &IlExpression<'_>,
     algebra: &mut A,
 ) -> Result<A::Term, A::Error> {
-    let children = expression
-        .children()
-        .map_err(|source| algebra.schema_error(source))?
-        .iter()
-        .map(|child| fold_expression(child, algebra))
-        .collect::<Result<Vec<_>, _>>()?;
-    algebra.expression(expression, children)
+    algebra.enter(expression)?;
+    let result = (|| {
+        let children = expression
+            .children()
+            .map_err(|source| algebra.schema_error(source))?
+            .iter()
+            .map(|child| fold_expression(child, algebra))
+            .collect::<Result<Vec<_>, _>>()?;
+        algebra.expression(expression, children)
+    })();
+    let leave = algebra.leave(expression);
+    match (result, leave) {
+        (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+        (Ok(term), Ok(())) => Ok(term),
+    }
 }

@@ -53,6 +53,30 @@ pub enum RelationalCaseError {
     /// A schema slot was not a curried graph predicate with a result argument.
     #[snafu(display("definition schema slot is not a function ending in bool"))]
     NotGraph,
+    /// A lowered pattern did not share its formal input's classifier.
+    #[snafu(display(
+        "clause pattern {index} ({pattern:?}) does not match formal {formal:?}: {source}"
+    ))]
+    Pattern {
+        /// Zero-based input position.
+        index: usize,
+        /// Universal formal input.
+        formal: Ref,
+        /// Lowered pattern value.
+        pattern: Ref,
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+    /// A lowered result did not share the formal result's classifier.
+    #[snafu(display("clause result {result:?} does not match formal {formal:?}: {source}"))]
+    Result {
+        /// Universal formal result.
+        formal: Ref,
+        /// Lowered result value.
+        result: Ref,
+        /// Underlying checked failure.
+        source: KernelError,
+    },
 }
 
 /// Lowered ingredients of one source-ordered definition clause.
@@ -269,13 +293,19 @@ pub fn relational_hol_case(
 
     let mut locals = clause.explicit_locals.to_vec();
     let mut applicability = Vec::new();
-    for (&formal, pattern) in clause.formal_inputs.iter().zip(clause.patterns) {
+    for (index, (&formal, pattern)) in clause.formal_inputs.iter().zip(clause.patterns).enumerate()
+    {
         locals.extend_from_slice(pattern.binders());
         applicability.extend_from_slice(pattern.premises());
         applicability.push(
             kernel
                 .eq(bool_ty, formal, pattern.value())
-                .map_err(|source| RelationalCaseError::Kernel { source })?,
+                .map_err(|source| RelationalCaseError::Pattern {
+                    index,
+                    formal,
+                    pattern: pattern.value(),
+                    source,
+                })?,
         );
     }
     locals.extend_from_slice(clause.semantic_binders);
@@ -290,7 +320,11 @@ pub fn relational_hol_case(
     production.push(
         kernel
             .eq(bool_ty, clause.formal_result, clause.result.value())
-            .map_err(|source| RelationalCaseError::Kernel { source })?,
+            .map_err(|source| RelationalCaseError::Result {
+                formal: clause.formal_result,
+                result: clause.result.value(),
+                source,
+            })?,
     );
     let produces = existential_case(kernel, bool_ty, &production_locals, &production)
         .map_err(|source| RelationalCaseError::Kernel { source })?;
@@ -307,11 +341,43 @@ pub trait RelationalResolver {
     /// Lowering failure type.
     type Error;
 
+    /// Attaches the structural declaration selector to a lowering failure.
+    fn declaration_error(&mut self, id: DeclarationId, source: Self::Error) -> Self::Error;
+
     /// Creates an isolated clause-local resolver retaining global meanings.
     #[must_use]
     fn clause_scope(&mut self) -> Self
     where
         Self: Sized;
+
+    /// Establishes any lexical bindings introduced by an expression before
+    /// its semantic children are visited.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the expression scope cannot be established.
+    fn enter_expression(
+        &mut self,
+        kernel: &mut Kernel,
+        expression: &IlExpression<'_>,
+    ) -> Result<(), Self::Error>;
+
+    /// Restores the environment after [`enter_expression`](Self::enter_expression).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the expression scope cannot be restored.
+    fn leave_expression(&mut self, expression: &IlExpression<'_>) -> Result<(), Self::Error>;
+
+    /// Returns fresh binders introduced by the current expression scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the active scope cannot supply its binders.
+    fn expression_binders(
+        &mut self,
+        expression: &IlExpression<'_>,
+    ) -> Result<Vec<Ref>, Self::Error>;
 
     /// Creates a resolver scope binding a complete recursive relation family.
     #[must_use]
@@ -395,6 +461,23 @@ pub trait RelationalResolver {
         kernel: &mut Kernel,
         argument: &IlArgument<'_>,
     ) -> Result<Ref, Self::Error>;
+
+    /// Resolves a non-expression clause pattern with access to its formal.
+    ///
+    /// Higher-order shorthand patterns can use `formal` as their lexical
+    /// binding. Other arguments use the ordinary argument interpretation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the pattern cannot be resolved at the formal.
+    fn pattern_argument(
+        &mut self,
+        kernel: &mut Kernel,
+        argument: &IlArgument<'_>,
+        _formal: Ref,
+    ) -> Result<Ref, Self::Error> {
+        self.argument(kernel, argument)
+    }
 
     /// Applies the HOL membership interpretation of one decoded IL type.
     ///
@@ -1084,6 +1167,23 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
         }
     }
 
+    fn pattern_argument(
+        &mut self,
+        argument: &IlArgument<'_>,
+        formal: Ref,
+    ) -> Result<RelationalTerm, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        match argument {
+            IlArgument::Expression(expression) => fold_expression(expression, self),
+            IlArgument::Type(_) | IlArgument::Definition(_) | IlArgument::Grammar(_) => self
+                .resolver
+                .pattern_argument(self.kernel, argument, formal)
+                .map(|value| RelationalTerm::new(value, Vec::new(), Vec::new())),
+        }
+    }
+
     /// Applies the resolver's type-membership interpretation.
     ///
     /// # Errors
@@ -1261,7 +1361,8 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
         let patterns = schema
             .arguments()
             .iter()
-            .map(|argument| self.argument(argument))
+            .zip(formal_inputs)
+            .map(|(argument, &formal)| self.pattern_argument(argument, formal))
             .collect::<Result<Vec<_>, _>>()?;
         let result = fold_expression(schema.result(), self)?;
         let conditions = schema
@@ -1449,6 +1550,14 @@ impl<R: RelationalResolver> ExpressionAlgebra for RelationalExpressionAlgebra<'_
         self.resolver.schema_error(source)
     }
 
+    fn enter(&mut self, expression: &IlExpression<'_>) -> Result<(), Self::Error> {
+        self.resolver.enter_expression(self.kernel, expression)
+    }
+
+    fn leave(&mut self, expression: &IlExpression<'_>) -> Result<(), Self::Error> {
+        self.resolver.leave_expression(expression)
+    }
+
     fn expression(
         &mut self,
         expression: &IlExpression<'_>,
@@ -1484,6 +1593,7 @@ impl<R: RelationalResolver> ExpressionAlgebra for RelationalExpressionAlgebra<'_
             }
             _ => self.resolver.operation(self.kernel, &view, &values)?,
         };
+        binders.extend(self.resolver.expression_binders(expression)?);
         Ok(RelationalTerm::new(value, binders, premises))
     }
 }

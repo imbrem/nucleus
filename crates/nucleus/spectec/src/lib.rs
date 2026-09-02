@@ -14,6 +14,7 @@ mod document;
 mod expression;
 mod grammar;
 mod grammar_definition;
+mod parameterized;
 mod premise;
 mod relational;
 mod schema;
@@ -36,6 +37,9 @@ pub use document::{RelationalDocumentDefinition, relational_document};
 pub use expression::{ExpressionAlgebra, fold_expression};
 pub use grammar::{GrammarAlgebra, GrammarArgument, GrammarChildren, fold_grammar};
 pub use grammar_definition::{RelationalGrammarDefinition, relational_grammar_declaration};
+pub use parameterized::{
+    InterpretationSymbol, ParameterizedDocument, ParameterizedError, parameterized_document,
+};
 pub use premise::{PremiseAlgebra, PremiseChildren, fold_premise};
 pub use relational::{
     RelationalCall, RelationalCaseError, RelationalClause, RelationalCondition,

@@ -236,6 +236,7 @@ pub fn declare_hol_schema(
         .ty_arr(value, value)
         .map_err(|source| HolSchemaError::Kernel { source })?;
     let mut roots = vec![value, bool_ty, value_identity];
+    let mut arrows = BTreeMap::new();
     let mut declarations = BTreeMap::new();
     let mut names = BTreeMap::<IlKind, BTreeMap<String, Vec<DeclarationId>>>::new();
     for declaration in source.il().declarations() {
@@ -255,6 +256,7 @@ pub fn declare_hol_schema(
             &mut staged,
             schema.body(),
             HolEmbedding::new(value, bool_ty),
+            &mut arrows,
         )?;
         let name = staged
             .fresh_name(&roots)
@@ -291,12 +293,11 @@ fn signature_type(
     kernel: &mut Kernel,
     body: &IlDeclarationBody<'_>,
     embedding: HolEmbedding,
+    arrows: &mut BTreeMap<(Ref, Ref), Ref>,
 ) -> Result<Ref, HolSchemaError> {
     let (domains, codomain) = match body {
         IlDeclarationBody::Type { parameters, .. } => {
-            let mut domains = embedding
-                .parameters(kernel, parameters)
-                .map_err(|source| HolSchemaError::Kernel { source })?;
+            let mut domains = canonical_parameters(kernel, embedding, parameters, arrows)?;
             domains.push(embedding.value);
             (domains, embedding.bool_ty)
         }
@@ -307,9 +308,7 @@ fn signature_type(
                 &IlType::decode(result).map_err(|source| HolSchemaError::Schema { source })?,
                 embedding,
             );
-            let mut domains = embedding
-                .parameters(kernel, parameters)
-                .map_err(|source| HolSchemaError::Kernel { source })?;
+            let mut domains = canonical_parameters(kernel, embedding, parameters, arrows)?;
             domains.push(result);
             (domains, embedding.bool_ty)
         }
@@ -320,9 +319,7 @@ fn signature_type(
                 &IlType::decode(result).map_err(|source| HolSchemaError::Schema { source })?,
                 embedding,
             );
-            let mut domains = embedding
-                .parameters(kernel, parameters)
-                .map_err(|source| HolSchemaError::Kernel { source })?;
+            let mut domains = canonical_parameters(kernel, embedding, parameters, arrows)?;
             domains.push(embedding.value);
             domains.push(result);
             (domains, embedding.bool_ty)
@@ -335,7 +332,57 @@ fn signature_type(
             (vec![argument], embedding.bool_ty)
         }
     };
-    curry(kernel, &domains, codomain).map_err(|source| HolSchemaError::Kernel { source })
+    canonical_curry(kernel, &domains, codomain, arrows)
+}
+
+fn canonical_parameters(
+    kernel: &mut Kernel,
+    embedding: HolEmbedding,
+    parameters: &[IlBinding<'_>],
+    arrows: &mut BTreeMap<(Ref, Ref), Ref>,
+) -> Result<Vec<Ref>, HolSchemaError> {
+    parameters
+        .iter()
+        .map(|parameter| match parameter {
+            IlBinding::Expression { ty, .. } => Ok(embedding.ty(ty)),
+            IlBinding::Type { .. } => {
+                canonical_curry(kernel, &[embedding.value], embedding.bool_ty, arrows)
+            }
+            IlBinding::Definition {
+                parameters, result, ..
+            } => {
+                let mut domains = canonical_parameters(kernel, embedding, parameters, arrows)?;
+                domains.push(embedding.ty(result));
+                canonical_curry(kernel, &domains, embedding.bool_ty, arrows)
+            }
+            IlBinding::Grammar {
+                parameters, result, ..
+            } => {
+                let mut domains = canonical_parameters(kernel, embedding, parameters, arrows)?;
+                domains.push(embedding.value);
+                domains.push(embedding.ty(result));
+                canonical_curry(kernel, &domains, embedding.bool_ty, arrows)
+            }
+        })
+        .collect()
+}
+
+fn canonical_curry(
+    kernel: &mut Kernel,
+    domains: &[Ref],
+    codomain: Ref,
+    arrows: &mut BTreeMap<(Ref, Ref), Ref>,
+) -> Result<Ref, HolSchemaError> {
+    domains.iter().rev().try_fold(codomain, |tail, &domain| {
+        if let Some(&arrow) = arrows.get(&(domain, tail)) {
+            return Ok(arrow);
+        }
+        let arrow = kernel
+            .ty_arr(domain, tail)
+            .map_err(|source| HolSchemaError::Kernel { source })?;
+        arrows.insert((domain, tail), arrow);
+        Ok(arrow)
+    })
 }
 
 const fn erased_type(ty: &IlType<'_>, embedding: HolEmbedding) -> Ref {

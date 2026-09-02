@@ -62,23 +62,19 @@ where
         let id = declaration.id();
         let constraint = match declaration.kind() {
             IlKind::Type => Some(
-                relational_type_declaration(&mut staged, resolver, source, schema, id, avoid)?
+                relational_type_declaration(&mut staged, resolver, source, schema, id, avoid)
+                    .map_err(|source| resolver.declaration_error(id, source))?
                     .definition
                     .equation,
             ),
             IlKind::Definition => Some(
-                relational_definition_declaration(
-                    &mut staged,
-                    resolver,
-                    source,
-                    schema,
-                    id,
-                    avoid,
-                )?
-                .equation,
+                relational_definition_declaration(&mut staged, resolver, source, schema, id, avoid)
+                    .map_err(|source| resolver.declaration_error(id, source))?
+                    .equation,
             ),
             IlKind::Grammar => Some(
-                relational_grammar_declaration(&mut staged, resolver, source, schema, id, avoid)?
+                relational_grammar_declaration(&mut staged, resolver, source, schema, id, avoid)
+                    .map_err(|source| resolver.declaration_error(id, source))?
                     .definition
                     .equation,
             ),
@@ -99,7 +95,8 @@ where
                     schema,
                     id,
                     avoid,
-                )?;
+                )
+                .map_err(|source| resolver.declaration_error(id, source))?;
                 if definitions.len() != relation_ids.len() {
                     return Err(resolver.family_error(crate::HolFamilyError::Arity {
                         expected: relation_ids.len(),
