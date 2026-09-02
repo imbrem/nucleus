@@ -34,7 +34,9 @@ pub use relational::{
     RelationalCall, RelationalExpressionAlgebra, RelationalResolver, RelationalTerm,
     relational_hol_rule,
 };
-pub use schema::{HolDeclaration, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema};
+pub use schema::{
+    HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,
+};
 pub use selected::{SelectedCompileError, SelectedCompiler, SelectedKernel, SelectedRoot};
 pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
 

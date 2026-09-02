@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use covalence_data_spectec::{DeclarationId, IlDeclarationBody, IlKind, IlSchemaError, IlType};
+use covalence_data_spectec::{
+    DeclarationId, IlBinding, IlDeclarationBody, IlKind, IlSchemaError, IlType,
+};
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref};
 
@@ -14,6 +16,87 @@ pub enum IndexErasure {
     /// All non-Boolean values share one HOL carrier; each `typ` declaration is
     /// represented by a membership predicate over that carrier.
     ValuePredicate,
+}
+
+/// Compositional classifier embedding selected for `SpecTec` IL.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HolEmbedding {
+    value: Ref,
+    bool_ty: Ref,
+}
+
+impl HolEmbedding {
+    /// Constructs an embedding from a shared value carrier and HOL Boolean.
+    #[must_use]
+    pub const fn new(value: Ref, bool_ty: Ref) -> Self {
+        Self { value, bool_ty }
+    }
+
+    /// Returns the shared non-Boolean value carrier.
+    #[must_use]
+    pub const fn value(self) -> Ref {
+        self.value
+    }
+
+    /// Returns the HOL Boolean classifier.
+    #[must_use]
+    pub const fn bool_ty(self) -> Ref {
+        self.bool_ty
+    }
+
+    /// Erases one decoded IL type to its HOL classifier.
+    #[must_use]
+    pub const fn ty(self, ty: &IlType<'_>) -> Ref {
+        match ty {
+            IlType::Boolean => self.bool_ty,
+            IlType::Named { .. }
+            | IlType::Text
+            | IlType::Numeric(_)
+            | IlType::Tuple(_)
+            | IlType::Iterated { .. } => self.value,
+        }
+    }
+
+    /// Constructs the checked classifier of one explicit binding.
+    ///
+    /// Definition and grammar parameters remain predicates and are classified
+    /// recursively; they are not collapsed into ordinary values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a checked function classifier cannot be built.
+    pub fn binding(self, kernel: &mut Kernel, binding: &IlBinding<'_>) -> Result<Ref, KernelError> {
+        match binding {
+            IlBinding::Expression { ty, .. } => Ok(self.ty(ty)),
+            IlBinding::Type { .. } => curry(kernel, &[self.value], self.bool_ty),
+            IlBinding::Definition {
+                parameters, result, ..
+            } => {
+                let mut domains = self.parameters(kernel, parameters)?;
+                domains.push(self.ty(result));
+                curry(kernel, &domains, self.bool_ty)
+            }
+            IlBinding::Grammar {
+                parameters, result, ..
+            } => {
+                let mut domains = self.parameters(kernel, parameters)?;
+                domains.push(self.value);
+                domains.push(self.ty(result));
+                curry(kernel, &domains, self.bool_ty)
+            }
+        }
+    }
+
+    fn parameters(
+        self,
+        kernel: &mut Kernel,
+        parameters: &[IlBinding<'_>],
+    ) -> Result<Vec<Ref>, KernelError> {
+        parameters
+            .iter()
+            .map(|parameter| self.binding(kernel, parameter))
+            .collect()
+    }
 }
 
 /// Checked target signature for one source declaration.
@@ -144,7 +227,11 @@ pub fn declare_hol_schema(
                     actual: "missing".to_owned(),
                 },
             })?;
-        let classifier = signature_type(&mut staged, schema.body(), value, bool_ty)?;
+        let classifier = signature_type(
+            &mut staged,
+            schema.body(),
+            HolEmbedding::new(value, bool_ty),
+        )?;
         let name = staged
             .fresh_name(&roots)
             .map_err(|source| HolSchemaError::Kernel { source })?;
@@ -172,62 +259,61 @@ pub fn declare_hol_schema(
 fn signature_type(
     kernel: &mut Kernel,
     body: &IlDeclarationBody<'_>,
-    value: Ref,
-    bool_ty: Ref,
+    embedding: HolEmbedding,
 ) -> Result<Ref, HolSchemaError> {
     let (domains, codomain) = match body {
-        IlDeclarationBody::Type { parameters, .. } => (vec![value; parameters.len() + 1], bool_ty),
+        IlDeclarationBody::Type { parameters, .. } => {
+            let mut domains = embedding
+                .parameters(kernel, parameters)
+                .map_err(|source| HolSchemaError::Kernel { source })?;
+            domains.push(embedding.value);
+            (domains, embedding.bool_ty)
+        }
         IlDeclarationBody::Definition {
             parameters, result, ..
         } => {
             let result = erased_type(
                 &IlType::decode(result).map_err(|source| HolSchemaError::Schema { source })?,
-                value,
-                bool_ty,
+                embedding,
             );
-            let mut domains = vec![value; parameters.len()];
+            let mut domains = embedding
+                .parameters(kernel, parameters)
+                .map_err(|source| HolSchemaError::Kernel { source })?;
             domains.push(result);
-            (domains, bool_ty)
+            (domains, embedding.bool_ty)
         }
         IlDeclarationBody::Grammar {
             parameters, result, ..
         } => {
             let result = erased_type(
                 &IlType::decode(result).map_err(|source| HolSchemaError::Schema { source })?,
-                value,
-                bool_ty,
+                embedding,
             );
-            let mut domains = vec![value; parameters.len() + 1];
+            let mut domains = embedding
+                .parameters(kernel, parameters)
+                .map_err(|source| HolSchemaError::Kernel { source })?;
+            domains.push(embedding.value);
             domains.push(result);
-            (domains, bool_ty)
+            (domains, embedding.bool_ty)
         }
         IlDeclarationBody::Relation { argument, .. } => {
             let argument = erased_type(
                 &IlType::decode(argument).map_err(|source| HolSchemaError::Schema { source })?,
-                value,
-                bool_ty,
+                embedding,
             );
-            (vec![argument], bool_ty)
+            (vec![argument], embedding.bool_ty)
         }
     };
-    curry(kernel, &domains, codomain)
+    curry(kernel, &domains, codomain).map_err(|source| HolSchemaError::Kernel { source })
 }
 
-const fn erased_type(ty: &IlType<'_>, value: Ref, bool_ty: Ref) -> Ref {
-    match ty {
-        IlType::Boolean => bool_ty,
-        IlType::Named { .. }
-        | IlType::Text
-        | IlType::Numeric(_)
-        | IlType::Tuple(_)
-        | IlType::Iterated { .. } => value,
-    }
+const fn erased_type(ty: &IlType<'_>, embedding: HolEmbedding) -> Ref {
+    embedding.ty(ty)
 }
 
-fn curry(kernel: &mut Kernel, domains: &[Ref], codomain: Ref) -> Result<Ref, HolSchemaError> {
-    domains.iter().rev().try_fold(codomain, |tail, &domain| {
-        kernel
-            .ty_arr(domain, tail)
-            .map_err(|source| HolSchemaError::Kernel { source })
-    })
+fn curry(kernel: &mut Kernel, domains: &[Ref], codomain: Ref) -> Result<Ref, KernelError> {
+    domains
+        .iter()
+        .rev()
+        .try_fold(codomain, |tail, &domain| kernel.ty_arr(domain, tail))
 }

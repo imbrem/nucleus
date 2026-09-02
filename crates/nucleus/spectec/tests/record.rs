@@ -7,11 +7,12 @@ use covalence_logic_hol::{Kernel, Tag, TmTag};
 use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
-    CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolRule,
-    IndexErasure, KernelRoot, RelationalCall, RelationalExpressionAlgebra, RelationalResolver,
-    SelectedCompileError, SelectedCompiler, Source, TYPE_NAME, TranslationCase, TypeAlgebra,
-    TypeChildren, close_hol_rule, close_hol_rules, declare_hol_schema, fold_expression,
-    fold_grammar, fold_type, least_closed_family, least_closed_predicate, relational_hol_rule,
+    CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolEmbedding,
+    HolRule, IndexErasure, KernelRoot, RelationalCall, RelationalExpressionAlgebra,
+    RelationalResolver, SelectedCompileError, SelectedCompiler, Source, TYPE_NAME, TranslationCase,
+    TypeAlgebra, TypeChildren, close_hol_rule, close_hol_rules, declare_hol_schema,
+    fold_expression, fold_grammar, fold_type, least_closed_family, least_closed_predicate,
+    relational_hol_rule,
 };
 
 struct TestRelationalResolver {
@@ -50,16 +51,12 @@ impl RelationalResolver for TestRelationalResolver {
         kernel: &mut Kernel,
         binding: &covalence_data_spectec::IlBinding<'_>,
     ) -> Result<covalence_logic_hol::Ref, Self::Error> {
-        if matches!(
-            binding,
-            covalence_data_spectec::IlBinding::Expression {
-                ty: IlType::Boolean,
-                ..
-            }
-        ) {
-            return Ok(self.bool_ty);
-        }
-        kernel.classifier(self.x).map_err(|error| error.to_string())
+        let value = kernel
+            .classifier(self.x)
+            .map_err(|error| error.to_string())?;
+        HolEmbedding::new(value, self.bool_ty)
+            .binding(kernel, binding)
+            .map_err(|error| error.to_string())
     }
 
     fn variable(
