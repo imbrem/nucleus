@@ -4,8 +4,9 @@ use covalence_logic_hol::{Kernel, Tag, TmTag};
 use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
-    CoveragePlan, Disposition, IndexErasure, KernelRoot, SelectedCompileError, SelectedCompiler,
-    Source, TYPE_NAME, TranslationCase, declare_hol_schema, least_closed_predicate,
+    CoveragePlan, Disposition, HolRule, IndexErasure, KernelRoot, SelectedCompileError,
+    SelectedCompiler, Source, TYPE_NAME, TranslationCase, close_hol_rule, close_hol_rules,
+    declare_hol_schema, least_closed_predicate,
 };
 
 #[test]
@@ -15,10 +16,14 @@ fn least_closed_predicate_builds_direct_hol_definition() {
     let bool_ty = kernel.bool_ty(star).unwrap();
     let value = kernel.ty_fv(0, star).unwrap();
     let predicate_ty = kernel.ty_arr(value, bool_ty).unwrap();
+    let rule_value = kernel.tm_fv(50, value).unwrap();
     let theorem_count = kernel.thm().live_theorems().count();
 
-    let least = least_closed_predicate(&mut kernel, bool_ty, predicate_ty, |kernel, _candidate| {
-        kernel.bool(bool_ty, true)
+    let least = least_closed_predicate(&mut kernel, bool_ty, predicate_ty, |kernel, candidate| {
+        let premise = kernel.bool(bool_ty, true)?;
+        let rule = HolRule::new(vec![rule_value], vec![premise], vec![rule_value]);
+        let closed = close_hol_rule(kernel, bool_ty, candidate, &rule)?;
+        close_hol_rules(kernel, bool_ty, &[closed])
     })
     .unwrap();
 

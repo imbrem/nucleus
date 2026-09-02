@@ -1,7 +1,30 @@
 //! Impredicative least-closure construction for relational semantics.
 
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref, Tag, TyTag};
+use covalence_logic_hol::{Kernel, KernelError, Ref, Tag, TyTag, builtin::Op2};
+
+/// Lowered ingredients of one relational rule.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct HolRule {
+    /// Free variables universally closed around the rule.
+    pub binders: Vec<Ref>,
+    /// Boolean premises conjoined in source order.
+    pub premises: Vec<Ref>,
+    /// Curried arguments applied to the candidate predicate.
+    pub conclusion: Vec<Ref>,
+}
+
+impl HolRule {
+    /// Constructs one compositional rule description.
+    #[must_use]
+    pub const fn new(binders: Vec<Ref>, premises: Vec<Ref>, conclusion: Vec<Ref>) -> Self {
+        Self {
+            binders,
+            premises,
+            conclusion,
+        }
+    }
+}
 
 /// Checked terms defining the least predicate closed under a rule schema.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -120,6 +143,72 @@ where
         characterization,
         predicate,
     })
+}
+
+/// Constructs the universally closed proposition for one candidate rule.
+///
+/// The result is `∀ binders. (premise₁ ∧ ... ∧ premiseₙ) →
+/// candidate conclusion...`. Empty premises denote truth.
+///
+/// # Errors
+///
+/// Returns an error unless the candidate accepts every conclusion argument,
+/// every premise is Boolean, every binder is a free term variable, and all
+/// involved propositions use `bool_ty`.
+pub fn close_hol_rule(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    candidate: Ref,
+    rule: &HolRule,
+) -> Result<Ref, KernelError> {
+    let conclusion = rule
+        .conclusion
+        .iter()
+        .try_fold(candidate, |function, &argument| {
+            kernel.app(function, argument)
+        })?;
+    let premises = conjoin(kernel, bool_ty, &rule.premises)?;
+    let bool_tail = kernel.ty_arr(bool_ty, bool_ty)?;
+    let bool_binary = kernel.ty_arr(bool_ty, bool_tail)?;
+    let roots = rule
+        .binders
+        .iter()
+        .chain(rule.premises.iter())
+        .copied()
+        .chain([candidate, conclusion, bool_ty, bool_binary])
+        .collect::<Vec<_>>();
+    let name = kernel.fresh_name(&roots)?;
+    let logic = kernel.tm_fv(name, bool_binary)?;
+    let mut proposition = kernel.imp_tm(bool_ty, logic, premises, conclusion)?;
+    for &binder in rule.binders.iter().rev() {
+        proposition = kernel.forall_tm(bool_ty, binder, proposition)?;
+    }
+    Ok(proposition)
+}
+
+/// Conjoins the closure propositions for all rules.
+///
+/// Empty rule sets denote truth, which makes the resulting least predicate
+/// empty rather than accidentally unconstrained.
+///
+/// # Errors
+///
+/// Returns an error unless every rule proposition is Boolean and uses
+/// `bool_ty`.
+pub fn close_hol_rules(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    rules: &[Ref],
+) -> Result<Ref, KernelError> {
+    conjoin(kernel, bool_ty, rules)
+}
+
+fn conjoin(kernel: &mut Kernel, bool_ty: Ref, propositions: &[Ref]) -> Result<Ref, KernelError> {
+    let Some((&first, tail)) = propositions.split_first() else {
+        return kernel.bool(bool_ty, true);
+    };
+    tail.iter()
+        .try_fold(first, |left, &right| kernel.op2(Op2::And, left, right))
 }
 
 fn predicate_arrows(

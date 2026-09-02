@@ -18,7 +18,10 @@ pub use add_slice::{
     ClauseCoverage, Coverage, CoverageArtifact, CoverageDisposition, CoverageParts, CoveragePlan,
     DeclarationCoverage, Disposition, Rejection, RuleCoverage, SourceSpan, TranslationCase,
 };
-pub use closure::{LeastPredicate, LeastPredicateError, least_closed_predicate};
+pub use closure::{
+    HolRule, LeastPredicate, LeastPredicateError, close_hol_rule, close_hol_rules,
+    least_closed_predicate,
+};
 pub use schema::{HolDeclaration, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema};
 pub use selected::{SelectedCompileError, SelectedCompiler, SelectedKernel, SelectedRoot};
 
