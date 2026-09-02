@@ -10,18 +10,20 @@ Wasm decoder without granting any new theorem rule.  `Target` describes a
 deterministic lowering package; `Target.Sound` is the obligation an ordinary
 Ethane/init implementation must discharge.
 
-Checked slicing is half-open and returns `none` when its bounds are invalid.
-Substring is the contiguous-list predicate, not subsequence membership.
+Bounded slicing is a total opaque term.  Its useful equation is exposed only
+when the half-open bounds satisfy `start ≤ stop ≤ len(bytes)`.  Substring
+is the contiguous-list predicate, not subsequence membership.
 -/
 
 namespace Nucleus.Hol.Propane.Compact
+
+universe u
 
 /-- The value types needed by the initial compact surface. -/
 inductive Ty where
   | bool
   | nat
   | bytes
-  | option (element : Ty)
   deriving DecidableEq, Repr
 
 /-- Direct mathematical meaning used to specify lowering packages. -/
@@ -29,7 +31,6 @@ inductive Ty where
   | .bool => Bool
   | .nat => Nat
   | .bytes => Nucleus.Bytes
-  | .option element => Option element.denote
 
 /-- Whether `needle` occurs contiguously in `haystack`. -/
 def bytesSubstring (needle haystack : Nucleus.Bytes) : Bool :=
@@ -47,7 +48,7 @@ inductive Expr : Ty → Type where
   | cat (left right : Expr .bytes) : Expr .bytes
   | len (value : Expr .bytes) : Expr .nat
   | slice (value : Expr .bytes) (start stop : Expr .nat) :
-      Expr (.option .bytes)
+      Expr .bytes
   | substring (needle haystack : Expr .bytes) : Expr .bool
 
 /-- Executable reference semantics. -/
@@ -60,13 +61,14 @@ def Expr.eval {type : Ty} : Expr type → type.denote
   | .lt left right => decide (left.eval < right.eval)
   | .cat left right => left.eval.append right.eval
   | .len value => value.eval.length
-  | .slice value start stop => value.eval.slice? start.eval (some stop.eval)
+  | .slice value start stop =>
+      (value.eval.slice? start.eval (some stop.eval)).getD Nucleus.Bytes.empty
   | .substring needle haystack => bytesSubstring needle.eval haystack.eval
 
 /-- Operations supplied by a concrete lowering.  The terms may be ordinary
 Ethane expressions, arena references, or another Lean design under study. -/
 structure Target where
-  Term : Ty → Type
+  Term : Ty → Type u
   bool : Bool → Term .bool
   nat : Nat → Term .nat
   bytes : Nucleus.Bytes → Term .bytes
@@ -75,7 +77,7 @@ structure Target where
   lt : Term .nat → Term .nat → Term .bool
   cat : Term .bytes → Term .bytes → Term .bytes
   len : Term .bytes → Term .nat
-  slice : Term .bytes → Term .nat → Term .nat → Term (.option .bytes)
+  slice : Term .bytes → Term .nat → Term .nat → Term .bytes
   substring : Term .bytes → Term .bytes → Term .bool
 
 /-- Deterministic structural lowering. -/
@@ -112,9 +114,12 @@ structure Sound (target : Target) where
     denote (target.cat left right) = (denote left).append (denote right)
   len (value : target.Term .bytes) :
     denote (target.len value) = (denote value).length
-  slice (value : target.Term .bytes) (start stop : target.Term .nat) :
+  slice (value : target.Term .bytes) (start stop : target.Term .nat)
+      (lower : denote start ≤ denote stop)
+      (upper : denote stop ≤ (denote value).length) :
     denote (target.slice value start stop) =
-      (denote value).slice? (denote start) (some (denote stop))
+      Nucleus.Bytes.ofList (((denote value).toList.drop (denote start)).take
+        (denote stop - denote start))
   substring (needle haystack : target.Term .bytes) :
     denote (target.substring needle haystack) =
       bytesSubstring (denote needle) (denote haystack)
@@ -130,7 +135,8 @@ def direct : Target where
   lt := fun left right => decide (left < right)
   cat := Nucleus.Bytes.append
   len := Nucleus.Bytes.length
-  slice := fun value start stop => value.slice? start (some stop)
+  slice := fun value start stop =>
+    (value.slice? start (some stop)).getD Nucleus.Bytes.empty
   substring := bytesSubstring
 
 def directSound : direct.Sound where
@@ -143,36 +149,73 @@ def directSound : direct.Sound where
   lt := by intros; rfl
   cat := by intros; rfl
   len := by intros; rfl
-  slice := by intros; rfl
+  slice := by
+    intro value start stop lower upper
+    simp only [id_eq] at lower upper
+    have sliced := Nucleus.Bytes.slice?_of_le (bytes := value)
+      (stop := some stop) lower upper
+    simpa only [direct, Ty.denote, id, Option.getD] using
+      congrArg (fun result => result.getD Nucleus.Bytes.empty) sliced
   substring := by intros; rfl
 
 end Target
 
-/-- A sound package makes compact evaluation agree exactly with lowering. -/
+/-- Every slice occurring in an expression has bounds in range.  This is an
+external precondition, not an extra logical type or a claim about an invalid
+slice. -/
+def Expr.Bounded : {type : Ty} → Expr type → Prop
+  | _, .bool _ | _, .nat _ | _, .bytes _ => True
+  | _, .add left right | _, .le left right | _, .lt left right =>
+      left.Bounded ∧ right.Bounded
+  | _, .cat left right | _, .substring left right =>
+      left.Bounded ∧ right.Bounded
+  | _, .len value => value.Bounded
+  | _, .slice value start stop =>
+      value.Bounded ∧ start.Bounded ∧ stop.Bounded ∧
+        start.eval ≤ stop.eval ∧ stop.eval ≤ value.eval.length
+
+/-- A sound package makes compact evaluation agree exactly with lowering for
+expressions whose slice preconditions hold. -/
 theorem Expr.lower_sound (target : Target) (sound : target.Sound)
-    {type : Ty} (expression : Expr type) :
+    {type : Ty} (expression : Expr type) (bounded : expression.Bounded) :
     sound.denote (expression.lower target) = expression.eval := by
   induction expression with
   | bool value => exact sound.bool value
   | nat literal => exact sound.nat literal
   | bytes literal => exact sound.bytes literal
   | add left right ihLeft ihRight =>
-      rw [Expr.lower, Expr.eval, sound.add, ihLeft, ihRight]
+      rw [Expr.lower, Expr.eval, sound.add, ihLeft bounded.1, ihRight bounded.2]
   | le left right ihLeft ihRight =>
-      rw [Expr.lower, Expr.eval, sound.le, ihLeft, ihRight]
+      rw [Expr.lower, Expr.eval, sound.le, ihLeft bounded.1, ihRight bounded.2]
   | lt left right ihLeft ihRight =>
-      rw [Expr.lower, Expr.eval, sound.lt, ihLeft, ihRight]
+      rw [Expr.lower, Expr.eval, sound.lt, ihLeft bounded.1, ihRight bounded.2]
   | cat left right ihLeft ihRight =>
-      rw [Expr.lower, Expr.eval, sound.cat, ihLeft, ihRight]
+      rw [Expr.lower, Expr.eval, sound.cat, ihLeft bounded.1, ihRight bounded.2]
   | len value ih =>
-      rw [Expr.lower, Expr.eval, sound.len, ih]
+      rw [Expr.lower, Expr.eval, sound.len, ih bounded]
   | slice value start stop ihValue ihStart ihStop =>
-      rw [Expr.lower, Expr.eval, sound.slice, ihValue, ihStart, ihStop]
+      rcases bounded with ⟨boundedValue, boundedStart, boundedStop, lower, upper⟩
+      have valueAgreement := ihValue boundedValue
+      have startAgreement := ihStart boundedStart
+      have stopAgreement := ihStop boundedStop
+      have loweredLower : sound.denote (start.lower target) ≤
+          sound.denote (stop.lower target) := by
+        simpa [startAgreement, stopAgreement] using lower
+      have loweredUpper : sound.denote (stop.lower target) ≤
+          (sound.denote (value.lower target)).length := by
+        simpa [valueAgreement, stopAgreement] using upper
+      rw [Expr.lower, Expr.eval,
+        sound.slice _ _ _ loweredLower loweredUpper,
+        ihValue boundedValue, ihStart boundedStart, ihStop boundedStop,
+        Nucleus.Bytes.slice?_of_le (bytes := value.eval)
+          (start := start.eval) (stop := some stop.eval) lower upper]
+      rfl
   | substring needle haystack ihNeedle ihHaystack =>
-      rw [Expr.lower, Expr.eval, sound.substring, ihNeedle, ihHaystack]
+      rw [Expr.lower, Expr.eval, sound.substring, ihNeedle bounded.1,
+        ihHaystack bounded.2]
 
 @[simp] theorem Expr.lower_direct {type : Ty} (expression : Expr type) :
-    expression.lower Target.direct = expression.eval :=
-  expression.lower_sound Target.direct Target.directSound
+    expression.lower Target.direct = expression.eval := by
+  induction expression <;> simp_all [Expr.lower, Expr.eval, Target.direct]
 
 end Nucleus.Hol.Propane.Compact
