@@ -1815,6 +1815,13 @@
       ]
     },
     {
+      "source": "workspace#covalence-nucleus-tactics@0.0.0",
+      "target": "workspace#covalence-logic-metamath@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-data-cas@0.0.0",
       "kinds": [

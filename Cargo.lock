@@ -1362,6 +1362,7 @@ dependencies = [
  "covalence-lib-error",
  "covalence-logic-hol",
  "covalence-logic-hol-derived",
+ "covalence-logic-metamath",
 ]
 
 [[package]]

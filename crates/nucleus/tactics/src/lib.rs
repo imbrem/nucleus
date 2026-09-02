@@ -1,5 +1,9 @@
 //! Untrusted high-level tactics composed from checked Nucleus operations.
 
+mod metamath;
+
+pub use metamath::{GroundImport, GroundReplayError, GroundSession};
+
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref, ThmId};
 use covalence_logic_hol_derived::{EqualityError, equality_symmetry};
