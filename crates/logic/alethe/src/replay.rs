@@ -134,7 +134,20 @@ pub enum Error {
     /// The proof ended without an empty clause.
     #[snafu(display("Alethe proof does not derive the empty clause"))]
     NoRefutation,
+    /// A term nests more deeply than the replayer lowers.
+    #[snafu(display("term nesting exceeds the replay budget of {limit} levels"))]
+    TermTooDeep {
+        /// Greatest nesting depth the replayer lowers.
+        limit: usize,
+    },
 }
+
+/// Greatest term nesting depth `Replayer` lowers.
+///
+/// Lowering recurses once per nesting level over untrusted problem and proof
+/// text, so the budget keeps a deeply nested term a rejected input rather than
+/// an aborted process.
+const MAX_TERM_DEPTH: usize = 256;
 
 #[derive(Clone, Copy, Debug)]
 struct Term {
@@ -274,6 +287,18 @@ impl Replayer {
                 message: format!("duplicate function {name:?}"),
             });
         }
+        // `@` spellings name Alethe `:named` terms, which `term_at` resolves
+        // ahead of declared functions, so such a declaration is unreachable.
+        if name.starts_with('@') {
+            return Err(Error::Unsupported {
+                message: format!("declared function {name:?} uses the reserved @ namespace"),
+            });
+        }
+        if self.named.contains_key(name) {
+            return Err(Error::Malformed {
+                message: format!("function {name:?} collides with a named term"),
+            });
+        }
         let mut ty = self.sort(result)?;
         for parameter in parameters.iter().rev() {
             let domain = self.sort(parameter)?;
@@ -299,23 +324,22 @@ impl Replayer {
     }
 
     fn term(&mut self, expression: &Expr) -> Result<Term, Error> {
+        self.term_at(expression, 0)
+    }
+
+    fn term_at(&mut self, expression: &Expr, depth: usize) -> Result<Term, Error> {
+        if depth >= MAX_TERM_DEPTH {
+            return Err(Error::TermTooDeep {
+                limit: MAX_TERM_DEPTH,
+            });
+        }
+        let depth = depth + 1;
         match expression.node() {
             ExprKind::Atom(node) => match SpannedRepr::atom(node) {
-                Atom::Symbol(value) if value == "true" => {
-                    Ok(Term::positive(self.kernel.bool(self.bool_ty, true)?))
-                }
-                Atom::Symbol(value) if value == "false" => {
-                    Ok(Term::positive(self.kernel.bool(self.bool_ty, false)?))
-                }
-                Atom::Symbol(value) if value.starts_with('@') => self
-                    .named
-                    .get(value.as_str())
-                    .copied()
-                    .map(|term| Term::positive(term.reference))
-                    .ok_or_else(|| Error::Malformed {
-                        message: format!("unknown named term {value:?}"),
-                    }),
                 Atom::Symbol(value) => {
+                    // SMT-LIB 2.6 s3.6.1: a `let` binder shadows any function
+                    // symbol of the same name, `true`, `false` and `:named`
+                    // spellings included, so locals are scanned first.
                     if let Some(term) = self
                         .locals
                         .iter()
@@ -324,9 +348,31 @@ impl Replayer {
                     {
                         return Ok(*term);
                     }
-                    self.functions
+                    if value == "true" {
+                        return Ok(Term::positive(self.kernel.bool(self.bool_ty, true)?));
+                    }
+                    if value == "false" {
+                        return Ok(Term::positive(self.kernel.bool(self.bool_ty, false)?));
+                    }
+                    if value.starts_with('@') {
+                        return self
+                            .named
+                            .get(value.as_str())
+                            .copied()
+                            .map(|term| Term::positive(term.reference))
+                            .ok_or_else(|| Error::Malformed {
+                                message: format!("unknown named term {value:?}"),
+                            });
+                    }
+                    // A `:named` label and a declared function never share a
+                    // spelling, so the two lookups cannot disagree.
+                    if let Some(term) = self.functions.get(value.as_str()).copied() {
+                        return Ok(term);
+                    }
+                    self.named
                         .get(value.as_str())
                         .copied()
+                        .map(|term| Term::positive(term.reference))
                         .ok_or_else(|| Error::Malformed {
                             message: format!("unknown function {value:?}"),
                         })
@@ -341,25 +387,26 @@ impl Replayer {
                     message: "empty term".to_owned(),
                 })?;
                 match symbol(head)? {
-                    "!" => self.annotation(items),
+                    "!" => self.annotation(items, depth),
                     "not" if items.len() == 2 => {
-                        let inner = self.term(&items[1])?;
+                        let inner = self.term_at(&items[1], depth)?;
                         let reference = self.kernel.op1(Op1::Not, inner.reference)?;
                         Ok(Term {
                             reference,
                             literal: inner.literal.negated(),
                         })
                     }
-                    "=" if items.len() >= 3 => self.chain_equality(&items[1..]),
-                    "distinct" if items.len() >= 3 => self.distinct(&items[1..]),
-                    "xor" if items.len() >= 3 => self.fold_xor(&items[1..]),
-                    "ite" if items.len() == 4 => self.ite(&items[1], &items[2], &items[3]),
-                    "let" if items.len() == 3 => self.let_term(&items[1], &items[2]),
-                    "and" | "or" | "=>" => self.fold_boolean(symbol(head)?, &items[1..]),
+                    "=" if items.len() >= 3 => self.chain_equality(&items[1..], depth),
+                    "distinct" if items.len() >= 3 => self.distinct(&items[1..], depth),
+                    "xor" if items.len() >= 3 => self.fold_xor(&items[1..], depth),
+                    "ite" if items.len() == 4 => self.ite(&items[1], &items[2], &items[3], depth),
+                    "let" if items.len() == 3 => self.let_term(&items[1], &items[2], depth),
+                    "and" | "or" => self.fold_boolean(symbol(head)?, &items[1..], depth),
+                    "=>" => self.fold_implication(&items[1..], depth),
                     _ => {
-                        let mut function = self.term(head)?.reference;
+                        let mut function = self.term_at(head, depth)?.reference;
                         for argument in &items[1..] {
-                            let argument = self.term(argument)?.reference;
+                            let argument = self.term_at(argument, depth)?.reference;
                             function = self.kernel.app(function, argument)?;
                         }
                         Ok(Term::positive(function))
@@ -369,27 +416,47 @@ impl Replayer {
         }
     }
 
-    fn fold_xor(&mut self, arguments: &[Expr]) -> Result<Term, Error> {
+    fn fold_xor(&mut self, arguments: &[Expr], depth: usize) -> Result<Term, Error> {
         let (first, rest) = arguments.split_first().ok_or_else(|| Error::Malformed {
             message: "xor requires at least two arguments".to_owned(),
         })?;
-        let mut result = self.term(first)?.reference;
+        let mut result = self.term_at(first, depth)?.reference;
+        // `xor` lowers to a chain of Boolean disequalities, and `Kernel::eq`
+        // reads the operand sort off its left argument, so the Boolean sort of
+        // both operands is required here rather than inferred.
+        self.require_boolean(result, "xor")?;
         for argument in rest {
-            let right = self.term(argument)?.reference;
+            let right = self.term_at(argument, depth)?.reference;
+            self.require_boolean(right, "xor")?;
             let equality = self.kernel.eq(self.bool_ty, result, right)?;
             result = self.kernel.op1(Op1::Not, equality)?;
         }
         Ok(Term::positive(result))
     }
 
-    fn chain_equality(&mut self, arguments: &[Expr]) -> Result<Term, Error> {
+    fn require_boolean(&self, term: Ref, operator: &str) -> Result<(), Error> {
+        if self
+            .kernel
+            .equivalent(self.kernel.classifier(term)?, self.bool_ty)?
+        {
+            return Ok(());
+        }
+        Err(Error::Malformed {
+            message: format!("{operator} operands must be Boolean"),
+        })
+    }
+
+    fn chain_equality(&mut self, arguments: &[Expr], depth: usize) -> Result<Term, Error> {
         let mut terms = arguments.iter();
         let mut left = self
-            .term(terms.next().expect("the caller requires two arguments"))?
+            .term_at(
+                terms.next().expect("the caller requires two arguments"),
+                depth,
+            )?
             .reference;
         let mut equalities = Vec::new();
         for argument in terms {
-            let right = self.term(argument)?.reference;
+            let right = self.term_at(argument, depth)?.reference;
             equalities.push(self.kernel.eq(self.bool_ty, left, right)?);
             left = right;
         }
@@ -403,10 +470,10 @@ impl Replayer {
         Ok(Term::positive(result))
     }
 
-    fn distinct(&mut self, arguments: &[Expr]) -> Result<Term, Error> {
+    fn distinct(&mut self, arguments: &[Expr], depth: usize) -> Result<Term, Error> {
         let terms = arguments
             .iter()
-            .map(|argument| self.term(argument).map(|term| term.reference))
+            .map(|argument| self.term_at(argument, depth).map(|term| term.reference))
             .collect::<Result<Vec<_>, _>>()?;
         let mut inequalities = Vec::new();
         for (index, &left) in terms.iter().enumerate() {
@@ -425,10 +492,16 @@ impl Replayer {
         Ok(Term::positive(result))
     }
 
-    fn ite(&mut self, condition: &Expr, then_: &Expr, else_: &Expr) -> Result<Term, Error> {
-        let condition = self.term(condition)?.reference;
-        let then_ = self.term(then_)?.reference;
-        let else_ = self.term(else_)?.reference;
+    fn ite(
+        &mut self,
+        condition: &Expr,
+        then_: &Expr,
+        else_: &Expr,
+        depth: usize,
+    ) -> Result<Term, Error> {
+        let condition = self.term_at(condition, depth)?.reference;
+        let then_ = self.term_at(then_, depth)?.reference;
+        let else_ = self.term_at(else_, depth)?.reference;
         let result_ty = self.kernel.classifier(then_)?;
         if !self
             .kernel
@@ -461,7 +534,7 @@ impl Replayer {
         Ok(Term::positive(result.term))
     }
 
-    fn let_term(&mut self, bindings: &Expr, body: &Expr) -> Result<Term, Error> {
+    fn let_term(&mut self, bindings: &Expr, body: &Expr, depth: usize) -> Result<Term, Error> {
         let ExprKind::List(node) = bindings.node() else {
             return Err(Error::Malformed {
                 message: "let bindings must be a list".to_owned(),
@@ -486,22 +559,22 @@ impl Replayer {
                     message: format!("duplicate let binding {name:?}"),
                 });
             }
-            let value = self.term(value)?;
+            let value = self.term_at(value, depth)?;
             scope.insert(name.to_owned(), value);
         }
         self.locals.push(scope);
-        let result = self.term(body);
+        let result = self.term_at(body, depth);
         self.locals.pop();
         result
     }
 
-    fn annotation(&mut self, items: &[Expr]) -> Result<Term, Error> {
+    fn annotation(&mut self, items: &[Expr], depth: usize) -> Result<Term, Error> {
         if items.len() < 4 || !items.len().is_multiple_of(2) {
             return Err(Error::Malformed {
                 message: "annotation requires attribute-value pairs".to_owned(),
             });
         }
-        let value = self.term(&items[1])?;
+        let value = self.term_at(&items[1], depth)?;
         for pair in items[2..].chunks_exact(2) {
             if keyword(&pair[0])? != "named" {
                 return Err(Error::Unsupported {
@@ -509,28 +582,59 @@ impl Replayer {
                 });
             }
             let name = symbol(&pair[1])?;
-            if !name.starts_with('@') || self.named.insert(name.to_owned(), value).is_some() {
+            // `named` is one flat map shared by the problem and the proof, so a
+            // name that also denotes a declared function is rejected rather
+            // than silently preferred over it.
+            if self.functions.contains_key(name) {
                 return Err(Error::Malformed {
-                    message: format!("invalid or duplicate named term {name:?}"),
+                    message: format!("named term {name:?} collides with a declared function"),
+                });
+            }
+            if self.named.insert(name.to_owned(), value).is_some() {
+                return Err(Error::Malformed {
+                    message: format!("duplicate named term {name:?}"),
                 });
             }
         }
         Ok(value)
     }
 
-    fn fold_boolean(&mut self, operator: &str, arguments: &[Expr]) -> Result<Term, Error> {
-        let (first, rest) = arguments.split_first().ok_or_else(|| Error::Malformed {
-            message: format!("nullary {operator}"),
-        })?;
-        let mut result = self.term(first)?.reference;
+    /// Lowers `:left-assoc` `and` and `or` by folding their arguments left.
+    fn fold_boolean(
+        &mut self,
+        operator: &str,
+        arguments: &[Expr],
+        depth: usize,
+    ) -> Result<Term, Error> {
+        let (first, rest) = arity_at_least_two(operator, arguments)?;
+        let mut result = self.term_at(first, depth)?.reference;
         for argument in rest {
-            let right = self.term(argument)?.reference;
+            let right = self.term_at(argument, depth)?.reference;
             result = match operator {
                 "and" => self.kernel.op2(Op2::And, result, right)?,
                 "or" => self.kernel.op2(Op2::Or, result, right)?,
-                "=>" => self.kernel.op2(Op2::Imp, result, right)?,
                 _ => unreachable!("caller limits Boolean operators"),
             };
+        }
+        Ok(Term::positive(result))
+    }
+
+    /// Lowers `=>`, which SMT-LIB Core declares `:right-assoc`, so that
+    /// `(=> a b c)` denotes `a -> (b -> c)` rather than `(a -> b) -> c`.
+    fn fold_implication(&mut self, arguments: &[Expr], depth: usize) -> Result<Term, Error> {
+        arity_at_least_two("=>", arguments)?;
+        // Lower left to right, so `:named` registration and `ite` binder names
+        // still follow source order, then fold the lowered rows right.
+        let rows = arguments
+            .iter()
+            .map(|argument| self.term_at(argument, depth).map(|term| term.reference))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (last, rest) = rows
+            .split_last()
+            .expect("two arguments produce two lowered rows");
+        let mut result = *last;
+        for &antecedent in rest.iter().rev() {
+            result = self.kernel.op2(Op2::Imp, antecedent, result)?;
         }
         Ok(Term::positive(result))
     }
@@ -668,7 +772,7 @@ impl Replayer {
             "trans" => self.transitivity(clause, premises),
             "cong" => self.congruence(clause, premises),
             "equiv_pos2" => self.equiv_pos2(clause),
-            "implies" => self.flatten_single_premise("implies", premises),
+            "implies" => self.implies(premises),
             "or_pos" => self.or_pos(clause),
             "and" => self.and_elimination(clause, premises, args),
             "xor1" => self.xor_one(clause, premises),
@@ -678,6 +782,11 @@ impl Replayer {
             "rare_rewrite" => self.rare_rewrite(clause, args),
             "evaluate" => self.evaluate(clause),
             "false" => self.false_rule(clause),
+            // A `hole` step is a solver trust placeholder carrying no checked
+            // content, so it is rejected before any handler can accept it.
+            "hole" => Err(Error::Unsupported {
+                message: "rule \"hole\" states an unchecked solver step".to_owned(),
+            }),
             other => handler
                 .apply(RuleRequest {
                     kernel: &mut self.kernel,
@@ -706,9 +815,34 @@ impl Replayer {
         }
         let disjunction = reference(negated_disjunction.magnitude())?;
         let theorem = self.kernel.identity(Lit::positive(disjunction.get()))?;
-        let theorem =
+        let mut theorem =
             self.kernel
                 .expand_conclusion(theorem, Lit::positive(disjunction.get()), None)?;
+        // The lowered disjunction is a binary tree, so a stated clause wider
+        // than two disjuncts needs further expansion. Expansion is directed by
+        // the stated clause, which keeps a disjunct that Alethe states as one
+        // literal, such as the left operand of `(or (or a b) c)`, intact.
+        let stated = clause[1..]
+            .iter()
+            .map(|literal| canonical_clause_literal(&self.kernel, *literal))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        loop {
+            let mut expandable = None;
+            for literal in conclusion_literals(&self.kernel, theorem)? {
+                if !literal.is_positive() || stated.contains(&literal) {
+                    continue;
+                }
+                let formula = reference(literal.magnitude())?;
+                if self.kernel.arena().op2(formula) == Some(Op2::Or) {
+                    expandable = Some(literal);
+                    break;
+                }
+            }
+            let Some(literal) = expandable else {
+                break;
+            };
+            theorem = self.kernel.expand_conclusion(theorem, literal, None)?;
+        }
         self.kernel
             .not_right(theorem, Lit::positive(disjunction.get()))?;
         self.kernel.contract_theorem(theorem)?;
@@ -797,13 +931,38 @@ impl Replayer {
         Ok((selected, theorem))
     }
 
-    fn flatten_single_premise(&mut self, rule: &str, premises: &[ThmId]) -> Result<ThmId, Error> {
+    /// Derives `(cl (not a) b)` from an `(=> a b)` premise.
+    ///
+    /// Exactly one implication is expanded per literal, so a right-nested
+    /// consequent such as `(=> p (=> q r))` keeps its inner implication
+    /// instead of flattening into `(cl (not p) (not q) r)`.
+    fn implies(&mut self, premises: &[ThmId]) -> Result<ThmId, Error> {
         let [premise] = premises else {
             return Err(Error::Malformed {
-                message: format!("{rule} requires one premise"),
+                message: "implies requires one premise".to_owned(),
             });
         };
-        self.flatten_clause(*premise)
+        let formulas = conclusion_literals(&self.kernel, *premise)?;
+        let mut result = *premise;
+        let mut expanded = false;
+        for formula in formulas {
+            if !formula.is_positive() {
+                continue;
+            }
+            let reference = reference(formula.magnitude())?;
+            if self.kernel.arena().op2(reference) != Some(Op2::Imp) {
+                continue;
+            }
+            result = self.kernel.expand_conclusion(result, formula, None)?;
+            expanded = true;
+        }
+        if !expanded {
+            return Err(Error::Malformed {
+                message: "implies premise must conclude an implication".to_owned(),
+            });
+        }
+        self.kernel.contract_theorem(result)?;
+        Ok(result)
     }
 
     fn rare_rewrite(&mut self, clause: &[Lit], args: &[Expr]) -> Result<ThmId, Error> {
@@ -1773,16 +1932,6 @@ impl Replayer {
         Ok(result)
     }
 
-    fn flatten_clause(&mut self, theorem: ThmId) -> Result<ThmId, Error> {
-        let formulas = conclusion_literals(&self.kernel, theorem)?;
-        let mut result = theorem;
-        for formula in formulas {
-            result = self.kernel.flatten_conclusion(result, formula)?;
-        }
-        self.kernel.contract_theorem(result)?;
-        Ok(result)
-    }
-
     fn convert_equality(
         &mut self,
         theorem: ThmId,
@@ -1945,6 +2094,22 @@ pub fn replay_qf_uf_with_handler(
     let mut replayer = Replayer::new()?;
     replayer.ingest_problem(problem)?;
     replayer.ingest_proof(proof, handler)
+}
+
+/// Requires the SMT-LIB Core minimum arity shared by `and`, `or` and `=>`.
+fn arity_at_least_two<'a>(
+    operator: &str,
+    arguments: &'a [Expr],
+) -> Result<(&'a Expr, &'a [Expr]), Error> {
+    match arguments.split_first() {
+        Some((first, rest)) if !rest.is_empty() => Ok((first, rest)),
+        _ => Err(Error::Malformed {
+            message: format!(
+                "{operator} requires at least two arguments, got {}",
+                arguments.len()
+            ),
+        }),
+    }
 }
 
 fn symbol(expression: &Expr) -> Result<&str, Error> {
@@ -2160,6 +2325,9 @@ mod tests {
             "(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const q Bool)\n(assert (xor p q))\n(assert (not p))\n(assert (not q))\n(check-sat)\n",
             "(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const q Bool)\n(declare-const r Bool)\n(assert (xor p q r))\n(assert p)\n(assert q)\n(assert (not r))\n(check-sat)\n",
             "(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const q Bool)\n(assert (= p q))\n(assert p)\n(assert (not q))\n(check-sat)\n",
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const q Bool)\n(declare-const r Bool)\n(assert (=> p q r))\n(assert p)\n(assert q)\n(assert (not r))\n(check-sat)\n",
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const q Bool)\n(declare-const r Bool)\n(assert (or p q r))\n(assert (not p))\n(assert (not q))\n(assert (not r))\n(check-sat)\n",
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(assert (! p :named hyp))\n(assert (not p))\n(check-sat)\n",
             "(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(declare-const b U)\n(declare-const c U)\n(assert (= a b c))\n(assert (not (= a c)))\n(check-sat)\n",
             "(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(declare-const b U)\n(declare-const c U)\n(assert (distinct a b c))\n(assert (= b c))\n(check-sat)\n",
         ];
@@ -2173,7 +2341,7 @@ mod tests {
             .args([
                 "--produce-proofs",
                 "--proof-format-mode=alethe",
-                "--proof-granularity=dsl-rewrite-strict",
+                "--proof-granularity=dsl-rewrite",
                 "--no-proof-allow-trust",
                 "--dump-proofs",
                 "--lang=smt2",
@@ -2214,6 +2382,207 @@ mod tests {
         assert!(matches!(
             replay_qf_uf(&problem, &forged),
             Err(Error::ClauseMismatch { .. } | Error::Kernel { .. })
+        ));
+    }
+
+    /// Lowers `problem_source` and returns its kernel with the lowered
+    /// assertion rows in source order.
+    fn lowered_assertions(problem_source: &str) -> (Kernel, Vec<Ref>) {
+        let problem = parse_smtlib2(problem_source).expect("problem parses");
+        let mut replayer = Replayer::new().expect("checked Boolean init compiles");
+        replayer.ingest_problem(&problem).expect("problem lowers");
+        let rows = replayer
+            .assertion_terms
+            .iter()
+            .map(|term| term.reference)
+            .collect();
+        (replayer.kernel, rows)
+    }
+
+    #[test]
+    fn lowers_implication_right_associatively() {
+        let (mut kernel, rows) = lowered_assertions(
+            "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (declare-const q Bool)\n\
+             (declare-const r Bool)\n\
+             (assert (=> p q r))\n\
+             (assert (=> p (=> q r)))\n\
+             (assert (=> (=> p q) r))\n\
+             (check-sat)\n",
+        );
+        let [flat, nested, left] = rows.as_slice() else {
+            panic!("three assertions lower to three rows");
+        };
+        assert!(
+            join_same_syntax(&mut kernel, *flat, *left).is_err(),
+            "(=> p q r) must not lower like (=> (=> p q) r)"
+        );
+        join_same_syntax(&mut kernel, *flat, *nested)
+            .expect("(=> p q r) lowers like (=> p (=> q r))");
+    }
+
+    #[test]
+    fn rejects_a_left_associated_implication_assumption() {
+        // The problem is satisfiable (p false, r false); only the discarded
+        // left-associative reading of `(=> p q r)` is unsatisfiable, so the
+        // assumption stating that reading must not match any assertion.
+        let problem = parse_smtlib2(
+            "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (declare-const q Bool)\n\
+             (declare-const r Bool)\n\
+             (assert (=> p q r))\n\
+             (assert (not p))\n\
+             (assert (not r))\n\
+             (check-sat)\n",
+        )
+        .expect("problem parses");
+        let proof = parse_alethe("(assume a0 (=> (=> p q) r))").expect("proof parses");
+        assert!(matches!(
+            replay_qf_uf(&problem, &proof),
+            Err(Error::UnassertedAssumption)
+        ));
+    }
+
+    #[test]
+    fn rejects_degenerate_boolean_arities() {
+        for source in [
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(assert (=> p))\n(check-sat)\n",
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(assert (and p))\n(check-sat)\n",
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(assert (or p))\n(check-sat)\n",
+        ] {
+            let problem = parse_smtlib2(source).expect("problem parses");
+            let proof = parse_alethe("(assume a0 p)").expect("proof parses");
+            assert!(
+                matches!(replay_qf_uf(&problem, &proof), Err(Error::Malformed { .. })),
+                "unary Boolean operator accepted in: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn let_binders_shadow_constants() {
+        let (mut kernel, rows) = lowered_assertions(
+            "(set-logic QF_UF)\n\
+             (assert (let ((true false)) true))\n\
+             (assert false)\n\
+             (check-sat)\n",
+        );
+        let [shadowed, constant] = rows.as_slice() else {
+            panic!("two assertions lower to two rows");
+        };
+        join_same_syntax(&mut kernel, *shadowed, *constant)
+            .expect("a let binder shadows the constant true");
+    }
+
+    #[test]
+    fn let_binders_shadow_named_terms() {
+        let (mut kernel, rows) = lowered_assertions(
+            "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (declare-const q Bool)\n\
+             (assert (! p :named @x))\n\
+             (assert (let ((@x q)) @x))\n\
+             (assert q)\n\
+             (check-sat)\n",
+        );
+        let [named, shadowed, binding] = rows.as_slice() else {
+            panic!("three assertions lower to three rows");
+        };
+        assert!(
+            join_same_syntax(&mut kernel, *shadowed, *named).is_err(),
+            "a let binder must win over the @-named term"
+        );
+        join_same_syntax(&mut kernel, *shadowed, *binding)
+            .expect("a let binder resolves to its bound value");
+    }
+
+    #[test]
+    fn rejects_reserved_and_colliding_names() {
+        let problem = parse_smtlib2(
+            "(set-logic QF_UF)\n(declare-const @p_1 Bool)\n(assert @p_1)\n(check-sat)\n",
+        )
+        .expect("problem parses");
+        let proof = parse_alethe("(assume a0 @p_1)").expect("proof parses");
+        assert!(matches!(
+            replay_qf_uf(&problem, &proof),
+            Err(Error::Unsupported { .. })
+        ));
+
+        let problem = parse_smtlib2(
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(assert (! p :named p))\n(check-sat)\n",
+        )
+        .expect("problem parses");
+        let proof = parse_alethe("(assume a0 p)").expect("proof parses");
+        assert!(matches!(
+            replay_qf_uf(&problem, &proof),
+            Err(Error::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_non_boolean_xor_operands() {
+        let problem = parse_smtlib2(
+            "(set-logic QF_UF)\n\
+             (declare-sort U 0)\n\
+             (declare-const a U)\n\
+             (declare-const b U)\n\
+             (assert (xor a b))\n\
+             (check-sat)\n",
+        )
+        .expect("problem parses");
+        let proof = parse_alethe("(assume a0 (xor a b))").expect("proof parses");
+        assert!(matches!(
+            replay_qf_uf(&problem, &proof),
+            Err(Error::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_hole_step_without_consulting_a_handler() {
+        struct AcceptEverything(bool);
+
+        impl RuleHandler for AcceptEverything {
+            fn apply(&mut self, _request: RuleRequest<'_>) -> Result<Option<ThmId>, Error> {
+                self.0 = true;
+                Ok(None)
+            }
+        }
+
+        let problem = parse_smtlib2(
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(assert p)\n(assert (not p))\n(check-sat)\n",
+        )
+        .expect("problem parses");
+        let proof = parse_alethe(
+            "(assume a0 p)\n\
+             (assume a1 (not p))\n\
+             (step t0 (cl) :rule hole :premises (a0 a1))",
+        )
+        .expect("proof parses");
+        let mut handler = AcceptEverything(false);
+        assert!(matches!(
+            replay_qf_uf_with_handler(&problem, &proof, &mut handler),
+            Err(Error::Unsupported { .. })
+        ));
+        assert!(!handler.0, "a hole step must never reach a rule handler");
+    }
+
+    #[test]
+    fn rejects_an_over_deep_term() {
+        let depth = MAX_TERM_DEPTH + 8;
+        let source = format!(
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(assert {}p{})\n(check-sat)\n",
+            "(not ".repeat(depth),
+            ")".repeat(depth)
+        );
+        let problem = parse_smtlib2(&source).expect("problem parses");
+        let proof = parse_alethe("(assume a0 p)").expect("proof parses");
+        assert!(matches!(
+            replay_qf_uf(&problem, &proof),
+            Err(Error::TermTooDeep {
+                limit: MAX_TERM_DEPTH
+            })
         ));
     }
 
