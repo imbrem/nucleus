@@ -16,6 +16,7 @@ mod premise;
 mod relational;
 mod schema;
 mod selected;
+mod theory;
 mod types;
 
 pub use add_slice::{
@@ -38,6 +39,9 @@ pub use schema::{
     HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,
 };
 pub use selected::{SelectedCompileError, SelectedCompiler, SelectedKernel, SelectedRoot};
+pub use theory::{
+    HolCase, close_graph_equation, conjoin_constraints, existential_case, ordered_cases,
+};
 pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};

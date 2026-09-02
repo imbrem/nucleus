@@ -7,12 +7,12 @@ use covalence_logic_hol::{Kernel, Tag, TmTag};
 use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
-    CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolEmbedding,
-    HolRule, IndexErasure, KernelRoot, RelationalCall, RelationalExpressionAlgebra,
+    CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase,
+    HolEmbedding, HolRule, IndexErasure, KernelRoot, RelationalCall, RelationalExpressionAlgebra,
     RelationalResolver, SelectedCompileError, SelectedCompiler, Source, TYPE_NAME, TranslationCase,
-    TypeAlgebra, TypeChildren, close_hol_rule, close_hol_rules, declare_hol_schema,
-    fold_expression, fold_grammar, fold_type, least_closed_family, least_closed_predicate,
-    relational_hol_rule,
+    TypeAlgebra, TypeChildren, close_graph_equation, close_hol_rule, close_hol_rules,
+    declare_hol_schema, fold_expression, fold_grammar, fold_type, least_closed_family,
+    least_closed_predicate, ordered_cases, relational_hol_rule,
 };
 
 struct TestRelationalResolver {
@@ -386,6 +386,53 @@ fn grammar_fold_composes_expression_and_symbol_children() {
 
     assert_eq!(expressions.0, 1);
     assert_eq!(grammars.0, 4);
+}
+
+#[test]
+fn ordered_graph_constraints_encode_otherwise_without_minting_facts() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let predicate_ty = kernel.ty_arr(value, bool_ty).unwrap();
+    let predicate = kernel.tm_fv(1, predicate_ty).unwrap();
+    let argument = kernel.tm_fv(2, value).unwrap();
+    let truth = kernel.bool(bool_ty, true).unwrap();
+    let falsity = kernel.bool(bool_ty, false).unwrap();
+    let theorem_count = kernel.thm().live_theorems().count();
+    let body = ordered_cases(
+        &mut kernel,
+        bool_ty,
+        &[
+            HolCase {
+                applicable: truth,
+                produces: falsity,
+                otherwise: false,
+            },
+            HolCase {
+                applicable: truth,
+                produces: truth,
+                otherwise: true,
+            },
+        ],
+    )
+    .unwrap();
+    let equation = close_graph_equation(
+        &mut kernel,
+        bool_ty,
+        predicate,
+        &[argument],
+        &[argument],
+        body,
+    )
+    .unwrap();
+
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(equation).unwrap(), bool_ty)
+            .unwrap()
+    );
+    assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
 }
 
 #[test]
