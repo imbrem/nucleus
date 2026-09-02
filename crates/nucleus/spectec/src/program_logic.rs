@@ -55,6 +55,43 @@ impl<Atom> Proposition<Atom> {
             Self::Or(left, right) => left.map(map).or(right.map(map)),
         }
     }
+
+    /// Lowers a formula by requesting checked evidence for each open atom.
+    ///
+    /// The callback is the explicit semantic interpretation boundary. Its
+    /// result must be a premise-free theorem with exactly the claimed positive
+    /// or negative conclusion. Input theorems remain reusable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if atom evidence is not exact or a checked HOL
+    /// construction fails.
+    pub fn establish_with(
+        &self,
+        kernel: &mut Kernel,
+        bool_ty: Ref,
+        atom: &mut impl FnMut(&Atom, &mut Kernel, Ref) -> Result<Established, KernelError>,
+    ) -> Result<Established, KernelError> {
+        match self {
+            Self::Atom(value) => {
+                let established = atom(value, kernel, bool_ty)?;
+                require_exact(kernel, established)?;
+                Ok(established)
+            }
+            Self::False => constant(kernel, bool_ty, false),
+            Self::True => constant(kernel, bool_ty, true),
+            Self::And(left, right) => {
+                let left = left.establish_with(kernel, bool_ty, atom)?;
+                let right = right.establish_with(kernel, bool_ty, atom)?;
+                establish_and(kernel, left, right)
+            }
+            Self::Or(left, right) => {
+                let left = left.establish_with(kernel, bool_ty, atom)?;
+                let right = right.establish_with(kernel, bool_ty, atom)?;
+                establish_or(kernel, left, right)
+            }
+        }
+    }
 }
 
 /// An open atom saying a program can call a distinguished assertion import.
@@ -161,21 +198,7 @@ impl Proposition<Infallible> {
     ///
     /// Returns an error if a checked HOL construction fails.
     pub fn establish(&self, kernel: &mut Kernel, bool_ty: Ref) -> Result<Established, KernelError> {
-        match self {
-            Self::Atom(atom) => match *atom {},
-            Self::False => constant(kernel, bool_ty, false),
-            Self::True => constant(kernel, bool_ty, true),
-            Self::And(left, right) => {
-                let left = left.establish(kernel, bool_ty)?;
-                let right = right.establish(kernel, bool_ty)?;
-                establish_and(kernel, left, right)
-            }
-            Self::Or(left, right) => {
-                let left = left.establish(kernel, bool_ty)?;
-                let right = right.establish(kernel, bool_ty)?;
-                establish_or(kernel, left, right)
-            }
-        }
+        self.establish_with(kernel, bool_ty, &mut |atom, _, _| match *atom {})
     }
 }
 
@@ -198,6 +221,32 @@ fn constant(kernel: &mut Kernel, bool_ty: Ref, value: bool) -> Result<Establishe
     })
 }
 
+fn require_exact(kernel: &Kernel, established: Established) -> Result<(), KernelError> {
+    let theorem =
+        kernel
+            .arena()
+            .theorems()
+            .get(established.theorem)
+            .ok_or(KernelError::MissingTheorem {
+                id: established.theorem,
+            })?;
+    let expected = if established.holds {
+        positive(established.proposition)
+    } else {
+        positive(established.proposition).negated()
+    };
+    let mut rows = theorem.rhs.rows();
+    if theorem.lhs.rows().next().is_some()
+        || rows.next().is_none_or(|row| row != [expected])
+        || rows.next().is_some()
+    {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "exact interpreted proposition",
+        });
+    }
+    Ok(())
+}
+
 fn establish_and(
     kernel: &mut Kernel,
     left: Established,
@@ -213,12 +262,10 @@ fn establish_and(
         } else {
             (left, right)
         };
-        kernel.not_left(
-            false_side.theorem,
-            positive(false_side.proposition).negated(),
-        )?;
-        kernel.weaken(false_side.theorem, &[positive(other.proposition)], &[])?;
-        let contradiction = kernel.and_left(false_side.theorem, conjunction)?;
+        let working = kernel.copy_theorem(false_side.theorem)?;
+        kernel.not_left(working, positive(false_side.proposition).negated())?;
+        kernel.weaken(working, &[positive(other.proposition)], &[])?;
+        let contradiction = kernel.and_left(working, conjunction)?;
         kernel.not_right(contradiction, conjunction)?;
         contradiction
     };
@@ -242,12 +289,15 @@ fn establish_or(
         } else {
             (right, left)
         };
-        kernel.weaken(true_side.theorem, &[], &[positive(other.proposition)])?;
-        kernel.or_right(true_side.theorem, disjunction)?
+        let working = kernel.copy_theorem(true_side.theorem)?;
+        kernel.weaken(working, &[], &[positive(other.proposition)])?;
+        kernel.or_right(working, disjunction)?
     } else {
-        kernel.not_left(left.theorem, positive(left.proposition).negated())?;
-        kernel.not_left(right.theorem, positive(right.proposition).negated())?;
-        let contradiction = kernel.or_left(left.theorem, right.theorem, disjunction)?;
+        let left_working = kernel.copy_theorem(left.theorem)?;
+        let right_working = kernel.copy_theorem(right.theorem)?;
+        kernel.not_left(left_working, positive(left.proposition).negated())?;
+        kernel.not_left(right_working, positive(right.proposition).negated())?;
+        let contradiction = kernel.or_left(left_working, right_working, disjunction)?;
         kernel.not_right(contradiction, disjunction)?;
         contradiction
     };
@@ -333,5 +383,46 @@ mod tests {
             let (kernel, result) = establish(&closed);
             assert_exact(&kernel, result, expected);
         }
+    }
+
+    #[test]
+    fn checked_atom_evidence_is_reusable_compositionally() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let atom = constant(&mut kernel, bool_ty, true).unwrap();
+        let formula = Proposition::atom("module").and(Proposition::atom("module"));
+
+        let result = formula
+            .establish_with(&mut kernel, bool_ty, &mut |_, _, _| Ok(atom))
+            .unwrap();
+
+        assert_exact(&kernel, atom, true);
+        assert_exact(&kernel, result, true);
+    }
+
+    #[test]
+    fn interpreted_atoms_require_exact_theorems() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let proposition = kernel.bool(bool_ty, true).unwrap();
+        let theorem = kernel.identity(positive(proposition)).unwrap();
+        let claimed = Established {
+            proposition,
+            theorem,
+            holds: true,
+        };
+
+        let result =
+            Proposition::atom("module")
+                .establish_with(&mut kernel, bool_ty, &mut |_, _, _| Ok(claimed));
+
+        assert!(matches!(
+            result,
+            Err(KernelError::InvalidTheoremRule {
+                rule: "exact interpreted proposition"
+            })
+        ));
     }
 }
