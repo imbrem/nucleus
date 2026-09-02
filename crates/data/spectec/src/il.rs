@@ -451,6 +451,66 @@ pub struct IlDocument {
     declarations: Vec<IlDeclaration>,
 }
 
+/// Structurally decoded body of one elaborated IL declaration.
+#[derive(Clone, Debug)]
+pub enum IlDeclarationBody<'a> {
+    /// `typ`: parameters followed by family instances.
+    Type {
+        /// Declaration parameters.
+        parameters: Vec<IlCursor<'a>>,
+        /// `inst` forms defining the type family.
+        instances: Vec<IlCursor<'a>>,
+    },
+    /// `def`: parameters, result type, and equational clauses.
+    Definition {
+        /// Declaration parameters.
+        parameters: Vec<IlCursor<'a>>,
+        /// Declared result type.
+        result: IlCursor<'a>,
+        /// `clause` forms defining the function.
+        clauses: Vec<IlCursor<'a>>,
+    },
+    /// `gram`: parameters, result type, and productions.
+    Grammar {
+        /// Declaration parameters.
+        parameters: Vec<IlCursor<'a>>,
+        /// Synthesized attribute type.
+        result: IlCursor<'a>,
+        /// `prod` forms defining the grammar.
+        productions: Vec<IlCursor<'a>>,
+    },
+    /// `rel`: notation, argument type, and inference rules.
+    Relation {
+        /// Exact mixfix notation emitted by `SpecTec`.
+        notation: &'a str,
+        /// Type of the relation's argument tuple.
+        argument: IlCursor<'a>,
+        /// `rule` forms defining the relation.
+        rules: Vec<IlCursor<'a>>,
+    },
+}
+
+/// One declaration partitioned according to the authoritative IL schema.
+#[derive(Clone, Debug)]
+pub struct IlDeclarationSchema<'a> {
+    declaration: &'a IlDeclaration,
+    body: IlDeclarationBody<'a>,
+}
+
+impl<'a> IlDeclarationSchema<'a> {
+    /// Returns the stable declaration metadata.
+    #[must_use]
+    pub const fn declaration(&self) -> &'a IlDeclaration {
+        self.declaration
+    }
+
+    /// Returns the structurally decoded declaration body.
+    #[must_use]
+    pub const fn body(&self) -> &IlDeclarationBody<'a> {
+        &self.body
+    }
+}
+
 impl IlDocument {
     /// Parses an elaborated IL document and inventories every root.
     ///
@@ -568,6 +628,52 @@ impl IlDocument {
         })
     }
 
+    /// Decodes one declaration using the generic elaborated-IL schema.
+    ///
+    /// This validates structural roles only; it does not assign Wasm meaning
+    /// or trust source names as selectors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the declaration head, name, required fields, or
+    /// repeated instance/clause/production/rule forms do not match its
+    /// inventoried [`IlKind`].
+    pub fn schema(
+        &self,
+        id: DeclarationId,
+    ) -> Result<Option<IlDeclarationSchema<'_>>, IlSchemaError> {
+        let Some(declaration) = self.declarations.iter().find(|item| item.id == id) else {
+            return Ok(None);
+        };
+        let Some(cursor) = self.cursor(id) else {
+            return Err(schema_error(
+                id,
+                &[],
+                "inventoried declaration expression",
+                "missing".to_owned(),
+            ));
+        };
+        let form = required_form(&cursor, "declaration form")?;
+        let expected_head = schema_head(declaration.kind);
+        require_head(&form, expected_head)?;
+        let name = required_string(form.argument(0), id, &[2], "quoted declaration name")?;
+        if name != declaration.name {
+            return Err(schema_error(
+                id,
+                &[2],
+                "inventoried declaration name",
+                format!("string {name:?}"),
+            ));
+        }
+        let body = match declaration.kind {
+            IlKind::Type => decode_type(&form)?,
+            IlKind::Definition => decode_function(&form, "clause")?,
+            IlKind::Grammar => decode_grammar(&form)?,
+            IlKind::Relation => decode_relation(&form)?,
+        };
+        Ok(Some(IlDeclarationSchema { declaration, body }))
+    }
+
     /// Views one node selected by a declaration and a one-based child path.
     ///
     /// An empty path selects the declaration itself. This structural API is
@@ -682,6 +788,250 @@ pub enum IlError {
         /// One-based expression path within the declaration.
         path: Vec<u32>,
     },
+}
+
+/// Why an inventoried declaration does not match the elaborated-IL schema.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum IlSchemaError {
+    /// A node did not have its required structural role.
+    #[snafu(display(
+        "SpecTec IL declaration at root {} has {actual} at path {path:?}; expected {expected}",
+        id.root().get()
+    ))]
+    Shape {
+        /// Stable containing declaration.
+        id: DeclarationId,
+        /// One-based path to the rejected node.
+        path: Vec<u32>,
+        /// Required schema role.
+        expected: &'static str,
+        /// Observed parser-independent shape.
+        actual: String,
+    },
+}
+
+fn decode_type<'a>(form: &IlForm<'a>) -> Result<IlDeclarationBody<'a>, IlSchemaError> {
+    let id = form.cursor().declaration();
+    let fields = form.arguments().skip(1).collect::<Vec<_>>();
+    let first_instance = fields
+        .iter()
+        .position(|field| field.head() == Some("inst"))
+        .unwrap_or(fields.len());
+    let (parameters, instances) = fields.split_at(first_instance);
+    require_parameters(parameters)?;
+    require_repeated(instances, "inst", "type-family instance")?;
+    if instances.is_empty() {
+        return Err(schema_error(
+            id,
+            form.cursor().path(),
+            "at least one type-family instance",
+            "none".to_owned(),
+        ));
+    }
+    Ok(IlDeclarationBody::Type {
+        parameters: parameters.to_vec(),
+        instances: instances.to_vec(),
+    })
+}
+
+fn decode_function<'a>(
+    form: &IlForm<'a>,
+    repeated_head: &'static str,
+) -> Result<IlDeclarationBody<'a>, IlSchemaError> {
+    let (parameters, result, repeated) = signature_and_repeated(form, repeated_head)?;
+    Ok(IlDeclarationBody::Definition {
+        parameters,
+        result,
+        clauses: repeated,
+    })
+}
+
+fn decode_grammar<'a>(form: &IlForm<'a>) -> Result<IlDeclarationBody<'a>, IlSchemaError> {
+    let (parameters, result, productions) = signature_and_repeated(form, "prod")?;
+    Ok(IlDeclarationBody::Grammar {
+        parameters,
+        result,
+        productions,
+    })
+}
+
+fn decode_relation<'a>(form: &IlForm<'a>) -> Result<IlDeclarationBody<'a>, IlSchemaError> {
+    let id = form.cursor().declaration();
+    if form.len() < 3 {
+        return Err(schema_error(
+            id,
+            form.cursor().path(),
+            "relation name, notation, and argument type",
+            format!("{} arguments", form.len()),
+        ));
+    }
+    let notation_cursor = form.argument(1);
+    let notation = required_string(
+        notation_cursor.clone(),
+        id,
+        &child_path(form, 1),
+        "notation",
+    )?;
+    let argument = form.argument(2).ok_or_else(|| {
+        schema_error(
+            id,
+            form.cursor().path(),
+            "relation argument type",
+            "missing".to_owned(),
+        )
+    })?;
+    let rules = form.arguments().skip(3).collect::<Vec<_>>();
+    require_repeated(&rules, "rule", "relation rule")?;
+    Ok(IlDeclarationBody::Relation {
+        notation,
+        argument,
+        rules,
+    })
+}
+
+fn signature_and_repeated<'a>(
+    form: &IlForm<'a>,
+    repeated_head: &'static str,
+) -> Result<(Vec<IlCursor<'a>>, IlCursor<'a>, Vec<IlCursor<'a>>), IlSchemaError> {
+    let id = form.cursor().declaration();
+    let fields = form.arguments().skip(1).collect::<Vec<_>>();
+    let first_repeated = fields
+        .iter()
+        .position(|field| field.head() == Some(repeated_head))
+        .unwrap_or(fields.len());
+    let (signature, repeated) = fields.split_at(first_repeated);
+    let Some((result, parameters)) = signature.split_last() else {
+        return Err(schema_error(
+            id,
+            form.cursor().path(),
+            "declaration result type",
+            "missing".to_owned(),
+        ));
+    };
+    require_parameters(parameters)?;
+    require_repeated(repeated, repeated_head, repeated_head)?;
+    Ok((parameters.to_vec(), result.clone(), repeated.to_vec()))
+}
+
+fn require_parameters(parameters: &[IlCursor<'_>]) -> Result<(), IlSchemaError> {
+    for parameter in parameters {
+        match parameter.head() {
+            Some("exp" | "typ" | "def" | "gram") => {}
+            _ => {
+                return Err(schema_error(
+                    parameter.declaration(),
+                    parameter.path(),
+                    "parameter form exp, typ, def, or gram",
+                    describe(parameter),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn require_repeated(
+    values: &[IlCursor<'_>],
+    head: &'static str,
+    expected: &'static str,
+) -> Result<(), IlSchemaError> {
+    for value in values {
+        if value.head() != Some(head) {
+            return Err(schema_error(
+                value.declaration(),
+                value.path(),
+                expected,
+                describe(value),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn required_form<'a>(
+    cursor: &IlCursor<'a>,
+    expected: &'static str,
+) -> Result<IlForm<'a>, IlSchemaError> {
+    cursor.form().ok_or_else(|| {
+        schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            expected,
+            describe(cursor),
+        )
+    })
+}
+
+fn require_head(form: &IlForm<'_>, expected: &'static str) -> Result<(), IlSchemaError> {
+    if form.head() == expected {
+        return Ok(());
+    }
+    Err(schema_error(
+        form.cursor().declaration(),
+        form.cursor().path(),
+        expected,
+        format!("form {:?}", form.head()),
+    ))
+}
+
+fn required_string<'a>(
+    cursor: Option<IlCursor<'a>>,
+    id: DeclarationId,
+    path: &[u32],
+    expected: &'static str,
+) -> Result<&'a str, IlSchemaError> {
+    let Some(cursor) = cursor else {
+        return Err(schema_error(id, path, expected, "missing".to_owned()));
+    };
+    match cursor.node() {
+        IlNode::String(value) => Ok(value),
+        _ => Err(schema_error(id, cursor.path(), expected, describe(&cursor))),
+    }
+}
+
+fn child_path(form: &IlForm<'_>, argument: usize) -> Vec<u32> {
+    let mut path = form.cursor().path().to_vec();
+    if let Some(position) = u32::try_from(argument).ok().and_then(|n| n.checked_add(2)) {
+        path.push(position);
+    }
+    path
+}
+
+fn schema_error(
+    id: DeclarationId,
+    path: &[u32],
+    expected: &'static str,
+    actual: String,
+) -> IlSchemaError {
+    IlSchemaError::Shape {
+        id,
+        path: path.to_vec(),
+        expected,
+        actual,
+    }
+}
+
+fn describe(cursor: &IlCursor<'_>) -> String {
+    match cursor.node() {
+        IlNode::List(arity) => match cursor.head() {
+            Some(head) => format!("form {head:?} with {} arguments", arity - 1),
+            None => format!("headless list of arity {arity}"),
+        },
+        IlNode::Symbol(value) => format!("symbol {value:?}"),
+        IlNode::String(value) => format!("string {value:?}"),
+        IlNode::Number(value) => format!("number {value:?}"),
+        IlNode::Other => "unsupported atom".to_owned(),
+    }
+}
+
+const fn schema_head(kind: IlKind) -> &'static str {
+    match kind {
+        IlKind::Type => "typ",
+        IlKind::Definition => "def",
+        IlKind::Grammar => "gram",
+        IlKind::Relation => "rel",
+    }
 }
 
 fn root_ordinal(index: usize) -> Result<RootOrdinal, IlError> {

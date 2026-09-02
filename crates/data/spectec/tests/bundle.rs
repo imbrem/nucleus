@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{
-    ArtifactError, AstError, AstSummary, BundleManifest, DeclarationId, IlDocument, IlKind, IlNode,
-    Limits, ManifestError, RuleId, SPECTEC_VERSION, WASM_3_RELEASE, WASM_3_REVISION,
-    WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast, parse_ast,
+    ArtifactError, AstError, AstSummary, BundleManifest, DeclarationId, IlDeclarationBody,
+    IlDocument, IlKind, IlNode, Limits, ManifestError, RuleId, SPECTEC_VERSION, WASM_3_RELEASE,
+    WASM_3_REVISION, WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast, parse_ast,
 };
 
 fn root() -> PathBuf {
@@ -169,6 +169,41 @@ fn official_il_declaration_inventory_is_exhaustive() {
         il.declarations()
             .iter()
             .all(|declaration| il.expression(declaration.id()).is_some())
+    );
+}
+
+#[test]
+fn official_il_declarations_all_match_the_generic_schema() {
+    let bundle = covalence_data_spectec::wasm3_bundle().unwrap();
+    let il = bundle.il();
+    let mut counts = [0_usize; 4];
+
+    for declaration in il.declarations() {
+        let schema = il.schema(declaration.id()).unwrap().unwrap();
+        assert_eq!(schema.declaration(), declaration);
+        let index = match (declaration.kind(), schema.body()) {
+            (IlKind::Type, IlDeclarationBody::Type { .. }) => 0,
+            (IlKind::Definition, IlDeclarationBody::Definition { .. }) => 1,
+            (IlKind::Grammar, IlDeclarationBody::Grammar { .. }) => 2,
+            (IlKind::Relation, IlDeclarationBody::Relation { .. }) => 3,
+            pair => panic!("schema kind mismatch: {pair:?}"),
+        };
+        counts[index] += 1;
+    }
+
+    assert_eq!(counts, [206, 458, 229, 87]);
+    assert!(
+        il.schema(DeclarationId::new(927, None).unwrap())
+            .unwrap()
+            .is_none()
+    );
+
+    let malformed =
+        IlDocument::parse(b"(def \"f\" (clause (num (nat 0))))", Limits::default()).unwrap();
+    assert!(
+        malformed
+            .schema(DeclarationId::new(1, None).unwrap())
+            .is_err()
     );
 }
 
