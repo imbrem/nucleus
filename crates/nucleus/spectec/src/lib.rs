@@ -16,6 +16,7 @@ mod grammar;
 mod grammar_definition;
 mod parameterized;
 mod premise;
+mod program_logic;
 mod relational;
 mod schema;
 mod selected;
@@ -41,6 +42,7 @@ pub use parameterized::{
     InterpretationSymbol, ParameterizedDocument, ParameterizedError, parameterized_document,
 };
 pub use premise::{PremiseAlgebra, PremiseChildren, fold_premise};
+pub use program_logic::{CallsAssert, Established, Proposition};
 pub use relational::{
     RelationalCall, RelationalCaseError, RelationalClause, RelationalCondition,
     RelationalDefinition, RelationalDefinitionSchema, RelationalDefinitionSource,

@@ -33,3 +33,12 @@ the linked elaborated document and requires exact coverage equality.
 the exact required case set from a coverage plan, ignores only explicit
 rejections, applies each selected case transactionally once, and refuses to
 finish while any selected declaration, clause, or rule lacks resident roots.
+
+`Proposition<Atom>` is an immutable, `Arc`-shared schema for small program-
+logic experiments. Its `CallsAssert<Program>` atom denotes the open claim that
+some permitted invocation and imported-I/O behavior reaches a named assertion
+import. Closed `TRUE`, `FALSE`, `AND`, and `OR` examples lower to HOL and produce
+positive or negative kernel-checked theorems. They exercise the composition
+API without treating an interpreter as theorem authority. A future semantic
+interpretation must relate open atoms and exact program bytes to the complete
+`SpecTec` theory before these examples establish WebAssembly behavior.
