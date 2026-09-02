@@ -7,10 +7,11 @@
 //! parameter-only instruction data for Route B while Route A constructs its
 //! result directly.
 
+use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash};
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref, SynRel, ThmId};
+use covalence_logic_hol::{Kernel, KernelError, Ref, SynRel, ThmId, wire};
 
-use crate::{AddSliceError, AddSlicePlan, Source};
+use crate::{AddSliceArtifact, AddSliceError, AddSlicePlan, Source};
 
 /// An ordered program over an arbitrary instruction schema.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,6 +148,7 @@ pub struct AddSliceAgreement {
     plan: AddSlicePlan,
     program: Program<ParameterInstruction<AddOperation>>,
     checked: AddRouteAgreement,
+    cids: PipelineCids,
 }
 
 impl AddSliceAgreement {
@@ -166,6 +168,58 @@ impl AddSliceAgreement {
     #[must_use]
     pub const fn checked(&self) -> AddRouteAgreement {
         self.checked
+    }
+
+    /// Returns exact input, init, translation, and output content links.
+    #[must_use]
+    pub const fn cids(&self) -> PipelineCids {
+        self.cids
+    }
+}
+
+/// Generic content links for one deterministic translation pipeline.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PipelineCids {
+    input: Cid,
+    init: Cid,
+    translation: Cid,
+    output: Cid,
+}
+
+impl PipelineCids {
+    /// Composes the four exact pipeline links.
+    #[must_use]
+    pub const fn new(input: Cid, init: Cid, translation: Cid, output: Cid) -> Self {
+        Self {
+            input,
+            init,
+            translation,
+            output,
+        }
+    }
+
+    /// Returns the exact input artifact link.
+    #[must_use]
+    pub const fn input(self) -> Cid {
+        self.input
+    }
+
+    /// Returns the initial checked-state link.
+    #[must_use]
+    pub const fn init(self) -> Cid {
+        self.init
+    }
+
+    /// Returns the translation-policy artifact link.
+    #[must_use]
+    pub const fn translation(self) -> Cid {
+        self.translation
+    }
+
+    /// Returns the final checked-state link.
+    #[must_use]
+    pub const fn output(self) -> Cid {
+        self.output
     }
 }
 
@@ -209,6 +263,14 @@ pub enum AddSliceAgreementError {
         /// Checked semantic construction failure.
         source: AddSemanticsError,
     },
+    /// Canonical checked-kernel encoding failed.
+    #[snafu(display("could not encode {stage} parameter-add kernel: {source}"))]
+    KernelEncode {
+        /// Pipeline stage being addressed.
+        stage: &'static str,
+        /// Canonical arena encoding failure.
+        source: wire::EncodeError,
+    },
 }
 
 /// Derives the closed add slice and checks both semantic routes in one step.
@@ -229,14 +291,30 @@ pub fn prove_add_slice_agreement(
 ) -> Result<AddSliceAgreement, AddSliceAgreementError> {
     let plan =
         AddSlicePlan::build(source).map_err(|source| AddSliceAgreementError::Plan { source })?;
+    let translation = AddSliceArtifact::new(source.bundle(), source.ast(), plan.clone())
+        .cid()
+        .map_err(|source| AddSliceAgreementError::Plan { source })?;
     let program = parameter_add_program();
-    let checked = prove_add_program_agreement(kernel, &program, bool_ty, word_ty, add, left, right)
-        .map_err(|source| AddSliceAgreementError::Semantics { source })?;
+    let init = kernel_cid(kernel, "initial")?;
+    let mut staged = kernel.fork();
+    let checked =
+        prove_add_program_agreement(&mut staged, &program, bool_ty, word_ty, add, left, right)
+            .map_err(|source| AddSliceAgreementError::Semantics { source })?;
+    let output = kernel_cid(&staged, "output")?;
+    *kernel = staged;
     Ok(AddSliceAgreement {
         plan,
         program,
         checked,
+        cids: PipelineCids::new(source.ast(), init, translation, output),
     })
+}
+
+fn kernel_cid(kernel: &Kernel, stage: &'static str) -> Result<Cid, AddSliceAgreementError> {
+    let mut bytes = Vec::new();
+    wire::serialize(kernel.arena(), &mut bytes)
+        .map_err(|source| AddSliceAgreementError::KernelEncode { stage, source })?;
+    Ok(drisl::address(CidCodec::Raw, CidHash::Sha256, &bytes))
 }
 
 /// Constructs both add routes and proves their equality through checked HOL.

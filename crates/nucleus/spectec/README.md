@@ -38,3 +38,5 @@ operation remain abstract; this first theorem adds no integer axiom.
 `prove_add_slice_agreement` is the source-level composition: it first rebuilds
 the exhaustive plan and validates selected rule bodies against the exact IL,
 then retains that plan and the interpreted program beside the checked theorem.
+Its generic `PipelineCids` value addresses the exact elaborated input, initial
+kernel CBOR, translation artifact, and output kernel CBOR independently.

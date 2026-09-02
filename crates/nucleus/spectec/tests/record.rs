@@ -236,6 +236,8 @@ fn source_level_add_agreement_retains_plan_and_program() {
     let add = kernel.tm_fv(11, binary).unwrap();
     let left = kernel.tm_fv(12, word_ty).unwrap();
     let right = kernel.tm_fv(13, word_ty).unwrap();
+    let mut init_bytes = Vec::new();
+    covalence_logic_hol::wire::serialize(kernel.arena(), &mut init_bytes).unwrap();
 
     let package =
         prove_add_slice_agreement(&source, &mut kernel, bool_ty, word_ty, add, left, right)
@@ -244,6 +246,22 @@ fn source_level_add_agreement_retains_plan_and_program() {
     assert_eq!(package.plan(), &AddSlicePlan::build(&source).unwrap());
     assert_eq!(package.program(), &parameter_add_program());
     assert!(kernel.thm().get(package.checked().theorem).is_some());
+    assert_eq!(package.cids().input(), source.ast());
+    assert_eq!(package.cids().init().codec(), CidCodec::Raw);
+    assert_eq!(package.cids().init().hash(), CidHash::Sha256);
+    assert_eq!(package.cids().translation().codec(), CidCodec::Drisl);
+    assert_eq!(package.cids().translation().hash(), CidHash::Sha256);
+    assert_eq!(
+        package.cids().translation(),
+        AddSliceArtifact::build(&source).unwrap().cid().unwrap()
+    );
+    assert_eq!(package.cids().output().codec(), CidCodec::Raw);
+    assert_eq!(package.cids().output().hash(), CidHash::Sha256);
+    assert_ne!(package.cids().init(), package.cids().output());
+    assert!(drisl::addresses(package.cids().init(), &init_bytes));
+    let mut output_bytes = Vec::new();
+    covalence_logic_hol::wire::serialize(kernel.arena(), &mut output_bytes).unwrap();
+    assert!(drisl::addresses(package.cids().output(), &output_bytes));
 }
 
 #[test]
