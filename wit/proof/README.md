@@ -13,6 +13,12 @@ apply-tactic: async func(tactic-id: u64, arguments: list<u8>, kernel: option<ker
     -> result<kernel, string>;
 ```
 
+It also imports the parser-independent `nucleus:proof/alethe` checked-rule
+interface by default. Alethe proof bytes and step names stay in an untrusted
+component; calls such as `assume` and `resolution` delegate to the same checked
+HOL theorem arena as the low-level host. The first-class native counterpart is
+`covalence-logic-alethe`, following the split used by `covalence-logic-lrat`.
+
 `strategy.apply-tactic` is the complete small stable kernel-transformer
 protocol. An omitted input asks the strategy to choose a checked starting
 kernel. Tactic arguments are a small copied `list<u8>`; larger inputs can travel

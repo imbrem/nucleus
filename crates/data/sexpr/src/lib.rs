@@ -157,6 +157,7 @@ pub struct Parser<'a> {
     offset: usize,
     depth: usize,
     done: bool,
+    o256_atoms: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -168,6 +169,22 @@ impl<'a> Parser<'a> {
             offset: 0,
             depth: 0,
             done: false,
+            o256_atoms: true,
+        }
+    }
+
+    /// Creates an SMT-LIB/Alethe event reader.
+    ///
+    /// This dialect treats `!` as an ordinary symbol (the SMT-LIB annotation
+    /// operator) rather than Nucleus's canonical address sigil.
+    #[must_use]
+    pub const fn new_smt(input: &'a str) -> Self {
+        Self {
+            input,
+            offset: 0,
+            depth: 0,
+            done: false,
+            o256_atoms: false,
         }
     }
 
@@ -320,7 +337,7 @@ impl<'a> Parser<'a> {
 
     fn atom(&mut self) -> Result<Event, ParseError> {
         let start = self.offset;
-        if self.input.as_bytes()[start] == b'!' {
+        if self.o256_atoms && self.input.as_bytes()[start] == b'!' {
             let end = self.bare_end();
             let encoded = &self.input[start + 1..end];
             let canonical = encoded.len() == 64
@@ -1003,6 +1020,19 @@ fn encode_string(value: &str) -> String {
 /// balanced stream, so construction cannot produce a [`StructureError`].
 pub fn parse(input: &str) -> Result<Document, ParseError> {
     let events = Parser::new(input).collect::<Result<Vec<_>, _>>()?;
+    Document::from_events(events).map_err(|source| ParseError::Structure { source })
+}
+
+/// Parses a complete SMT-LIB/Alethe document into an owned AST.
+///
+/// Unlike [`parse`], a bare `!` is the SMT-LIB annotation operator rather than
+/// the prefix of a Nucleus `o256` address.
+///
+/// # Errors
+///
+/// Returns [`ParseError`] for malformed text.
+pub fn parse_smt(input: &str) -> Result<Document, ParseError> {
+    let events = Parser::new_smt(input).collect::<Result<Vec<_>, _>>()?;
     Document::from_events(events).map_err(|source| ParseError::Structure { source })
 }
 

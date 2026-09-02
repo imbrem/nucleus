@@ -1,0 +1,30 @@
+[package]
+name = "covalence-proof-alethe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Untrusted Alethe proof component for Nucleus"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+covalence-logic-alethe = { path = "../../logic/alethe" }
+wit-bindgen = "=0.61.1"
+
+[package.metadata.component]
+package = "nucleus:proof-alethe"
+
+[package.metadata.component.target]
+path = "../../../wit/proof"
+world = "proof"
+
+[package.metadata.component.dependencies]
+
+[package.metadata.glu]
+buck-manifest-mapped-srcs = { "nucleus//:proof_wit" = "wit/proof/proof.wit" }
+
+[lints]
+workspace = true

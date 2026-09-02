@@ -91,6 +91,14 @@ interface host {
         theorem: u64,
     }
 
+    /// One signed Boolean atom in a checked classical sequent.
+    record literal {
+        /// Checked Boolean term row.
+        proposition: u64,
+        /// Whether the atom occurs positively.
+        positive: bool,
+    }
+
     /// An immutable shared byte buffer.
     resource bytes {
         /// Copies component bytes into a host buffer.
@@ -510,6 +518,29 @@ interface tactics {
     ) -> result<rewrite-result, string>;
 }
 
+/// Checked Alethe-shaped operations available to every proof component.
+///
+/// This interface is parser-independent. Alethe text, step names, solver
+/// output, and provenance remain untrusted guest data; successful calls mint
+/// theorem facts only through the checked HOL kernel.
+interface alethe {
+    use host.{kernel, literal};
+
+    /// Introduces an Alethe assumption as the identity sequent `p |- p`.
+    assume: func(
+        kernel: borrow<kernel>,
+        proposition: literal,
+    ) -> result<u64, string>;
+
+    /// Resolves two Alethe clause theorems at a checked complementary pivot.
+    resolution: func(
+        kernel: borrow<kernel>,
+        left: u64,
+        right: u64,
+        pivot: literal,
+    ) -> result<u64, string>;
+}
+
 /// The minimal interface for a reusable kernel-transforming strategy.
 interface strategy {
     use host.{kernel};
@@ -531,6 +562,7 @@ world proof {
     import host;
     import capabilities;
     import tactics;
+    import alethe;
     export strategy;
 }
 
@@ -538,4 +570,5 @@ world proof {
 world kernel-host {
     export host;
     export tactics;
+    export alethe;
 }

@@ -1,0 +1,17 @@
+[package]
+name = "covalence-logic-alethe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Typed Alethe parsing and checked QF_UF replay for Nucleus"
+publish = false
+
+[dependencies]
+covalence-data-sexpr = { path = "../../data/sexpr" }
+covalence-lib-error = { path = "../../lib/error" }
+covalence-logic-hol = { path = "../hol" }
+covalence-logic-hol-derived = { path = "../hol-derived" }
+
+[lints]
+workspace = true

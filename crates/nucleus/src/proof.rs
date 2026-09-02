@@ -9,7 +9,7 @@ use covalence_lib_hash::O256;
 use covalence_lib_wasm::wasmtime;
 use covalence_logic_cas::CasFact;
 use covalence_logic_hol::{
-    Arena, Import, Kernel as HolKernel, Link, LinkFormat, Ref, Resolver, Sort as HolSort,
+    Arena, Import, Kernel as HolKernel, Link, LinkFormat, Lit, Ref, Resolver, Sort as HolSort,
     SynFactId, SynRel as HolSynRel, Table, wire,
 };
 use wasmtime::component::{Accessor, HasData, Resource, ResourceTable};
@@ -166,6 +166,15 @@ fn fact_id(value: u64) -> Result<SynFactId, String> {
 fn theorem_id(value: u64) -> Result<covalence_logic_hol::ThmId, String> {
     let value = i32::try_from(value).map_err(|_| "theorem slot exceeds i32".to_owned())?;
     covalence_logic_hol::ThmId::new(value).ok_or_else(|| "theorem slots are one-based".to_owned())
+}
+
+fn literal(value: nucleus::proof::host::Literal) -> Result<Lit, String> {
+    let proposition = reference(value.proposition)?;
+    Ok(if value.positive {
+        Lit::positive(proposition.get())
+    } else {
+        Lit::positive(proposition.get()).negated()
+    })
 }
 
 fn import_id(value: u64) -> Result<covalence_logic_hol::ImportId, String> {
@@ -2454,6 +2463,47 @@ impl nucleus::proof::tactics::Host for ProofState {
     }
 }
 
+impl nucleus::proof::alethe::Host for ProofState {
+    fn assume(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        proposition: nucleus::proof::host::Literal,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        Ok(match literal(proposition) {
+            Ok(proposition) => self
+                .table
+                .get_mut(&kernel)?
+                .0
+                .identity(proposition)
+                .map(|id| u64::from(id.get().unsigned_abs()))
+                .map_err(|error| error.to_string()),
+            Err(error) => Err(error),
+        })
+    }
+
+    fn resolution(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        left: u64,
+        right: u64,
+        pivot: nucleus::proof::host::Literal,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        let (left, right, pivot) = match (theorem_id(left), theorem_id(right), literal(pivot)) {
+            (Ok(left), Ok(right), Ok(pivot)) => (left, right, pivot),
+            (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
+                return Ok(Err(error));
+            }
+        };
+        Ok(self
+            .table
+            .get_mut(&kernel)?
+            .0
+            .resolve(left, right, pivot)
+            .map(|id| u64::from(id.get().unsigned_abs()))
+            .map_err(|error| error.to_string()))
+    }
+}
+
 /// Failure to load or execute a standard proof component.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
@@ -2773,6 +2823,90 @@ mod tests {
 
         let default_id = Host::cas_insert(&mut state, Resource::new_borrow(blob.rep())).unwrap();
         assert!(Host::cas_get(&mut state, default_id).unwrap().is_some());
+    }
+
+    #[test]
+    fn wit_alethe_rules_check_resolution_and_reject_bad_pivots_atomically() {
+        let mut kernel = HolKernel::new();
+        let star = kernel.star().expect("star");
+        let bool_ty = kernel.bool_ty(star).expect("bool");
+        let proposition = kernel.bool(bool_ty, true).expect("proposition");
+        let non_boolean = kernel.ty_arr(bool_ty, bool_ty).expect("non-Boolean type");
+        let mut state = ProofState::default();
+        let resource = state
+            .table
+            .push(HostKernel(kernel))
+            .expect("kernel resource");
+        let positive = nucleus::proof::host::Literal {
+            proposition: u64_from_ref(proposition),
+            positive: true,
+        };
+        let negative = nucleus::proof::host::Literal {
+            proposition: u64_from_ref(proposition),
+            positive: false,
+        };
+        let left = <ProofState as nucleus::proof::alethe::Host>::assume(
+            &mut state,
+            Resource::new_borrow(resource.rep()),
+            positive,
+        )
+        .expect("host call")
+        .expect("positive identity");
+        let right = <ProofState as nucleus::proof::alethe::Host>::assume(
+            &mut state,
+            Resource::new_borrow(resource.rep()),
+            negative,
+        )
+        .expect("host call")
+        .expect("negative identity");
+        let contradiction = <ProofState as nucleus::proof::alethe::Host>::resolution(
+            &mut state,
+            Resource::new_borrow(resource.rep()),
+            left,
+            right,
+            positive,
+        )
+        .expect("host call")
+        .expect("resolution");
+        assert!(
+            state
+                .table
+                .get(&resource)
+                .expect("kernel resource")
+                .0
+                .thm()
+                .get(theorem_id(contradiction).expect("theorem ID"))
+                .is_some()
+        );
+
+        let before = state
+            .table
+            .get(&resource)
+            .expect("kernel resource")
+            .0
+            .arena()
+            .clone();
+        let rejected = <ProofState as nucleus::proof::alethe::Host>::resolution(
+            &mut state,
+            Resource::new_borrow(resource.rep()),
+            left,
+            right,
+            nucleus::proof::host::Literal {
+                proposition: u64_from_ref(non_boolean),
+                positive: true,
+            },
+        )
+        .expect("host call");
+        assert!(rejected.is_err());
+        assert_eq!(
+            *state
+                .table
+                .get(&resource)
+                .expect("kernel resource")
+                .0
+                .arena(),
+            before
+        );
     }
 
     #[test]
