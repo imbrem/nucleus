@@ -16,8 +16,9 @@ use covalence_nucleus_spectec::{
     close_graph_equation, close_hol_rule, close_hol_rules, close_hol_theory, declare_hol_schema,
     fold_expression, fold_grammar, fold_type, least_closed_family, least_closed_predicate,
     ordered_cases, relational_definition, relational_definition_declaration,
-    relational_definition_schema, relational_hol_case, relational_hol_rule,
-    relational_relation_declaration, relational_relations, relational_type_declaration,
+    relational_definition_schema, relational_grammar_declaration, relational_hol_case,
+    relational_hol_rule, relational_relation_declaration, relational_relations,
+    relational_type_declaration,
 };
 
 #[derive(Clone)]
@@ -171,8 +172,21 @@ impl RelationalResolver for TestRelationalResolver {
         Ok(self.x)
     }
 
+    fn grammar_value(
+        &mut self,
+        _kernel: &mut Kernel,
+        _symbol: &IlGrammarSymbol<'_>,
+        _children: &[covalence_logic_hol::Ref],
+    ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        Ok(self.x)
+    }
+
     fn type_otherwise(&mut self) -> Self::Error {
         "otherwise in structural type".to_owned()
+    }
+
+    fn grammar_otherwise(&mut self) -> Self::Error {
+        "otherwise in grammar production".to_owned()
     }
 
     fn operation(
@@ -985,6 +999,60 @@ fn grammar_fold_composes_expression_and_symbol_children() {
 
     assert_eq!(expressions.0, 1);
     assert_eq!(grammars.0, 4);
+}
+
+#[test]
+fn exact_grammar_declaration_lowers_productions_to_hol_family() {
+    let bytes = br#"(gram "G" nat
+        (prod (exp "x" nat) (text "a") (var "x")))"#;
+    let il = IlDocument::parse(bytes, Limits::default()).unwrap();
+    let source = Source::new(
+        drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle"),
+        drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        "test",
+        "revision",
+        &il,
+    )
+    .unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let schema = declare_hol_schema(&source, &mut kernel, value, bool_ty).unwrap();
+    let binary_tail = kernel.ty_arr(value, value).unwrap();
+    let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
+    let graph_tail = kernel.ty_arr(value, bool_ty).unwrap();
+    let graph_ty = kernel.ty_arr(value, graph_tail).unwrap();
+    let x = kernel.tm_fv(10_000, value).unwrap();
+    let mut resolver = TestRelationalResolver {
+        x,
+        y: kernel.tm_fv(10_001, value).unwrap(),
+        add: kernel.tm_fv(10_002, binary_ty).unwrap(),
+        graph: kernel.tm_fv(10_003, graph_ty).unwrap(),
+        bool_ty,
+        bound: std::collections::BTreeMap::new(),
+        relations: std::collections::BTreeMap::new(),
+    };
+    let grammar = relational_grammar_declaration(
+        &mut kernel,
+        &mut resolver,
+        &source,
+        &schema,
+        DeclarationId::new(1, None).unwrap(),
+        &[x],
+    )
+    .unwrap();
+
+    assert_eq!(grammar.formal_arguments.len(), 2);
+    assert_eq!(grammar.definition.branches.len(), 1);
+    assert!(
+        kernel
+            .equivalent(
+                kernel.classifier(grammar.definition.equation).unwrap(),
+                bool_ty
+            )
+            .unwrap()
+    );
 }
 
 #[test]

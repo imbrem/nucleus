@@ -434,8 +434,25 @@ pub trait RelationalResolver {
         fields: &[(&str, Ref)],
     ) -> Result<Ref, Self::Error>;
 
+    /// Interprets one grammar-symbol constructor from its already-lowered
+    /// semantic children.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unresolved grammar constructor/reference or a
+    /// rejected checked application.
+    fn grammar_value(
+        &mut self,
+        kernel: &mut Kernel,
+        symbol: &covalence_data_spectec::IlGrammarSymbol<'_>,
+        children: &[Ref],
+    ) -> Result<Ref, Self::Error>;
+
     /// Reports an `otherwise` marker in a structural type side condition.
     fn type_otherwise(&mut self) -> Self::Error;
+
+    /// Reports an `otherwise` marker in a grammar-production side condition.
+    fn grammar_otherwise(&mut self) -> Self::Error;
 
     /// Lowers one non-variable, non-call constructor from child values.
     ///
@@ -1116,12 +1133,52 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
         self.resolver.struct_value(self.kernel, fields)
     }
 
+    /// Constructs one interpreted grammar-symbol value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unresolved-symbol or checked application failure.
+    pub fn grammar_value(
+        &mut self,
+        symbol: &covalence_data_spectec::IlGrammarSymbol<'_>,
+        children: &[Ref],
+    ) -> Result<Ref, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        self.resolver.grammar_value(self.kernel, symbol, children)
+    }
+
+    /// Registers an existing term for one decoded binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns a duplicate-name or incompatible-binding failure.
+    pub fn register_binding(
+        &mut self,
+        binding: &IlBinding<'_>,
+        reference: Ref,
+    ) -> Result<(), R::Error>
+    where
+        R: RelationalResolver,
+    {
+        self.resolver.binding(binding, reference)
+    }
+
     /// Converts an unsupported structural `otherwise` premise.
     pub fn type_otherwise(&mut self) -> R::Error
     where
         R: RelationalResolver,
     {
         self.resolver.type_otherwise()
+    }
+
+    /// Converts an unsupported grammar `otherwise` premise.
+    pub fn grammar_otherwise(&mut self) -> R::Error
+    where
+        R: RelationalResolver,
+    {
+        self.resolver.grammar_otherwise()
     }
 
     /// Converts a structural schema failure through the resolver.
