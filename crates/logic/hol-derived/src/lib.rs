@@ -13,7 +13,12 @@ mod infinity;
 mod model;
 mod natural;
 mod natural_arithmetic;
+mod natural_calc;
+mod natural_expr;
+mod natural_normal;
 mod natural_rec;
+mod natural_ring;
+mod natural_sub;
 mod subtype;
 mod syntax;
 
@@ -44,9 +49,17 @@ pub use natural::{
 pub use natural_arithmetic::{
     NaturalArithmetic, NaturalArithmeticDecl, NaturalArithmeticExt, NaturalArithmeticProof,
 };
+pub use natural_expr::Expr;
+pub use natural_normal::{MAX_LITERAL, NaturalNormalizer};
 pub use natural_rec::{
     NaturalNameSupply, NaturalRecExt, NaturalRecGraph, NaturalRecGraphDecl, NaturalRecGraphProof,
     NaturalRecSchemas, NaturalRecursor, NaturalRecursorDecl, NaturalRecursorProof,
+};
+pub use natural_ring::{
+    NaturalRing, NaturalRingDecl, NaturalRingExt, NaturalRingProof, NaturalRingSignature,
+};
+pub use natural_sub::{
+    NaturalSubtraction, NaturalSubtractionDecl, NaturalSubtractionExt, NaturalSubtractionProof,
 };
 pub use subtype::{Subtype, SubtypeAxiomDecl, SubtypeDecl, SubtypeError, SubtypeExt, SubtypeProof};
 pub use syntax::{SyntaxError, join_alpha_equivalent, join_alpha_equivalents, join_same_syntax};

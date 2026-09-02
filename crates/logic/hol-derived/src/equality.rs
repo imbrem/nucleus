@@ -187,12 +187,21 @@ pub fn equality_transitivity(
     right_theorem: ThmId,
 ) -> Result<ProvedEquality, EqualityError> {
     let mut staged = kernel.fork();
-    let result = equality_transitivity_inner(&mut staged, bool_ty, left_theorem, right_theorem)?;
+    let result = equality_transitivity_in_place(&mut staged, bool_ty, left_theorem, right_theorem)?;
     *kernel = staged;
     Ok(result)
 }
 
-fn equality_transitivity_inner(
+/// Transitivity without the transactional fork.
+///
+/// Forking copies the arena, which is too expensive to repeat once per rewrite
+/// in a long chain. A rejection here can leave syntax rows behind, so callers
+/// must already be working inside a staged kernel of their own.
+///
+/// # Errors
+///
+/// Returns an error under the same conditions as [`equality_transitivity`].
+pub(crate) fn equality_transitivity_in_place(
     kernel: &mut Kernel,
     bool_ty: Ref,
     left_theorem: ThmId,

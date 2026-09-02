@@ -871,6 +871,12 @@
       "category": "product",
       "targets": [
         {
+          "name": "arithmetic",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "covalence_nucleus_script",
           "kinds": [
             "lib"
