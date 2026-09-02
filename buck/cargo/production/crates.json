@@ -1802,6 +1802,13 @@
     },
     {
       "source": "workspace#covalence-nucleus-tactics@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-tactics@0.0.0",
       "target": "workspace#covalence-logic-hol-derived@0.0.0",
       "kinds": [
         "normal"

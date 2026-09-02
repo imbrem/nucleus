@@ -15,7 +15,8 @@
 use std::collections::{HashMap, HashSet};
 
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, ThmId, builtin::Op2};
+use covalence_lib_hash::O256;
+use covalence_logic_hol::{Arena, Kernel, KernelError, Lit, Ref, ThmId, builtin::Op2};
 use covalence_logic_hol_derived::{ForallError, forall_elim};
 use covalence_logic_metamath::{Assertion, Database, Expr, MmError, ReplayObserver, Subst, replay};
 
@@ -35,6 +36,149 @@ pub struct GroundImport {
     pub theorem: ThmId,
     /// Number of distinct ground logical rule instances in `L'`.
     pub rule_instances: usize,
+}
+
+/// Deterministic source-order record for one independently checked theorem.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroundArtifactRecord {
+    /// Content address of the exact Metamath source bytes.
+    pub corpus: O256,
+    /// Zero-based statement position in the parsed database.
+    pub statement_index: u64,
+    /// Metamath assertion label.
+    pub label: String,
+    /// Canonical flat Metamath conclusion.
+    pub conclusion: String,
+    /// Content address of the canonical checked HOL arena bytes.
+    pub arena: O256,
+    /// The checked theorem handle within `arena`.
+    pub theorem: ThmId,
+    /// The theorem's encoded Metamath expression within `arena`.
+    pub expression: Ref,
+    /// The theorem's impredicative derivability proposition within `arena`.
+    pub proposition: Ref,
+    /// Number of distinct ground logical rule instances used by the proof.
+    pub rule_instances: u64,
+}
+
+impl GroundArtifactRecord {
+    /// Encodes this record in the deterministic `nucleus.metamath-ground.v1`
+    /// binary format.
+    ///
+    /// Integers are fixed-width big-endian. Strings are UTF-8 prefixed by a
+    /// big-endian `u64` byte length. The two addresses are their raw 32 bytes.
+    /// Concatenated records remain self-delimiting and preserve source order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only on a platform whose string length cannot fit the
+    /// format's `u64` length field.
+    pub fn encode(&self) -> Result<Vec<u8>, GroundReplayError> {
+        const MAGIC: &[u8] = b"nucleus.metamath-ground.v1\0";
+        let mut bytes =
+            Vec::with_capacity(MAGIC.len() + self.label.len() + self.conclusion.len() + 128);
+        bytes.extend_from_slice(MAGIC);
+        bytes.extend_from_slice(self.corpus.as_bytes());
+        bytes.extend_from_slice(&self.statement_index.to_be_bytes());
+        encode_string(&mut bytes, &self.label)?;
+        encode_string(&mut bytes, &self.conclusion)?;
+        bytes.extend_from_slice(self.arena.as_bytes());
+        bytes.extend_from_slice(&self.theorem.get().to_be_bytes());
+        bytes.extend_from_slice(&i32::from(self.expression).to_be_bytes());
+        bytes.extend_from_slice(&i32::from(self.proposition).to_be_bytes());
+        bytes.extend_from_slice(&self.rule_instances.to_be_bytes());
+        Ok(bytes)
+    }
+}
+
+fn encode_string(bytes: &mut Vec<u8>, value: &str) -> Result<(), GroundReplayError> {
+    let len = u64::try_from(value.len())
+        .map_err(|_| trace_error("string length is outside the artifact format"))?;
+    bytes.extend_from_slice(&len.to_be_bytes());
+    bytes.extend_from_slice(value.as_bytes());
+    Ok(())
+}
+
+/// One sequential replay result, ready for canonical arena serialization.
+#[derive(Debug)]
+pub struct GroundArtifact {
+    /// Stable manifest record for this theorem arena.
+    pub record: GroundArtifactRecord,
+    /// Independently checked arena addressed by [`record.arena`](Self::record).
+    pub arena: Arena,
+}
+
+/// Source-ordered, sequential checked replay of every proved logical assertion.
+///
+/// Each iterator step uses a fresh short-lived kernel. This prevents proof
+/// scratch rows from one theorem from slowing later theorems and makes every
+/// yielded arena independently serializable and content-addressable. Iterator
+/// order is database statement order and therefore independent of scheduling.
+pub struct GroundCorpus<'db> {
+    db: &'db Database,
+    corpus: O256,
+    next_statement: usize,
+}
+
+impl<'db> GroundCorpus<'db> {
+    /// Starts a deterministic sequential replay over `db`.
+    #[must_use]
+    pub const fn new(db: &'db Database, corpus: O256) -> Self {
+        Self {
+            db,
+            corpus,
+            next_statement: 0,
+        }
+    }
+}
+
+impl Iterator for GroundCorpus<'_> {
+    type Item = Result<GroundArtifact, GroundReplayError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let statement_index = self.next_statement;
+            let statement = self.db.statements().get(statement_index)?;
+            self.next_statement += 1;
+            let covalence_logic_metamath::Statement::Assert(assertion) = statement else {
+                continue;
+            };
+            if assertion.proof.is_none() || assertion.conclusion.typecode() != "|-" {
+                continue;
+            }
+            return Some(replay_artifact(
+                self.db,
+                self.corpus,
+                statement_index,
+                assertion,
+            ));
+        }
+    }
+}
+
+fn replay_artifact(
+    db: &Database,
+    corpus: O256,
+    statement_index: usize,
+    assertion: &Assertion,
+) -> Result<GroundArtifact, GroundReplayError> {
+    let mut session = GroundSession::new(db)?;
+    let imported = session.import(assertion)?;
+    let arena = session.kernel.into_arena();
+    let record = GroundArtifactRecord {
+        corpus,
+        statement_index: u64::try_from(statement_index)
+            .map_err(|_| trace_error("statement index is outside the artifact format"))?,
+        label: assertion.label.clone(),
+        conclusion: assertion.conclusion.render(),
+        arena: arena.addr(),
+        theorem: imported.theorem,
+        expression: imported.expression,
+        proposition: imported.proposition,
+        rule_instances: u64::try_from(imported.rule_instances)
+            .map_err(|_| trace_error("rule count is outside the artifact format"))?,
+    };
+    Ok(GroundArtifact { record, arena })
 }
 
 /// Failure while replaying verified Metamath events through HOL.
@@ -136,6 +280,9 @@ struct RuleInstance {
 struct RuleLayout {
     formula: Ref,
 }
+
+type ExtractionStep = (Ref, Ref);
+type ExtractionPath = Vec<ExtractionStep>;
 
 #[derive(Clone, Copy)]
 enum Slot {
@@ -261,7 +408,7 @@ fn import_trace(
         expressions,
         &rules,
     )?;
-    let (closed, suffixes) = closed_formula(kernel, bool_ty, &layouts)?;
+    let (closed, extraction_paths) = closed_formula(kernel, bool_ty, &layouts)?;
     let rule_index: HashMap<RuleInstance, usize> = rules
         .iter()
         .cloned()
@@ -279,7 +426,7 @@ fn import_trace(
         expressions,
         events,
         &layouts,
-        &suffixes,
+        &extraction_paths,
         &rule_index,
         closed,
         &mut predicate_apps,
@@ -386,13 +533,14 @@ fn replay_events(
     expressions: &mut HashMap<Expr, Ref>,
     events: &[Event],
     layouts: &[RuleLayout],
-    suffixes: &[Ref],
+    extraction_paths: &[ExtractionPath],
     rule_index: &HashMap<RuleInstance, usize>,
     closed: Ref,
     predicate_apps: &mut HashMap<Expr, Ref>,
 ) -> Result<ThmId, GroundReplayError> {
     let mut stack = Vec::<Slot>::new();
     let mut heap = Vec::<Slot>::new();
+    let mut extracted_clauses = vec![None; layouts.len()];
     for event in events {
         match event {
             Event::Float(expression) => {
@@ -448,7 +596,13 @@ fn replay_events(
                 let index = *rule_index
                     .get(&rule)
                     .ok_or_else(|| trace_error("logical rule instance is absent"))?;
-                let mut theorem = extract_clause(kernel, layouts, suffixes, index)?;
+                let mut theorem = if let Some(theorem) = extracted_clauses[index] {
+                    theorem
+                } else {
+                    let theorem = extract_clause(kernel, layouts, extraction_paths, index)?;
+                    extracted_clauses[index] = Some(theorem);
+                    theorem
+                };
                 let proof_args = &args[*floats..];
                 if proof_args.len() != premises.len() {
                     return Err(trace_error("essential argument count changed"));
@@ -573,15 +727,36 @@ fn closed_formula(
     kernel: &mut Kernel,
     bool_ty: Ref,
     layouts: &[RuleLayout],
-) -> Result<(Ref, Vec<Ref>), GroundReplayError> {
+) -> Result<(Ref, Vec<ExtractionPath>), GroundReplayError> {
     if layouts.is_empty() {
         return Ok((kernel.bool(bool_ty, true)?, Vec::new()));
     }
-    let mut suffixes = vec![layouts.last().expect("nonempty").formula; layouts.len()];
-    for index in (0..layouts.len() - 1).rev() {
-        suffixes[index] = kernel.op2(Op2::And, layouts[index].formula, suffixes[index + 1])?;
+    let mut extraction_paths = vec![Vec::new(); layouts.len()];
+    let closed = balanced_closed_formula(kernel, layouts, 0, layouts.len(), &mut extraction_paths)?;
+    Ok((closed, extraction_paths))
+}
+
+fn balanced_closed_formula(
+    kernel: &mut Kernel,
+    layouts: &[RuleLayout],
+    start: usize,
+    end: usize,
+    extraction_paths: &mut [ExtractionPath],
+) -> Result<Ref, GroundReplayError> {
+    if end - start == 1 {
+        return Ok(layouts[start].formula);
     }
-    Ok((suffixes[0], suffixes))
+    let middle = start + (end - start) / 2;
+    let left = balanced_closed_formula(kernel, layouts, start, middle, extraction_paths)?;
+    let right = balanced_closed_formula(kernel, layouts, middle, end, extraction_paths)?;
+    let parent = kernel.op2(Op2::And, left, right)?;
+    for path in &mut extraction_paths[start..middle] {
+        path.push((right, parent));
+    }
+    for path in &mut extraction_paths[middle..end] {
+        path.push((left, parent));
+    }
+    Ok(parent)
 }
 
 fn derivable_formula(
@@ -613,7 +788,7 @@ fn predicate_app(
 fn extract_clause(
     kernel: &mut Kernel,
     layouts: &[RuleLayout],
-    suffixes: &[Ref],
+    extraction_paths: &[ExtractionPath],
     index: usize,
 ) -> Result<ThmId, GroundReplayError> {
     let clause = layouts
@@ -621,13 +796,12 @@ fn extract_clause(
         .ok_or_else(|| trace_error("rule index is absent"))?
         .formula;
     let mut theorem = kernel.identity(positive(clause))?;
-    if index + 1 < layouts.len() {
-        kernel.weaken(theorem, &[positive(suffixes[index + 1])], &[])?;
-        theorem = kernel.and_left(theorem, positive(suffixes[index]))?;
-    }
-    for outer in (0..index).rev() {
-        kernel.weaken(theorem, &[positive(layouts[outer].formula)], &[])?;
-        theorem = kernel.and_left(theorem, positive(suffixes[outer]))?;
+    let path = extraction_paths
+        .get(index)
+        .ok_or_else(|| trace_error("rule extraction path is absent"))?;
+    for &(sibling, parent) in path {
+        kernel.weaken(theorem, &[positive(sibling)], &[])?;
+        theorem = kernel.and_left(theorem, positive(parent))?;
     }
     Ok(theorem)
 }
@@ -737,6 +911,26 @@ mod tests {
     }
 
     #[test]
+    fn sequential_corpus_artifact_is_byte_deterministic() {
+        let db = parse(DEMO0).expect("parse demo0");
+        verify_all(&db).expect("verify demo0");
+        let corpus = O256::from_bytes(DEMO0.as_bytes());
+        let build = || {
+            GroundCorpus::new(&db, corpus)
+                .map(|artifact| {
+                    let artifact = artifact.expect("HOL replay");
+                    assert_eq!(artifact.arena.addr(), artifact.record.arena);
+                    artifact.record.encode().expect("encode record")
+                })
+                .collect::<Vec<_>>()
+        };
+        let first = build();
+        let second = build();
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 1);
+    }
+
+    #[test]
     #[ignore = "requires NUCLEUS_METAMATH_CORPUS; full upstream hol.mm replay"]
     fn every_hol_mm_theorem_becomes_a_checked_hol_derivation() {
         let root = std::env::var("NUCLEUS_METAMATH_CORPUS").expect("corpus checkout");
@@ -750,12 +944,10 @@ mod tests {
                 assertion.proof.is_some() && assertion.conclusion.typecode() == "|-"
             })
             .collect();
-        let mut session = GroundSession::new(&db).expect("session");
-        for theorem in &logical {
-            session
-                .import(theorem)
-                .unwrap_or_else(|error| panic!("HOL replay of {} failed: {error}", theorem.label));
-        }
+        let imported = GroundCorpus::new(&db, O256::from_bytes(source.as_bytes()))
+            .try_fold(0, |count, artifact| artifact.map(|_| count + 1))
+            .expect("HOL replay");
+        assert_eq!(imported, logical.len());
         assert_eq!(logical.len(), verified);
     }
 
@@ -780,6 +972,58 @@ mod tests {
         assert_eq!(
             theorem.rhs.rows().next(),
             Some(&[positive(imported.proposition)][..])
+        );
+    }
+
+    #[test]
+    #[ignore = "requires NUCLEUS_METAMATH_CORPUS; full set.mm HOL replay benchmark"]
+    fn every_set_mm_theorem_becomes_a_checked_hol_derivation() {
+        let root = std::env::var("NUCLEUS_METAMATH_CORPUS").expect("corpus checkout");
+        let source = std::fs::read_to_string(std::path::Path::new(&root).join("set.mm"))
+            .expect("read set.mm");
+        let db = parse(&source).expect("parse set.mm");
+        verify_all(&db).expect("independently verify all of set.mm");
+        let logical: Vec<&Assertion> = db
+            .assertions()
+            .filter(|assertion| {
+                assertion.proof.is_some() && assertion.conclusion.typecode() == "|-"
+            })
+            .collect();
+        let corpus = O256::from_bytes(source.as_bytes());
+        let mut manifest = Vec::new();
+        let mut imported = 0;
+        let mut replay = GroundCorpus::new(&db, corpus);
+        loop {
+            let started = std::time::Instant::now();
+            let Some(artifact) = replay.next() else {
+                break;
+            };
+            let artifact = artifact.expect("HOL replay");
+            let elapsed = started.elapsed();
+            manifest.extend(artifact.record.encode().expect("encode record"));
+            imported += 1;
+            if elapsed >= std::time::Duration::from_secs(1) {
+                eprintln!(
+                    "set.mm HOL long tail: record {imported}, statement {} ({}), {elapsed:?}, {} rules, {} arena rows",
+                    artifact.record.statement_index,
+                    artifact.record.label,
+                    artifact.record.rule_instances,
+                    artifact.arena.len()
+                );
+            }
+            if imported % 1_000 == 0 {
+                eprintln!(
+                    "set.mm HOL artifact: {imported} records through statement {} ({})",
+                    artifact.record.statement_index, artifact.record.label
+                );
+            }
+        }
+        assert_eq!(imported, logical.len());
+        assert!(logical.len() > 40_000);
+        eprintln!(
+            "set.mm HOL artifact: {imported} records, {} bytes, {}",
+            manifest.len(),
+            O256::from_bytes(&manifest)
         );
     }
 }

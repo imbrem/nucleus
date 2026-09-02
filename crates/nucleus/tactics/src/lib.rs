@@ -2,7 +2,10 @@
 
 mod metamath;
 
-pub use metamath::{GroundImport, GroundReplayError, GroundSession};
+pub use metamath::{
+    GroundArtifact, GroundArtifactRecord, GroundCorpus, GroundImport, GroundReplayError,
+    GroundSession,
+};
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref, ThmId};

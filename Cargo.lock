@@ -1360,6 +1360,7 @@ name = "covalence-nucleus-tactics"
 version = "0.0.0"
 dependencies = [
  "covalence-lib-error",
+ "covalence-lib-hash",
  "covalence-logic-hol",
  "covalence-logic-hol-derived",
  "covalence-logic-metamath",
