@@ -138,10 +138,8 @@ where
     T: TypeAlgebra<X, Error = Err>,
 {
     Ok(match argument {
-        IlArgument::Expression(cursor) => {
-            let expression =
-                IlExpression::decode(cursor).map_err(|source| types.schema_error(source))?;
-            TypeArgument::Expression(fold_expression(&expression, expressions)?)
+        IlArgument::Expression(expression) => {
+            TypeArgument::Expression(fold_expression(expression, expressions)?)
         }
         IlArgument::Type(ty) => TypeArgument::Type(fold_type(ty, expressions, types)?),
         IlArgument::Definition(name) => TypeArgument::Definition(name),

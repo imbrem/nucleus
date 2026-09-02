@@ -636,8 +636,8 @@ pub enum IlType<'a> {
 /// One heterogeneous argument to a named IL type.
 #[derive(Clone, Debug)]
 pub enum IlArgument<'a> {
-    /// Expression argument, retained for expression lowering.
-    Expression(IlCursor<'a>),
+    /// Expression argument.
+    Expression(IlExpression<'a>),
     /// Type argument.
     Type(Box<IlType<'a>>),
     /// Definition argument identified by its exact declaration name.
@@ -1330,7 +1330,7 @@ fn expression_child_cursors<'a>(
         K::Call => {
             for argument in form.arguments().skip(1) {
                 if let IlArgument::Expression(payload) = decode_argument(&argument)? {
-                    children.push(payload);
+                    children.push(payload.cursor().clone());
                 }
             }
         }
@@ -1478,7 +1478,7 @@ fn validate_path(cursor: &IlCursor<'_>) -> Result<(), IlSchemaError> {
 
 fn validate_il_argument(argument: &IlArgument<'_>) -> Result<(), IlSchemaError> {
     match argument {
-        IlArgument::Expression(cursor) => IlExpression::decode(cursor)?.validate(),
+        IlArgument::Expression(expression) => expression.validate(),
         IlArgument::Type(_) | IlArgument::Definition(_) | IlArgument::Grammar(_) => Ok(()),
     }
 }
@@ -2229,7 +2229,11 @@ fn decode_argument<'a>(cursor: &IlCursor<'a>) -> Result<IlArgument<'a>, IlSchema
         )
     })?;
     match form.head() {
-        "exp" => Ok(IlArgument::Expression(payload)),
+        "exp" => {
+            let expression = IlExpression::decode(&payload)?;
+            expression.validate()?;
+            Ok(IlArgument::Expression(expression))
+        }
         "typ" => Ok(IlArgument::Type(Box::new(IlType::decode(&payload)?))),
         "def" => Ok(IlArgument::Definition(required_string(
             Some(payload),
