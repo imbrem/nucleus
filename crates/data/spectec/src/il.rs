@@ -883,9 +883,30 @@ pub enum IlPremise<'a> {
         premise: Box<IlPremise<'a>>,
         /// Iteration shape.
         iteration: IlIteration<'a>,
-        /// `dom` forms binding iteration variables.
-        domains: Vec<IlCursor<'a>>,
+        /// Domains binding iteration variables.
+        domains: Vec<IlDomain<'a>>,
     },
+}
+
+/// One named expression domain of an iterated premise.
+#[derive(Clone, Debug)]
+pub struct IlDomain<'a> {
+    name: &'a str,
+    expression: IlExpression<'a>,
+}
+
+impl<'a> IlDomain<'a> {
+    /// Returns the bound domain name.
+    #[must_use]
+    pub const fn name(&self) -> &'a str {
+        self.name
+    }
+
+    /// Returns the expression producing the domain sequence.
+    #[must_use]
+    pub const fn expression(&self) -> &IlExpression<'a> {
+        &self.expression
+    }
 }
 
 /// One equational definition clause.
@@ -1625,10 +1646,11 @@ fn decode_premise<'a>(cursor: &IlCursor<'a>) -> Result<IlPremise<'a>, IlSchemaEr
             let iteration_cursor = required_argument(&form, 1, "premise iteration")?;
             let iteration = decode_iteration(&iteration_cursor)?;
             validate_iteration(&iteration)?;
-            let domains = form.arguments().skip(2).collect::<Vec<_>>();
-            for domain in &domains {
-                validate_domain(domain)?;
-            }
+            let domains = form
+                .arguments()
+                .skip(2)
+                .map(|cursor| decode_domain(&cursor))
+                .collect::<Result<Vec<_>, _>>()?;
             Ok(IlPremise::Iterated {
                 premise,
                 iteration,
@@ -1644,18 +1666,23 @@ fn decode_premise<'a>(cursor: &IlCursor<'a>) -> Result<IlPremise<'a>, IlSchemaEr
     }
 }
 
-fn validate_domain(cursor: &IlCursor<'_>) -> Result<(), IlSchemaError> {
+fn decode_domain<'a>(cursor: &IlCursor<'a>) -> Result<IlDomain<'a>, IlSchemaError> {
     let form = required_form(cursor, "iteration domain")?;
     require_head(&form, "dom")?;
     require_arity(&form, 2, "domain with identifier and expression")?;
-    required_string(
+    let name = required_string(
         form.argument(0),
         cursor.declaration(),
         &child_path(&form, 0),
         "domain identifier",
     )?;
-    IlExpression::decode(&required_argument(&form, 1, "domain expression")?)?.validate()?;
-    Ok(())
+    let expression = IlExpression::decode(&required_argument(&form, 1, "domain expression")?)?;
+    expression.validate()?;
+    Ok(IlDomain { name, expression })
+}
+
+fn validate_domain(cursor: &IlCursor<'_>) -> Result<(), IlSchemaError> {
+    decode_domain(cursor).map(|_| ())
 }
 
 fn require_bindings(bindings: &[IlCursor<'_>]) -> Result<(), IlSchemaError> {
