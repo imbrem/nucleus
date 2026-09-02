@@ -1276,6 +1276,7 @@ version = "0.0.0"
 dependencies = [
  "covalence-lib-error",
  "covalence-lib-json",
+ "covalence-logic-hol",
 ]
 
 [[package]]

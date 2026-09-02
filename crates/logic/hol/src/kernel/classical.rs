@@ -326,12 +326,37 @@ impl Kernel {
             init_prefix: self.init_prefix,
         };
         let equality = staged.eq(bool_ty, term, term)?;
-        let theorem = staged.push_theorem(Thm::new(
-            Cnf::default(),
-            Dnf::new(vec![unit_row(positive(equality))]),
-        ))?;
+        let theorem = staged.refl_at(equality)?;
         *self = staged;
         Ok(ReflThm { equality, theorem })
+    }
+
+    /// Introduces equality reflexivity for an existing equality row.
+    ///
+    /// This allocation-target form lets a checked elaborator retain the exact
+    /// proposition reference it has already associated with source syntax.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `equality` is a checked Boolean equality whose
+    /// left and right operands are the same reference. Rejection does not add
+    /// a theorem.
+    pub fn refl_at(&mut self, equality: Ref) -> Result<ThmId, KernelError> {
+        self.require_bool_term::<std::convert::Infallible>(equality)?;
+        let Node::Eq(_, left, right) = *self.row(equality)?.expr() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "equality reflexivity",
+            });
+        };
+        if left != right {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "equality reflexivity",
+            });
+        }
+        self.push_theorem(Thm::new(
+            Cnf::default(),
+            Dnf::new(vec![unit_row(positive(equality))]),
+        ))
     }
 
     /// Applies a proved function equality to one argument (`AP_THM`).
@@ -1811,7 +1836,9 @@ mod tests {
 
     #[test]
     fn reflexivity_builds_an_exact_theorem_transactionally() {
-        let Fixture { mut kernel, p, .. } = fixture();
+        let Fixture {
+            mut kernel, p, q, ..
+        } = fixture();
         let bool_ty = kernel.classifier(reference(p)).unwrap();
         let result = kernel.refl(bool_ty, reference(p)).unwrap();
         assert_eq!(
@@ -1828,6 +1855,18 @@ mod tests {
 
         let before = kernel.arena().clone();
         assert!(kernel.refl(reference(p), reference(p)).is_err());
+        assert_eq!(*kernel.arena(), before);
+
+        let existing = kernel.eq(bool_ty, reference(p), reference(p)).unwrap();
+        let exact = kernel.refl_at(existing).unwrap();
+        assert_eq!(
+            unit_conclusions(kernel.require_thm(exact).unwrap()),
+            [positive(existing)]
+        );
+
+        let unequal = kernel.eq(bool_ty, reference(p), reference(q)).unwrap();
+        let before = kernel.arena().clone();
+        assert!(kernel.refl_at(unequal).is_err());
         assert_eq!(*kernel.arena(), before);
     }
 

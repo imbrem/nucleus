@@ -115,13 +115,13 @@ the non-streaming arena view. The conversion should assign/check dense explicit
 IDs at the NDJSON boundary and prove or test equality with the array-position
 view, rather than making the in-memory DAG support two identity rules.
 
-## Future semantic boundary
+## Semantic boundary
 
-This reader stops after schema and reference validation. A future importer is
-a separate translation/checking stage: reconstruct Lean syntax, choose and
-document treatment of unsafe/partial declarations and metadata, translate a
-supported fragment to Nucleus objects, and ask a Nucleus kernel to check every
-fact it wants to expose. Lean definitions and declarations should be a
-first-class frontend workflow; parsing a theorem record alone still does not
-produce a theorem handle. Unsupported Lean syntax or declarations remain
-explicit translation failures, independent of valid NDJSON framing.
+The `import` module separates schema validation from backend-parametric
+translation. It reconstructs typed Lean syntax and drives the selected backend
+in streaming order. Safety and partiality flags are retained as syntax; the
+frontend does not turn them into rejection policy. A backend either completes
+its checked HOL constructions and returns object/derivation correspondences,
+or the import fails. Parsing a theorem record alone still does not produce a
+theorem handle. Unsupported Lean syntax or declarations remain explicit
+backend failures, independent of valid NDJSON framing.
