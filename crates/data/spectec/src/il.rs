@@ -497,6 +497,108 @@ pub struct IlDeclarationSchema<'a> {
     body: IlDeclarationBody<'a>,
 }
 
+/// One type in the generic elaborated-IL schema.
+#[derive(Clone, Debug)]
+pub enum IlType<'a> {
+    /// Named type, possibly instantiated by heterogeneous arguments.
+    Named {
+        /// Exact type identifier.
+        name: &'a str,
+        /// Type-family arguments.
+        arguments: Vec<IlArgument<'a>>,
+    },
+    /// Built-in Boolean type.
+    Boolean,
+    /// Built-in text type.
+    Text,
+    /// Built-in numeric type spelling such as `nat`, `i32`, or `f64`.
+    Numeric(&'a str),
+    /// Dependent tuple type.
+    Tuple(Vec<IlTypeBinding<'a>>),
+    /// Optional, list, nonempty-list, or fixed-length iteration.
+    Iterated {
+        /// Element type.
+        element: Box<IlType<'a>>,
+        /// Iteration shape.
+        iteration: IlIteration<'a>,
+    },
+}
+
+/// One heterogeneous argument to a named IL type.
+#[derive(Clone, Debug)]
+pub enum IlArgument<'a> {
+    /// Expression argument, retained for expression lowering.
+    Expression(IlCursor<'a>),
+    /// Type argument.
+    Type(Box<IlType<'a>>),
+    /// Definition argument identified by its exact declaration name.
+    Definition(&'a str),
+    /// Grammar-symbol argument, retained for grammar lowering.
+    Grammar(IlCursor<'a>),
+}
+
+/// One expression-indexed component of an IL tuple type.
+#[derive(Clone, Debug)]
+pub struct IlTypeBinding<'a> {
+    binder: IlCursor<'a>,
+    ty: IlType<'a>,
+}
+
+impl<'a> IlTypeBinding<'a> {
+    /// Returns the binding expression (`_` for an ordinary product field).
+    #[must_use]
+    pub const fn binder(&self) -> &IlCursor<'a> {
+        &self.binder
+    }
+
+    /// Returns the component type.
+    #[must_use]
+    pub const fn ty(&self) -> &IlType<'a> {
+        &self.ty
+    }
+}
+
+/// Iteration shape attached to an IL type, expression, grammar, or premise.
+#[derive(Clone, Debug)]
+pub enum IlIteration<'a> {
+    /// Optional value (`?`).
+    Optional,
+    /// Possibly empty sequence (`*`).
+    List,
+    /// Nonempty sequence (`+`).
+    NonEmptyList,
+    /// Sequence with an expression-defined length and optional index binder.
+    Fixed {
+        /// Length expression.
+        length: IlCursor<'a>,
+        /// Optional exact index-binder name.
+        binder: Option<&'a str>,
+    },
+}
+
+impl<'a> IlType<'a> {
+    /// Decodes one type using the generic elaborated-IL schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown type constructor, malformed type-family
+    /// argument, malformed tuple binding, or invalid iteration shape.
+    pub fn decode(cursor: &IlCursor<'a>) -> Result<Self, IlSchemaError> {
+        match cursor.node() {
+            IlNode::Symbol("bool") => Ok(Self::Boolean),
+            IlNode::Symbol("text") => Ok(Self::Text),
+            IlNode::Symbol(name) => Ok(Self::Numeric(name)),
+            IlNode::List(_) => decode_type_form(cursor),
+            _ => Err(schema_error(
+                cursor.declaration(),
+                cursor.path(),
+                "IL type",
+                describe(cursor),
+            )),
+        }
+    }
+}
+
 impl<'a> IlDeclarationSchema<'a> {
     /// Returns the stable declaration metadata.
     #[must_use]
@@ -809,6 +911,197 @@ pub enum IlSchemaError {
         /// Observed parser-independent shape.
         actual: String,
     },
+}
+
+fn decode_type_form<'a>(cursor: &IlCursor<'a>) -> Result<IlType<'a>, IlSchemaError> {
+    let form = required_form(cursor, "type form")?;
+    match form.head() {
+        "var" => {
+            require_min_arity(&form, 1, "named type with identifier")?;
+            let name = required_string(
+                form.argument(0),
+                cursor.declaration(),
+                &child_path(&form, 0),
+                "type identifier",
+            )?;
+            let arguments = form
+                .arguments()
+                .skip(1)
+                .map(|argument| decode_argument(&argument))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(IlType::Named { name, arguments })
+        }
+        "tup" => Ok(IlType::Tuple(
+            form.arguments()
+                .map(|binding| decode_type_binding(&binding))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        "iter" => {
+            require_arity(&form, 2, "iterated type with element and iteration")?;
+            let element_cursor = form.argument(0).ok_or_else(|| {
+                schema_error(
+                    cursor.declaration(),
+                    cursor.path(),
+                    "iteration element type",
+                    "missing".to_owned(),
+                )
+            })?;
+            let iteration_cursor = form.argument(1).ok_or_else(|| {
+                schema_error(
+                    cursor.declaration(),
+                    cursor.path(),
+                    "iteration shape",
+                    "missing".to_owned(),
+                )
+            })?;
+            Ok(IlType::Iterated {
+                element: Box::new(IlType::decode(&element_cursor)?),
+                iteration: decode_iteration(&iteration_cursor)?,
+            })
+        }
+        _ => Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "type form var, tup, or iter",
+            describe(cursor),
+        )),
+    }
+}
+
+fn decode_argument<'a>(cursor: &IlCursor<'a>) -> Result<IlArgument<'a>, IlSchemaError> {
+    let form = required_form(cursor, "type-family argument")?;
+    require_arity(&form, 1, "single-payload type-family argument")?;
+    let payload = form.argument(0).ok_or_else(|| {
+        schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "type-family argument payload",
+            "missing".to_owned(),
+        )
+    })?;
+    match form.head() {
+        "exp" => Ok(IlArgument::Expression(payload)),
+        "typ" => Ok(IlArgument::Type(Box::new(IlType::decode(&payload)?))),
+        "def" => Ok(IlArgument::Definition(required_string(
+            Some(payload),
+            cursor.declaration(),
+            &child_path(&form, 0),
+            "definition identifier",
+        )?)),
+        "gram" => Ok(IlArgument::Grammar(payload)),
+        _ => Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "argument form exp, typ, def, or gram",
+            describe(cursor),
+        )),
+    }
+}
+
+fn decode_type_binding<'a>(cursor: &IlCursor<'a>) -> Result<IlTypeBinding<'a>, IlSchemaError> {
+    let form = required_form(cursor, "tuple type binding")?;
+    require_head(&form, "bind")?;
+    require_arity(&form, 2, "tuple binding with expression and type")?;
+    let binder = form.argument(0).ok_or_else(|| {
+        schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "tuple binding expression",
+            "missing".to_owned(),
+        )
+    })?;
+    let ty_cursor = form.argument(1).ok_or_else(|| {
+        schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "tuple binding type",
+            "missing".to_owned(),
+        )
+    })?;
+    Ok(IlTypeBinding {
+        binder,
+        ty: IlType::decode(&ty_cursor)?,
+    })
+}
+
+fn decode_iteration<'a>(cursor: &IlCursor<'a>) -> Result<IlIteration<'a>, IlSchemaError> {
+    match cursor.node() {
+        IlNode::Symbol("opt") => Ok(IlIteration::Optional),
+        IlNode::Symbol("list") => Ok(IlIteration::List),
+        IlNode::Symbol("list1") => Ok(IlIteration::NonEmptyList),
+        IlNode::List(_) => {
+            let form = required_form(cursor, "fixed-length iteration")?;
+            require_head(&form, "listn")?;
+            if !(1..=2).contains(&form.len()) {
+                return Err(schema_error(
+                    cursor.declaration(),
+                    cursor.path(),
+                    "listn with length and optional binder",
+                    format!("form with {} arguments", form.len()),
+                ));
+            }
+            let length = form.argument(0).ok_or_else(|| {
+                schema_error(
+                    cursor.declaration(),
+                    cursor.path(),
+                    "fixed iteration length",
+                    "missing".to_owned(),
+                )
+            })?;
+            let binder = form
+                .argument(1)
+                .map(|binder| {
+                    required_string(
+                        Some(binder),
+                        cursor.declaration(),
+                        &child_path(&form, 1),
+                        "fixed iteration binder",
+                    )
+                })
+                .transpose()?;
+            Ok(IlIteration::Fixed { length, binder })
+        }
+        _ => Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "iteration opt, list, list1, or listn",
+            describe(cursor),
+        )),
+    }
+}
+
+fn require_arity(
+    form: &IlForm<'_>,
+    arity: usize,
+    expected: &'static str,
+) -> Result<(), IlSchemaError> {
+    if form.len() == arity {
+        Ok(())
+    } else {
+        Err(schema_error(
+            form.cursor().declaration(),
+            form.cursor().path(),
+            expected,
+            format!("form {:?} with {} arguments", form.head(), form.len()),
+        ))
+    }
+}
+
+fn require_min_arity(
+    form: &IlForm<'_>,
+    minimum: usize,
+    expected: &'static str,
+) -> Result<(), IlSchemaError> {
+    if form.len() >= minimum {
+        Ok(())
+    } else {
+        Err(schema_error(
+            form.cursor().declaration(),
+            form.cursor().path(),
+            expected,
+            format!("form {:?} with {} arguments", form.head(), form.len()),
+        ))
+    }
 }
 
 fn decode_type<'a>(form: &IlForm<'a>) -> Result<IlDeclarationBody<'a>, IlSchemaError> {

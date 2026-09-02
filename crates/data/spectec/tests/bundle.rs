@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{
     ArtifactError, AstError, AstSummary, BundleManifest, DeclarationId, IlDeclarationBody,
-    IlDocument, IlKind, IlNode, Limits, ManifestError, RuleId, SPECTEC_VERSION, WASM_3_RELEASE,
-    WASM_3_REVISION, WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast, parse_ast,
+    IlDocument, IlKind, IlNode, IlType, Limits, ManifestError, RuleId, SPECTEC_VERSION,
+    WASM_3_RELEASE, WASM_3_REVISION, WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast, parse_ast,
 };
 
 fn root() -> PathBuf {
@@ -205,6 +205,41 @@ fn official_il_declarations_all_match_the_generic_schema() {
             .schema(DeclarationId::new(1, None).unwrap())
             .is_err()
     );
+}
+
+#[test]
+fn official_il_signatures_all_use_the_generic_type_schema() {
+    let bundle = covalence_data_spectec::wasm3_bundle().unwrap();
+    let il = bundle.il();
+    let mut decoded = 0;
+
+    for declaration in il.declarations() {
+        let schema = il.schema(declaration.id()).unwrap().unwrap();
+        let cursor = match schema.body() {
+            IlDeclarationBody::Type { .. } => continue,
+            IlDeclarationBody::Definition { result, .. }
+            | IlDeclarationBody::Grammar { result, .. } => result.clone(),
+            IlDeclarationBody::Relation { argument, .. } => argument.clone(),
+        };
+        IlType::decode(&cursor).unwrap();
+        decoded += 1;
+    }
+
+    assert_eq!(decoded, 774);
+
+    let malformed = IlDocument::parse(
+        b"(def \"f\" (unknown) (clause (num (nat 0))))",
+        Limits::default(),
+    )
+    .unwrap();
+    let schema = malformed
+        .schema(DeclarationId::new(1, None).unwrap())
+        .unwrap()
+        .unwrap();
+    let IlDeclarationBody::Definition { result, .. } = schema.body() else {
+        panic!("expected definition schema");
+    };
+    assert!(IlType::decode(result).is_err());
 }
 
 fn read(root: &Path, path: &str) -> Vec<u8> {
