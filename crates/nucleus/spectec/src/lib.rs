@@ -31,7 +31,8 @@ pub use expression::{ExpressionAlgebra, fold_expression};
 pub use grammar::{GrammarAlgebra, GrammarArgument, GrammarChildren, fold_grammar};
 pub use premise::{PremiseAlgebra, PremiseChildren, fold_premise};
 pub use relational::{
-    RelationalExpressionAlgebra, RelationalResolver, RelationalTerm, relational_hol_rule,
+    RelationalCall, RelationalExpressionAlgebra, RelationalResolver, RelationalTerm,
+    relational_hol_rule,
 };
 pub use schema::{HolDeclaration, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema};
 pub use selected::{SelectedCompileError, SelectedCompiler, SelectedKernel, SelectedRoot};

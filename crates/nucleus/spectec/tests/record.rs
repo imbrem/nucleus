@@ -8,7 +8,7 @@ use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
     CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolRule,
-    IndexErasure, KernelRoot, RelationalExpressionAlgebra, RelationalResolver,
+    IndexErasure, KernelRoot, RelationalCall, RelationalExpressionAlgebra, RelationalResolver,
     SelectedCompileError, SelectedCompiler, Source, TYPE_NAME, TranslationCase, TypeAlgebra,
     TypeChildren, close_hol_rule, close_hol_rules, declare_hol_schema, fold_expression,
     fold_grammar, fold_type, least_closed_family, least_closed_predicate, relational_hol_rule,
@@ -19,6 +19,7 @@ struct TestRelationalResolver {
     y: covalence_logic_hol::Ref,
     add: covalence_logic_hol::Ref,
     graph: covalence_logic_hol::Ref,
+    bool_ty: covalence_logic_hol::Ref,
 }
 
 impl RelationalResolver for TestRelationalResolver {
@@ -42,6 +43,23 @@ impl RelationalResolver for TestRelationalResolver {
         _reference: covalence_logic_hol::Ref,
     ) -> Result<(), Self::Error> {
         Ok(())
+    }
+
+    fn binding_type(
+        &mut self,
+        kernel: &mut Kernel,
+        binding: &covalence_data_spectec::IlBinding<'_>,
+    ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        if matches!(
+            binding,
+            covalence_data_spectec::IlBinding::Expression {
+                ty: IlType::Boolean,
+                ..
+            }
+        ) {
+            return Ok(self.bool_ty);
+        }
+        kernel.classifier(self.x).map_err(|error| error.to_string())
     }
 
     fn variable(
@@ -86,23 +104,30 @@ impl RelationalResolver for TestRelationalResolver {
         name: &str,
         _arguments: &[covalence_data_spectec::IlArgument<'_>],
         expression_arguments: &[covalence_logic_hol::Ref],
-    ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+    ) -> Result<RelationalCall, Self::Error> {
         if name != "f" {
             return Err("unknown definition".to_owned());
         }
         let [argument] = expression_arguments else {
             return Err("call arity mismatch".to_owned());
         };
-        kernel
+        let predicate = kernel
             .app(self.graph, *argument)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        let result_type = kernel
+            .classifier(self.x)
+            .map_err(|error| error.to_string())?;
+        Ok(RelationalCall {
+            predicate,
+            result_type,
+        })
     }
 }
 
 #[test]
 fn relational_expression_fold_turns_calls_into_graph_premises() {
     let il = IlDocument::parse(
-        b"(def \"g\" nat (clause (exp \"z\" nat) (call \"f\" (exp (bin add nat (var \"x\") (var \"y\"))))))",
+        b"(def \"g\" nat (clause (exp \"z\" nat) (exp \"flag\" bool) (call \"f\" (exp (bin add nat (var \"x\") (var \"y\"))))))",
         Limits::default(),
     )
     .unwrap();
@@ -124,19 +149,29 @@ fn relational_expression_fold_turns_calls_into_graph_premises() {
     let y = kernel.tm_fv(2, value).unwrap();
     let add = kernel.tm_fv(3, binary_ty).unwrap();
     let graph = kernel.tm_fv(4, graph_ty).unwrap();
-    let resolver = TestRelationalResolver { x, y, add, graph };
+    let resolver = TestRelationalResolver {
+        x,
+        y,
+        add,
+        graph,
+        bool_ty,
+    };
     let (term, explicit) = {
-        let mut algebra =
-            RelationalExpressionAlgebra::new(&mut kernel, resolver, value, bool_ty, 100);
+        let mut algebra = RelationalExpressionAlgebra::new(&mut kernel, resolver, 100);
         let explicit = algebra.bindings(schema.bindings()).unwrap();
         let term = fold_expression(schema.result(), &mut algebra).unwrap();
-        assert_eq!(algebra.next_name(), 102);
+        assert_eq!(algebra.next_name(), 103);
         (term, explicit)
     };
-    assert_eq!(explicit.len(), 1);
+    assert_eq!(explicit.len(), 2);
     assert!(
         kernel
             .equivalent(kernel.classifier(explicit[0]).unwrap(), value)
+            .unwrap()
+    );
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(explicit[1]).unwrap(), bool_ty)
             .unwrap()
     );
     assert_eq!(term.binders().len(), 1);
@@ -155,7 +190,7 @@ fn relational_expression_fold_turns_calls_into_graph_premises() {
     let candidate = kernel.tm_fv(200, predicate_ty).unwrap();
     let semantic_premise = kernel.bool(bool_ty, true).unwrap();
     let rule = relational_hol_rule(&explicit, &[term], &[semantic_premise]);
-    assert_eq!(rule.binders.len(), 2);
+    assert_eq!(rule.binders.len(), 3);
     assert_eq!(rule.premises.len(), 2);
     assert_eq!(rule.conclusion.len(), 1);
     let closure = close_hol_rule(&mut kernel, bool_ty, candidate, &rule).unwrap();

@@ -15,6 +15,15 @@ pub struct RelationalTerm {
     premises: Vec<Ref>,
 }
 
+/// Resolved graph predicate and checked result classifier for one call.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RelationalCall {
+    /// Graph predicate after applying every explicit input argument.
+    pub predicate: Ref,
+    /// Classifier of the fresh result accepted by `predicate`.
+    pub result_type: Ref,
+}
+
 impl RelationalTerm {
     /// Constructs an already-lowered relational term.
     #[must_use]
@@ -90,6 +99,18 @@ pub trait RelationalResolver {
     /// with the binding category.
     fn binding(&mut self, binding: &IlBinding<'_>, reference: Ref) -> Result<(), Self::Error>;
 
+    /// Resolves the checked classifier of one explicit IL binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when its IL type or higher-order signature cannot be
+    /// embedded in the selected HOL representation.
+    fn binding_type(
+        &mut self,
+        kernel: &mut Kernel,
+        binding: &IlBinding<'_>,
+    ) -> Result<Ref, Self::Error>;
+
     /// Resolves one variable expression to a checked term.
     ///
     /// # Errors
@@ -123,33 +144,23 @@ pub trait RelationalResolver {
         name: &str,
         arguments: &[IlArgument<'_>],
         expression_arguments: &[Ref],
-    ) -> Result<Ref, Self::Error>;
+    ) -> Result<RelationalCall, Self::Error>;
 }
 
 /// Concrete expression algebra producing relational HOL terms.
 pub struct RelationalExpressionAlgebra<'a, R> {
     kernel: &'a mut Kernel,
     resolver: R,
-    value_ty: Ref,
-    bool_ty: Ref,
     next_name: u64,
 }
 
 impl<'a, R> RelationalExpressionAlgebra<'a, R> {
     /// Starts a lowering with an explicit deterministic name range.
     #[must_use]
-    pub const fn new(
-        kernel: &'a mut Kernel,
-        resolver: R,
-        value_ty: Ref,
-        bool_ty: Ref,
-        first_name: u64,
-    ) -> Self {
+    pub const fn new(kernel: &'a mut Kernel, resolver: R, first_name: u64) -> Self {
         Self {
             kernel,
             resolver,
-            value_ty,
-            bool_ty,
             next_name: first_name,
         }
     }
@@ -166,7 +177,7 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
     {
         let mut references = Vec::with_capacity(bindings.len());
         for binding in bindings {
-            let classifier = self.binding_type(binding)?;
+            let classifier = self.resolver.binding_type(self.kernel, binding)?;
             let name = self.take_name()?;
             let reference = self
                 .kernel
@@ -188,30 +199,6 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
     #[must_use]
     pub fn into_resolver(self) -> R {
         self.resolver
-    }
-
-    fn binding_type(&mut self, binding: &IlBinding<'_>) -> Result<Ref, R::Error>
-    where
-        R: RelationalResolver,
-    {
-        let domains = match binding {
-            IlBinding::Expression { .. } => return Ok(self.value_ty),
-            IlBinding::Type { .. } => vec![self.value_ty],
-            IlBinding::Definition { parameters, .. } => {
-                vec![self.value_ty; parameters.len() + 1]
-            }
-            IlBinding::Grammar { parameters, .. } => {
-                vec![self.value_ty; parameters.len() + 2]
-            }
-        };
-        domains
-            .iter()
-            .rev()
-            .try_fold(self.bool_ty, |tail, &domain| {
-                self.kernel
-                    .ty_arr(domain, tail)
-                    .map_err(|source| self.resolver.kernel_error(source))
-            })
     }
 
     fn take_name(&mut self) -> Result<u64, R::Error>
@@ -254,15 +241,15 @@ impl<R: RelationalResolver> ExpressionAlgebra for RelationalExpressionAlgebra<'_
         let value = match &view {
             IlExpressionView::Variable(name) => self.resolver.variable(self.kernel, name)?,
             IlExpressionView::Call { name, arguments } => {
-                let prefix = self.resolver.call(self.kernel, name, arguments, &values)?;
+                let call = self.resolver.call(self.kernel, name, arguments, &values)?;
                 let name = self.take_name()?;
                 let result = self
                     .kernel
-                    .tm_fv(name, self.value_ty)
+                    .tm_fv(name, call.result_type)
                     .map_err(|source| self.resolver.kernel_error(source))?;
                 let premise = self
                     .kernel
-                    .app(prefix, result)
+                    .app(call.predicate, result)
                     .map_err(|source| self.resolver.kernel_error(source))?;
                 binders.push(result);
                 premises.push(premise);
