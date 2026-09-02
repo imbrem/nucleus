@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 use std::io::Cursor;
 
-use covalence_logic_lean::direct::{DirectDerivation, DirectHol};
+use covalence_logic_lean::direct::{DirectDerivation, DirectHol, DirectProofStep};
 use covalence_logic_lean::syntax::{Declaration, DefinitionSafety, LeanSyntax, Record, Tables};
 use covalence_logic_lean::{Artifacts, Backend, BackendArtifacts, ImportError, Metadata, import};
 
@@ -141,5 +141,58 @@ fn direct_backend_checks_an_implication_projection_proof() {
 #[test]
 fn direct_backend_rejects_a_proof_of_the_wrong_proposition() {
     let error = import(Cursor::new(projection_proof(0)), DirectHol::new()).unwrap_err();
+    assert!(matches!(error, ImportError::Backend { .. }));
+}
+
+fn equality_proof(reflexive: bool) -> String {
+    let right = if reflexive { 2 } else { 3 };
+    format!(
+        "{META}\n\
+         {{\"in\":1,\"str\":{{\"pre\":0,\"str\":\"A\"}}}}\n\
+         {{\"in\":2,\"str\":{{\"pre\":0,\"str\":\"x\"}}}}\n\
+         {{\"in\":3,\"str\":{{\"pre\":0,\"str\":\"y\"}}}}\n\
+         {{\"in\":4,\"str\":{{\"pre\":0,\"str\":\"Eq\"}}}}\n\
+         {{\"in\":5,\"str\":{{\"pre\":4,\"str\":\"refl\"}}}}\n\
+         {{\"in\":6,\"str\":{{\"pre\":0,\"str\":\"proof\"}}}}\n\
+         {{\"il\":1,\"succ\":0}}\n\
+         {{\"ie\":0,\"sort\":1}}\n\
+         {{\"axiom\":{{\"name\":1,\"levelParams\":[],\"type\":0,\"isUnsafe\":false}}}}\n\
+         {{\"ie\":1,\"const\":{{\"name\":1,\"us\":[]}}}}\n\
+         {{\"axiom\":{{\"name\":2,\"levelParams\":[],\"type\":1,\"isUnsafe\":false}}}}\n\
+         {{\"axiom\":{{\"name\":3,\"levelParams\":[],\"type\":1,\"isUnsafe\":false}}}}\n\
+         {{\"ie\":2,\"const\":{{\"name\":2,\"us\":[]}}}}\n\
+         {{\"ie\":3,\"const\":{{\"name\":3,\"us\":[]}}}}\n\
+         {{\"ie\":4,\"const\":{{\"name\":4,\"us\":[0]}}}}\n\
+         {{\"ie\":5,\"app\":{{\"fn\":4,\"arg\":1}}}}\n\
+         {{\"ie\":6,\"app\":{{\"fn\":5,\"arg\":2}}}}\n\
+         {{\"ie\":7,\"app\":{{\"fn\":6,\"arg\":{right}}}}}\n\
+         {{\"ie\":8,\"const\":{{\"name\":5,\"us\":[0]}}}}\n\
+         {{\"ie\":9,\"app\":{{\"fn\":8,\"arg\":1}}}}\n\
+         {{\"ie\":10,\"app\":{{\"fn\":9,\"arg\":2}}}}\n\
+         {{\"thm\":{{\"name\":6,\"levelParams\":[],\"type\":7,\"value\":10,\"all\":[]}}}}\n"
+    )
+}
+
+#[test]
+fn direct_backend_checks_lean_equality_reflexivity() {
+    let imported = import(Cursor::new(equality_proof(true)), DirectHol::new()).unwrap();
+    let (theorem, derivation) = imported.theorem_derivations().iter().next().unwrap();
+    let DirectDerivation::Proof {
+        proposition, steps, ..
+    } = derivation
+    else {
+        panic!("expected proof derivation")
+    };
+    assert!(matches!(
+        steps.as_slice(),
+        [DirectProofStep::EqualityReflexivity { equality, theorem: step, .. }]
+            if equality == proposition && step == theorem
+    ));
+    assert!(imported.backend().kernel().thm().get(*theorem).is_some());
+}
+
+#[test]
+fn direct_backend_rejects_nonreflexive_equality_as_refl() {
+    let error = import(Cursor::new(equality_proof(false)), DirectHol::new()).unwrap_err();
     assert!(matches!(error, ImportError::Backend { .. }));
 }

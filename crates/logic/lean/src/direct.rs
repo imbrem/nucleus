@@ -4,7 +4,8 @@
 //! full Lean embedding. It supports monomorphic simple types, constants,
 //! applications, lambdas, and non-dependent `forallE` arrows. For propositions
 //! it checks implication-introduction proofs made from lambdas, hypotheses, and
-//! earlier checked theorems. Definitions are eagerly delta-lowered to their
+//! earlier checked theorems, and interprets Lean's primitive `Eq`/`Eq.refl` as
+//! HOL equality/reflexivity. Definitions are eagerly delta-lowered to their
 //! values. Conversion beyond equality already known to the kernel is delegated
 //! to [`ConversionTactic`].
 
@@ -16,7 +17,7 @@ use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, SynFactId, ThmId, built
 
 use crate::import::{Artifacts, Backend};
 use crate::lean4export::Metadata;
-use crate::syntax::{Declaration, Expr, ExprId, Level, NameId, Record, Tables};
+use crate::syntax::{Declaration, Expr, ExprId, Level, Name, NameId, Record, Tables};
 
 /// Checked evidence returned by a conversion tactic.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -133,6 +134,12 @@ pub enum DirectProofStep {
         source: ThmId,
         theorem: ThmId,
     },
+    /// Lean's primitive `Eq.refl` was checked by HOL equality reflexivity.
+    EqualityReflexivity {
+        proof: ExprId,
+        equality: Ref,
+        theorem: ThmId,
+    },
 }
 
 /// Failure to lower the deliberately small direct-HOL fragment.
@@ -194,18 +201,29 @@ enum Proposition {
         left: Box<Self>,
         right: Box<Self>,
     },
+    Equality {
+        expression: ExprId,
+        reference: Ref,
+        ty: Ref,
+        left: Ref,
+        right: Ref,
+    },
 }
 
 impl Proposition {
     const fn expression(&self) -> ExprId {
         match self {
-            Self::Atom { expression, .. } | Self::Implication { expression, .. } => *expression,
+            Self::Atom { expression, .. }
+            | Self::Implication { expression, .. }
+            | Self::Equality { expression, .. } => *expression,
         }
     }
 
     const fn reference(&self) -> Ref {
         match self {
-            Self::Atom { reference, .. } | Self::Implication { reference, .. } => *reference,
+            Self::Atom { reference, .. }
+            | Self::Implication { reference, .. }
+            | Self::Equality { reference, .. } => *reference,
         }
     }
 }
@@ -411,38 +429,59 @@ impl<C: ConversionTactic> DirectHol<C> {
         if let Some(proposition) = self.propositions.get(&id) {
             return Ok(proposition.clone());
         }
-        let proposition = match &tables.expressions[id.0] {
-            Expr::Forall { ty, body, .. } => {
-                if occurs_bound(*body, 0, tables, 0) {
-                    return Self::unsupported("dependent propositions");
-                }
-                let left = self.lower_proposition(*ty, tables)?;
-                let right = self.lower_proposition(*body, tables)?;
-                let reference = self
-                    .kernel
-                    .op2(Op2::Imp, left.reference(), right.reference())
-                    .map_err(|source| DirectError::Construction { source })?;
-                Proposition::Implication {
-                    expression: id,
-                    reference,
-                    left: Box::new(left),
-                    right: Box::new(right),
-                }
+        let (head, arguments) = application_spine(id, tables);
+        let proposition = if const_named(head, tables, &["Eq"]) && arguments.len() == 3 {
+            let ty_value = self.lower_expr(arguments[0], tables, &mut Vec::new())?;
+            let ty = Self::expect_type(ty_value)?;
+            let left_value = self.lower_expr(arguments[1], tables, &mut Vec::new())?;
+            let left = Self::expect_term(left_value)?;
+            let right_value = self.lower_expr(arguments[2], tables, &mut Vec::new())?;
+            let right = Self::expect_term(right_value)?;
+            let reference = self
+                .kernel
+                .eq_at(self.bool_type()?, ty, left, right)
+                .map_err(|source| DirectError::Construction { source })?;
+            Proposition::Equality {
+                expression: id,
+                reference,
+                ty,
+                left,
+                right,
             }
-            Expr::MData { expression, .. } => self.lower_proposition(*expression, tables)?,
-            _ => {
-                let lowered = self.lower_expr(id, tables, &mut Vec::new())?;
-                let reference = Self::expect_term(lowered)?;
-                let classifier = self
-                    .kernel
-                    .classifier(reference)
-                    .map_err(|source| DirectError::Construction { source })?;
-                if classifier != self.bool_type()? {
-                    return Err(DirectError::ProofMismatch { proof: id.0 });
+        } else {
+            match &tables.expressions[id.0] {
+                Expr::Forall { ty, body, .. } => {
+                    if occurs_bound(*body, 0, tables, 0) {
+                        return Self::unsupported("dependent propositions");
+                    }
+                    let left = self.lower_proposition(*ty, tables)?;
+                    let right = self.lower_proposition(*body, tables)?;
+                    let reference = self
+                        .kernel
+                        .op2(Op2::Imp, left.reference(), right.reference())
+                        .map_err(|source| DirectError::Construction { source })?;
+                    Proposition::Implication {
+                        expression: id,
+                        reference,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    }
                 }
-                Proposition::Atom {
-                    expression: id,
-                    reference,
+                Expr::MData { expression, .. } => self.lower_proposition(*expression, tables)?,
+                _ => {
+                    let lowered = self.lower_expr(id, tables, &mut Vec::new())?;
+                    let reference = Self::expect_term(lowered)?;
+                    let classifier = self
+                        .kernel
+                        .classifier(reference)
+                        .map_err(|source| DirectError::Construction { source })?;
+                    if classifier != self.bool_type()? {
+                        return Err(DirectError::ProofMismatch { proof: id.0 });
+                    }
+                    Proposition::Atom {
+                        expression: id,
+                        reference,
+                    }
                 }
             }
         };
@@ -458,6 +497,11 @@ impl<C: ConversionTactic> DirectHol<C> {
         context: &mut Vec<Ref>,
         steps: &mut Vec<DirectProofStep>,
     ) -> Result<ThmId, DirectError<C::Error>> {
+        let (head, arguments) = application_spine(proof, tables);
+        if const_named(head, tables, &["Eq", "refl"]) && arguments.len() == 2 {
+            return self
+                .prove_equality_reflexivity(proof, &arguments, expected, tables, context, steps);
+        }
         match &tables.expressions[proof.0] {
             Expr::BVar(index) => {
                 let position =
@@ -548,6 +592,49 @@ impl<C: ConversionTactic> DirectHol<C> {
             }
             _ => Self::unsupported("proof terms beyond implication introduction and hypotheses"),
         }
+    }
+
+    fn prove_equality_reflexivity(
+        &mut self,
+        proof: ExprId,
+        arguments: &[ExprId],
+        expected: &Proposition,
+        tables: &Tables,
+        context: &[Ref],
+        steps: &mut Vec<DirectProofStep>,
+    ) -> Result<ThmId, DirectError<C::Error>> {
+        let Proposition::Equality {
+            reference,
+            ty,
+            left,
+            right,
+            ..
+        } = expected
+        else {
+            return Err(DirectError::ProofMismatch { proof: proof.0 });
+        };
+        let proof_ty_value = self.lower_expr(arguments[0], tables, &mut Vec::new())?;
+        let proof_ty = Self::expect_type(proof_ty_value)?;
+        let value_value = self.lower_expr(arguments[1], tables, &mut Vec::new())?;
+        let value = Self::expect_term(value_value)?;
+        if proof_ty != *ty || value != *left || left != right {
+            return Err(DirectError::ProofMismatch { proof: proof.0 });
+        }
+        let theorem = self
+            .kernel
+            .refl_at(*reference)
+            .map_err(|source| DirectError::Construction { source })?;
+        for hypothesis in context {
+            self.kernel
+                .weaken(theorem, &[Lit::positive(hypothesis.get())], &[])
+                .map_err(|source| DirectError::Construction { source })?;
+        }
+        steps.push(DirectProofStep::EqualityReflexivity {
+            proof,
+            equality: *reference,
+            theorem,
+        });
+        Ok(theorem)
     }
 
     fn take_binder_name(&mut self) -> Result<u64, DirectError<C::Error>> {
@@ -714,4 +801,35 @@ fn occurs_bound(id: ExprId, target: usize, tables: &Tables, depth: usize) -> boo
         Expr::MData { expression, .. } => occurs_bound(*expression, target, tables, depth),
         Expr::Sort(_) | Expr::Const { .. } | Expr::NatLit(_) | Expr::StrLit(_) => false,
     }
+}
+
+fn application_spine(id: ExprId, tables: &Tables) -> (ExprId, Vec<ExprId>) {
+    let mut head = id;
+    let mut arguments = Vec::new();
+    while let Expr::App { function, argument } = tables.expressions[head.0] {
+        arguments.push(argument);
+        head = function;
+    }
+    arguments.reverse();
+    (head, arguments)
+}
+
+fn const_named(id: ExprId, tables: &Tables, expected: &[&str]) -> bool {
+    let Expr::Const { name, .. } = &tables.expressions[id.0] else {
+        return false;
+    };
+    let mut components = Vec::new();
+    let mut current = *name;
+    loop {
+        match &tables.names[current.0] {
+            Name::Anonymous => break,
+            Name::Str { prefix, value } => {
+                components.push(value.as_str());
+                current = *prefix;
+            }
+            Name::Num { .. } => return false,
+        }
+    }
+    components.reverse();
+    components == expected
 }
