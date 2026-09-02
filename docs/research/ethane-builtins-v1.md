@@ -22,10 +22,10 @@ versioned tag otherwise. Writers emit only the version they declare.
 
 ## Families
 
-| family | tag | operands |
-| --- | --- | --- |
-| `op1` | `tm.op1.v1` | one Boolean |
-| `op2` | `tm.op2.v1` | two Boolean |
+| family | tag          | operands    |
+| ------ | ------------ | ----------- |
+| `op1`  | `tm.op1.v1`  | one Boolean |
+| `op2`  | `tm.op2.v1`  | two Boolean |
 | `num1` | `tm.num1.v1` | one numeric |
 | `num2` | `tm.num2.v1` | two numeric |
 
@@ -69,11 +69,11 @@ inputs where the mathematical operation is undefined. That result is part of
 the frozen meaning. The `total` column records it: `-` when the operation is
 defined everywhere, otherwise what it returns on those inputs.
 
-| case | result | column |
-| --- | --- | --- |
-| `nat.pred 0` | `0` | `zero` |
-| `nat.sub a b` with `b > a` | `0` | `zero` |
-| `nat.div` or `int.div` by zero | `0` | `zero` |
+| case                           | result       | column     |
+| ------------------------------ | ------------ | ---------- |
+| `nat.pred 0`                   | `0`          | `zero`     |
+| `nat.sub a b` with `b > a`     | `0`          | `zero`     |
+| `nat.div` or `int.div` by zero | `0`          | `zero`     |
 | `nat.mod` or `int.mod` by zero | the dividend | `dividend` |
 
 Division by zero follows Lean, Coq, and Isabelle/HOL: `a / 0 = 0` and

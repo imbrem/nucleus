@@ -18,7 +18,7 @@ The init slice already freezes `nat.zero`, `nat.succ`, `nat.rec`, `nat.add`,
     add.commutative  mul.zero  mul.successor
     induction  succ.injective  zero_ne_succ
 
-`nat` is a commutative *semiring*, not a ring: there is no additive inverse,
+`nat` is a commutative _semiring_, not a ring: there is no additive inverse,
 and `nat.sub` is truncated. So `x * y + 5 - 3` normalizes to `x * y + 2` only
 because the subtraction is by a literal that a literal summand covers. A
 normalizer over `nat` must treat any subtraction it cannot discharge as an
@@ -31,17 +31,17 @@ Each is an induction of the same shape as `prove_add_commutative` in
 `add.associative` took ~90 lines and added 242 arena rows in 64 ms;
 `mul.right_zero` ~45 lines and 124 rows in 41 ms. Both worked on first run.
 
-| law | statement | proof |
-| --- | --- | --- |
-| `add.associative` | `(a+b)+c = a+(b+c)` | induction on `a` |
-| `add.exchange` | `(x+y)+z = (x+z)+y` | equational, from associativity and commutativity |
-| `mul.right_zero` | `n*0 = 0` | induction on `n` |
-| `mul.right_successor` | `n*(succ m) = n*m + n` | induction on `n`; the heaviest one |
-| `mul.one` | `1*n = n` and `n*1 = n` | equational |
-| `mul.commutative` | `a*b = b*a` | induction on `a` |
-| `mul.right_distributive` | `(a+b)*c = a*c + b*c` | induction on `a` |
-| `mul.left_distributive` | `a*(b+c) = a*b + a*c` | equational, from the above and commutativity |
-| `mul.associative` | `(a*b)*c = a*(b*c)` | induction on `a`, after distributivity |
+| law                      | statement               | proof                                            |
+| ------------------------ | ----------------------- | ------------------------------------------------ |
+| `add.associative`        | `(a+b)+c = a+(b+c)`     | induction on `a`                                 |
+| `add.exchange`           | `(x+y)+z = (x+z)+y`     | equational, from associativity and commutativity |
+| `mul.right_zero`         | `n*0 = 0`               | induction on `n`                                 |
+| `mul.right_successor`    | `n*(succ m) = n*m + n`  | induction on `n`; the heaviest one               |
+| `mul.one`                | `1*n = n` and `n*1 = n` | equational                                       |
+| `mul.commutative`        | `a*b = b*a`             | induction on `a`                                 |
+| `mul.right_distributive` | `(a+b)*c = a*c + b*c`   | induction on `a`                                 |
+| `mul.left_distributive`  | `a*(b+c) = a*b + a*c`   | equational, from the above and commutativity     |
+| `mul.associative`        | `(a*b)*c = a*(b*c)`     | induction on `a`, after distributivity           |
 
 That completes the commutative semiring, which is all the normalizer needs.
 
