@@ -157,26 +157,22 @@ pub type CoverageParts<Classification> = (
 /// Deterministic, exhaustive coverage plan for the first add slice.
 pub type AddSlicePlan = CoveragePlan<Disposition>;
 
-/// Canonical audit artifact linking exact inputs to one closed coverage plan.
+/// Generic audit artifact linking exact inputs to one coverage plan.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AddSliceArtifact {
+pub struct CoverageArtifact<Classification> {
     bundle: Cid,
     ast: Cid,
-    plan: AddSlicePlan,
+    plan: CoveragePlan<Classification>,
 }
 
-impl AddSliceArtifact {
-    /// Builds the canonical plan for one exact verified source.
-    ///
-    /// # Errors
-    ///
-    /// Returns any structural coverage error from [`AddSlicePlan::build`].
-    pub fn build(source: &Source) -> Result<Self, AddSliceError> {
-        Ok(Self {
-            bundle: source.bundle(),
-            ast: source.ast(),
-            plan: AddSlicePlan::build(source)?,
-        })
+/// Canonical audit artifact for the first add slice.
+pub type AddSliceArtifact = CoverageArtifact<Disposition>;
+
+impl<Classification> CoverageArtifact<Classification> {
+    /// Composes an artifact from exact input links and a coverage plan.
+    #[must_use]
+    pub const fn new(bundle: Cid, ast: Cid, plan: CoveragePlan<Classification>) -> Self {
+        Self { bundle, ast, plan }
     }
 
     /// Returns the exact source-bundle CID.
@@ -191,10 +187,31 @@ impl AddSliceArtifact {
         self.ast
     }
 
-    /// Returns the closed coverage plan.
+    /// Returns the coverage plan.
     #[must_use]
-    pub const fn plan(&self) -> &AddSlicePlan {
+    pub const fn plan(&self) -> &CoveragePlan<Classification> {
         &self.plan
+    }
+
+    /// Decomposes an artifact without cloning its plan.
+    #[must_use]
+    pub fn into_parts(self) -> (Cid, Cid, CoveragePlan<Classification>) {
+        (self.bundle, self.ast, self.plan)
+    }
+}
+
+impl CoverageArtifact<Disposition> {
+    /// Builds the canonical plan for one exact verified source.
+    ///
+    /// # Errors
+    ///
+    /// Returns any structural coverage error from [`AddSlicePlan::build`].
+    pub fn build(source: &Source) -> Result<Self, AddSliceError> {
+        Ok(Self {
+            bundle: source.bundle(),
+            ast: source.ast(),
+            plan: AddSlicePlan::build(source)?,
+        })
     }
 
     /// Encodes the artifact as canonical ATProto-profile DRISL.

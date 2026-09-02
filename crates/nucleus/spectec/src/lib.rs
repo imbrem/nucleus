@@ -12,7 +12,7 @@ mod add_slice;
 
 pub use add_slice::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSliceError, AddSlicePlan,
-    ClauseCoverage, Coverage, CoverageDisposition, CoverageParts, CoveragePlan,
+    ClauseCoverage, Coverage, CoverageArtifact, CoverageDisposition, CoverageParts, CoveragePlan,
     DeclarationCoverage, Disposition, Rejection, RuleCoverage, SourceSpan, TranslationCase,
 };
 

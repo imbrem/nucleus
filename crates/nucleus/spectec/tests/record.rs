@@ -3,8 +3,8 @@ use covalence_data_spectec::{DeclarationId, IlDocument, Limits};
 use covalence_logic_hol::Kernel;
 use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
-    CompilationRecord, CompileError, Compiler, Disposition, KernelRoot, Source, TYPE_NAME,
-    TranslationCase,
+    CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoveragePlan,
+    Disposition, KernelRoot, Source, TYPE_NAME, TranslationCase,
 };
 
 #[test]
@@ -75,6 +75,29 @@ fn add_slice_exhaustively_classifies_exact_structural_forms() {
             .count();
         assert!(usize::try_from(span.last_line).unwrap() <= line_count);
     }
+}
+
+#[test]
+fn generic_coverage_artifact_composes_without_add_policy() {
+    let bundle = drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle");
+    let ast = drisl::address(CidCodec::Raw, CidHash::Sha256, b"ast");
+    let id = DeclarationId::new(1, None).unwrap();
+    let plan = CoveragePlan::new(
+        vec![Coverage {
+            id,
+            disposition: "handled",
+        }],
+        Vec::new(),
+        Vec::new(),
+    );
+    let artifact = CoverageArtifact::new(bundle, ast, plan);
+
+    assert_eq!(artifact.bundle(), bundle);
+    assert_eq!(artifact.ast(), ast);
+    assert_eq!(artifact.plan().declarations()[0].disposition, "handled");
+    let (actual_bundle, actual_ast, plan) = artifact.into_parts();
+    assert_eq!((actual_bundle, actual_ast), (bundle, ast));
+    assert_eq!(plan.declarations()[0].id, id);
 }
 
 #[test]
