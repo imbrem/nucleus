@@ -453,6 +453,7 @@ fn complete_relation_rule_lowers_to_inductive_hol_rule() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Covers decoding, mutual scope, hygiene, and slot equations.
 fn mutually_recursive_relations_lower_to_one_least_hol_family() {
     let il = IlDocument::parse(
         br#"(rel "R" "R" nat
@@ -501,6 +502,8 @@ fn mutually_recursive_relations_lower_to_one_least_hol_family() {
     let bool_ty = kernel.bool_ty(star).unwrap();
     let value = kernel.ty_fv(0, star).unwrap();
     let predicate_ty = kernel.ty_arr(value, bool_ty).unwrap();
+    let first_predicate = kernel.tm_fv(20, predicate_ty).unwrap();
+    let second_predicate = kernel.tm_fv(21, predicate_ty).unwrap();
     let binary_tail = kernel.ty_arr(value, value).unwrap();
     let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
     let graph_tail = kernel.ty_arr(value, bool_ty).unwrap();
@@ -523,12 +526,12 @@ fn mutually_recursive_relations_lower_to_one_least_hol_family() {
         &[
             RelationalRelation {
                 name: "R",
-                predicate_type: predicate_ty,
+                predicate: first_predicate,
                 rules: &first_rules,
             },
             RelationalRelation {
                 name: "S",
-                predicate_type: predicate_ty,
+                predicate: second_predicate,
                 rules: &second_rules,
             },
         ],
@@ -536,10 +539,24 @@ fn mutually_recursive_relations_lower_to_one_least_hol_family() {
     .unwrap();
 
     assert_eq!(family.len(), 2);
+    assert_eq!(family[0].predicate, first_predicate);
+    assert_eq!(family[1].predicate, second_predicate);
+    assert_ne!(family[0].least.candidate, first_predicate);
+    assert_ne!(family[0].least.candidate, second_predicate);
+    assert_ne!(family[1].least.candidate, first_predicate);
+    assert_ne!(family[1].least.candidate, second_predicate);
     for relation in family {
         assert!(
             kernel
-                .equivalent(kernel.classifier(relation.predicate).unwrap(), predicate_ty)
+                .equivalent(
+                    kernel.classifier(relation.least.predicate).unwrap(),
+                    predicate_ty
+                )
+                .unwrap()
+        );
+        assert!(
+            kernel
+                .equivalent(kernel.classifier(relation.equation).unwrap(), bool_ty)
                 .unwrap()
         );
     }

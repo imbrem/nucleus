@@ -26,7 +26,8 @@ pub use add_slice::{
 };
 pub use closure::{
     HolRule, LeastFamilyBuilder, LeastPredicate, LeastPredicateError, begin_least_closed_family,
-    close_hol_rule, close_hol_rules, least_closed_family, least_closed_predicate,
+    begin_least_closed_family_avoiding, close_hol_rule, close_hol_rules, least_closed_family,
+    least_closed_predicate,
 };
 pub use expression::{ExpressionAlgebra, fold_expression};
 pub use grammar::{GrammarAlgebra, GrammarArgument, GrammarChildren, fold_grammar};
@@ -34,8 +35,8 @@ pub use premise::{PremiseAlgebra, PremiseChildren, fold_premise};
 pub use relational::{
     RelationalCall, RelationalCaseError, RelationalClause, RelationalCondition,
     RelationalDefinition, RelationalDefinitionSource, RelationalExpressionAlgebra,
-    RelationalRelation, RelationalResolver, RelationalTerm, relational_definition,
-    relational_hol_case, relational_hol_rule, relational_relations,
+    RelationalRelation, RelationalRelationDefinition, RelationalResolver, RelationalTerm,
+    relational_definition, relational_hol_case, relational_hol_rule, relational_relations,
 };
 pub use schema::{
     HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,

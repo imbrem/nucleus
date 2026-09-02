@@ -196,6 +196,26 @@ pub fn begin_least_closed_family<'a>(
     bool_ty: Ref,
     predicate_tys: &[Ref],
 ) -> Result<LeastFamilyBuilder<'a>, LeastPredicateError> {
+    begin_least_closed_family_avoiding(kernel, bool_ty, predicate_tys, &[])
+}
+
+/// Begins a transactional least-family construction while reserving every
+/// free-variable name reachable from caller-supplied roots.
+///
+/// This is the hygienic form for embedding a family beside existing semantic
+/// slots or rule parameters. The simpler [`begin_least_closed_family`] is
+/// equivalent with an empty avoidance set.
+///
+/// # Errors
+///
+/// Returns an error for an empty family, a classifier not ending in Boolean,
+/// or checked candidate/name construction failure. `kernel` is unchanged.
+pub fn begin_least_closed_family_avoiding<'a>(
+    kernel: &'a mut Kernel,
+    bool_ty: Ref,
+    predicate_tys: &[Ref],
+    avoid: &[Ref],
+) -> Result<LeastFamilyBuilder<'a>, LeastPredicateError> {
     if predicate_tys.is_empty() {
         return Err(LeastPredicateError::NotPredicate);
     }
@@ -209,6 +229,7 @@ pub fn begin_least_closed_family<'a>(
     }
     let roots = std::iter::once(bool_ty)
         .chain(predicate_tys.iter().copied())
+        .chain(avoid.iter().copied())
         .collect::<Vec<_>>();
     let base = staged
         .fresh_name(&roots)

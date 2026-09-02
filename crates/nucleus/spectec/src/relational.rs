@@ -9,7 +9,8 @@ use covalence_logic_hol::{Kernel, KernelError, Ref};
 
 use crate::{
     ExpressionAlgebra, HolCase, HolRule, LeastPredicate, LeastPredicateError,
-    begin_least_closed_family, close_hol_rule, close_hol_rules, existential_case, fold_expression,
+    begin_least_closed_family_avoiding, close_hol_rule, close_hol_rules, existential_case,
+    fold_expression,
 };
 
 /// Relational meaning of one expression.
@@ -113,10 +114,21 @@ pub struct RelationalDefinitionSource<'a> {
 pub struct RelationalRelation<'a> {
     /// Exact relation name used by nested rule premises.
     pub name: &'a str,
-    /// Checked curried predicate classifier.
-    pub predicate_type: Ref,
+    /// Checked semantic-predicate slot declared by the generic schema.
+    pub predicate: Ref,
     /// Decoded source rules in exact order.
     pub rules: &'a [IlRuleSchema<'a>],
+}
+
+/// Exact definition of one schema relation slot by a least-family member.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RelationalRelationDefinition {
+    /// Free semantic slot supplied by the checked schema.
+    pub predicate: Ref,
+    /// Direct impredicative least predicate generated from the relation rules.
+    pub least: LeastPredicate,
+    /// Checked proposition `predicate = least.predicate`.
+    pub equation: Ref,
 }
 
 impl RelationalCondition {
@@ -472,16 +484,26 @@ pub fn relational_relations<R>(
     resolver: &mut R,
     bool_ty: Ref,
     relations: &[RelationalRelation<'_>],
-) -> Result<Vec<LeastPredicate>, R::Error>
+) -> Result<Vec<RelationalRelationDefinition>, R::Error>
 where
     R: RelationalResolver,
 {
+    let mut staged = kernel.fork();
     let predicate_types = relations
         .iter()
-        .map(|relation| relation.predicate_type)
+        .map(|relation| {
+            staged
+                .classifier(relation.predicate)
+                .map_err(|source| resolver.kernel_error(source))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let predicates = relations
+        .iter()
+        .map(|relation| relation.predicate)
         .collect::<Vec<_>>();
-    let mut builder = begin_least_closed_family(kernel, bool_ty, &predicate_types)
-        .map_err(|source| resolver.least_error(source))?;
+    let mut builder =
+        begin_least_closed_family_avoiding(&mut staged, bool_ty, &predicate_types, &predicates)
+            .map_err(|source| resolver.least_error(source))?;
     let closure = {
         let (staged, candidates) = builder.parts();
         let candidate_names = relations
@@ -511,9 +533,25 @@ where
         close_hol_rules(staged, bool_ty, &closures)
             .map_err(|source| resolver.kernel_error(source))?
     };
-    builder
+    let family = builder
         .finish(closure)
-        .map_err(|source| resolver.least_error(source))
+        .map_err(|source| resolver.least_error(source))?;
+    let definitions = relations
+        .iter()
+        .zip(family)
+        .map(|(relation, least)| {
+            staged
+                .eq(bool_ty, relation.predicate, least.predicate)
+                .map(|equation| RelationalRelationDefinition {
+                    predicate: relation.predicate,
+                    least,
+                    equation,
+                })
+                .map_err(|source| resolver.kernel_error(source))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    *kernel = staged;
+    Ok(definitions)
 }
 
 /// Concrete expression algebra producing relational HOL terms.
