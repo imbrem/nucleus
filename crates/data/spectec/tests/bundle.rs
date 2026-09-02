@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{
     ArtifactError, AstError, AstSummary, BundleManifest, DeclarationId, IlClauseSchema,
-    IlDeclarationBody, IlDocument, IlKind, IlNode, IlProductionSchema, IlRuleSchema, IlType,
-    Limits, ManifestError, RuleId, SPECTEC_VERSION, WASM_3_RELEASE, WASM_3_REVISION,
-    WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast, parse_ast,
+    IlDeclarationBody, IlDocument, IlExpression, IlKind, IlNode, IlPremise, IlProductionSchema,
+    IlRuleSchema, IlType, Limits, ManifestError, RuleId, SPECTEC_VERSION, WASM_3_RELEASE,
+    WASM_3_REVISION, WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast, parse_ast,
 };
 
 fn root() -> PathBuf {
@@ -78,6 +78,7 @@ fn official_il_rules_all_match_the_generic_rule_schema() {
     let bundle = covalence_data_spectec::wasm3_bundle().unwrap();
     let il = bundle.il();
     let mut decoded = 0;
+    let mut expressions = 0;
 
     for declaration in il.declarations() {
         for rule in il.rules(declaration.id()).unwrap().unwrap() {
@@ -85,11 +86,14 @@ fn official_il_rules_all_match_the_generic_rule_schema() {
             let schema = IlRuleSchema::decode(&cursor).unwrap();
             assert_eq!(schema.name(), rule.name());
             assert_eq!(schema.cursor().path(), rule.id().path().collect::<Vec<_>>());
+            expressions += expression_nodes(schema.conclusion());
+            expressions += schema.premises().iter().map(premise_nodes).sum::<usize>();
             decoded += 1;
         }
     }
 
     assert_eq!(decoded, 781);
+    assert!(expressions > 10_000);
 
     let malformed = IlDocument::parse(
         b"(rel \"R\" \"%\" bool (rule \"bad\" \"%\" (unknown)))",
@@ -277,6 +281,7 @@ fn official_il_clauses_and_productions_match_the_generic_schema() {
     let il = bundle.il();
     let mut clauses = 0;
     let mut productions = 0;
+    let mut expressions = 0;
 
     for declaration in il.declarations() {
         let schema = il.schema(declaration.id()).unwrap().unwrap();
@@ -285,7 +290,9 @@ fn official_il_clauses_and_productions_match_the_generic_schema() {
                 clauses: cursors, ..
             } => {
                 for cursor in cursors {
-                    IlClauseSchema::decode(cursor).unwrap();
+                    let schema = IlClauseSchema::decode(cursor).unwrap();
+                    expressions += expression_nodes(schema.result());
+                    expressions += schema.premises().iter().map(premise_nodes).sum::<usize>();
                     clauses += 1;
                 }
             }
@@ -294,7 +301,9 @@ fn official_il_clauses_and_productions_match_the_generic_schema() {
                 ..
             } => {
                 for cursor in cursors {
-                    IlProductionSchema::decode(cursor).unwrap();
+                    let schema = IlProductionSchema::decode(cursor).unwrap();
+                    expressions += expression_nodes(schema.result());
+                    expressions += schema.premises().iter().map(premise_nodes).sum::<usize>();
                     productions += 1;
                 }
             }
@@ -304,6 +313,10 @@ fn official_il_clauses_and_productions_match_the_generic_schema() {
 
     assert_eq!(clauses, 793);
     assert_eq!(productions, 1_432);
+    assert!(
+        expressions > 10_000,
+        "decoded only {expressions} expressions"
+    );
 
     let malformed = IlDocument::parse(
         b"(def \"f\" bool (clause (exp (var \"x\"))))",
@@ -313,6 +326,28 @@ fn official_il_clauses_and_productions_match_the_generic_schema() {
     let id = DeclarationId::new(1, None).unwrap();
     let clause = malformed.clauses(id).unwrap().remove(0);
     assert!(IlClauseSchema::decode(&malformed.clause_cursor(clause.id()).unwrap()).is_err());
+}
+
+fn expression_nodes(expression: &IlExpression<'_>) -> usize {
+    1 + expression
+        .children()
+        .unwrap()
+        .iter()
+        .map(expression_nodes)
+        .sum::<usize>()
+}
+
+fn premise_nodes(premise: &IlPremise<'_>) -> usize {
+    match premise {
+        IlPremise::Rule(rule) => {
+            expression_nodes(rule.conclusion())
+                + rule.premises().iter().map(premise_nodes).sum::<usize>()
+        }
+        IlPremise::If(expression) => expression_nodes(expression),
+        IlPremise::Let { left, right } => expression_nodes(left) + expression_nodes(right),
+        IlPremise::Otherwise => 0,
+        IlPremise::Iterated { premise, .. } => premise_nodes(premise),
+    }
 }
 
 fn read(root: &Path, path: &str) -> Vec<u8> {

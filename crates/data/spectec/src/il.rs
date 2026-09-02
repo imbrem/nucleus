@@ -723,6 +723,23 @@ impl<'a> IlExpression<'a> {
     pub fn validate(&self) -> Result<(), IlSchemaError> {
         validate_expression(self)
     }
+
+    /// Returns the direct semantic child expressions in deterministic order.
+    ///
+    /// Wrapper nodes such as call arguments, record fields, iteration domains,
+    /// and update paths are traversed here, so consumers can implement a
+    /// generic bottom-up fold without knowing their positional encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error at the first malformed node in this expression tree.
+    pub fn children(&self) -> Result<Vec<Self>, IlSchemaError> {
+        self.validate()?;
+        expression_child_cursors(self)?
+            .iter()
+            .map(Self::decode)
+            .collect()
+    }
 }
 
 /// One relation rule or relation-valued premise.
@@ -1082,6 +1099,105 @@ fn validate_expression(expression: &IlExpression<'_>) -> Result<(), IlSchemaErro
         }
     }
     Ok(())
+}
+
+fn expression_child_cursors<'a>(
+    expression: &IlExpression<'a>,
+) -> Result<Vec<IlCursor<'a>>, IlSchemaError> {
+    use IlExpressionKind as K;
+    let form = required_form(expression.cursor(), "decoded expression")?;
+    let mut children = Vec::new();
+    match expression.kind() {
+        K::Variable | K::Boolean | K::Number | K::Text => {}
+        K::Unary => push_argument(&mut children, &form, 2, "unary operand")?,
+        K::Binary | K::Comparison => {
+            push_argument(&mut children, &form, 2, "left operand")?;
+            push_argument(&mut children, &form, 3, "right operand")?;
+        }
+        K::Tuple | K::List | K::Optional => children.extend(form.arguments()),
+        K::Projection | K::Uncase | K::UnwrapOptional | K::Dot | K::Lift | K::Length => {
+            push_argument(&mut children, &form, 0, "unary expression payload")?;
+        }
+        K::Case => push_argument(&mut children, &form, 1, "variant payload")?,
+        K::Struct => {
+            for field in form.arguments() {
+                let field_form = required_form(&field, "record expression field")?;
+                push_argument(&mut children, &field_form, 1, "record field expression")?;
+            }
+        }
+        K::Compose | K::Membership | K::Concatenate | K::Index => {
+            push_argument(&mut children, &form, 0, "left expression")?;
+            push_argument(&mut children, &form, 1, "right expression")?;
+        }
+        K::Slice => {
+            for index in 0..3 {
+                push_argument(&mut children, &form, index, "slice expression")?;
+            }
+        }
+        K::Update | K::Extend => {
+            push_argument(&mut children, &form, 0, "updated expression")?;
+            collect_path_expressions(&required_argument(&form, 1, "update path")?, &mut children)?;
+            push_argument(&mut children, &form, 2, "update value")?;
+        }
+        K::Call => {
+            for argument in form.arguments().skip(1) {
+                if let IlArgument::Expression(payload) = decode_argument(&argument)? {
+                    children.push(payload);
+                }
+            }
+        }
+        K::Iterate => {
+            push_argument(&mut children, &form, 0, "iterated expression")?;
+            let iteration =
+                decode_iteration(&required_argument(&form, 1, "expression iteration")?)?;
+            if let IlIteration::Fixed { length, .. } = iteration {
+                children.push(length);
+            }
+            for domain in form.arguments().skip(2) {
+                let domain_form = required_form(&domain, "iteration domain")?;
+                push_argument(&mut children, &domain_form, 1, "domain expression")?;
+            }
+        }
+        K::Convert | K::Subtype => {
+            push_argument(&mut children, &form, 2, "converted expression")?;
+        }
+    }
+    Ok(children)
+}
+
+fn push_argument<'a>(
+    output: &mut Vec<IlCursor<'a>>,
+    form: &IlForm<'a>,
+    index: usize,
+    expected: &'static str,
+) -> Result<(), IlSchemaError> {
+    output.push(required_argument(form, index, expected)?);
+    Ok(())
+}
+
+fn collect_path_expressions<'a>(
+    cursor: &IlCursor<'a>,
+    output: &mut Vec<IlCursor<'a>>,
+) -> Result<(), IlSchemaError> {
+    if cursor.node() == IlNode::Symbol("root") {
+        return Ok(());
+    }
+    let form = required_form(cursor, "update path")?;
+    collect_path_expressions(&required_argument(&form, 0, "parent path")?, output)?;
+    match form.head() {
+        "idx" => push_argument(output, &form, 1, "path index"),
+        "slice" => {
+            push_argument(output, &form, 1, "path slice start")?;
+            push_argument(output, &form, 2, "path slice length")
+        }
+        "dot" => Ok(()),
+        _ => Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "path root, idx, slice, or dot",
+            describe(cursor),
+        )),
+    }
 }
 
 fn validate_expression_argument(
