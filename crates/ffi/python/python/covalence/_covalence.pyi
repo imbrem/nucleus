@@ -528,6 +528,16 @@ class CasAddressMismatchError(CasLookupError):
 class LratError(ValueError):
     """A typed LRAT operation was rejected."""
 
+class AletheError(ValueError):
+    """An Alethe problem or proof was rejected."""
+
+class QfUfRefutation:
+    theorem: int
+    assertions: list[int]
+    kernel_len: int
+
+def check_qf_uf(problem: str, cvc5_output: str, /) -> QfUfRefutation: ...
+
 class Cnf:
     rows: list[list[int]]
     def __init__(self, rows: list[list[int]], /) -> None: ...

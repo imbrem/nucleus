@@ -1539,6 +1539,13 @@
     },
     {
       "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-logic-alethe@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-logic-cas@0.0.0",
       "kinds": [
         "normal"
