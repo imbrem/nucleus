@@ -1,13 +1,63 @@
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
-use covalence_data_spectec::{ClauseId, DeclarationId, IlDocument, Limits};
+use covalence_data_spectec::{
+    ClauseId, DeclarationId, IlClauseSchema, IlDocument, IlExpression, IlExpressionKind,
+    IlSchemaError, Limits,
+};
 use covalence_logic_hol::{Kernel, Tag, TmTag};
 use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
-    CoveragePlan, Disposition, HolRule, IndexErasure, KernelRoot, SelectedCompileError,
-    SelectedCompiler, Source, TYPE_NAME, TranslationCase, close_hol_rule, close_hol_rules,
-    declare_hol_schema, least_closed_family, least_closed_predicate,
+    CoveragePlan, Disposition, ExpressionAlgebra, HolRule, IndexErasure, KernelRoot,
+    SelectedCompileError, SelectedCompiler, Source, TYPE_NAME, TranslationCase, close_hol_rule,
+    close_hol_rules, declare_hol_schema, fold_expression, least_closed_family,
+    least_closed_predicate,
 };
+
+#[test]
+fn expression_fold_is_bottom_up_and_target_independent() {
+    struct CountAlgebra(Vec<IlExpressionKind>);
+
+    impl ExpressionAlgebra for CountAlgebra {
+        type Term = usize;
+        type Error = String;
+
+        fn schema_error(&mut self, source: IlSchemaError) -> Self::Error {
+            source.to_string()
+        }
+
+        fn expression(
+            &mut self,
+            expression: &IlExpression<'_>,
+            children: Vec<Self::Term>,
+        ) -> Result<Self::Term, Self::Error> {
+            self.0.push(expression.kind());
+            Ok(1 + children.into_iter().sum::<usize>())
+        }
+    }
+
+    let il = IlDocument::parse(
+        b"(def \"f\" nat (clause (bin add nat (var \"x\") (var \"y\"))))",
+        Limits::default(),
+    )
+    .unwrap();
+    let clause = il
+        .clauses(DeclarationId::new(1, None).unwrap())
+        .unwrap()
+        .remove(0);
+    let cursor = il.clause_cursor(clause.id()).unwrap();
+    let schema = IlClauseSchema::decode(&cursor).unwrap();
+    let mut algebra = CountAlgebra(Vec::new());
+
+    assert_eq!(fold_expression(schema.result(), &mut algebra).unwrap(), 3);
+    assert_eq!(
+        algebra.0,
+        vec![
+            IlExpressionKind::Variable,
+            IlExpressionKind::Variable,
+            IlExpressionKind::Binary,
+        ]
+    );
+}
 
 #[test]
 fn least_closed_predicate_builds_direct_hol_definition() {
