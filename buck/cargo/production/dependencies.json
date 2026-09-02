@@ -9467,6 +9467,14 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-basic@0.0.0",
+      "name": "covalence-data-basic",
+      "category": "product",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6"
+      ]
+    },
+    {
       "id": "workspace#covalence-data-cas@0.0.0",
       "name": "covalence-data-cas",
       "category": "product",

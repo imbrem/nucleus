@@ -156,6 +156,7 @@ where
         actual.push(symbol.value());
         actual.push(result.value());
         next_name = algebra.next_name();
+        resolver.restore_scope(algebra.into_resolver());
         branches.push(HolFamilyBranch {
             binders,
             arguments: actual,

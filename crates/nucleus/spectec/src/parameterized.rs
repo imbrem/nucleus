@@ -1,10 +1,8 @@
 //! One-shot parameterized HOL interpretation for complete `SpecTec` documents.
 
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
-};
+use std::{collections::BTreeMap, sync::Arc};
 
+use covalence_data_basic::Symbol;
 use covalence_data_spectec::{
     DeclarationId, IlArgument, IlBinding, IlExpression, IlExpressionView, IlGrammarSymbol,
     IlIteration, IlKind, IlSchemaError, IlType,
@@ -105,7 +103,7 @@ pub enum ParameterizedError {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Default)]
 struct SharedInterpretation {
     next_name: u64,
     symbols: BTreeMap<String, InterpretationSymbol>,
@@ -113,18 +111,18 @@ struct SharedInterpretation {
     canonical_type_refs: BTreeMap<Ref, Ref>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct ParameterizedResolver {
     embedding: HolEmbedding,
     schema: Arc<HolSchema>,
-    bindings: BTreeMap<String, Ref>,
-    type_bindings: BTreeMap<String, Ref>,
-    definition_bindings: BTreeMap<String, Ref>,
-    grammar_bindings: BTreeMap<String, Ref>,
-    relations: BTreeMap<String, Ref>,
-    expression_scopes: Vec<Vec<(String, Option<Ref>, Ref)>>,
+    bindings: BTreeMap<Symbol, Ref>,
+    type_bindings: BTreeMap<Symbol, Ref>,
+    definition_bindings: BTreeMap<Symbol, Ref>,
+    grammar_bindings: BTreeMap<Symbol, Ref>,
+    relations: BTreeMap<Symbol, Ref>,
+    expression_scopes: Vec<Vec<(Symbol, Option<Ref>, Ref)>>,
     implicit_binders: Vec<Ref>,
-    shared: Arc<Mutex<SharedInterpretation>>,
+    interpretation: SharedInterpretation,
 }
 
 /// Transactionally declares generic slots and lowers an entire exact document
@@ -161,12 +159,12 @@ pub fn parameterized_document(
             .ok_or_else(|| ParameterizedError::Resolve {
                 message: "free-variable name range exhausted".to_owned(),
             })?;
-    let shared = Arc::new(Mutex::new(SharedInterpretation {
+    let interpretation = SharedInterpretation {
         next_name,
         symbols: BTreeMap::new(),
         canonical_types: BTreeMap::new(),
         canonical_type_refs: BTreeMap::new(),
-    }));
+    };
     let mut resolver = ParameterizedResolver {
         embedding: HolEmbedding::new(value, bool_ty),
         schema: Arc::new(schema.clone()),
@@ -177,16 +175,16 @@ pub fn parameterized_document(
         relations: BTreeMap::new(),
         expression_scopes: Vec::new(),
         implicit_binders: Vec::new(),
-        shared: Arc::clone(&shared),
+        interpretation,
     };
+    for (_, declaration) in schema.declarations() {
+        let classifier = staged
+            .classifier(declaration.reference())
+            .map_err(|source| ParameterizedError::Kernel { source })?;
+        resolver.canonical_type(&staged, classifier)?;
+    }
     let semantics = relational_document(&mut staged, &mut resolver, source, &schema, &[])?;
-    let interpretation = shared
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .symbols
-        .values()
-        .cloned()
-        .collect();
+    let interpretation = resolver.interpretation.symbols.values().cloned().collect();
     *kernel = staged;
     Ok(ParameterizedDocument {
         schema,
@@ -218,12 +216,12 @@ fn arrow_children(
 }
 
 impl ParameterizedResolver {
-    fn shared(&self) -> MutexGuard<'_, SharedInterpretation> {
-        self.shared.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn canonical_type(&self, kernel: &Kernel, reference: Ref) -> Result<Ref, ParameterizedError> {
-        if let Some(canonical) = self.shared().canonical_type_refs.get(&reference) {
+    fn canonical_type(
+        &mut self,
+        kernel: &Kernel,
+        reference: Ref,
+    ) -> Result<Ref, ParameterizedError> {
+        if let Some(canonical) = self.interpretation.canonical_type_refs.get(&reference) {
             return Ok(*canonical);
         }
         let Some((domain, codomain)) = arrow_children(kernel, reference)? else {
@@ -231,12 +229,14 @@ impl ParameterizedResolver {
         };
         let domain = self.canonical_type(kernel, domain)?;
         let codomain = self.canonical_type(kernel, codomain)?;
-        let mut shared = self.shared();
-        let canonical = *shared
+        let canonical = *self
+            .interpretation
             .canonical_types
             .entry((domain, codomain))
             .or_insert(reference);
-        shared.canonical_type_refs.insert(reference, canonical);
+        self.interpretation
+            .canonical_type_refs
+            .insert(reference, canonical);
         Ok(canonical)
     }
 
@@ -255,26 +255,25 @@ impl ParameterizedResolver {
             })
     }
 
-    fn take_name(&self) -> Result<u64, ParameterizedError> {
-        let mut shared = self.shared();
-        let name = shared.next_name;
-        shared.next_name = name
-            .checked_add(1)
-            .ok_or_else(|| ParameterizedError::Resolve {
-                message: "free-variable name range exhausted".to_owned(),
-            })?;
+    fn take_name(&mut self) -> Result<u64, ParameterizedError> {
+        let name = self.interpretation.next_name;
+        self.interpretation.next_name =
+            name.checked_add(1)
+                .ok_or_else(|| ParameterizedError::Resolve {
+                    message: "free-variable name range exhausted".to_owned(),
+                })?;
         Ok(name)
     }
 
     fn primitive(
-        &self,
+        &mut self,
         kernel: &mut Kernel,
         label: String,
         domains: &[Ref],
         codomain: Ref,
     ) -> Result<Ref, ParameterizedError> {
         let key = format!("{label}|{domains:?}->{codomain:?}");
-        if let Some(symbol) = self.shared().symbols.get(&key) {
+        if let Some(symbol) = self.interpretation.symbols.get(&key) {
             return Ok(symbol.reference);
         }
         let classifier = domains.iter().rev().try_fold(codomain, |tail, &domain| {
@@ -286,7 +285,7 @@ impl ParameterizedResolver {
         let reference = kernel
             .tm_fv(self.take_name()?, classifier)
             .map_err(|source| ParameterizedError::Kernel { source })?;
-        self.shared().symbols.insert(
+        self.interpretation.symbols.insert(
             key,
             InterpretationSymbol {
                 label,
@@ -314,7 +313,7 @@ impl ParameterizedResolver {
     }
 
     fn structural_value(
-        &self,
+        &mut self,
         kernel: &mut Kernel,
         label: String,
         children: &[Ref],
@@ -413,14 +412,22 @@ impl RelationalResolver for ParameterizedResolver {
     }
 
     fn clause_scope(&mut self) -> Self {
-        let mut child = self.clone();
-        child.bindings.clear();
-        child.type_bindings.clear();
-        child.definition_bindings.clear();
-        child.grammar_bindings.clear();
-        child.expression_scopes.clear();
-        child.implicit_binders.clear();
-        child
+        Self {
+            embedding: self.embedding,
+            schema: Arc::clone(&self.schema),
+            bindings: BTreeMap::new(),
+            type_bindings: BTreeMap::new(),
+            definition_bindings: BTreeMap::new(),
+            grammar_bindings: BTreeMap::new(),
+            relations: self.relations.clone(),
+            expression_scopes: Vec::new(),
+            implicit_binders: Vec::new(),
+            interpretation: std::mem::take(&mut self.interpretation),
+        }
+    }
+
+    fn restore_scope(&mut self, scope: Self) {
+        self.interpretation = scope.interpretation;
     }
 
     fn enter_expression(
@@ -444,8 +451,9 @@ impl RelationalResolver for ParameterizedResolver {
             let reference = kernel
                 .tm_fv(self.take_name()?, self.embedding.value())
                 .map_err(|source| ParameterizedError::Kernel { source })?;
-            let previous = self.bindings.insert(name.to_owned(), reference);
-            scope.push((name.to_owned(), previous, reference));
+            let name = Symbol::from(name);
+            let previous = self.bindings.insert(name.clone(), reference);
+            scope.push((name, previous, reference));
         }
         self.expression_scopes.push(scope);
         Ok(())
@@ -500,7 +508,7 @@ impl RelationalResolver for ParameterizedResolver {
         let mut child = self.clause_scope();
         child.relations = candidates
             .iter()
-            .map(|(name, reference)| ((*name).to_owned(), *reference))
+            .map(|(name, reference)| (Symbol::from(*name), *reference))
             .collect();
         child
     }
@@ -542,7 +550,7 @@ impl RelationalResolver for ParameterizedResolver {
             IlBinding::Definition { .. } => &mut self.definition_bindings,
             IlBinding::Grammar { .. } => &mut self.grammar_bindings,
         };
-        namespace.insert(binding.name().to_owned(), reference);
+        namespace.insert(Symbol::from(binding.name()), reference);
         Ok(())
     }
 
@@ -577,7 +585,7 @@ impl RelationalResolver for ParameterizedResolver {
         let reference = kernel
             .tm_fv(self.take_name()?, self.embedding.value())
             .map_err(|source| ParameterizedError::Kernel { source })?;
-        self.bindings.insert(name.to_owned(), reference);
+        self.bindings.insert(Symbol::from(name), reference);
         self.implicit_binders.push(reference);
         Ok(reference)
     }
@@ -598,7 +606,7 @@ impl RelationalResolver for ParameterizedResolver {
     ) -> Result<Ref, Self::Error> {
         match argument {
             IlArgument::Definition(name) if !self.definition_bindings.contains_key(*name) => {
-                self.definition_bindings.insert((*name).to_owned(), formal);
+                self.definition_bindings.insert(Symbol::from(*name), formal);
                 Ok(formal)
             }
             IlArgument::Grammar(symbol)
@@ -611,7 +619,7 @@ impl RelationalResolver for ParameterizedResolver {
                 let IlGrammarSymbol::Variable { name, .. } = &**symbol else {
                     unreachable!()
                 };
-                self.grammar_bindings.insert((*name).to_owned(), formal);
+                self.grammar_bindings.insert(Symbol::from(*name), formal);
                 Ok(formal)
             }
             _ => self.non_expression_argument(kernel, argument),
