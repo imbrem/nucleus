@@ -19,7 +19,7 @@ mod il;
 mod wasm3;
 
 pub use il::{
-    ClauseId, DeclarationId, IlArgument, IlChildren, IlClause, IlClauseSchema, IlCursor,
+    ClauseId, DeclarationId, IlArgument, IlBinding, IlChildren, IlClause, IlClauseSchema, IlCursor,
     IlDeclaration, IlDeclarationBody, IlDeclarationSchema, IlDocument, IlError, IlExpression,
     IlExpressionKind, IlForm, IlIteration, IlKind, IlNode, IlPremise, IlProductionSchema, IlRoot,
     IlRule, IlRuleSchema, IlSchemaError, IlType, IlTypeBinding, RootOrdinal, RuleId,

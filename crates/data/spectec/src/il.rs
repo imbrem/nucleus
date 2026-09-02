@@ -537,6 +537,64 @@ pub enum IlArgument<'a> {
     Grammar(IlCursor<'a>),
 }
 
+/// One explicit binder in a declaration body.
+#[derive(Clone, Debug)]
+pub enum IlBinding<'a> {
+    /// Expression variable with its inferred IL type.
+    Expression {
+        /// Exact variable name.
+        name: &'a str,
+        /// Inferred type.
+        ty: IlType<'a>,
+    },
+    /// Type variable.
+    Type {
+        /// Exact type-variable name.
+        name: &'a str,
+    },
+    /// Higher-order definition parameter.
+    Definition {
+        /// Exact definition-variable name.
+        name: &'a str,
+        /// Nested declaration parameters.
+        parameters: Vec<IlCursor<'a>>,
+        /// Result type.
+        result: IlType<'a>,
+    },
+    /// Higher-order grammar parameter.
+    Grammar {
+        /// Exact grammar-variable name.
+        name: &'a str,
+        /// Nested declaration parameters.
+        parameters: Vec<IlCursor<'a>>,
+        /// Synthesized result type.
+        result: IlType<'a>,
+    },
+}
+
+impl<'a> IlBinding<'a> {
+    /// Decodes one explicit binding form.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown binding category, malformed name,
+    /// malformed nested parameter, or invalid result type.
+    pub fn decode(cursor: &IlCursor<'a>) -> Result<Self, IlSchemaError> {
+        decode_binding(cursor)
+    }
+
+    /// Returns the exact bound name.
+    #[must_use]
+    pub const fn name(&self) -> &'a str {
+        match self {
+            Self::Expression { name, .. }
+            | Self::Type { name }
+            | Self::Definition { name, .. }
+            | Self::Grammar { name, .. } => name,
+        }
+    }
+}
+
 /// One expression-indexed component of an IL tuple type.
 #[derive(Clone, Debug)]
 pub struct IlTypeBinding<'a> {
@@ -747,7 +805,7 @@ impl<'a> IlExpression<'a> {
 pub struct IlRuleSchema<'a> {
     cursor: IlCursor<'a>,
     name: &'a str,
-    bindings: Vec<IlCursor<'a>>,
+    bindings: Vec<IlBinding<'a>>,
     notation: &'a str,
     conclusion: IlExpression<'a>,
     premises: Vec<IlPremise<'a>>,
@@ -773,7 +831,7 @@ impl<'a> IlRuleSchema<'a> {
 
     /// Returns explicit rule bindings in source order.
     #[must_use]
-    pub fn bindings(&self) -> &[IlCursor<'a>] {
+    pub fn bindings(&self) -> &[IlBinding<'a>] {
         &self.bindings
     }
 
@@ -834,7 +892,7 @@ pub enum IlPremise<'a> {
 #[derive(Clone, Debug)]
 pub struct IlClauseSchema<'a> {
     cursor: IlCursor<'a>,
-    bindings: Vec<IlCursor<'a>>,
+    bindings: Vec<IlBinding<'a>>,
     arguments: Vec<IlArgument<'a>>,
     result: IlExpression<'a>,
     premises: Vec<IlPremise<'a>>,
@@ -853,7 +911,7 @@ impl<'a> IlClauseSchema<'a> {
 
     /// Returns explicit clause bindings.
     #[must_use]
-    pub fn bindings(&self) -> &[IlCursor<'a>] {
+    pub fn bindings(&self) -> &[IlBinding<'a>] {
         &self.bindings
     }
 
@@ -886,7 +944,7 @@ impl<'a> IlClauseSchema<'a> {
 #[derive(Clone, Debug)]
 pub struct IlProductionSchema<'a> {
     cursor: IlCursor<'a>,
-    bindings: Vec<IlCursor<'a>>,
+    bindings: Vec<IlBinding<'a>>,
     symbol: IlCursor<'a>,
     result: IlExpression<'a>,
     premises: Vec<IlPremise<'a>>,
@@ -905,7 +963,7 @@ impl<'a> IlProductionSchema<'a> {
 
     /// Returns explicit production bindings.
     #[must_use]
-    pub fn bindings(&self) -> &[IlCursor<'a>] {
+    pub fn bindings(&self) -> &[IlBinding<'a>] {
         &self.bindings
     }
 
@@ -1373,6 +1431,10 @@ fn decode_rule_schema<'a>(cursor: &IlCursor<'a>) -> Result<IlRuleSchema<'a>, IlS
         })?;
     let (bindings, tail) = fields.split_at(notation_index);
     require_bindings(bindings)?;
+    let bindings = bindings
+        .iter()
+        .map(decode_binding)
+        .collect::<Result<Vec<_>, _>>()?;
     let notation_cursor = tail.first().ok_or_else(|| {
         schema_error(
             cursor.declaration(),
@@ -1407,7 +1469,7 @@ fn decode_rule_schema<'a>(cursor: &IlCursor<'a>) -> Result<IlRuleSchema<'a>, IlS
     Ok(IlRuleSchema {
         cursor: cursor.clone(),
         name,
-        bindings: bindings.to_vec(),
+        bindings,
         notation,
         conclusion,
         premises,
@@ -1422,6 +1484,10 @@ fn decode_clause_schema<'a>(cursor: &IlCursor<'a>) -> Result<IlClauseSchema<'a>,
     let binding_count = fields.iter().take_while(|field| is_binding(field)).count();
     let (bindings, tail) = fields.split_at(binding_count);
     require_bindings(bindings)?;
+    let bindings = bindings
+        .iter()
+        .map(decode_binding)
+        .collect::<Result<Vec<_>, _>>()?;
     let argument_count = tail
         .iter()
         .take_while(|field| is_argument_wrapper(field))
@@ -1451,7 +1517,7 @@ fn decode_clause_schema<'a>(cursor: &IlCursor<'a>) -> Result<IlClauseSchema<'a>,
         .collect::<Result<Vec<_>, _>>()?;
     Ok(IlClauseSchema {
         cursor: cursor.clone(),
-        bindings: bindings.to_vec(),
+        bindings,
         arguments,
         result,
         premises,
@@ -1468,6 +1534,10 @@ fn decode_production_schema<'a>(
     let binding_count = fields.iter().take_while(|field| is_binding(field)).count();
     let (bindings, tail) = fields.split_at(binding_count);
     require_bindings(bindings)?;
+    let bindings = bindings
+        .iter()
+        .map(decode_binding)
+        .collect::<Result<Vec<_>, _>>()?;
     let symbol = tail.first().cloned().ok_or_else(|| {
         schema_error(
             cursor.declaration(),
@@ -1493,7 +1563,7 @@ fn decode_production_schema<'a>(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(IlProductionSchema {
         cursor: cursor.clone(),
-        bindings: bindings.to_vec(),
+        bindings,
         symbol,
         result,
         premises,
@@ -2036,6 +2106,60 @@ fn decode_argument<'a>(cursor: &IlCursor<'a>) -> Result<IlArgument<'a>, IlSchema
             cursor.declaration(),
             cursor.path(),
             "argument form exp, typ, def, or gram",
+            describe(cursor),
+        )),
+    }
+}
+
+fn decode_binding<'a>(cursor: &IlCursor<'a>) -> Result<IlBinding<'a>, IlSchemaError> {
+    let form = required_form(cursor, "explicit binding")?;
+    let name = required_string(
+        form.argument(0),
+        cursor.declaration(),
+        &child_path(&form, 0),
+        "binding identifier",
+    )?;
+    match form.head() {
+        "exp" => {
+            require_arity(&form, 2, "expression binding with name and type")?;
+            let ty = IlType::decode(&required_argument(&form, 1, "expression binding type")?)?;
+            Ok(IlBinding::Expression { name, ty })
+        }
+        "typ" => {
+            require_arity(&form, 1, "type binding with name")?;
+            Ok(IlBinding::Type { name })
+        }
+        "def" | "gram" => {
+            require_min_arity(&form, 2, "higher-order binding with result type")?;
+            let tail = form.arguments().skip(1).collect::<Vec<_>>();
+            let Some((result, parameters)) = tail.split_last() else {
+                return Err(schema_error(
+                    cursor.declaration(),
+                    cursor.path(),
+                    "higher-order binding result type",
+                    "missing".to_owned(),
+                ));
+            };
+            require_parameters(parameters)?;
+            let result = IlType::decode(result)?;
+            if form.head() == "def" {
+                Ok(IlBinding::Definition {
+                    name,
+                    parameters: parameters.to_vec(),
+                    result,
+                })
+            } else {
+                Ok(IlBinding::Grammar {
+                    name,
+                    parameters: parameters.to_vec(),
+                    result,
+                })
+            }
+        }
+        _ => Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "binding form exp, typ, def, or gram",
             describe(cursor),
         )),
     }
