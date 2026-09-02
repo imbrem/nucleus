@@ -9,7 +9,8 @@
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash};
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref, SynRel, ThmId, wire};
+use covalence_logic_hol::{Kernel, KernelError, Ref, SynFactId, SynRel, ThmId, wire};
+use covalence_logic_hol_derived::{ModelError, SyntaxError, join_same_syntax, substitute};
 
 use crate::{AddSliceArtifact, AddSliceError, AddSlicePlan, Source};
 
@@ -132,6 +133,8 @@ pub fn parameter_add_program() -> Program<ParameterInstruction<AddOperation>> {
 /// Checked roots witnessing agreement of direct and interpreted add routes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AddRouteAgreement {
+    /// Route B's selected program represented as resident HOL data.
+    pub program: Ref,
     /// Route A: direct application of the supplied addition operation.
     pub direct: Ref,
     /// Route B: result of interpreting [`parameter_add_program`].
@@ -227,23 +230,36 @@ impl PipelineCids {
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum AddSemanticsError {
-    /// The fixed program unexpectedly failed its stack discipline.
-    #[snafu(display("parameter-add program is invalid: {failure:?}"))]
-    Program {
-        /// Generic stack-machine failure.
-        failure: EvaluationError,
-    },
-    /// The fixed program requested a parameter outside its two-input schema.
-    #[snafu(display("parameter-add program requested unexpected local {index}"))]
-    UnexpectedLocal {
-        /// Unsupported zero-based local index.
-        index: u32,
-    },
+    /// The program is outside the one exact instruction sequence supported by
+    /// this first semantic package.
+    #[snafu(display("unsupported parameter-add instruction sequence"))]
+    UnsupportedProgram,
     /// A public checked HOL operation rejected the construction or proof.
     #[snafu(display("checked parameter-add semantics failed: {source}"))]
     Kernel {
         /// Underlying kernel rejection.
         source: KernelError,
+    },
+    /// Checked application congruence failed during one evaluator stage.
+    #[snafu(display("checked {stage} evaluator congruence failed: {source}"))]
+    BetaCongruence {
+        /// Evaluator application stage.
+        stage: &'static str,
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+    /// Untrusted substitution orchestration could not produce checked beta
+    /// evidence.
+    #[snafu(display("could not reduce internal parameter-add data: {source}"))]
+    Substitution {
+        /// Derived substitution failure.
+        source: ModelError,
+    },
+    /// Untrusted same-syntax traversal could not construct checked evidence.
+    #[snafu(display("could not relate internal parameter-add results: {source}"))]
+    Syntax {
+        /// Derived syntax-certificate failure.
+        source: SyntaxError,
     },
 }
 
@@ -365,6 +381,9 @@ pub fn prove_add_program_agreement(
     left: Ref,
     right: Ref,
 ) -> Result<AddRouteAgreement, AddSemanticsError> {
+    if program != &parameter_add_program() {
+        return Err(AddSemanticsError::UnsupportedProgram);
+    }
     let mut staged = kernel.fork();
 
     // Route A is authored directly from the selected semantic operation.
@@ -375,41 +394,20 @@ pub fn prove_add_program_agreement(
         .app(direct_partial, right)
         .map_err(|source| AddSemanticsError::Kernel { source })?;
 
-    // Route B consumes the instruction schema as data through the generic
-    // evaluator.
-    let (interpreted_partial, interpreted) =
-        interpret_parameter_add(program, &mut staged, add, left, right)?;
-
-    let add_same = staged
-        .syn_refl(None, SynRel::Syn, add)
-        .map_err(|source| AddSemanticsError::Kernel { source })?;
-    let left_same = staged
-        .syn_refl(None, SynRel::Syn, left)
-        .map_err(|source| AddSemanticsError::Kernel { source })?;
-    let partial_same = staged
-        .syn_congr(
-            None,
-            SynRel::Syn,
-            None,
-            None,
-            direct_partial,
-            interpreted_partial,
-            &[add_same, left_same],
-        )
-        .map_err(|source| AddSemanticsError::Kernel { source })?;
-    let right_same = staged
-        .syn_refl(None, SynRel::Syn, right)
+    // Route B represents the selected program as higher-order data inside HOL,
+    // then evaluates it solely through checked application and beta evidence.
+    let internal_program = internal_add_program(&mut staged, add, word_ty)?;
+    let applied_add = beta_apply(&mut staged, internal_program, add)?;
+    let applied_left = beta_apply_after(&mut staged, applied_add, left, "left")?;
+    let applied_right = beta_apply_after(&mut staged, applied_left, right, "right")?;
+    let interpreted = applied_right.input;
+    let same_normal = join_same_syntax(&mut staged, applied_right.output, direct)
+        .map_err(|source| AddSemanticsError::Syntax { source })?;
+    let interpreted_to_direct = staged
+        .syn_trans(None, applied_right.fact, same_normal)
         .map_err(|source| AddSemanticsError::Kernel { source })?;
     let result_same = staged
-        .syn_congr(
-            None,
-            SynRel::Syn,
-            None,
-            None,
-            direct,
-            interpreted,
-            &[partial_same, right_same],
-        )
+        .syn_symm(None, interpreted_to_direct)
         .map_err(|source| AddSemanticsError::Kernel { source })?;
     staged
         .union_syn_fact(result_same)
@@ -430,7 +428,7 @@ pub fn prove_add_program_agreement(
     let proposition_same = staged
         .syn_congr(
             None,
-            SynRel::Syn,
+            SynRel::Conv,
             None,
             None,
             reflexive.equality,
@@ -447,6 +445,7 @@ pub fn prove_add_program_agreement(
 
     *kernel = staged;
     Ok(AddRouteAgreement {
+        program: internal_program,
         direct,
         interpreted,
         proposition,
@@ -454,39 +453,127 @@ pub fn prove_add_program_agreement(
     })
 }
 
-fn interpret_parameter_add(
-    program: &Program<ParameterInstruction<AddOperation>>,
+fn internal_add_program(
     kernel: &mut Kernel,
     add: Ref,
-    left: Ref,
-    right: Ref,
-) -> Result<(Ref, Ref), AddSemanticsError> {
-    let mut partial = None;
-    let result = program
-        .evaluate(
-            |index| match index {
-                0 => Ok(left),
-                1 => Ok(right),
-                _ => Err(AddSemanticsError::UnexpectedLocal { index }),
-            },
-            |operation, lhs, rhs| match operation {
-                AddOperation::I32Add => {
-                    let application = kernel
-                        .app(add, lhs)
-                        .map_err(|source| AddSemanticsError::Kernel { source })?;
-                    partial = Some(application);
-                    kernel
-                        .app(application, rhs)
-                        .map_err(|source| AddSemanticsError::Kernel { source })
-                }
-            },
+    word_ty: Ref,
+) -> Result<Ref, AddSemanticsError> {
+    let add_ty = kernel
+        .classifier(add)
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    let add_binder = kernel
+        .tm_fv(
+            kernel
+                .fresh_name(&[add, word_ty])
+                .map_err(|source| AddSemanticsError::Kernel { source })?,
+            add_ty,
         )
-        .map_err(|failure| match failure {
-            ProgramError::Callback(failure) => failure,
-            ProgramError::Evaluation(failure) => AddSemanticsError::Program { failure },
-        })?;
-    let partial = partial.ok_or(AddSemanticsError::Program {
-        failure: EvaluationError::StackUnderflow,
-    })?;
-    Ok((partial, result))
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    let left_binder = kernel
+        .tm_fv(
+            kernel
+                .fresh_name(&[add_binder])
+                .map_err(|source| AddSemanticsError::Kernel { source })?,
+            word_ty,
+        )
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    let right_binder = kernel
+        .tm_fv(
+            kernel
+                .fresh_name(&[left_binder])
+                .map_err(|source| AddSemanticsError::Kernel { source })?,
+            word_ty,
+        )
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    let partial = kernel
+        .app(add_binder, left_binder)
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    let body = kernel
+        .app(partial, right_binder)
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    let with_right = kernel
+        .lam(right_binder, body)
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    let with_left = kernel
+        .lam(left_binder, with_right)
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    let program = kernel
+        .lam(add_binder, with_left)
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    Ok(program)
+}
+
+#[derive(Clone, Copy)]
+struct Reduction {
+    input: Ref,
+    output: Ref,
+    fact: SynFactId,
+}
+
+fn beta_apply(
+    kernel: &mut Kernel,
+    function: Ref,
+    argument: Ref,
+) -> Result<Reduction, AddSemanticsError> {
+    let input = kernel
+        .app(function, argument)
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    let children = kernel
+        .arena()
+        .children(function)
+        .ok_or(AddSemanticsError::UnsupportedProgram)?
+        .collect::<Vec<_>>();
+    let [binder, body] = children.as_slice() else {
+        return Err(AddSemanticsError::UnsupportedProgram);
+    };
+    let substitution = substitute(kernel, *binder, argument, *body)
+        .map_err(|source| AddSemanticsError::Substitution { source })?;
+    let fact = kernel
+        .tm_beta_fact(None, input, substitution.fact)
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    kernel
+        .union_syn_fact(fact)
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    Ok(Reduction {
+        input,
+        output: substitution.output,
+        fact,
+    })
+}
+
+fn beta_apply_after(
+    kernel: &mut Kernel,
+    previous: Reduction,
+    argument: Ref,
+    stage: &'static str,
+) -> Result<Reduction, AddSemanticsError> {
+    let input = kernel
+        .app(previous.input, argument)
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    let tail = beta_apply(kernel, previous.output, argument)?;
+    let argument_same = kernel
+        .syn_refl(None, SynRel::Syn, argument)
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    let head = kernel
+        .syn_congr(
+            None,
+            SynRel::Conv,
+            None,
+            None,
+            input,
+            tail.input,
+            &[previous.fact, argument_same],
+        )
+        .map_err(|source| AddSemanticsError::BetaCongruence { stage, source })?;
+    let fact = kernel
+        .syn_trans(None, head, tail.fact)
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    kernel
+        .union_syn_fact(fact)
+        .map_err(|source| AddSemanticsError::Kernel { source })?;
+    Ok(Reduction {
+        input,
+        output: tail.output,
+        fact,
+    })
 }

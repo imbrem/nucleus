@@ -31,10 +31,11 @@ the linked elaborated document and requires exact coverage equality.
 
 `Program<I>` and `ParameterInstruction<Operation>` are the generic executable
 schema boundary for semantic routes. `prove_parameter_add_agreement` constructs
-the selected result directly and independently interprets the parameter-add
-instruction data, then asks the public HOL kernel to check their syntactic
-congruence and premise-free equality theorem. The word carrier and addition
-operation remain abstract; this first theorem adds no integer axiom.
+the selected result directly, represents the supported program as higher-order
+data inside HOL, and evaluates that data through checked application and beta
+certificates. The final premise-free theorem relates the independently built
+results. The word carrier and addition operation remain abstract; this first
+theorem adds no integer axiom.
 `prove_add_slice_agreement` is the source-level composition: it first rebuilds
 the exhaustive plan and validates selected rule bodies against the exact IL,
 then retains that plan and the interpreted program beside the checked theorem.
