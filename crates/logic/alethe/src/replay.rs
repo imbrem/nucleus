@@ -199,7 +199,7 @@ impl Replayer {
                 } => self.declare_function(name, parameters, result)?,
                 SmtCommand::Assert(expression) => {
                     let term = self.term(expression)?;
-                    self.assertions.push(term.literal());
+                    self.assertions.push(Lit::positive(term.reference.get()));
                     self.assertion_terms.push(term);
                 }
             }
@@ -260,6 +260,7 @@ impl Replayer {
                     .named
                     .get(value.as_str())
                     .copied()
+                    .map(|term| Term::positive(term.reference))
                     .ok_or_else(|| Error::Malformed {
                         message: format!("unknown named term {value:?}"),
                     }),
@@ -355,12 +356,9 @@ impl Replayer {
             match command {
                 AletheCommand::Assume { id, term } => {
                     let term = self.term(term)?;
-                    let literal = term.literal();
-                    self.match_assertion(literal)?;
                     let formula = Lit::positive(term.reference.get());
+                    self.match_assertion(formula)?;
                     let theorem = self.kernel.identity(formula)?;
-                    let theorem = self.kernel.flatten_premise(theorem, formula)?;
-                    let theorem = self.flatten_clause(theorem)?;
                     self.insert_step(id, theorem)?;
                 }
                 AletheCommand::Step {
@@ -371,7 +369,9 @@ impl Replayer {
                     args,
                     discharge,
                 } => {
-                    if !args.is_empty() || !discharge.is_empty() {
+                    if !discharge.is_empty()
+                        || (!args.is_empty() && !matches!(rule.as_str(), "rare_rewrite" | "and"))
+                    {
                         return Err(Error::Unsupported {
                             message: format!("{rule} attributes"),
                         });
@@ -391,8 +391,8 @@ impl Replayer {
                                 })
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let theorem = self.apply_rule(rule, &clause, &premises)?;
-                    self.check_clause(id, theorem, &clause)?;
+                    let theorem = self.apply_rule(rule, &clause, &premises, args)?;
+                    let theorem = self.check_clause(id, theorem, &clause)?;
                     self.insert_step(id, theorem)?;
                     if clause.is_empty() {
                         refutation = Some(theorem);
@@ -437,10 +437,7 @@ impl Replayer {
         let candidate = reference(literal.magnitude())?;
         let assertions = self.assertion_terms.clone();
         for assertion in assertions {
-            if literal.is_positive() != assertion.literal.is_positive() {
-                continue;
-            }
-            let target = reference(assertion.literal.magnitude())?;
+            let target = assertion.reference;
             if join_same_syntax(&mut self.kernel, candidate, target).is_ok() {
                 self.assertion_transports.push((candidate, target));
                 return Ok(());
@@ -454,6 +451,7 @@ impl Replayer {
         rule: &str,
         clause: &[Lit],
         premises: &[ThmId],
+        args: &[Expr],
     ) -> Result<ThmId, Error> {
         match rule {
             "resolution" | "th_resolution" => self.resolution(premises),
@@ -462,10 +460,209 @@ impl Replayer {
             "trans" => self.transitivity(clause, premises),
             "cong" => self.congruence(clause, premises),
             "equiv_pos2" => self.equiv_pos2(clause),
+            "implies" => self.flatten_single_premise("implies", premises),
+            "or_pos" => self.or_pos(clause),
+            "and" => self.and_elimination(clause, premises, args),
+            "rare_rewrite" => self.rare_rewrite(clause, args),
+            "evaluate" => self.evaluate(clause),
+            "false" => self.false_rule(clause),
             other => Err(Error::Unsupported {
                 message: format!("rule {other:?}"),
             }),
         }
+    }
+
+    fn or_pos(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let Some(negated_disjunction) = clause.first().copied() else {
+            return Err(Error::Malformed {
+                message: "or_pos requires a clause".to_owned(),
+            });
+        };
+        if negated_disjunction.is_positive() {
+            return Err(Error::Malformed {
+                message: "or_pos requires a negative disjunction".to_owned(),
+            });
+        }
+        let disjunction = reference(negated_disjunction.magnitude())?;
+        let theorem = self.kernel.identity(Lit::positive(disjunction.get()))?;
+        let theorem =
+            self.kernel
+                .expand_conclusion(theorem, Lit::positive(disjunction.get()), None)?;
+        self.kernel
+            .not_right(theorem, Lit::positive(disjunction.get()))?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    fn and_elimination(
+        &mut self,
+        clause: &[Lit],
+        premises: &[ThmId],
+        args: &[Expr],
+    ) -> Result<ThmId, Error> {
+        let [premise] = premises else {
+            return Err(Error::Malformed {
+                message: "and requires one premise".to_owned(),
+            });
+        };
+        let [argument] = args else {
+            return Err(Error::Malformed {
+                message: "and requires one index".to_owned(),
+            });
+        };
+        let index = number_value(argument)?
+            .parse::<usize>()
+            .map_err(|_| Error::Malformed {
+                message: "and index is not a natural number".to_owned(),
+            })?;
+        let conclusions = conclusion_literals(&self.kernel, *premise)?;
+        let [source] = conclusions.as_slice() else {
+            return Err(Error::Malformed {
+                message: "and premise must have one conclusion".to_owned(),
+            });
+        };
+        if !source.is_positive() {
+            return Err(Error::Malformed {
+                message: "and premise must conclude a conjunction".to_owned(),
+            });
+        }
+        let conjunction = reference(source.magnitude())?;
+        let children = self
+            .kernel
+            .arena()
+            .children(conjunction)
+            .ok_or_else(|| Error::Malformed {
+                message: "and premise has no children".to_owned(),
+            })?
+            .collect::<Vec<_>>();
+        let [left, right] = children.as_slice() else {
+            return Err(Error::Malformed {
+                message: "and premise is not binary".to_owned(),
+            });
+        };
+        let selected = match index {
+            0 => *left,
+            1 => *right,
+            _ => {
+                return Err(Error::Malformed {
+                    message: "and index is outside the binary conjunction".to_owned(),
+                });
+            }
+        };
+        let other = if index == 0 { *right } else { *left };
+        let theorem = self.kernel.identity(Lit::positive(selected.get()))?;
+        self.kernel
+            .weaken(theorem, &[Lit::positive(other.get())], &[])?;
+        let theorem = self
+            .kernel
+            .fold_premise(theorem, Lit::positive(conjunction.get()))?;
+        self.convert_equality(theorem, selected, positive_unit(clause, "and")?)
+    }
+
+    fn flatten_single_premise(&mut self, rule: &str, premises: &[ThmId]) -> Result<ThmId, Error> {
+        let [premise] = premises else {
+            return Err(Error::Malformed {
+                message: format!("{rule} requires one premise"),
+            });
+        };
+        self.flatten_clause(*premise)
+    }
+
+    fn rare_rewrite(&mut self, clause: &[Lit], args: &[Expr]) -> Result<ThmId, Error> {
+        let Some(name) = args.first().and_then(string_value) else {
+            return Err(Error::Malformed {
+                message: "rare_rewrite requires a string rule name".to_owned(),
+            });
+        };
+        match name {
+            "eq-refl" => {
+                let target = positive_unit(clause, "rare_rewrite eq-refl")?;
+                let [_bool_ty, proposition, truth] = equality_children(&self.kernel, target)?;
+                if self.kernel.arena().bool_value(truth) != Some(true) {
+                    return Err(Error::Malformed {
+                        message: "eq-refl must rewrite to true".to_owned(),
+                    });
+                }
+                let [_domain, left, right] = equality_children(&self.kernel, proposition)?;
+                join_same_syntax(&mut self.kernel, left, right)?;
+                let proved = self.kernel.refl(self.bool_ty, left)?;
+                let theorem =
+                    self.convert_equality(proved.theorem, proved.equality, proposition)?;
+                self.equality_to_true(proposition, truth, theorem, target)
+            }
+            other => Err(Error::Unsupported {
+                message: format!("rare_rewrite {other:?}"),
+            }),
+        }
+    }
+
+    fn evaluate(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let target = positive_unit(clause, "evaluate")?;
+        let [_bool_ty, proposition, constant] = equality_children(&self.kernel, target)?;
+        if self.kernel.arena().bool_value(constant) != Some(false) {
+            return Err(Error::Unsupported {
+                message: "evaluate result other than false".to_owned(),
+            });
+        }
+        let left = self.kernel.identity(Lit::positive(proposition.get()))?;
+        let left = self
+            .kernel
+            .flatten_conclusion(left, Lit::positive(proposition.get()))?;
+        if conclusion_literals(&self.kernel, left)?.is_empty() {
+            self.kernel
+                .weaken(left, &[], &[Lit::positive(constant.get())])?;
+        } else {
+            return Err(Error::Unsupported {
+                message: "evaluate expression does not reduce to false".to_owned(),
+            });
+        }
+        let right = self.kernel.false_left(Lit::positive(constant.get()))?;
+        self.kernel
+            .weaken(right, &[], &[Lit::positive(proposition.get())])?;
+        let result =
+            self.kernel
+                .deduct_antisym(self.bool_ty, proposition, constant, left, right)?;
+        self.convert_equality(result.theorem, result.equality, target)
+    }
+
+    fn equality_to_true(
+        &mut self,
+        proposition: Ref,
+        truth: Ref,
+        proposition_theorem: ThmId,
+        target: Ref,
+    ) -> Result<ThmId, Error> {
+        let truth_theorem = self.kernel.true_right(Lit::positive(truth.get()))?;
+        let result = self.kernel.deduct_antisym(
+            self.bool_ty,
+            proposition,
+            truth,
+            truth_theorem,
+            proposition_theorem,
+        )?;
+        self.convert_equality(result.theorem, result.equality, target)
+    }
+
+    fn false_rule(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let [literal] = clause else {
+            return Err(Error::Malformed {
+                message: "false requires one literal".to_owned(),
+            });
+        };
+        if literal.is_positive() {
+            return Err(Error::Malformed {
+                message: "false requires a negative literal".to_owned(),
+            });
+        }
+        let falsehood =
+            Lit::positive(
+                i32::try_from(literal.magnitude()).map_err(|_| Error::Malformed {
+                    message: "false literal exceeds the checked arena".to_owned(),
+                })?,
+            );
+        let theorem = self.kernel.false_left(falsehood)?;
+        self.kernel.not_right(theorem, falsehood)?;
+        Ok(theorem)
     }
 
     fn resolution(&mut self, premises: &[ThmId]) -> Result<ThmId, Error> {
@@ -474,15 +671,78 @@ impl Replayer {
         })?;
         let mut result = *first;
         for &next in rest {
+            let mut next = next;
             let left = conclusion_literals(&self.kernel, result)?;
             let right = conclusion_literals(&self.kernel, next)?;
-            let pivot = left
+            let mut pivot = left
                 .iter()
                 .find(|literal| right.contains(&literal.negated()))
-                .copied()
-                .ok_or_else(|| Error::Malformed {
-                    message: "resolution premises have no complementary pivot".to_owned(),
-                })?;
+                .copied();
+            if pivot.is_none() {
+                'candidate: for &left_literal in &left {
+                    for &right_literal in &right {
+                        if left_literal.is_positive() == right_literal.is_positive() {
+                            continue;
+                        }
+                        let left_reference = reference(left_literal.magnitude())?;
+                        let right_reference = reference(right_literal.magnitude())?;
+                        if join_same_syntax(&mut self.kernel, left_reference, right_reference)
+                            .is_ok()
+                        {
+                            self.kernel.convert_conclusions(
+                                next,
+                                right_reference,
+                                left_reference,
+                            )?;
+                            pivot = Some(left_literal);
+                            break 'candidate;
+                        }
+                    }
+                }
+            }
+            // CVC5 sometimes resolves a singleton `(not p)` assumption as
+            // the negative literal `p`, but in other proofs resolves the
+            // exact named negation as an atom. Prefer exact atoms above and
+            // only expose the logical clause view when that cannot resolve.
+            if pivot.is_none()
+                && right.len() == 1
+                && right[0].is_positive()
+                && self.kernel.arena().op1(reference(right[0].magnitude())?) == Some(Op1::Not)
+            {
+                next = self.kernel.expand_conclusion(next, right[0], None)?;
+                let flattened = conclusion_literals(&self.kernel, next)?;
+                pivot = left
+                    .iter()
+                    .find(|literal| flattened.contains(&literal.negated()))
+                    .copied();
+            }
+            if pivot.is_none() {
+                for &literal in &left {
+                    if !literal.is_positive() {
+                        continue;
+                    }
+                    let formula = reference(literal.magnitude())?;
+                    if self.kernel.arena().op1(formula) != Some(Op1::Not) {
+                        continue;
+                    }
+                    let Some(child) = self
+                        .kernel
+                        .arena()
+                        .children(formula)
+                        .and_then(|mut children| children.next())
+                    else {
+                        continue;
+                    };
+                    if right.contains(&Lit::positive(child.get())) {
+                        result = self.kernel.flatten_conclusion(result, literal)?;
+                        pivot = Some(Lit::positive(child.get()).negated());
+                        break;
+                    }
+                }
+            }
+            let pivot = pivot.ok_or_else(|| Error::Malformed {
+                message: "resolution premises have no complementary pivot".to_owned(),
+            })?;
             result = self.kernel.resolve(result, next, pivot)?;
         }
         self.kernel.contract_theorem(result)?;
@@ -531,6 +791,33 @@ impl Replayer {
         let right = right_expansion.raw;
         let (left_head, left_args) = application_spine(&self.kernel, left)?;
         let (right_head, right_args) = application_spine(&self.kernel, right)?;
+        if left_args.is_empty() && right_args.is_empty() && premises.len() == 2 {
+            let left_proved = positive_theorem_equality(&self.kernel, premises[0])?;
+            let right_proved = positive_theorem_equality(&self.kernel, premises[1])?;
+            if join_same_syntax(&mut self.kernel, left_proved, compact_left).is_ok()
+                && join_same_syntax(&mut self.kernel, right_proved, compact_right).is_ok()
+            {
+                self.kernel
+                    .convert_conclusions(premises[0], left_proved, compact_left)?;
+                self.kernel
+                    .convert_conclusions(premises[1], right_proved, compact_right)?;
+                let truth = self.kernel.bool(self.bool_ty, true)?;
+                let left_target = self.kernel.eq(self.bool_ty, compact_left, truth)?;
+                let left_true =
+                    self.equality_to_true(compact_left, truth, premises[0], left_target)?;
+                let right_target = self.kernel.eq(self.bool_ty, compact_right, truth)?;
+                let right_true =
+                    self.equality_to_true(compact_right, truth, premises[1], right_target)?;
+                let right_true = equality_symmetry(&mut self.kernel, self.bool_ty, right_true)?;
+                let combined = equality_transitivity(
+                    &mut self.kernel,
+                    self.bool_ty,
+                    left_true,
+                    right_true.theorem,
+                )?;
+                return self.convert_equality(combined.theorem, combined.equality, target);
+            }
+        }
         if left_args.len() != premises.len() || right_args.len() != premises.len() {
             return Err(Error::Malformed {
                 message: "cong premise count does not match application arity".to_owned(),
@@ -594,18 +881,12 @@ impl Replayer {
             });
         }
         let equality = reference(not_equality.magnitude())?;
-        let [_domain, left, right] = equality_children(&self.kernel, equality)?;
+        let [_domain, left, _right] = equality_children(&self.kernel, equality)?;
         let equality_identity = self.kernel.identity(not_equality.negated())?;
         let left_identity = self.kernel.identity(Lit::positive(left.get()))?;
         let result = self.kernel.eq_mp(equality_identity, left_identity)?;
         self.kernel.not_right(result, not_equality.negated())?;
         self.kernel.not_right(result, Lit::positive(left.get()))?;
-        let result = self
-            .kernel
-            .flatten_conclusion(result, Lit::positive(left.get()).negated())?;
-        let result = self
-            .kernel
-            .flatten_conclusion(result, Lit::positive(right.get()))?;
         self.kernel.contract_theorem(result)?;
         Ok(result)
     }
@@ -633,17 +914,34 @@ impl Replayer {
         Ok(theorem)
     }
 
-    fn check_clause(&mut self, step: &str, theorem: ThmId, expected: &[Lit]) -> Result<(), Error> {
+    fn check_clause(
+        &mut self,
+        step: &str,
+        theorem: ThmId,
+        expected: &[Lit],
+    ) -> Result<ThmId, Error> {
         let mut actual = conclusion_literals(&self.kernel, theorem)?;
+        for &literal in expected {
+            let reference = reference(literal.magnitude())?;
+            let is_false = matches!(
+                (
+                    literal.is_positive(),
+                    self.kernel.arena().bool_value(reference)
+                ),
+                (true, Some(false)) | (false, Some(true))
+            );
+            if is_false && !actual.contains(&literal) {
+                self.kernel.weaken(theorem, &[], &[literal])?;
+            }
+        }
+        actual = conclusion_literals(&self.kernel, theorem)?;
         let mut expected = expected.to_vec();
         actual.sort_unstable();
         expected.sort_unstable();
-        if actual.len() == expected.len() && actual != expected {
-            let mut unmatched = actual.clone();
+        if actual != expected {
             for wanted in &expected {
                 let wanted_reference = reference(wanted.magnitude())?;
-                let mut matched = None;
-                for (index, candidate) in unmatched.iter().enumerate() {
+                for candidate in &actual {
                     if candidate.is_positive() != wanted.is_positive() {
                         continue;
                     }
@@ -656,27 +954,34 @@ impl Replayer {
                             candidate_reference,
                             wanted_reference,
                         )?;
-                        matched = Some(index);
-                        break;
                     }
                 }
-                if let Some(index) = matched {
-                    unmatched.remove(index);
-                } else {
-                    break;
-                }
             }
+            self.kernel.contract_theorem(theorem)?;
             actual = conclusion_literals(&self.kernel, theorem)?;
             actual.sort_unstable();
         }
         if actual != expected {
+            let canonical_actual = actual
+                .iter()
+                .copied()
+                .map(|literal| canonical_clause_literal(&self.kernel, literal))
+                .collect::<Result<Vec<_>, _>>()?;
+            let canonical_expected = expected
+                .iter()
+                .copied()
+                .map(|literal| canonical_clause_literal(&self.kernel, literal))
+                .collect::<Result<Vec<_>, _>>()?;
+            if canonical_actual == canonical_expected {
+                return Ok(theorem);
+            }
             return Err(Error::ClauseMismatch {
                 step: step.to_owned(),
                 actual,
                 expected,
             });
         }
-        Ok(())
+        Ok(theorem)
     }
 
     fn check_exact_goal(&self, theorem: ThmId) -> Result<(), Error> {
@@ -710,6 +1015,24 @@ impl Replayer {
     }
 }
 
+fn canonical_clause_literal(kernel: &Kernel, literal: Lit) -> Result<Lit, Error> {
+    if !literal.is_positive() {
+        return Ok(literal);
+    }
+    let formula = reference(literal.magnitude())?;
+    if kernel.arena().op1(formula) != Some(Op1::Not) {
+        return Ok(literal);
+    }
+    let child = kernel
+        .arena()
+        .children(formula)
+        .and_then(|mut children| children.next())
+        .ok_or_else(|| Error::Malformed {
+            message: "negation has no operand".to_owned(),
+        })?;
+    Ok(Lit::positive(child.get()).negated())
+}
+
 /// Replays a QF_UF Alethe proof and binds its empty-clause theorem to the
 /// exact normalized assertion set from `problem`.
 ///
@@ -733,6 +1056,30 @@ fn symbol(expression: &Expr) -> Result<&str, Error> {
         },
         ExprKind::List(_) => Err(Error::Malformed {
             message: "expected a symbol".to_owned(),
+        }),
+    }
+}
+
+fn string_value(expression: &Expr) -> Option<&str> {
+    match expression.node() {
+        ExprKind::Atom(node) => match SpannedRepr::atom(node) {
+            Atom::String(value) => Some(value),
+            _ => None,
+        },
+        ExprKind::List(_) => None,
+    }
+}
+
+fn number_value(expression: &Expr) -> Result<&str, Error> {
+    match expression.node() {
+        ExprKind::Atom(node) => match SpannedRepr::atom(node) {
+            Atom::Number(value) => Ok(value),
+            _ => Err(Error::Malformed {
+                message: "expected a numeric argument".to_owned(),
+            }),
+        },
+        ExprKind::List(_) => Err(Error::Malformed {
+            message: "expected a numeric argument".to_owned(),
         }),
     }
 }
@@ -874,6 +1221,24 @@ mod tests {
 
     #[test]
     fn generates_and_replays_a_proof_with_cvc5() {
+        generate_and_replay(PROBLEM);
+    }
+
+    #[test]
+    fn replays_a_live_cvc5_qf_uf_rule_corpus() {
+        const CASES: &[&str] = &[
+            "(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(assert (not (= a a)))\n(check-sat)\n",
+            "(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(declare-const b U)\n(declare-const c U)\n(assert (= a b))\n(assert (= b c))\n(assert (not (= a c)))\n(check-sat)\n",
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(assert p)\n(assert (not p))\n(check-sat)\n",
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const q Bool)\n(assert p)\n(assert (not q))\n(assert (=> p q))\n(check-sat)\n",
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const q Bool)\n(assert (and p q))\n(assert (or (not p) (not q)))\n(check-sat)\n",
+        ];
+        for problem in CASES {
+            generate_and_replay(problem);
+        }
+    }
+
+    fn generate_and_replay(problem_source: &str) {
         let mut child = Command::new("cvc5")
             .args([
                 "--produce-proofs",
@@ -891,14 +1256,18 @@ mod tests {
             .stdin
             .take()
             .expect("cvc5 stdin")
-            .write_all(PROBLEM.as_bytes())
+            .write_all(problem_source.as_bytes())
             .expect("write problem to cvc5");
         let output = child.wait_with_output().expect("wait for cvc5");
         assert!(output.status.success(), "cvc5 failed: {output:?}");
         let stdout = String::from_utf8(output.stdout).expect("cvc5 emits UTF-8");
-        let problem = parse_smtlib2(PROBLEM).expect("problem parses");
+        let problem = parse_smtlib2(problem_source).expect("problem parses");
         let proof = parse_cvc5_output(&stdout).expect("generated proof parses");
-        replay_qf_uf(&problem, &proof).expect("generated proof replays");
+        replay_qf_uf(&problem, &proof).unwrap_or_else(|error| {
+            panic!(
+                "generated proof replays for:\n{problem_source}\nproof:\n{stdout}\nerror: {error}"
+            )
+        });
     }
 
     #[test]
