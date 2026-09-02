@@ -723,7 +723,7 @@ pub enum IlBinding<'a> {
         /// Exact definition-variable name.
         name: &'a str,
         /// Nested declaration parameters.
-        parameters: Vec<IlCursor<'a>>,
+        parameters: Vec<IlBinding<'a>>,
         /// Result type.
         result: IlType<'a>,
     },
@@ -732,7 +732,7 @@ pub enum IlBinding<'a> {
         /// Exact grammar-variable name.
         name: &'a str,
         /// Nested declaration parameters.
-        parameters: Vec<IlCursor<'a>>,
+        parameters: Vec<IlBinding<'a>>,
         /// Synthesized result type.
         result: IlType<'a>,
     },
@@ -2745,18 +2745,18 @@ fn decode_binding<'a>(cursor: &IlCursor<'a>) -> Result<IlBinding<'a>, IlSchemaEr
                     "missing".to_owned(),
                 ));
             };
-            require_parameters(parameters)?;
+            let parameters = decode_bindings(parameters)?;
             let result = IlType::decode(result)?;
             if form.head() == "def" {
                 Ok(IlBinding::Definition {
                     name,
-                    parameters: parameters.to_vec(),
+                    parameters,
                     result,
                 })
             } else {
                 Ok(IlBinding::Grammar {
                     name,
-                    parameters: parameters.to_vec(),
+                    parameters,
                     result,
                 })
             }
