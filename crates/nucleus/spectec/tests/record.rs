@@ -1,12 +1,11 @@
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
-use covalence_data_spectec::{DeclarationId, IlDocument, Limits};
-use covalence_logic_hol::{Kernel, Tag, TmTag};
+use covalence_data_spectec::{ClauseId, DeclarationId, IlDocument, Limits};
+use covalence_logic_hol::Kernel;
 use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
-    CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoveragePlan,
-    Disposition, KernelRoot, ParameterInstruction, Program, ProgramError, Source, TYPE_NAME,
-    TranslationCase, parameter_add_program, prove_add_program_agreement, prove_add_slice_agreement,
-    prove_parameter_add_agreement,
+    CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
+    CoveragePlan, Disposition, KernelRoot, SelectedCompileError, SelectedCompiler, Source,
+    TYPE_NAME, TranslationCase,
 };
 
 #[test]
@@ -138,167 +137,65 @@ fn generic_coverage_artifact_composes_without_add_policy() {
 }
 
 #[test]
-fn generic_program_schema_interprets_parameter_add() {
-    let program = parameter_add_program();
-    assert_eq!(
-        program.instructions(),
-        &[
-            ParameterInstruction::LocalGet(0),
-            ParameterInstruction::LocalGet(1),
-            ParameterInstruction::Binary(covalence_nucleus_spectec::AddOperation::I32Add),
-            ParameterInstruction::Return,
-        ]
+fn selected_compiler_requires_every_generic_plan_case_once() {
+    let declaration = DeclarationId::new(1, None).unwrap();
+    let clause = ClauseId::new(declaration, [3]).unwrap();
+    let plan = CoveragePlan::new(
+        vec![
+            Coverage {
+                id: declaration,
+                disposition: CoverageDisposition::Translate {
+                    case: 1_u8,
+                    source: (),
+                },
+            },
+            Coverage {
+                id: DeclarationId::new(2, None).unwrap(),
+                disposition: CoverageDisposition::Reject("outside"),
+            },
+        ],
+        vec![Coverage {
+            id: clause,
+            disposition: CoverageDisposition::Translate {
+                case: 2_u8,
+                source: (),
+            },
+        }],
+        Vec::new(),
     );
-    assert_eq!(
-        program.evaluate(
-            |index| Ok::<_, ()>([20_u32, 22][usize::try_from(index).unwrap()]),
-            |_operation, left, right| Ok::<_, ()>(left + right),
-        ),
-        Ok(42)
-    );
-
-    let malformed = Program::new(vec![
-        ParameterInstruction::LocalGet(0),
-        ParameterInstruction::Binary(covalence_nucleus_spectec::AddOperation::I32Add),
-        ParameterInstruction::Return,
-    ]);
+    let mut compiler = SelectedCompiler::new(&plan, Kernel::new()).unwrap();
+    assert_eq!(compiler.required(), 2);
+    compiler
+        .lower(1, |kernel| {
+            Ok(vec![KernelRoot::new("carrier", kernel.star()?)])
+        })
+        .unwrap();
+    let star = compiler.roots(1).unwrap()[0].reference();
+    let rows = compiler.kernel().len();
     assert!(matches!(
-        malformed.evaluate(|_| Ok::<_, ()>(1_u32), |_, left, right| Ok(left + right)),
-        Err(ProgramError::Evaluation(_))
+        compiler.lower(1, |_| Ok(Vec::new())),
+        Err(SelectedCompileError::AlreadyLowered { .. })
     ));
-}
+    assert_eq!(compiler.kernel().len(), rows);
+    assert!(matches!(
+        compiler.lower(9, |_| Ok(Vec::new())),
+        Err(SelectedCompileError::UnknownCase { .. })
+    ));
+    assert_eq!(compiler.kernel().len(), rows);
+    compiler
+        .lower(2, |kernel| {
+            Ok(vec![KernelRoot::new("type", kernel.bool_ty(star)?)])
+        })
+        .unwrap();
+    let selected = compiler.finish().unwrap();
+    assert_eq!(selected.roots(&1).unwrap()[0].role(), "carrier");
+    assert_eq!(selected.roots(&2).unwrap()[0].role(), "type");
 
-#[test]
-fn public_kernel_checks_direct_and_interpreted_add_agreement() {
-    let mut kernel = Kernel::new();
-    let star = kernel.star().unwrap();
-    let bool_ty = kernel.bool_ty(star).unwrap();
-    let word_ty = kernel.ty_fv(1, star).unwrap();
-    let unary = kernel.ty_arr(word_ty, word_ty).unwrap();
-    let binary = kernel.ty_arr(word_ty, unary).unwrap();
-    let add = kernel.tm_fv(2, binary).unwrap();
-    let left = kernel.tm_fv(3, word_ty).unwrap();
-    let right = kernel.tm_fv(4, word_ty).unwrap();
-
-    let before_theorems = kernel.thm().live_theorems().count();
-    let agreement =
-        prove_parameter_add_agreement(&mut kernel, bool_ty, word_ty, add, left, right).unwrap();
-
-    assert_ne!(agreement.direct, agreement.interpreted);
-    assert_eq!(
-        kernel.arena().tag(agreement.program),
-        Some(Tag::Tm(TmTag::Lam))
-    );
-    assert_eq!(
-        kernel.arena().tag(agreement.interpreted),
-        Some(Tag::Tm(TmTag::App))
-    );
-    assert!(
-        kernel
-            .tm_eq(agreement.direct, agreement.interpreted)
-            .unwrap()
-    );
-    let theorem = kernel.thm().get(agreement.theorem).unwrap();
-    assert!(theorem.lhs.rows().next().is_none());
-    let conclusions = theorem.rhs.rows().collect::<Vec<_>>();
-    assert_eq!(conclusions.len(), 1);
-    assert_eq!(conclusions[0].len(), 1);
-    assert!(conclusions[0][0].is_positive());
-    assert_eq!(
-        conclusions[0][0].magnitude(),
-        u32::try_from(agreement.proposition.get()).unwrap()
-    );
-    assert_eq!(kernel.thm().live_theorems().count(), before_theorems + 1);
-    assert_eq!(kernel.classifier(agreement.proposition).unwrap(), bool_ty);
-}
-
-#[test]
-fn checked_add_agreement_is_transactional() {
-    let mut kernel = Kernel::new();
-    let star = kernel.star().unwrap();
-    let bool_ty = kernel.bool_ty(star).unwrap();
-    let word_ty = kernel.ty_fv(1, star).unwrap();
-    let left = kernel.tm_fv(2, word_ty).unwrap();
-    let right = kernel.tm_fv(3, word_ty).unwrap();
-    let wrong_add = kernel.tm_fv(4, word_ty).unwrap();
-    let before_rows = kernel.len();
-    let before_theorems = kernel.thm().live_theorems().count();
-
-    assert!(
-        prove_parameter_add_agreement(&mut kernel, bool_ty, word_ty, wrong_add, left, right)
-            .is_err()
-    );
-    assert_eq!(kernel.len(), before_rows);
-    assert_eq!(kernel.thm().live_theorems().count(), before_theorems);
-}
-
-#[test]
-fn checked_add_agreement_rejects_unrecognized_program_data() {
-    let mut kernel = Kernel::new();
-    let star = kernel.star().unwrap();
-    let bool_ty = kernel.bool_ty(star).unwrap();
-    let word_ty = kernel.ty_fv(1, star).unwrap();
-    let unary = kernel.ty_arr(word_ty, word_ty).unwrap();
-    let binary = kernel.ty_arr(word_ty, unary).unwrap();
-    let add = kernel.tm_fv(2, binary).unwrap();
-    let left = kernel.tm_fv(3, word_ty).unwrap();
-    let right = kernel.tm_fv(4, word_ty).unwrap();
-    let unsupported = Program::new(vec![ParameterInstruction::Return]);
-    let before = kernel.len();
-
-    assert!(
-        prove_add_program_agreement(
-            &mut kernel,
-            &unsupported,
-            bool_ty,
-            word_ty,
-            add,
-            left,
-            right,
-        )
-        .is_err()
-    );
-    assert_eq!(kernel.len(), before);
-}
-
-#[test]
-fn source_level_add_agreement_retains_plan_and_program() {
-    let source = Source::wasm3().unwrap();
-    let mut kernel = Kernel::new();
-    let star = kernel.star().unwrap();
-    let bool_ty = kernel.bool_ty(star).unwrap();
-    let word_ty = kernel.ty_fv(10, star).unwrap();
-    let unary = kernel.ty_arr(word_ty, word_ty).unwrap();
-    let binary = kernel.ty_arr(word_ty, unary).unwrap();
-    let add = kernel.tm_fv(11, binary).unwrap();
-    let left = kernel.tm_fv(12, word_ty).unwrap();
-    let right = kernel.tm_fv(13, word_ty).unwrap();
-    let mut init_bytes = Vec::new();
-    covalence_logic_hol::wire::serialize(kernel.arena(), &mut init_bytes).unwrap();
-
-    let package =
-        prove_add_slice_agreement(&source, &mut kernel, bool_ty, word_ty, add, left, right)
-            .unwrap();
-
-    assert_eq!(package.plan(), &AddSlicePlan::build(&source).unwrap());
-    assert_eq!(package.program(), &parameter_add_program());
-    assert!(kernel.thm().get(package.checked().theorem).is_some());
-    assert_eq!(package.cids().input(), source.ast());
-    assert_eq!(package.cids().init().codec(), CidCodec::Raw);
-    assert_eq!(package.cids().init().hash(), CidHash::Sha256);
-    assert_eq!(package.cids().translation().codec(), CidCodec::Drisl);
-    assert_eq!(package.cids().translation().hash(), CidHash::Sha256);
-    assert_eq!(
-        package.cids().translation(),
-        AddSliceArtifact::build(&source).unwrap().cid().unwrap()
-    );
-    assert_eq!(package.cids().output().codec(), CidCodec::Raw);
-    assert_eq!(package.cids().output().hash(), CidHash::Sha256);
-    assert_ne!(package.cids().init(), package.cids().output());
-    assert!(drisl::addresses(package.cids().init(), &init_bytes));
-    let mut output_bytes = Vec::new();
-    covalence_logic_hol::wire::serialize(kernel.arena(), &mut output_bytes).unwrap();
-    assert!(drisl::addresses(package.cids().output(), &output_bytes));
+    let incomplete = SelectedCompiler::new(&plan, Kernel::new()).unwrap();
+    assert!(matches!(
+        incomplete.finish(),
+        Err(SelectedCompileError::MissingCase { .. })
+    ));
 }
 
 #[test]
