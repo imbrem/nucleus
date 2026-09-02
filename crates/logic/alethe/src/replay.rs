@@ -174,7 +174,10 @@ struct Replayer {
 
 impl Replayer {
     fn new() -> Result<Self, Error> {
-        const MANIFEST: &str = include_str!("../../../../theories/init-boolean.checked.json");
+        const MANIFEST: &str = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../theories/init-boolean.checked.json"
+        ));
         let manifest = covalence_lib_json::serde_json::from_str(MANIFEST)
             .map_err(|source| Error::InitJson { source })?;
         let init = init::compile(&manifest).map_err(|source| Error::Init { source })?;
@@ -2110,10 +2113,14 @@ mod tests {
     use std::io::Write as _;
     use std::process::{Command, Stdio};
 
-    const PROBLEM: &str =
-        include_str!("../../../proof/alethe/tests/fixtures/cvc5-qf-uf/problem.smt2");
-    const PROOF: &str =
-        include_str!("../../../proof/alethe/tests/fixtures/cvc5-qf-uf/proof.alethe");
+    const PROBLEM: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../proof/alethe/tests/fixtures/cvc5-qf-uf/problem.smt2"
+    ));
+    const PROOF: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../proof/alethe/tests/fixtures/cvc5-qf-uf/proof.alethe"
+    ));
 
     #[test]
     fn replays_the_selected_cvc5_qf_uf_refutation() {

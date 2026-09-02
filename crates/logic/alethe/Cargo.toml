@@ -7,6 +7,14 @@ license.workspace = true
 description = "Typed Alethe parsing and checked QF_UF replay for Nucleus"
 publish = false
 
+# `Replayer` and the fixture tests read files that live outside this package:
+# the checked Boolean init manifest at the workspace root, and the cvc5 QF_UF
+# corpus owned by `crates/proof/alethe`. Buck compiles from the package tree
+# alone, so name both as declared inputs and recreate them at their
+# workspace-relative paths under `CARGO_MANIFEST_DIR`.
+[package.metadata.glu]
+buck-manifest-mapped-srcs = { "nucleus//:hol_init_checked_manifest" = "theories/init-boolean.checked.json", "nucleus//crates/proof/alethe:package_files" = "crates/proof/alethe" }
+
 [dependencies]
 covalence-data-sexpr = { path = "../../data/sexpr" }
 covalence-lib-error = { path = "../../lib/error" }

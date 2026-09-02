@@ -385,8 +385,10 @@ fn duplicate<T>(attribute: &str) -> Result<T, ParseError> {
 mod tests {
     use super::*;
 
-    const QF_UF: &str =
-        include_str!("../../../proof/alethe/tests/fixtures/cvc5-qf-uf/proof.alethe");
+    const QF_UF: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../proof/alethe/tests/fixtures/cvc5-qf-uf/proof.alethe"
+    ));
 
     #[test]
     fn parses_the_selected_cvc5_qf_uf_fixture() {
@@ -432,7 +434,10 @@ mod tests {
 
     #[test]
     fn parses_the_selected_qf_uf_problem_and_rejects_unknown_commands() {
-        let source = include_str!("../../../proof/alethe/tests/fixtures/cvc5-qf-uf/problem.smt2");
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../proof/alethe/tests/fixtures/cvc5-qf-uf/problem.smt2"
+        ));
         let problem = parse_smtlib2(source).expect("problem parses");
         assert_eq!(problem.commands().len(), 8);
         assert!(matches!(
