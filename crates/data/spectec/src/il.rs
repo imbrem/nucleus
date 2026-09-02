@@ -713,6 +713,16 @@ impl<'a> IlExpression<'a> {
     pub fn arguments(&self) -> impl ExactSizeIterator<Item = IlCursor<'a>> + '_ {
         self.cursor.children().skip(1)
     }
+
+    /// Validates this expression and every contextually nested schema node.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error at the exact structural path of the first malformed
+    /// atom, expression, argument, type, iteration domain, or update path.
+    pub fn validate(&self) -> Result<(), IlSchemaError> {
+        validate_expression(self)
+    }
 }
 
 /// One relation rule or relation-valued premise.
@@ -973,6 +983,256 @@ fn expression_shape(head: &str) -> Option<(IlExpressionKind, SchemaArity)> {
     })
 }
 
+fn validate_expression(expression: &IlExpression<'_>) -> Result<(), IlSchemaError> {
+    use IlExpressionKind as K;
+    let form = required_form(expression.cursor(), "decoded expression")?;
+    match expression.kind() {
+        K::Variable => {
+            require_string_argument(&form, 0, "variable identifier")?;
+        }
+        K::Boolean => {
+            let value = require_symbol_argument(&form, 0, "Boolean literal")?;
+            if !matches!(value, "true" | "false") {
+                return Err(schema_error(
+                    form.cursor().declaration(),
+                    &child_path(&form, 0),
+                    "Boolean literal true or false",
+                    format!("symbol {value:?}"),
+                ));
+            }
+        }
+        K::Number => validate_number(&required_argument(&form, 0, "numeric literal")?)?,
+        K::Text => {
+            require_string_argument(&form, 0, "text literal")?;
+        }
+        K::Unary => {
+            require_symbol_argument(&form, 0, "unary operator")?;
+            require_symbol_argument(&form, 1, "unary operand type")?;
+            validate_expression_argument(&form, 2, "unary operand")?;
+        }
+        K::Binary | K::Comparison => {
+            require_symbol_argument(&form, 0, "binary operator")?;
+            require_symbol_argument(&form, 1, "binary operand type")?;
+            validate_expression_argument(&form, 2, "left operand")?;
+            validate_expression_argument(&form, 3, "right operand")?;
+        }
+        K::Tuple | K::List => {
+            for argument in form.arguments() {
+                IlExpression::decode(&argument)?.validate()?;
+            }
+        }
+        K::Projection => {
+            validate_expression_argument(&form, 0, "projected expression")?;
+            require_number_argument(&form, 1, "tuple projection index")?;
+        }
+        K::Case => {
+            require_string_argument(&form, 0, "variant mixfix operator")?;
+            validate_expression_argument(&form, 1, "variant payload")?;
+        }
+        K::Uncase => {
+            validate_expression_argument(&form, 0, "variant expression")?;
+            require_string_argument(&form, 1, "variant mixfix operator")?;
+        }
+        K::Optional => {
+            if !form.is_empty() {
+                validate_expression_argument(&form, 0, "optional payload")?;
+            }
+        }
+        K::UnwrapOptional | K::Lift | K::Length => {
+            validate_expression_argument(&form, 0, "unary expression payload")?;
+        }
+        K::Struct => {
+            for field in form.arguments() {
+                validate_expression_field(&field)?;
+            }
+        }
+        K::Dot => {
+            validate_expression_argument(&form, 0, "record expression")?;
+            require_string_argument(&form, 1, "record field operator")?;
+        }
+        K::Compose | K::Membership | K::Concatenate | K::Index => {
+            validate_expression_argument(&form, 0, "left expression")?;
+            validate_expression_argument(&form, 1, "right expression")?;
+        }
+        K::Slice => {
+            for index in 0..3 {
+                validate_expression_argument(&form, index, "slice expression")?;
+            }
+        }
+        K::Update | K::Extend => {
+            validate_expression_argument(&form, 0, "updated expression")?;
+            validate_path(&required_argument(&form, 1, "update path")?)?;
+            validate_expression_argument(&form, 2, "update value")?;
+        }
+        K::Call => {
+            validate_call(&form)?;
+        }
+        K::Iterate => {
+            validate_iterated_expression(&form)?;
+        }
+        K::Convert => {
+            require_symbol_argument(&form, 0, "source numeric type")?;
+            require_symbol_argument(&form, 1, "target numeric type")?;
+            validate_expression_argument(&form, 2, "converted expression")?;
+        }
+        K::Subtype => {
+            IlType::decode(&required_argument(&form, 0, "source inclusion type")?)?;
+            IlType::decode(&required_argument(&form, 1, "target inclusion type")?)?;
+            validate_expression_argument(&form, 2, "included expression")?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_expression_argument(
+    form: &IlForm<'_>,
+    index: usize,
+    expected: &'static str,
+) -> Result<(), IlSchemaError> {
+    IlExpression::decode(&required_argument(form, index, expected)?)?.validate()
+}
+
+fn validate_call(form: &IlForm<'_>) -> Result<(), IlSchemaError> {
+    require_string_argument(form, 0, "definition identifier")?;
+    for argument in form.arguments().skip(1) {
+        validate_il_argument(&decode_argument(&argument)?)?;
+    }
+    Ok(())
+}
+
+fn validate_iterated_expression(form: &IlForm<'_>) -> Result<(), IlSchemaError> {
+    validate_expression_argument(form, 0, "iterated expression")?;
+    let iteration_cursor = required_argument(form, 1, "expression iteration")?;
+    validate_iteration(&decode_iteration(&iteration_cursor)?)?;
+    for domain in form.arguments().skip(2) {
+        validate_domain(&domain)?;
+    }
+    Ok(())
+}
+
+fn validate_number(cursor: &IlCursor<'_>) -> Result<(), IlSchemaError> {
+    let form = required_form(cursor, "numeric literal family")?;
+    if !matches!(form.head(), "nat" | "int" | "rat" | "real") {
+        return Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "numeric literal family nat, int, rat, or real",
+            describe(cursor),
+        ));
+    }
+    require_arity(&form, 1, "numeric literal with one spelling")?;
+    match required_argument(&form, 0, "numeric spelling")?.node() {
+        IlNode::Number(_) | IlNode::Symbol(_) => Ok(()),
+        _ => Err(schema_error(
+            cursor.declaration(),
+            &child_path(&form, 0),
+            "numeric spelling",
+            describe(&required_argument(&form, 0, "numeric spelling")?),
+        )),
+    }
+}
+
+fn validate_expression_field(cursor: &IlCursor<'_>) -> Result<(), IlSchemaError> {
+    let form = required_form(cursor, "record expression field")?;
+    require_head(&form, "field")?;
+    require_arity(&form, 2, "record field with operator and expression")?;
+    require_string_argument(&form, 0, "record field operator")?;
+    validate_expression_argument(&form, 1, "record field expression")
+}
+
+fn validate_path(cursor: &IlCursor<'_>) -> Result<(), IlSchemaError> {
+    if cursor.node() == IlNode::Symbol("root") {
+        return Ok(());
+    }
+    let form = required_form(cursor, "update path")?;
+    match form.head() {
+        "idx" => {
+            require_arity(&form, 2, "indexed path")?;
+            validate_path(&required_argument(&form, 0, "parent path")?)?;
+            validate_expression_argument(&form, 1, "path index")
+        }
+        "slice" => {
+            require_arity(&form, 3, "sliced path")?;
+            validate_path(&required_argument(&form, 0, "parent path")?)?;
+            validate_expression_argument(&form, 1, "path slice start")?;
+            validate_expression_argument(&form, 2, "path slice length")
+        }
+        "dot" => {
+            require_arity(&form, 2, "record-field path")?;
+            validate_path(&required_argument(&form, 0, "parent path")?)?;
+            require_string_argument(&form, 1, "path field operator")?;
+            Ok(())
+        }
+        _ => Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "path root, idx, slice, or dot",
+            describe(cursor),
+        )),
+    }
+}
+
+fn validate_il_argument(argument: &IlArgument<'_>) -> Result<(), IlSchemaError> {
+    match argument {
+        IlArgument::Expression(cursor) => IlExpression::decode(cursor)?.validate(),
+        IlArgument::Type(_) | IlArgument::Definition(_) | IlArgument::Grammar(_) => Ok(()),
+    }
+}
+
+fn validate_iteration(iteration: &IlIteration<'_>) -> Result<(), IlSchemaError> {
+    if let IlIteration::Fixed { length, .. } = iteration {
+        IlExpression::decode(length)?.validate()?;
+    }
+    Ok(())
+}
+
+fn require_string_argument<'a>(
+    form: &IlForm<'a>,
+    index: usize,
+    expected: &'static str,
+) -> Result<&'a str, IlSchemaError> {
+    required_string(
+        form.argument(index),
+        form.cursor().declaration(),
+        &child_path(form, index),
+        expected,
+    )
+}
+
+fn require_symbol_argument<'a>(
+    form: &IlForm<'a>,
+    index: usize,
+    expected: &'static str,
+) -> Result<&'a str, IlSchemaError> {
+    let cursor = required_argument(form, index, expected)?;
+    match cursor.node() {
+        IlNode::Symbol(value) => Ok(value),
+        _ => Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            expected,
+            describe(&cursor),
+        )),
+    }
+}
+
+fn require_number_argument<'a>(
+    form: &IlForm<'a>,
+    index: usize,
+    expected: &'static str,
+) -> Result<&'a str, IlSchemaError> {
+    let cursor = required_argument(form, index, expected)?;
+    match cursor.node() {
+        IlNode::Number(value) => Ok(value),
+        _ => Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            expected,
+            describe(&cursor),
+        )),
+    }
+}
+
 fn decode_rule_schema<'a>(cursor: &IlCursor<'a>) -> Result<IlRuleSchema<'a>, IlSchemaError> {
     let form = required_form(cursor, "relation rule")?;
     require_head(&form, "rule")?;
@@ -1022,6 +1282,7 @@ fn decode_rule_schema<'a>(cursor: &IlCursor<'a>) -> Result<IlRuleSchema<'a>, IlS
         )
     })?;
     let conclusion = IlExpression::decode(conclusion_cursor)?;
+    conclusion.validate()?;
     let premises = tail
         .iter()
         .skip(2)
@@ -1054,6 +1315,9 @@ fn decode_clause_schema<'a>(cursor: &IlCursor<'a>) -> Result<IlClauseSchema<'a>,
         .iter()
         .map(decode_argument)
         .collect::<Result<Vec<_>, _>>()?;
+    for argument in &arguments {
+        validate_il_argument(argument)?;
+    }
     let result_cursor = tail.first().ok_or_else(|| {
         schema_error(
             cursor.declaration(),
@@ -1063,6 +1327,7 @@ fn decode_clause_schema<'a>(cursor: &IlCursor<'a>) -> Result<IlClauseSchema<'a>,
         )
     })?;
     let result = IlExpression::decode(result_cursor)?;
+    result.validate()?;
     let premises = tail
         .iter()
         .skip(1)
@@ -1104,6 +1369,7 @@ fn decode_production_schema<'a>(
         )
     })?;
     let result = IlExpression::decode(result_cursor)?;
+    result.validate()?;
     let premises = tail
         .iter()
         .skip(2)
@@ -1150,18 +1416,18 @@ fn decode_premise<'a>(cursor: &IlCursor<'a>) -> Result<IlPremise<'a>, IlSchemaEr
         "rule" => Ok(IlPremise::Rule(Box::new(decode_rule_schema(cursor)?))),
         "if" => {
             require_arity(&form, 1, "if premise with one expression")?;
-            Ok(IlPremise::If(IlExpression::decode(&required_argument(
-                &form,
-                0,
-                "if-premise expression",
-            )?)?))
+            let expression =
+                IlExpression::decode(&required_argument(&form, 0, "if-premise expression")?)?;
+            expression.validate()?;
+            Ok(IlPremise::If(expression))
         }
         "let" => {
             require_arity(&form, 2, "let premise with pattern and expression")?;
-            Ok(IlPremise::Let {
-                left: IlExpression::decode(&required_argument(&form, 0, "let pattern")?)?,
-                right: IlExpression::decode(&required_argument(&form, 1, "let expression")?)?,
-            })
+            let left = IlExpression::decode(&required_argument(&form, 0, "let pattern")?)?;
+            let right = IlExpression::decode(&required_argument(&form, 1, "let expression")?)?;
+            left.validate()?;
+            right.validate()?;
+            Ok(IlPremise::Let { left, right })
         }
         "iter" => {
             require_min_arity(&form, 2, "iterated premise with iteration shape")?;
@@ -1172,6 +1438,7 @@ fn decode_premise<'a>(cursor: &IlCursor<'a>) -> Result<IlPremise<'a>, IlSchemaEr
             )?)?);
             let iteration_cursor = required_argument(&form, 1, "premise iteration")?;
             let iteration = decode_iteration(&iteration_cursor)?;
+            validate_iteration(&iteration)?;
             let domains = form.arguments().skip(2).collect::<Vec<_>>();
             for domain in &domains {
                 validate_domain(domain)?;
@@ -1201,7 +1468,7 @@ fn validate_domain(cursor: &IlCursor<'_>) -> Result<(), IlSchemaError> {
         &child_path(&form, 0),
         "domain identifier",
     )?;
-    IlExpression::decode(&required_argument(&form, 1, "domain expression")?)?;
+    IlExpression::decode(&required_argument(&form, 1, "domain expression")?)?.validate()?;
     Ok(())
 }
 
