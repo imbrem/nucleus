@@ -2,8 +2,79 @@ use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
 use covalence_data_spectec::{DeclarationId, IlDocument, Limits};
 use covalence_logic_hol::Kernel;
 use covalence_nucleus_spectec::{
-    ArtifactError, CompilationRecord, CompileError, Compiler, KernelRoot, Source, TYPE_NAME,
+    AddSlicePlan, ArtifactError, CompilationRecord, CompileError, Compiler, Disposition,
+    KernelRoot, Source, TYPE_NAME, TranslationCase,
 };
+
+#[test]
+fn add_slice_exhaustively_classifies_exact_structural_forms() {
+    let source = Source::wasm3().unwrap();
+    let first = AddSlicePlan::build(&source).unwrap();
+    let second = AddSlicePlan::build(&source).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(first.declarations().len(), source.declaration_count());
+
+    let translated = first
+        .declarations()
+        .iter()
+        .map(|entry| entry.disposition)
+        .chain(first.clauses().iter().map(|entry| entry.disposition))
+        .chain(first.rules().iter().map(|entry| entry.disposition))
+        .filter_map(|disposition| match disposition {
+            Disposition::Translate { case, source } => Some((case, source)),
+            Disposition::Reject(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(translated.len(), 31);
+    assert_eq!(
+        translated
+            .iter()
+            .map(|(case, _)| *case)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        translated.len()
+    );
+    assert!(
+        translated
+            .iter()
+            .any(|(case, _)| *case == TranslationCase::BinaryOperationValueRule)
+    );
+    assert!(
+        translated
+            .iter()
+            .any(|(case, _)| *case == TranslationCase::LocalGetRule)
+    );
+    assert!(
+        first
+            .declarations()
+            .iter()
+            .any(|entry| matches!(entry.disposition, Disposition::Reject(_)))
+    );
+    assert!(
+        first
+            .clauses()
+            .iter()
+            .any(|entry| matches!(entry.disposition, Disposition::Reject(_)))
+    );
+    assert!(
+        first
+            .rules()
+            .iter()
+            .any(|entry| matches!(entry.disposition, Disposition::Reject(_)))
+    );
+
+    let data_root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/spectec/vendor/wasm-3.0");
+    for (_, span) in translated {
+        assert!(span.first_line > 0);
+        assert!(span.first_line <= span.last_line);
+        let line_count = std::fs::read_to_string(data_root.join(span.path))
+            .unwrap()
+            .lines()
+            .count();
+        assert!(usize::try_from(span.last_line).unwrap() <= line_count);
+    }
+}
 
 #[test]
 fn wasm3_source_requires_every_declaration() {

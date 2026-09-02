@@ -9,3 +9,9 @@ The portable output is an ATProto DRISL object linking the exact source bundle
 and exact kernel CBOR bytes. The mapping is provenance and audit data, not
 theorem authority: only facts present in the linked arena and accepted through
 the checked kernel boundary are trusted.
+
+`AddSlicePlan` is the closed coverage IR for the first parameter-only add
+theorem. It classifies every elaborated declaration, nested clause, and nested
+rule by structural selector as one translation case or an explicit rejection.
+Selected cases carry pinned raw-source line mappings. The plan assigns no HOL
+meaning and cannot create facts.

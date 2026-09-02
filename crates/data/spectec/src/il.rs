@@ -76,19 +76,43 @@ pub struct RuleId {
     path: Vec<NonZeroU32>,
 }
 
+/// Stable structural selector for a nested `clause` form.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ClauseId {
+    declaration: DeclarationId,
+    path: Vec<NonZeroU32>,
+}
+
+impl ClauseId {
+    /// Constructs a clause selector from one-based child positions.
+    ///
+    /// Returns `None` for an empty path or any zero position.
+    #[must_use]
+    pub fn new(declaration: DeclarationId, path: impl IntoIterator<Item = u32>) -> Option<Self> {
+        let path = structural_path(path)?;
+        Some(Self { declaration, path })
+    }
+
+    /// Returns the containing declaration selector.
+    #[must_use]
+    pub const fn declaration(&self) -> DeclarationId {
+        self.declaration
+    }
+
+    /// Returns the one-based expression path within the declaration.
+    #[must_use]
+    pub fn path(&self) -> impl ExactSizeIterator<Item = u32> + '_ {
+        self.path.iter().map(|position| position.get())
+    }
+}
+
 impl RuleId {
     /// Constructs a rule selector from one-based child positions.
     ///
     /// Returns `None` for an empty path or any zero position.
     #[must_use]
     pub fn new(declaration: DeclarationId, path: impl IntoIterator<Item = u32>) -> Option<Self> {
-        let path = path
-            .into_iter()
-            .map(NonZeroU32::new)
-            .collect::<Option<Vec<_>>>()?;
-        if path.is_empty() {
-            return None;
-        }
+        let path = structural_path(path)?;
         Some(Self { declaration, path })
     }
 
@@ -110,6 +134,20 @@ impl RuleId {
 pub struct IlRule {
     id: RuleId,
     name: String,
+}
+
+/// One nested definition clause in the elaborated document.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct IlClause {
+    id: ClauseId,
+}
+
+impl IlClause {
+    /// Returns the stable structural selector.
+    #[must_use]
+    pub const fn id(&self) -> &ClauseId {
+        &self.id
+    }
 }
 
 impl IlRule {
@@ -363,6 +401,22 @@ impl IlDocument {
         }
         (symbol(list_items(expression)?.first()) == Some("rule")).then_some(expression)
     }
+
+    /// Inventories every nested `clause` form in deterministic tree order.
+    #[must_use]
+    pub fn clauses(&self, id: DeclarationId) -> Option<Vec<IlClause>> {
+        let expression = self.expression(id)?;
+        let mut clauses = Vec::new();
+        collect_clauses(expression, id, &mut Vec::new(), &mut clauses);
+        Some(clauses)
+    }
+
+    /// Resolves an exact structural clause selector.
+    #[must_use]
+    pub fn clause(&self, id: &ClauseId) -> Option<&Expr> {
+        let expression = resolve_path(self.expression(id.declaration)?, &id.path)?;
+        (symbol(list_items(expression)?.first()) == Some("clause")).then_some(expression)
+    }
 }
 
 /// Why an elaborated S-expression is not a recognized IL declaration envelope.
@@ -510,4 +564,48 @@ fn collect_rules(
         path.pop();
     }
     Ok(())
+}
+
+fn collect_clauses(
+    expression: &Expr,
+    declaration: DeclarationId,
+    path: &mut Vec<NonZeroU32>,
+    clauses: &mut Vec<IlClause>,
+) {
+    let Some(items) = list_items(expression) else {
+        return;
+    };
+    if symbol(items.first()) == Some("clause") {
+        clauses.push(IlClause {
+            id: ClauseId {
+                declaration,
+                path: path.clone(),
+            },
+        });
+    }
+    for (index, child) in items.iter().enumerate() {
+        let Some(position) = u32::try_from(index + 1).ok().and_then(NonZeroU32::new) else {
+            return;
+        };
+        path.push(position);
+        collect_clauses(child, declaration, path, clauses);
+        path.pop();
+    }
+}
+
+fn structural_path(path: impl IntoIterator<Item = u32>) -> Option<Vec<NonZeroU32>> {
+    let path = path
+        .into_iter()
+        .map(NonZeroU32::new)
+        .collect::<Option<Vec<_>>>()?;
+    (!path.is_empty()).then_some(path)
+}
+
+fn resolve_path<'a>(mut expression: &'a Expr, path: &[NonZeroU32]) -> Option<&'a Expr> {
+    for position in path {
+        let items = list_items(expression)?;
+        let index = usize::try_from(position.get()).ok()?.checked_sub(1)?;
+        expression = items.get(index)?;
+    }
+    Some(expression)
 }
