@@ -6,7 +6,9 @@
 use std::ops::Range;
 
 use covalence_lib_error::snafu::Snafu;
-use covalence_lib_wasm::wasmparser::{Encoding, Parser, Payload, Validator, WasmFeatures};
+use covalence_lib_wasm::wasmparser::{
+    BinaryReader, Encoding, FunctionBody, Parser, Payload, Validator, WasmFeatures,
+};
 
 /// Resource policy applied while recognizing a module envelope.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -15,6 +17,8 @@ pub struct Limits {
     pub bytes: usize,
     /// Greatest accepted number of sections, including custom sections.
     pub sections: usize,
+    /// Greatest accepted number of defined function bodies.
+    pub functions: usize,
 }
 
 impl Default for Limits {
@@ -22,6 +26,7 @@ impl Default for Limits {
         Self {
             bytes: 64 * 1024 * 1024,
             sections: 100_000,
+            functions: 1_000_000,
         }
     }
 }
@@ -35,11 +40,27 @@ pub struct Section {
     pub payload: Range<usize>,
 }
 
+/// One defined function body in function-index order after imports.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Function {
+    body: Range<usize>,
+}
+
+impl Function {
+    /// Returns the body byte range, including locals and instructions but not
+    /// its encoded size prefix.
+    #[must_use]
+    pub fn range(&self) -> Range<usize> {
+        self.body.clone()
+    }
+}
+
 /// A validated WebAssembly 3.0 core module borrowing its exact bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Module<'a> {
     bytes: &'a [u8],
     sections: Vec<Section>,
+    functions: Vec<Function>,
 }
 
 impl<'a> Module<'a> {
@@ -53,6 +74,23 @@ impl<'a> Module<'a> {
     #[must_use]
     pub fn sections(&self) -> &[Section] {
         &self.sections
+    }
+
+    /// Returns defined function bodies in binary order.
+    #[must_use]
+    pub fn functions(&self) -> &[Function] {
+        &self.functions
+    }
+
+    /// Opens a typed, borrowing reader for a function's locals and operators.
+    ///
+    /// The reader uses exactly the WebAssembly 3.0 feature profile. This is a
+    /// compositional view over the retained bytes, not a second semantic AST.
+    #[must_use]
+    pub fn function_body(&self, function: &Function) -> FunctionBody<'a> {
+        let mut reader = BinaryReader::new(&self.bytes[function.body.clone()], function.body.start);
+        reader.set_features(WasmFeatures::WASM3);
+        FunctionBody::new(reader)
     }
 
     /// Returns the exact payload bytes for a section from this module.
@@ -77,6 +115,12 @@ pub enum Error {
     /// Input exceeded the configured section budget.
     #[snafu(display("WebAssembly binary has more than {limit} sections"))]
     Sections {
+        /// Configured limit.
+        limit: usize,
+    },
+    /// Input exceeded the configured defined-function budget.
+    #[snafu(display("WebAssembly binary has more than {limit} defined functions"))]
+    Functions {
         /// Configured limit.
         limit: usize,
     },
@@ -110,11 +154,20 @@ pub fn parse(bytes: &[u8], limits: Limits) -> Result<Module<'_>, Error> {
     }
 
     let mut sections = Vec::new();
+    let mut functions = Vec::new();
     let mut is_module = false;
     for payload in Parser::new(0).parse_all(bytes) {
         let payload = payload.map_err(|source| Error::Invalid { source })?;
         if let Payload::Version { encoding, .. } = payload {
             is_module = encoding == Encoding::Module;
+        }
+        if let Payload::CodeSectionEntry(body) = &payload {
+            if functions.len() == limits.functions {
+                return Err(Error::Functions {
+                    limit: limits.functions,
+                });
+            }
+            functions.push(Function { body: body.range() });
         }
         if let Some((id, payload)) = payload.as_section() {
             if sections.len() == limits.sections {
@@ -133,11 +186,17 @@ pub fn parse(bytes: &[u8], limits: Limits) -> Result<Module<'_>, Error> {
         .validate_all(bytes)
         .map_err(|source| Error::Invalid { source })?;
 
-    Ok(Module { bytes, sections })
+    Ok(Module {
+        bytes,
+        sections,
+        functions,
+    })
 }
 
 #[cfg(test)]
 mod tests {
+    use covalence_lib_wasm::wasmparser::Operator;
+
     use super::{Error, Limits, parse};
 
     const EMPTY_MODULE: &[u8] = b"\0asm\x01\0\0\0";
@@ -163,6 +222,7 @@ mod tests {
                 Limits {
                     bytes: 7,
                     sections: 0,
+                    functions: 0,
                 }
             ),
             Err(Error::Bytes { .. })
@@ -177,5 +237,19 @@ mod tests {
             parse(bytes, Limits::default()),
             Err(Error::Invalid { .. })
         ));
+    }
+
+    #[test]
+    fn opens_typed_wasm3_operators_without_copying_the_module() {
+        let bytes = b"\0asm\x01\0\0\0\x01\x04\x01\x60\0\0\x03\x02\x01\0\x0a\x04\x01\x02\0\x0b";
+        let module = parse(bytes, Limits::default()).expect("valid function module");
+        let [function] = module.functions() else {
+            panic!("expected one function")
+        };
+        let body = module.function_body(function);
+        assert_eq!(body.as_bytes(), b"\0\x0b");
+        let mut operators = body.get_operators_reader().expect("locals decode");
+        assert!(matches!(operators.read(), Ok(Operator::End)));
+        assert!(operators.eof());
     }
 }
