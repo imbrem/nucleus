@@ -1,12 +1,13 @@
 //! Relational HOL expression lowering over the generic expression fold.
 
 use covalence_data_spectec::{
-    IlArgument, IlBinding, IlExpression, IlExpressionView, IlSchemaError,
+    IlArgument, IlBinding, IlDomain, IlExpression, IlExpressionView, IlIteration, IlPremise,
+    IlSchemaError,
 };
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref};
 
-use crate::{ExpressionAlgebra, HolCase, HolRule, existential_case};
+use crate::{ExpressionAlgebra, HolCase, HolRule, existential_case, fold_expression};
 
 /// Relational meaning of one expression.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,6 +65,50 @@ pub struct RelationalClause<'a> {
     pub semantic_premises: &'a [Ref],
     /// Whether this clause carries `otherwise`.
     pub otherwise: bool,
+}
+
+/// Lowered conjunction contributed by one premise subtree.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RelationalCondition {
+    binders: Vec<Ref>,
+    premises: Vec<Ref>,
+    otherwise: bool,
+}
+
+impl RelationalCondition {
+    /// Constructs a lowered premise condition.
+    #[must_use]
+    pub const fn new(binders: Vec<Ref>, premises: Vec<Ref>, otherwise: bool) -> Self {
+        Self {
+            binders,
+            premises,
+            otherwise,
+        }
+    }
+
+    /// Returns fresh variables introduced by relational subexpressions.
+    #[must_use]
+    pub fn binders(&self) -> &[Ref] {
+        &self.binders
+    }
+
+    /// Returns checked Boolean propositions in source order.
+    #[must_use]
+    pub fn premises(&self) -> &[Ref] {
+        &self.premises
+    }
+
+    /// Returns whether this subtree contains `otherwise`.
+    #[must_use]
+    pub const fn otherwise(&self) -> bool {
+        self.otherwise
+    }
+
+    fn append(&mut self, other: &Self) {
+        self.binders.extend_from_slice(&other.binders);
+        self.premises.extend_from_slice(&other.premises);
+        self.otherwise |= other.otherwise;
+    }
 }
 
 impl RelationalTerm {
@@ -247,22 +292,54 @@ pub trait RelationalResolver {
         arguments: &[IlArgument<'_>],
         expression_arguments: &[Ref],
     ) -> Result<RelationalCall, Self::Error>;
+
+    /// Applies a named relation to its lowered single argument.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown relation or ill-typed application.
+    fn relation(
+        &mut self,
+        kernel: &mut Kernel,
+        name: &str,
+        argument: Ref,
+    ) -> Result<Ref, Self::Error>;
+
+    /// Lowers an iterated premise after its repeated condition and domain
+    /// expressions have been lowered.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the selected value representation cannot express
+    /// the iteration or its named domains.
+    fn iterated_premise(
+        &mut self,
+        kernel: &mut Kernel,
+        iteration: &IlIteration<'_>,
+        domains: &[(&str, RelationalTerm)],
+        repeated: RelationalCondition,
+    ) -> Result<RelationalCondition, Self::Error>;
+
+    /// Reports nested relation-premise binders unsupported by this lowering.
+    fn nested_premise_bindings(&mut self, count: usize) -> Self::Error;
 }
 
 /// Concrete expression algebra producing relational HOL terms.
 pub struct RelationalExpressionAlgebra<'a, R> {
     kernel: &'a mut Kernel,
     resolver: R,
+    bool_ty: Ref,
     next_name: u64,
 }
 
 impl<'a, R> RelationalExpressionAlgebra<'a, R> {
     /// Starts a lowering with an explicit deterministic name range.
     #[must_use]
-    pub const fn new(kernel: &'a mut Kernel, resolver: R, first_name: u64) -> Self {
+    pub const fn new(kernel: &'a mut Kernel, resolver: R, bool_ty: Ref, first_name: u64) -> Self {
         Self {
             kernel,
             resolver,
+            bool_ty,
             next_name: first_name,
         }
     }
@@ -301,6 +378,96 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
     #[must_use]
     pub fn into_resolver(self) -> R {
         self.resolver
+    }
+
+    /// Lowers one complete premise subtree to relational HOL conditions.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first expression, binding, relation, iteration, or checked
+    /// HOL failure reported by the resolver.
+    pub fn premise(&mut self, premise: &IlPremise<'_>) -> Result<RelationalCondition, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        match premise {
+            IlPremise::If(expression) => {
+                let term = fold_expression(expression, self)?;
+                let truth = self
+                    .kernel
+                    .bool(self.bool_ty, true)
+                    .map_err(|source| self.resolver.kernel_error(source))?;
+                let proposition = self
+                    .kernel
+                    .op2(covalence_logic_hol::builtin::Op2::And, truth, term.value())
+                    .map_err(|source| self.resolver.kernel_error(source))?;
+                let mut premises = term.premises().to_vec();
+                premises.push(proposition);
+                Ok(RelationalCondition::new(
+                    term.binders().to_vec(),
+                    premises,
+                    false,
+                ))
+            }
+            IlPremise::Let { left, right } => {
+                let left = fold_expression(left, self)?;
+                let right = fold_expression(right, self)?;
+                let equality = self
+                    .kernel
+                    .eq(self.bool_ty, left.value(), right.value())
+                    .map_err(|source| self.resolver.kernel_error(source))?;
+                let mut binders = left.binders().to_vec();
+                binders.extend_from_slice(right.binders());
+                let mut premises = left.premises().to_vec();
+                premises.extend_from_slice(right.premises());
+                premises.push(equality);
+                Ok(RelationalCondition::new(binders, premises, false))
+            }
+            IlPremise::Otherwise => Ok(RelationalCondition::new(Vec::new(), Vec::new(), true)),
+            IlPremise::Rule(rule) => {
+                if !rule.bindings().is_empty() {
+                    return Err(self.resolver.nested_premise_bindings(rule.bindings().len()));
+                }
+                let conclusion = fold_expression(rule.conclusion(), self)?;
+                let relation =
+                    self.resolver
+                        .relation(self.kernel, rule.name(), conclusion.value())?;
+                let mut condition = RelationalCondition::new(
+                    conclusion.binders().to_vec(),
+                    conclusion.premises().to_vec(),
+                    false,
+                );
+                condition.premises.push(relation);
+                for nested in rule.premises() {
+                    let nested = self.premise(nested)?;
+                    condition.append(&nested);
+                }
+                Ok(condition)
+            }
+            IlPremise::Iterated {
+                premise,
+                iteration,
+                domains,
+            } => {
+                let repeated = self.premise(premise)?;
+                let domains = domains
+                    .iter()
+                    .map(|domain| self.lower_domain(domain))
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.resolver
+                    .iterated_premise(self.kernel, iteration, &domains, repeated)
+            }
+        }
+    }
+
+    fn lower_domain<'b>(
+        &mut self,
+        domain: &'b IlDomain<'b>,
+    ) -> Result<(&'b str, RelationalTerm), R::Error>
+    where
+        R: RelationalResolver,
+    {
+        Ok((domain.name(), fold_expression(domain.expression(), self)?))
     }
 
     fn take_name(&mut self) -> Result<u64, R::Error>

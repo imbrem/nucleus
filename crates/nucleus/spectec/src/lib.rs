@@ -32,8 +32,9 @@ pub use expression::{ExpressionAlgebra, fold_expression};
 pub use grammar::{GrammarAlgebra, GrammarArgument, GrammarChildren, fold_grammar};
 pub use premise::{PremiseAlgebra, PremiseChildren, fold_premise};
 pub use relational::{
-    RelationalCall, RelationalCaseError, RelationalClause, RelationalExpressionAlgebra,
-    RelationalResolver, RelationalTerm, relational_hol_case, relational_hol_rule,
+    RelationalCall, RelationalCaseError, RelationalClause, RelationalCondition,
+    RelationalExpressionAlgebra, RelationalResolver, RelationalTerm, relational_hol_case,
+    relational_hol_rule,
 };
 pub use schema::{
     HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,

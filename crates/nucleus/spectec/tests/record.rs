@@ -9,11 +9,11 @@ use covalence_nucleus_spectec::{
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
     CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase,
     HolEmbedding, HolRule, IndexErasure, KernelRoot, RelationalCall, RelationalClause,
-    RelationalExpressionAlgebra, RelationalResolver, RelationalTerm, SelectedCompileError,
-    SelectedCompiler, Source, TYPE_NAME, TranslationCase, TypeAlgebra, TypeChildren,
-    close_graph_equation, close_hol_rule, close_hol_rules, declare_hol_schema, fold_expression,
-    fold_grammar, fold_type, least_closed_family, least_closed_predicate, ordered_cases,
-    relational_hol_case, relational_hol_rule,
+    RelationalCondition, RelationalExpressionAlgebra, RelationalResolver, RelationalTerm,
+    SelectedCompileError, SelectedCompiler, Source, TYPE_NAME, TranslationCase, TypeAlgebra,
+    TypeChildren, close_graph_equation, close_hol_rule, close_hol_rules, declare_hol_schema,
+    fold_expression, fold_grammar, fold_type, least_closed_family, least_closed_predicate,
+    ordered_cases, relational_hol_case, relational_hol_rule,
 };
 
 struct TestRelationalResolver {
@@ -78,6 +78,11 @@ impl RelationalResolver for TestRelationalResolver {
         expression: &covalence_data_spectec::IlExpressionView<'_>,
         children: &[covalence_logic_hol::Ref],
     ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        if let covalence_data_spectec::IlExpressionView::Boolean(value) = expression {
+            return kernel
+                .bool(self.bool_ty, *value)
+                .map_err(|error| error.to_string());
+        }
         if !matches!(
             expression,
             covalence_data_spectec::IlExpressionView::Binary {
@@ -120,13 +125,38 @@ impl RelationalResolver for TestRelationalResolver {
             result_type,
         })
     }
+
+    fn relation(
+        &mut self,
+        kernel: &mut Kernel,
+        _name: &str,
+        _argument: covalence_logic_hol::Ref,
+    ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        kernel
+            .bool(self.bool_ty, true)
+            .map_err(|error| error.to_string())
+    }
+
+    fn iterated_premise(
+        &mut self,
+        _kernel: &mut Kernel,
+        _iteration: &covalence_data_spectec::IlIteration<'_>,
+        _domains: &[(&str, RelationalTerm)],
+        repeated: covalence_nucleus_spectec::RelationalCondition,
+    ) -> Result<covalence_nucleus_spectec::RelationalCondition, Self::Error> {
+        Ok(repeated)
+    }
+
+    fn nested_premise_bindings(&mut self, count: usize) -> Self::Error {
+        format!("unsupported nested premise bindings: {count}")
+    }
 }
 
 #[test]
 #[allow(clippy::too_many_lines)] // Exercises binding, call, rule, and exact-clause composition.
 fn relational_expression_fold_turns_calls_into_graph_premises() {
     let il = IlDocument::parse(
-        b"(def \"g\" nat (clause (exp \"z\" nat) (exp \"flag\" bool) (call \"f\" (exp (bin add nat (var \"x\") (var \"y\"))))))",
+        b"(def \"g\" nat (clause (exp \"z\" nat) (exp \"flag\" bool) (call \"f\" (exp (bin add nat (var \"x\") (var \"y\")))) (if (bool true)) (let (var \"x\") (var \"x\")) (rule \"R\" \"R\" (var \"x\")) else))",
         Limits::default(),
     )
     .unwrap();
@@ -155,13 +185,29 @@ fn relational_expression_fold_turns_calls_into_graph_premises() {
         graph,
         bool_ty,
     };
-    let (term, explicit) = {
-        let mut algebra = RelationalExpressionAlgebra::new(&mut kernel, resolver, 100);
+    let (term, explicit, conditions) = {
+        let mut algebra = RelationalExpressionAlgebra::new(&mut kernel, resolver, bool_ty, 100);
         let explicit = algebra.bindings(schema.bindings()).unwrap();
         let term = fold_expression(schema.result(), &mut algebra).unwrap();
+        let conditions = schema
+            .premises()
+            .iter()
+            .map(|premise| algebra.premise(premise))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         assert_eq!(algebra.next_name(), 103);
-        (term, explicit)
+        (term, explicit, conditions)
     };
+    assert_eq!(conditions.len(), 4);
+    assert!(conditions[3].otherwise());
+    let semantic_binders = conditions
+        .iter()
+        .flat_map(|condition| condition.binders().iter().copied())
+        .collect::<Vec<_>>();
+    let semantic_premises = conditions
+        .iter()
+        .flat_map(|condition| condition.premises().iter().copied())
+        .collect::<Vec<_>>();
     assert_eq!(explicit.len(), 2);
     assert!(
         kernel
@@ -202,9 +248,9 @@ fn relational_expression_fold_turns_calls_into_graph_premises() {
             explicit_locals: &explicit,
             patterns: &patterns,
             result: &term,
-            semantic_binders: &[],
-            semantic_premises: &[],
-            otherwise: true,
+            semantic_binders: &semantic_binders,
+            semantic_premises: &semantic_premises,
+            otherwise: conditions.iter().any(RelationalCondition::otherwise),
         },
     )
     .unwrap();
