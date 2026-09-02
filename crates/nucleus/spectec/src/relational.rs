@@ -1,14 +1,14 @@
 //! Relational HOL expression lowering over the generic expression fold.
 
 use covalence_data_spectec::{
-    IlArgument, IlBinding, IlClauseSchema, IlDomain, IlExpression, IlExpressionView, IlIteration,
-    IlPremise, IlRuleSchema, IlSchemaError,
+    DeclarationId, IlArgument, IlBinding, IlClauseSchema, IlDeclarationBody, IlDomain,
+    IlExpression, IlExpressionView, IlIteration, IlKind, IlPremise, IlRuleSchema, IlSchemaError,
 };
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref, Tag, TyTag};
 
 use crate::{
-    ExpressionAlgebra, HolCase, HolRule, LeastPredicate, LeastPredicateError,
+    ExpressionAlgebra, HolCase, HolRule, HolSchema, LeastPredicate, LeastPredicateError, Source,
     begin_least_closed_family_avoiding, close_hol_rule, close_hol_rules, existential_case,
     fold_expression,
 };
@@ -556,6 +556,86 @@ where
     )?;
     *kernel = staged;
     Ok(definition)
+}
+
+/// Decodes and lowers one complete definition selected from an exact source
+/// and its checked generic schema.
+///
+/// All schema slots are reserved automatically for hygienic formal-variable
+/// allocation. `avoid` adds primitive-interpretation or caller-owned roots.
+///
+/// # Errors
+///
+/// Returns an error for an absent/non-definition selector, a mismatched HOL
+/// schema slot, malformed clause, or any schema-derived lowering failure.
+/// `kernel` is unchanged on failure.
+pub fn relational_definition_declaration<R>(
+    kernel: &mut Kernel,
+    resolver: &mut R,
+    source: &Source,
+    schema: &HolSchema,
+    id: DeclarationId,
+    avoid: &[Ref],
+) -> Result<RelationalDefinition, R::Error>
+where
+    R: RelationalResolver,
+{
+    let declaration = source
+        .il()
+        .schema(id)
+        .map_err(|error| resolver.schema_error(error))?
+        .ok_or_else(|| {
+            resolver.schema_error(IlSchemaError::Shape {
+                id,
+                path: Vec::new(),
+                expected: "inventoried definition declaration",
+                actual: "missing declaration".to_owned(),
+            })
+        })?;
+    let target = schema.declaration(id).ok_or_else(|| {
+        resolver.schema_error(IlSchemaError::Shape {
+            id,
+            path: Vec::new(),
+            expected: "checked HOL definition slot",
+            actual: "missing schema slot".to_owned(),
+        })
+    })?;
+    let IlDeclarationBody::Definition { clauses, .. } = declaration.body() else {
+        return Err(resolver.schema_error(IlSchemaError::Shape {
+            id,
+            path: Vec::new(),
+            expected: "definition declaration",
+            actual: format!("{:?} declaration", target.kind()),
+        }));
+    };
+    if target.kind() != IlKind::Definition {
+        return Err(resolver.schema_error(IlSchemaError::Shape {
+            id,
+            path: Vec::new(),
+            expected: "HOL definition slot",
+            actual: format!("HOL {:?} slot", target.kind()),
+        }));
+    }
+    let clauses = clauses
+        .iter()
+        .map(IlClauseSchema::decode)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| resolver.schema_error(error))?;
+    let reserved = schema
+        .declarations()
+        .map(|(_, declaration)| declaration.reference())
+        .chain(avoid.iter().copied())
+        .collect::<Vec<_>>();
+    relational_definition_schema(
+        kernel,
+        resolver,
+        &RelationalDefinitionSchema {
+            bool_ty: schema.bool_ty(),
+            predicate: target.reference(),
+            clauses: &clauses,
+            avoid: &reserved,
+        },
+    )
 }
 
 fn graph_domains(

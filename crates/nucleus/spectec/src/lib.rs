@@ -36,8 +36,8 @@ pub use relational::{
     RelationalCall, RelationalCaseError, RelationalClause, RelationalCondition,
     RelationalDefinition, RelationalDefinitionSchema, RelationalDefinitionSource,
     RelationalExpressionAlgebra, RelationalRelation, RelationalRelationDefinition,
-    RelationalResolver, RelationalTerm, relational_definition, relational_definition_schema,
-    relational_hol_case, relational_hol_rule, relational_relations,
+    RelationalResolver, RelationalTerm, relational_definition, relational_definition_declaration,
+    relational_definition_schema, relational_hol_case, relational_hol_rule, relational_relations,
 };
 pub use schema::{
     HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,

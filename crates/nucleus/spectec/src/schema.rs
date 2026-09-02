@@ -155,6 +155,16 @@ impl HolSchema {
         self.declarations.get(&id).copied()
     }
 
+    /// Iterates every checked declaration slot in structural-selector order.
+    #[must_use]
+    pub fn declarations(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (DeclarationId, HolDeclaration)> + '_ {
+        self.declarations
+            .iter()
+            .map(|(&id, &declaration)| (id, declaration))
+    }
+
     /// Returns every structural selector carrying an exact kind-qualified name.
     ///
     /// Names are lookup metadata rather than trusted identity, so duplicate

@@ -15,7 +15,8 @@ use covalence_nucleus_spectec::{
     TypeChildren, begin_least_closed_family, close_graph_equation, close_hol_rule, close_hol_rules,
     close_hol_theory, declare_hol_schema, fold_expression, fold_grammar, fold_type,
     least_closed_family, least_closed_predicate, ordered_cases, relational_definition,
-    relational_definition_schema, relational_hol_case, relational_hol_rule, relational_relations,
+    relational_definition_declaration, relational_definition_schema, relational_hol_case,
+    relational_hol_rule, relational_relations,
 };
 
 #[derive(Clone)]
@@ -446,6 +447,69 @@ fn complete_clause_api_lowers_patterns_result_and_premises() {
     );
     assert_eq!(kernel.arena().len(), before);
     assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+}
+
+#[test]
+fn exact_source_definition_lowers_from_selector_and_schema() {
+    let bytes = b"(def \"id\" (exp \"x\" nat) nat (clause (exp (var \"x\")) (var \"x\"))) (typ \"T\" (inst (alias nat)))";
+    let il = IlDocument::parse(bytes, Limits::default()).unwrap();
+    let source = Source::new(
+        drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle"),
+        drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        "test",
+        "revision",
+        &il,
+    )
+    .unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let schema = declare_hol_schema(&source, &mut kernel, value, bool_ty).unwrap();
+    let binary_tail = kernel.ty_arr(value, value).unwrap();
+    let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
+    let graph_tail = kernel.ty_arr(value, bool_ty).unwrap();
+    let graph_ty = kernel.ty_arr(value, graph_tail).unwrap();
+    let x = kernel.tm_fv(10_000, value).unwrap();
+    let mut resolver = TestRelationalResolver {
+        x,
+        y: kernel.tm_fv(10_001, value).unwrap(),
+        add: kernel.tm_fv(10_002, binary_ty).unwrap(),
+        graph: kernel.tm_fv(10_003, graph_ty).unwrap(),
+        bool_ty,
+        bound: std::collections::BTreeMap::new(),
+        relations: std::collections::BTreeMap::new(),
+    };
+    let definition = relational_definition_declaration(
+        &mut kernel,
+        &mut resolver,
+        &source,
+        &schema,
+        DeclarationId::new(1, None).unwrap(),
+        &[],
+    )
+    .unwrap();
+
+    assert_eq!(definition.formal_inputs.len(), 1);
+    assert_eq!(definition.cases.len(), 1);
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(definition.equation).unwrap(), bool_ty)
+            .unwrap()
+    );
+    let before = kernel.arena().len();
+    assert!(
+        relational_definition_declaration(
+            &mut kernel,
+            &mut resolver,
+            &source,
+            &schema,
+            DeclarationId::new(2, None).unwrap(),
+            &[],
+        )
+        .is_err()
+    );
+    assert_eq!(kernel.arena().len(), before);
 }
 
 #[test]
