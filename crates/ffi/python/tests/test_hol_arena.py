@@ -35,6 +35,9 @@ def populated() -> tuple[Arena, dict[str, int]]:
     rows["tm.app"] = arena.app(variable, variable)
     rows["tm.lam"] = arena.lam(variable, variable)
     rows["tm.bool"] = arena.bool(False)
+    rows["tm.bytes"] = arena.bytes(b"\x00literal\xff")
+    rows["tm.nat"] = arena.nat(2**256)
+    rows["tm.int"] = arena.int(-(2**256))
     rows["tm.eq"] = arena.tm_eq(variable, variable)
     rows["tm.eps"] = arena.eps(boolean, variable)
 
@@ -79,6 +82,9 @@ def test_rows_report_the_members_their_tag_carries() -> None:
     assert by_tag["ty.model"].name == 13
     assert by_tag["tm.fv"].name == 14
     assert by_tag["tm.bool"].value is False
+    assert by_tag["tm.bytes"].value == b"\x00literal\xff"
+    assert by_tag["tm.nat"].value == 2**256
+    assert by_tag["tm.int"].value == -(2**256)
     assert by_tag["tm.app"].children == [rows["tm.fv"], rows["tm.fv"]]
     assert by_tag["tm.eq"].children == [
         rows["ty.bool"],
@@ -235,6 +241,43 @@ def test_boolean_literals_do_not_accept_other_types(value: object) -> None:
 def test_boolean_literals_store_what_they_were_given(value: bool) -> None:
     arena = Arena()
     assert arena.definition(arena.bool(value)).value is value
+
+
+def test_compact_literals_are_arbitrary_precision_and_buffer_friendly() -> None:
+    arena = Arena()
+    immutable = b"some bytestring"
+    assert arena.definition(arena.bytes(immutable)).value == immutable
+
+    raw = bytearray(b"a\x00b")
+    assert arena.definition(arena.bytes(memoryview(raw))).value == bytes(raw)
+
+    for value in [0, 127, 128, 2**256]:
+        assert arena.definition(arena.nat(value)).value == value
+    for value in [0, 127, 128, -128, -129, 2**256, -(2**256)]:
+        assert arena.definition(arena.int(value)).value == value
+
+    with pytest.raises(ValueError, match="cannot be negative"):
+        arena.nat(-1)
+
+
+def test_literals_beyond_the_decimal_string_limit_read_back() -> None:
+    """CPython caps int(str) at 4300 digits; reading back must not go via str."""
+    arena = Arena()
+    big = 1 << (8 * 4096)
+    assert arena.definition(arena.nat(big)).value == big
+    assert arena.definition(arena.int(-big)).value == -big
+
+
+def test_compact_literals_stop_at_the_wire_size_limit() -> None:
+    limit = 1024 * 1024
+    arena = Arena()
+    arena.bytes(bytes(limit))
+    with pytest.raises(ValueError, match="byte literal is 1048577 bytes"):
+        arena.bytes(bytes(limit + 1))
+    with pytest.raises(ValueError, match="natural literal is 1048577 bytes"):
+        arena.nat(1 << (8 * limit))
+    with pytest.raises(ValueError, match="integer literal is 1048577 bytes"):
+        arena.int(-(1 << (8 * limit)))
 
 
 def test_the_wire_form_round_trips_every_member() -> None:

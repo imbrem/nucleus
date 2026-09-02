@@ -120,9 +120,15 @@ empty and can only grow through checked row and syntactic-fact rules. Both
 layers retain the low-level integer-index API. A kernel can additionally
 return opaque `Kind`, `Ty`, and `Tm` handles, while `SynFact` snapshots prevent
 evidence from being reused after its slot is overwritten or across kernels.
+Raw arenas take compact byte, natural, and integer literals directly. Numeric
+arguments keep Python's arbitrary precision, and byte literals accept any
+contiguous buffer.
 
 ```python
->>> from covalence.logic.hol import Kernel
+>>> from covalence.logic.hol import Arena, Kernel
+>>> literals = Arena()
+>>> literals.bytes(b"abc"), literals.nat(2**256), literals.int(-(2**256))
+(1, 2, 3)
 >>> kernel = Kernel()
 >>> star = kernel.star()
 >>> bool_ty = kernel.bool_ty(star)

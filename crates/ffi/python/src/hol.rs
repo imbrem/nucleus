@@ -10,21 +10,27 @@ use std::{
     },
 };
 
-use covalence_data_cas::{AsyncCas, AsyncCasError, Bytes as CasBytes, CasFuture};
+// Both `covalence_data_cas` and `covalence_logic_hol` re-export `bytes::Bytes`.
+// One alias covers both and leaves the name `Bytes` for the Python buffer.
+use covalence_data_cas::{AsyncCas, AsyncCasError, Bytes as SharedBytes, CasFuture};
 use covalence_lib_hash::O256;
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::{
+    IntoPyObjectExt,
     exceptions::PyRuntimeError,
-    types::{PyBytes, PyType},
+    types::{PyBytes, PyInt, PyType},
 };
 use covalence_logic_hol::{
-    AmbPred, Arena, CnfId, DnfId, Import, ImportId, Kernel, Link, LinkFormat, Lit, LitVec, Ref,
-    Sort, SynFact, SynFactId, SynRel, ThmId,
+    AmbPred, Arena, CnfId, DecodeLimit, DnfId, Import, ImportId, Int, Kernel, Link, LinkFormat,
+    Lit, LitVec, MAX_LITERAL_BYTES, Num, Ref, Sort, SynFact, SynFactId, SynRel, ThmId,
     builtin::{Op1, Op2},
     wire,
 };
 
-use crate::hash::PyO256;
+use crate::{
+    cbor::{python_int, rust_int},
+    hash::PyO256,
+};
 
 fn value_error(error: impl ToString) -> PyErr {
     PyValueError::new_err(error.to_string())
@@ -157,6 +163,29 @@ const fn relation_name(value: SynRel) -> &'static str {
     }
 }
 
+/// Decode bound for a Python `int`: one byte above the literal limit.
+///
+/// A Python `int` is decoded as signed, so a natural exactly at the limit needs
+/// one extra byte for the sign. The slack lets [`within_literal_limit`] report
+/// the size instead of the decoder failing first.
+const LITERAL_DECODE_LIMIT: DecodeLimit = DecodeLimit::new(MAX_LITERAL_BYTES + 1);
+
+/// Fails when a literal is larger than [`MAX_LITERAL_BYTES`].
+///
+/// # Errors
+///
+/// Returns an error naming the size. `Arena::push_*` returns `None` both for an
+/// oversized literal and for an exhausted reference space, so the size is
+/// checked here to tell the two apart.
+fn within_literal_limit(kind: &str, encoded: usize) -> PyResult<()> {
+    if encoded > MAX_LITERAL_BYTES {
+        return Err(PyValueError::new_err(format!(
+            "{kind} literal is {encoded} bytes; limit is {MAX_LITERAL_BYTES}"
+        )));
+    }
+    Ok(())
+}
+
 fn allocated(value: Option<Ref>) -> PyResult<i32> {
     value
         .map(Ref::get)
@@ -226,9 +255,17 @@ pub struct PyDefinition {
     tag: &'static str,
     children: Vec<i32>,
     name: Option<u64>,
-    value: Option<bool>,
+    value: Option<DefinitionValue>,
     source: Option<i32>,
     foreign: Option<i32>,
+}
+
+#[derive(Clone)]
+enum DefinitionValue {
+    Bool(bool),
+    Bytes(SharedBytes),
+    Nat(Num),
+    Int(Int),
 }
 
 #[pymethods]
@@ -255,8 +292,20 @@ impl PyDefinition {
     }
 
     #[getter]
-    const fn value(&self) -> Option<bool> {
+    fn value(&self, python: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.value
+            .as_ref()
+            .map(|value| match value {
+                DefinitionValue::Bool(value) => value.into_py_any(python),
+                DefinitionValue::Bytes(value) => {
+                    Ok(PyBytes::new(python, value).into_any().unbind())
+                }
+                DefinitionValue::Nat(value) => {
+                    rust_int(python, &Int::from(value)).map(Bound::unbind)
+                }
+                DefinitionValue::Int(value) => rust_int(python, value).map(Bound::unbind),
+            })
+            .transpose()
     }
 
     #[getter]
@@ -342,12 +391,24 @@ impl PyArena {
             .map_or((None, None), |(source, foreign)| {
                 (Some(source.get()), Some(foreign.get()))
             });
+        let value = self
+            .arena
+            .bool_value(reference)
+            .map(DefinitionValue::Bool)
+            .or_else(|| {
+                self.arena
+                    .bytes(reference)
+                    .cloned()
+                    .map(DefinitionValue::Bytes)
+            })
+            .or_else(|| self.arena.nat_value(reference).map(DefinitionValue::Nat))
+            .or_else(|| self.arena.int_value(reference).map(DefinitionValue::Int));
         Some(PyDefinition {
             reference: reference.get(),
             tag: tag.name(),
             children: self.arena.children(reference)?.map(Ref::get).collect(),
             name: self.arena.name(reference),
-            value: self.arena.bool_value(reference),
+            value,
             source,
             foreign,
         })
@@ -578,7 +639,7 @@ struct PythonCas {
 }
 
 impl AsyncCas for PythonCas {
-    fn get_bytes(&self, address: O256) -> CasFuture<'_, Option<CasBytes>> {
+    fn get_bytes(&self, address: O256) -> CasFuture<'_, Option<SharedBytes>> {
         Box::pin(async move {
             Python::attach(|python| {
                 let address = PyO256::wrap(python, address).map_err(python_cas_error)?;
@@ -588,7 +649,7 @@ impl AsyncCas for PythonCas {
                     .call_method1("get", (address,))
                     .map_err(python_cas_error)?;
                 let bytes = returned.extract::<Bytes>().map_err(python_cas_error)?;
-                Ok(Some(CasBytes::copy_from_slice(bytes.as_slice())))
+                Ok(Some(SharedBytes::copy_from_slice(bytes.as_slice())))
             })
         })
     }
@@ -1951,6 +2012,27 @@ impl PyArena {
 
     fn bool(&mut self, value: bool) -> PyResult<i32> {
         allocated(self.arena.push_bool(value))
+    }
+
+    fn bytes(&mut self, value: Bytes) -> PyResult<i32> {
+        within_literal_limit("byte", value.len())?;
+        allocated(
+            self.arena
+                .push_bytes(SharedBytes::copy_from_slice(value.as_slice())),
+        )
+    }
+
+    fn nat(&mut self, value: &Bound<'_, PyInt>) -> PyResult<i32> {
+        let value = Num::try_from(python_int(value, LITERAL_DECODE_LIMIT)?)
+            .map_err(|_| PyValueError::new_err("natural literal cannot be negative"))?;
+        within_literal_limit("natural", value.to_canonical_bytes().len())?;
+        allocated(self.arena.push_nat(value))
+    }
+
+    fn int(&mut self, value: &Bound<'_, PyInt>) -> PyResult<i32> {
+        let value = python_int(value, LITERAL_DECODE_LIMIT)?;
+        within_literal_limit("integer", value.to_canonical_bytes().len())?;
+        allocated(self.arena.push_int(value))
     }
 
     fn tm_eq(&mut self, left: i32, right: i32) -> PyResult<i32> {
