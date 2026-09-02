@@ -19,8 +19,8 @@ mod il;
 mod wasm3;
 
 pub use il::{
-    ClauseId, DeclarationId, IlClause, IlDeclaration, IlDocument, IlError, IlKind, IlRoot, IlRule,
-    RootOrdinal, RuleId,
+    ClauseId, DeclarationId, IlClause, IlDeclaration, IlDocument, IlError, IlKind, IlNode, IlRoot,
+    IlRule, RootOrdinal, RuleId,
 };
 pub use wasm3::{WASM_3_AST_BYTES, WASM_3_MANIFEST_BYTES, Wasm3Bundle, Wasm3Error, wasm3_bundle};
 

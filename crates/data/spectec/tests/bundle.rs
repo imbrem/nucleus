@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{
-    ArtifactError, AstError, AstSummary, BundleManifest, DeclarationId, IlDocument, IlKind, Limits,
-    ManifestError, RuleId, SPECTEC_VERSION, WASM_3_RELEASE, WASM_3_REVISION, WASM_3_SOURCES,
-    WASM_UPSTREAM, canonical_ast, parse_ast,
+    ArtifactError, AstError, AstSummary, BundleManifest, DeclarationId, IlDocument, IlKind, IlNode,
+    Limits, ManifestError, RuleId, SPECTEC_VERSION, WASM_3_RELEASE, WASM_3_REVISION,
+    WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast, parse_ast,
 };
 
 fn root() -> PathBuf {
@@ -70,6 +70,28 @@ fn official_il_rule_inventory_has_stable_nested_selectors() {
         malformed.rules(DeclarationId::new(1, None).unwrap()),
         Err(covalence_data_spectec::IlError::MissingRuleName { .. })
     ));
+}
+
+#[test]
+fn il_nodes_have_a_parser_independent_structural_view() {
+    let il = IlDocument::parse(
+        b"(rel \"R\" 17 (rule \"step\" (call \"f\" (exp (var \"x\")))))",
+        Limits::default(),
+    )
+    .unwrap();
+    let declaration = DeclarationId::new(1, None).unwrap();
+
+    assert_eq!(il.node(declaration, &[]), Some(IlNode::List(4)));
+    assert_eq!(il.node(declaration, &[1]), Some(IlNode::Symbol("rel")));
+    assert_eq!(il.node(declaration, &[2]), Some(IlNode::String("R")));
+    assert_eq!(il.node(declaration, &[3]), Some(IlNode::Number("17")));
+    assert_eq!(il.node(declaration, &[4, 1]), Some(IlNode::Symbol("rule")));
+    assert_eq!(
+        il.node(declaration, &[4, 3, 1]),
+        Some(IlNode::Symbol("call"))
+    );
+    assert_eq!(il.node(declaration, &[0]), None);
+    assert_eq!(il.node(declaration, &[5]), None);
 }
 
 #[test]

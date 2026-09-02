@@ -142,6 +142,26 @@ pub struct IlClause {
     id: ClauseId,
 }
 
+/// Parser-independent view of one elaborated IL node.
+///
+/// Lists expose only their arity. Text-bearing atom variants borrow their
+/// decoded spelling; binary literals, addresses, and other atom families stay
+/// distinguishable as [`Other`](Self::Other) without leaking parser types into
+/// the IL API.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IlNode<'a> {
+    /// Proper list with this many children.
+    List(usize),
+    /// Ordinary identifier.
+    Symbol(&'a str),
+    /// Decoded quoted text.
+    String(&'a str),
+    /// Exact numeric spelling.
+    Number(&'a str),
+    /// Any other recognized atomic family.
+    Other,
+}
+
 impl IlClause {
     /// Returns the stable structural selector.
     #[must_use]
@@ -373,6 +393,21 @@ impl IlDocument {
         }
     }
 
+    /// Views one node selected by a declaration and a one-based child path.
+    ///
+    /// An empty path selects the declaration itself. This structural API is
+    /// independent of names and source spans, and does not expose the backing
+    /// S-expression representation.
+    #[must_use]
+    pub fn node(&self, id: DeclarationId, path: &[u32]) -> Option<IlNode<'_>> {
+        let mut expression = self.expression(id)?;
+        for &position in path {
+            let index = usize::try_from(position).ok()?.checked_sub(1)?;
+            expression = list_items(expression)?.get(index)?;
+        }
+        Some(node_view(expression))
+    }
+
     /// Inventories every nested `rule` form in deterministic tree order.
     ///
     /// Rule identity is the declaration selector plus a one-based expression
@@ -507,6 +542,18 @@ fn list_items(expression: &Expr) -> Option<&[Expr]> {
     match expression.node() {
         ExprKind::List(node) => Some(SpannedRepr::list_items(node)),
         ExprKind::Atom(_) => None,
+    }
+}
+
+fn node_view(expression: &Expr) -> IlNode<'_> {
+    match expression.node() {
+        ExprKind::List(node) => IlNode::List(SpannedRepr::list_items(node).len()),
+        ExprKind::Atom(node) => match SpannedRepr::atom(node) {
+            Atom::Symbol(value) => IlNode::Symbol(value),
+            Atom::String(value) => IlNode::String(value),
+            Atom::Number(value) => IlNode::Number(value),
+            Atom::Bytes(_) | Atom::Keyword(_) | Atom::Directive(_) | Atom::O256(_) => IlNode::Other,
+        },
     }
 }
 
