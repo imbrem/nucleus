@@ -642,8 +642,65 @@ pub enum IlArgument<'a> {
     Type(Box<IlType<'a>>),
     /// Definition argument identified by its exact declaration name.
     Definition(&'a str),
-    /// Grammar-symbol argument, retained for grammar lowering.
-    Grammar(IlCursor<'a>),
+    /// Grammar-symbol argument.
+    Grammar(Box<IlGrammarSymbol<'a>>),
+}
+
+/// One grammar symbol in the generic elaborated-IL schema.
+#[derive(Clone, Debug)]
+pub enum IlGrammarSymbol<'a> {
+    /// Empty input.
+    Empty,
+    /// Exact text terminal.
+    Text(&'a str),
+    /// Exact numeric terminal spelling.
+    Number(&'a str),
+    /// Ordered concatenation.
+    Sequence(Vec<IlGrammarSymbol<'a>>),
+    /// Ordered alternatives.
+    Alternative(Vec<IlGrammarSymbol<'a>>),
+    /// Inclusive numeric terminal range.
+    Range {
+        /// Lower endpoint spelling.
+        lower: &'a str,
+        /// Upper endpoint spelling.
+        upper: &'a str,
+    },
+    /// Synthesized attribute attached to a symbol.
+    Attribute {
+        /// Attribute expression.
+        value: IlExpression<'a>,
+        /// Underlying grammar symbol.
+        symbol: Box<IlGrammarSymbol<'a>>,
+    },
+    /// Iterated grammar symbol and named domains.
+    Iterated {
+        /// Repeated symbol.
+        symbol: Box<IlGrammarSymbol<'a>>,
+        /// Iteration shape.
+        iteration: IlIteration<'a>,
+        /// Domains binding iteration variables.
+        domains: Vec<IlDomain<'a>>,
+    },
+    /// Reference to a grammar declaration or parameter.
+    Variable {
+        /// Exact grammar name.
+        name: &'a str,
+        /// Heterogeneous arguments in source order.
+        arguments: Vec<IlArgument<'a>>,
+    },
+}
+
+impl<'a> IlGrammarSymbol<'a> {
+    /// Decodes and recursively validates one grammar symbol.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown symbol constructor, malformed terminal,
+    /// argument, attribute expression, iteration, or domain.
+    pub fn decode(cursor: &IlCursor<'a>) -> Result<Self, IlSchemaError> {
+        decode_grammar_symbol(cursor)
+    }
 }
 
 /// One explicit binder in a declaration body.
@@ -1075,7 +1132,7 @@ impl<'a> IlClauseSchema<'a> {
 pub struct IlProductionSchema<'a> {
     cursor: IlCursor<'a>,
     bindings: Vec<IlBinding<'a>>,
-    symbol: IlCursor<'a>,
+    symbol: IlGrammarSymbol<'a>,
     result: IlExpression<'a>,
     premises: Vec<IlPremise<'a>>,
 }
@@ -1099,7 +1156,7 @@ impl<'a> IlProductionSchema<'a> {
 
     /// Returns the grammar-symbol subtree.
     #[must_use]
-    pub const fn symbol(&self) -> &IlCursor<'a> {
+    pub const fn symbol(&self) -> &IlGrammarSymbol<'a> {
         &self.symbol
     }
 
@@ -1668,7 +1725,7 @@ fn decode_production_schema<'a>(
         .iter()
         .map(decode_binding)
         .collect::<Result<Vec<_>, _>>()?;
-    let symbol = tail.first().cloned().ok_or_else(|| {
+    let symbol_cursor = tail.first().ok_or_else(|| {
         schema_error(
             cursor.declaration(),
             cursor.path(),
@@ -1676,6 +1733,7 @@ fn decode_production_schema<'a>(
             "missing".to_owned(),
         )
     })?;
+    let symbol = decode_grammar_symbol(symbol_cursor)?;
     let result_cursor = tail.get(1).ok_or_else(|| {
         schema_error(
             cursor.declaration(),
@@ -2241,7 +2299,9 @@ fn decode_argument<'a>(cursor: &IlCursor<'a>) -> Result<IlArgument<'a>, IlSchema
             &child_path(&form, 0),
             "definition identifier",
         )?)),
-        "gram" => Ok(IlArgument::Grammar(payload)),
+        "gram" => Ok(IlArgument::Grammar(Box::new(decode_grammar_symbol(
+            &payload,
+        )?))),
         _ => Err(schema_error(
             cursor.declaration(),
             cursor.path(),
@@ -2249,6 +2309,119 @@ fn decode_argument<'a>(cursor: &IlCursor<'a>) -> Result<IlArgument<'a>, IlSchema
             describe(cursor),
         )),
     }
+}
+
+fn decode_grammar_symbol<'a>(cursor: &IlCursor<'a>) -> Result<IlGrammarSymbol<'a>, IlSchemaError> {
+    if cursor.node() == IlNode::Symbol("eps") {
+        return Ok(IlGrammarSymbol::Empty);
+    }
+    let form = required_form(cursor, "grammar symbol")?;
+    match form.head() {
+        "text" => {
+            require_arity(&form, 1, "text terminal with one string")?;
+            Ok(IlGrammarSymbol::Text(required_string(
+                form.argument(0),
+                cursor.declaration(),
+                &child_path(&form, 0),
+                "text terminal",
+            )?))
+        }
+        "num" => {
+            require_arity(&form, 1, "numeric terminal with one number")?;
+            Ok(IlGrammarSymbol::Number(required_number(
+                &required_argument(&form, 0, "numeric terminal")?,
+            )?))
+        }
+        "seq" | "alt" => {
+            let symbols = form
+                .arguments()
+                .map(|symbol| decode_grammar_symbol(&symbol))
+                .collect::<Result<Vec<_>, _>>()?;
+            if form.head() == "seq" {
+                Ok(IlGrammarSymbol::Sequence(symbols))
+            } else {
+                Ok(IlGrammarSymbol::Alternative(symbols))
+            }
+        }
+        "range" => {
+            require_arity(&form, 2, "range with lower and upper terminals")?;
+            let lower = decode_numeric_symbol(&required_argument(&form, 0, "range lower bound")?)?;
+            let upper = decode_numeric_symbol(&required_argument(&form, 1, "range upper bound")?)?;
+            Ok(IlGrammarSymbol::Range { lower, upper })
+        }
+        "attr" => {
+            require_arity(&form, 2, "attribute expression and grammar symbol")?;
+            let value = IlExpression::decode(&required_argument(
+                &form,
+                0,
+                "grammar attribute expression",
+            )?)?;
+            value.validate()?;
+            let symbol =
+                decode_grammar_symbol(&required_argument(&form, 1, "attributed grammar symbol")?)?;
+            Ok(IlGrammarSymbol::Attribute {
+                value,
+                symbol: Box::new(symbol),
+            })
+        }
+        "iter" => {
+            require_min_arity(&form, 2, "iterated grammar symbol and iteration")?;
+            let symbol =
+                decode_grammar_symbol(&required_argument(&form, 0, "iterated grammar symbol")?)?;
+            let iteration = decode_iteration(&required_argument(&form, 1, "grammar iteration")?)?;
+            validate_iteration(&iteration)?;
+            let domains = form
+                .arguments()
+                .skip(2)
+                .map(|domain| decode_domain(&domain))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(IlGrammarSymbol::Iterated {
+                symbol: Box::new(symbol),
+                iteration,
+                domains,
+            })
+        }
+        "var" => {
+            require_min_arity(&form, 1, "grammar variable name")?;
+            let name = required_string(
+                form.argument(0),
+                cursor.declaration(),
+                &child_path(&form, 0),
+                "grammar variable name",
+            )?;
+            let arguments = form
+                .arguments()
+                .skip(1)
+                .map(|argument| decode_argument(&argument))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(IlGrammarSymbol::Variable { name, arguments })
+        }
+        _ => Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "grammar symbol eps, text, num, seq, alt, range, attr, iter, or var",
+            describe(cursor),
+        )),
+    }
+}
+
+fn decode_numeric_symbol<'a>(cursor: &IlCursor<'a>) -> Result<&'a str, IlSchemaError> {
+    let form = required_form(cursor, "numeric grammar terminal")?;
+    require_head(&form, "num")?;
+    require_arity(&form, 1, "numeric terminal with one number")?;
+    required_number(&required_argument(&form, 0, "numeric terminal")?)
+}
+
+fn required_number<'a>(cursor: &IlCursor<'a>) -> Result<&'a str, IlSchemaError> {
+    let IlNode::Number(value) = cursor.node() else {
+        return Err(schema_error(
+            cursor.declaration(),
+            cursor.path(),
+            "numeric atom",
+            describe(cursor),
+        ));
+    };
+    Ok(value)
 }
 
 fn decode_binding<'a>(cursor: &IlCursor<'a>) -> Result<IlBinding<'a>, IlSchemaError> {

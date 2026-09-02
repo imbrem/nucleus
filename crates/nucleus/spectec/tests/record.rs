@@ -1,17 +1,17 @@
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
 use covalence_data_spectec::{
-    ClauseId, DeclarationId, IlClauseSchema, IlDocument, IlExpression, IlExpressionKind, IlNode,
-    IlSchemaError, IlType, Limits,
+    ClauseId, DeclarationId, IlClauseSchema, IlDocument, IlExpression, IlExpressionKind,
+    IlGrammarSymbol, IlNode, IlProductionSchema, IlSchemaError, IlType, Limits,
 };
 use covalence_logic_hol::{Kernel, Tag, TmTag};
 use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
-    CoveragePlan, Disposition, ExpressionAlgebra, HolRule, IndexErasure, KernelRoot,
-    RelationalExpressionAlgebra, RelationalResolver, SelectedCompileError, SelectedCompiler,
-    Source, TYPE_NAME, TranslationCase, TypeAlgebra, TypeChildren, close_hol_rule, close_hol_rules,
-    declare_hol_schema, fold_expression, fold_type, least_closed_family, least_closed_predicate,
-    relational_hol_rule,
+    CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolRule,
+    IndexErasure, KernelRoot, RelationalExpressionAlgebra, RelationalResolver,
+    SelectedCompileError, SelectedCompiler, Source, TYPE_NAME, TranslationCase, TypeAlgebra,
+    TypeChildren, close_hol_rule, close_hol_rules, declare_hol_schema, fold_expression,
+    fold_grammar, fold_type, least_closed_family, least_closed_predicate, relational_hol_rule,
 };
 
 struct TestRelationalResolver {
@@ -263,6 +263,86 @@ fn type_fold_composes_with_dependent_expression_indices() {
 
     assert_eq!(expressions.0, 2);
     assert_eq!(types.0, 4);
+}
+
+#[test]
+fn grammar_fold_composes_expression_and_symbol_children() {
+    struct Expressions(usize);
+    impl ExpressionAlgebra for Expressions {
+        type Term = ();
+        type Error = String;
+        fn schema_error(&mut self, source: IlSchemaError) -> String {
+            source.to_string()
+        }
+        fn expression(
+            &mut self,
+            _expression: &IlExpression<'_>,
+            _children: Vec<()>,
+        ) -> Result<(), String> {
+            self.0 += 1;
+            Ok(())
+        }
+    }
+    struct Types;
+    impl TypeAlgebra<()> for Types {
+        type Type = ();
+        type Error = String;
+        fn schema_error(&mut self, source: IlSchemaError) -> String {
+            source.to_string()
+        }
+        fn ty(
+            &mut self,
+            _source: &IlType<'_>,
+            _children: TypeChildren<'_, (), ()>,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+    struct Grammars(usize);
+    impl GrammarAlgebra<(), ()> for Grammars {
+        type Grammar = ();
+        type Error = String;
+        fn schema_error(&mut self, source: IlSchemaError) -> String {
+            source.to_string()
+        }
+        fn grammar(
+            &mut self,
+            _source: &IlGrammarSymbol<'_>,
+            _children: GrammarChildren<'_, (), (), ()>,
+        ) -> Result<(), String> {
+            self.0 += 1;
+            Ok(())
+        }
+    }
+
+    let il = IlDocument::parse(
+        b"(gram \"G\" nat (prod (seq (text \"x\") (attr (var \"n\") (num 0x01))) (num (nat 0))))",
+        Limits::default(),
+    )
+    .unwrap();
+    let schema = il
+        .schema(DeclarationId::new(1, None).unwrap())
+        .unwrap()
+        .unwrap();
+    let covalence_data_spectec::IlDeclarationBody::Grammar { productions, .. } = schema.body()
+    else {
+        panic!("expected grammar")
+    };
+    let production = IlProductionSchema::decode(&productions[0]).unwrap();
+    let mut expressions = Expressions(0);
+    let mut types = Types;
+    let mut grammars = Grammars(0);
+
+    fold_grammar(
+        production.symbol(),
+        &mut expressions,
+        &mut types,
+        &mut grammars,
+    )
+    .unwrap();
+
+    assert_eq!(expressions.0, 1);
+    assert_eq!(grammars.0, 4);
 }
 
 #[test]

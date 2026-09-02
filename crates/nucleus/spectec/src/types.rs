@@ -1,7 +1,7 @@
 //! Target-independent fold over validated IL types.
 
 use covalence_data_spectec::{
-    IlArgument, IlCursor, IlExpression, IlIteration, IlNode, IlSchemaError, IlType,
+    IlArgument, IlExpression, IlGrammarSymbol, IlIteration, IlNode, IlSchemaError, IlType,
 };
 
 use crate::{ExpressionAlgebra, fold_expression};
@@ -15,7 +15,7 @@ pub enum TypeArgument<'a, Expression, Type> {
     /// Higher-order definition name.
     Definition(&'a str),
     /// Grammar-symbol argument retained in its parser-independent IL form.
-    Grammar(&'a IlCursor<'a>),
+    Grammar(&'a IlGrammarSymbol<'a>),
 }
 
 /// Already-folded semantic children of one IL type.
