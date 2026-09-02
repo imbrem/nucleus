@@ -2,15 +2,17 @@
 //!
 //! This backend is a first consumer of the generic import API, not the intended
 //! full Lean embedding. It supports monomorphic simple types, constants,
-//! applications, lambdas, and non-dependent `forallE` arrows. Definitions are
-//! eagerly delta-lowered to their values. Conversion beyond equality already
-//! known to the kernel is delegated to [`ConversionTactic`].
+//! applications, lambdas, and non-dependent `forallE` arrows. For propositions
+//! it checks implication-introduction proofs made from lambdas, hypotheses, and
+//! earlier checked theorems. Definitions are eagerly delta-lowered to their
+//! values. Conversion beyond equality already known to the kernel is delegated
+//! to [`ConversionTactic`].
 
 use std::collections::BTreeMap;
 use std::error::Error as StdError;
 
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref, SynFactId, ThmId};
+use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, SynFactId, ThmId, builtin::Op2};
 
 use crate::import::{Artifacts, Backend};
 use crate::lean4export::Metadata;
@@ -94,8 +96,43 @@ impl ConversionTactic for NoConversion {
 pub enum DirectDerivation {
     /// Kernel construction established that the lowered value has this type.
     HasType { term: Ref, ty: Ref },
+    /// An exported Lean proof term was checked through HOL sequent rules.
+    Proof {
+        /// Source proof expression.
+        proof: ExprId,
+        /// Lowered HOL proposition proved by `theorem`.
+        proposition: Ref,
+        /// Checked LCF steps, in construction order.
+        steps: Vec<DirectProofStep>,
+    },
     /// A conversion tactic established equality of two classifiers.
     Conversion(Conversion),
+}
+
+/// One checked step used to lower a Lean proof term.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DirectProofStep {
+    /// A bound proof variable selected a hypothesis through identity and
+    /// weakening.
+    Hypothesis {
+        proof: ExprId,
+        proposition: Ref,
+        theorem: ThmId,
+    },
+    /// A Lean proof lambda discharged one implication premise.
+    ImplicationIntroduction {
+        proof: ExprId,
+        implication: Ref,
+        premise: ThmId,
+        theorem: ThmId,
+    },
+    /// A prior checked theorem was copied into a fresh resident slot.
+    KnownTheorem {
+        proof: ExprId,
+        proposition: Ref,
+        source: ThmId,
+        theorem: ThmId,
+    },
 }
 
 /// Failure to lower the deliberately small direct-HOL fragment.
@@ -117,6 +154,9 @@ pub enum DirectError<E: StdError + 'static> {
     /// A bound variable was outside the current lambda context.
     #[snafu(display("bound variable {index} is outside a context of depth {depth}"))]
     BoundVariable { index: usize, depth: usize },
+    /// A proof term established a different proposition from the expected one.
+    #[snafu(display("Lean proof expression {proof} does not establish its expected proposition"))]
+    ProofMismatch { proof: usize },
     /// A checked HOL constructor rejected the proposed lowering.
     #[snafu(display("HOL construction failed: {source}"))]
     Construction { source: KernelError },
@@ -142,6 +182,34 @@ impl Lowered {
     }
 }
 
+#[derive(Clone, Debug)]
+enum Proposition {
+    Atom {
+        expression: ExprId,
+        reference: Ref,
+    },
+    Implication {
+        expression: ExprId,
+        reference: Ref,
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+}
+
+impl Proposition {
+    const fn expression(&self) -> ExprId {
+        match self {
+            Self::Atom { expression, .. } | Self::Implication { expression, .. } => *expression,
+        }
+    }
+
+    const fn reference(&self) -> Ref {
+        match self {
+            Self::Atom { reference, .. } | Self::Implication { reference, .. } => *reference,
+        }
+    }
+}
+
 /// Direct, monomorphic, non-dependent Lean-to-HOL backend.
 #[derive(Debug)]
 pub struct DirectHol<C = NoConversion> {
@@ -150,6 +218,8 @@ pub struct DirectHol<C = NoConversion> {
     star: Option<Ref>,
     bool_ty: Option<Ref>,
     constants: BTreeMap<NameId, Lowered>,
+    propositions: BTreeMap<ExprId, Proposition>,
+    theorems: BTreeMap<NameId, (Ref, ThmId)>,
     conversions: Vec<Conversion>,
     next_binder: u64,
 }
@@ -178,6 +248,8 @@ impl<C> DirectHol<C> {
             star: None,
             bool_ty: None,
             constants: BTreeMap::new(),
+            propositions: BTreeMap::new(),
+            theorems: BTreeMap::new(),
             conversions: Vec::new(),
             next_binder: u64::MAX,
         }
@@ -236,6 +308,30 @@ impl<C: ConversionTactic> Backend for DirectHol<C> {
         };
         let declaration = &tables.declarations[ordinal];
         let syntax = record.syntax(tables);
+        if let Declaration::Theorem {
+            header,
+            value,
+            all: _,
+        } = declaration
+        {
+            Self::require_monomorphic(&header.level_params)?;
+            let proposition = self.lower_proposition(header.ty, tables)?;
+            let mut steps = Vec::new();
+            let theorem = self.prove(*value, &proposition, tables, &mut Vec::new(), &mut steps)?;
+            self.theorems
+                .insert(header.name, (proposition.reference(), theorem));
+            return Ok(Artifacts {
+                objects: vec![(proposition.reference(), syntax)],
+                theorems: vec![(
+                    theorem,
+                    DirectDerivation::Proof {
+                        proof: *value,
+                        proposition: proposition.reference(),
+                        steps,
+                    },
+                )],
+            });
+        }
         let (name, lowered, derivation) = match declaration {
             Declaration::Axiom { header, .. } => {
                 Self::require_monomorphic(&header.level_params)?;
@@ -287,9 +383,7 @@ impl<C: ConversionTactic> Backend for DirectHol<C> {
                     Some(DirectDerivation::HasType { term, ty: declared }),
                 )
             }
-            Declaration::Theorem { .. } => {
-                return Self::unsupported("proposition and theorem lowering");
-            }
+            Declaration::Theorem { .. } => unreachable!("handled above"),
             Declaration::Quotient { .. } => return Self::unsupported("quotient declarations"),
             Declaration::Inductive { .. } => return Self::unsupported("inductive declarations"),
         };
@@ -309,6 +403,164 @@ impl<C: ConversionTactic> Backend for DirectHol<C> {
 }
 
 impl<C: ConversionTactic> DirectHol<C> {
+    fn lower_proposition(
+        &mut self,
+        id: ExprId,
+        tables: &Tables,
+    ) -> Result<Proposition, DirectError<C::Error>> {
+        if let Some(proposition) = self.propositions.get(&id) {
+            return Ok(proposition.clone());
+        }
+        let proposition = match &tables.expressions[id.0] {
+            Expr::Forall { ty, body, .. } => {
+                if occurs_bound(*body, 0, tables, 0) {
+                    return Self::unsupported("dependent propositions");
+                }
+                let left = self.lower_proposition(*ty, tables)?;
+                let right = self.lower_proposition(*body, tables)?;
+                let reference = self
+                    .kernel
+                    .op2(Op2::Imp, left.reference(), right.reference())
+                    .map_err(|source| DirectError::Construction { source })?;
+                Proposition::Implication {
+                    expression: id,
+                    reference,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                }
+            }
+            Expr::MData { expression, .. } => self.lower_proposition(*expression, tables)?,
+            _ => {
+                let lowered = self.lower_expr(id, tables, &mut Vec::new())?;
+                let reference = Self::expect_term(lowered)?;
+                let classifier = self
+                    .kernel
+                    .classifier(reference)
+                    .map_err(|source| DirectError::Construction { source })?;
+                if classifier != self.bool_type()? {
+                    return Err(DirectError::ProofMismatch { proof: id.0 });
+                }
+                Proposition::Atom {
+                    expression: id,
+                    reference,
+                }
+            }
+        };
+        self.propositions.insert(id, proposition.clone());
+        Ok(proposition)
+    }
+
+    fn prove(
+        &mut self,
+        proof: ExprId,
+        expected: &Proposition,
+        tables: &Tables,
+        context: &mut Vec<Ref>,
+        steps: &mut Vec<DirectProofStep>,
+    ) -> Result<ThmId, DirectError<C::Error>> {
+        match &tables.expressions[proof.0] {
+            Expr::BVar(index) => {
+                let position =
+                    context
+                        .len()
+                        .checked_sub(index + 1)
+                        .ok_or(DirectError::BoundVariable {
+                            index: *index,
+                            depth: context.len(),
+                        })?;
+                let proposition = context[position];
+                if proposition != expected.reference() {
+                    return Err(DirectError::ProofMismatch { proof: proof.0 });
+                }
+                let theorem = self
+                    .kernel
+                    .identity(Lit::positive(proposition.get()))
+                    .map_err(|source| DirectError::Construction { source })?;
+                for (hypothesis_position, hypothesis) in context.iter().enumerate() {
+                    if hypothesis_position != position {
+                        self.kernel
+                            .weaken(theorem, &[Lit::positive(hypothesis.get())], &[])
+                            .map_err(|source| DirectError::Construction { source })?;
+                    }
+                }
+                steps.push(DirectProofStep::Hypothesis {
+                    proof,
+                    proposition,
+                    theorem,
+                });
+                Ok(theorem)
+            }
+            Expr::Lam { ty, body, .. } => {
+                let Proposition::Implication {
+                    reference,
+                    left,
+                    right,
+                    ..
+                } = expected
+                else {
+                    return Err(DirectError::ProofMismatch { proof: proof.0 });
+                };
+                if *ty != left.expression() {
+                    return Err(DirectError::ProofMismatch { proof: proof.0 });
+                }
+                context.push(left.reference());
+                let premise_result = self.prove(*body, right, tables, context, steps);
+                context.pop();
+                let premise = premise_result?;
+                let theorem = self
+                    .kernel
+                    .imp_right(premise, Lit::positive(reference.get()))
+                    .map_err(|source| DirectError::Construction { source })?;
+                steps.push(DirectProofStep::ImplicationIntroduction {
+                    proof,
+                    implication: *reference,
+                    premise,
+                    theorem,
+                });
+                Ok(theorem)
+            }
+            Expr::Const { name, universes } if universes.is_empty() => {
+                let Some((proposition, source)) = self.theorems.get(name).copied() else {
+                    return Self::unsupported("proof constants without an earlier checked theorem");
+                };
+                if proposition != expected.reference() {
+                    return Err(DirectError::ProofMismatch { proof: proof.0 });
+                }
+                let theorem = self
+                    .kernel
+                    .copy_theorem(source)
+                    .map_err(|source| DirectError::Construction { source })?;
+                for hypothesis in context.iter() {
+                    self.kernel
+                        .weaken(theorem, &[Lit::positive(hypothesis.get())], &[])
+                        .map_err(|source| DirectError::Construction { source })?;
+                }
+                steps.push(DirectProofStep::KnownTheorem {
+                    proof,
+                    proposition,
+                    source,
+                    theorem,
+                });
+                Ok(theorem)
+            }
+            Expr::MData { expression, .. } => {
+                self.prove(*expression, expected, tables, context, steps)
+            }
+            _ => Self::unsupported("proof terms beyond implication introduction and hypotheses"),
+        }
+    }
+
+    fn take_binder_name(&mut self) -> Result<u64, DirectError<C::Error>> {
+        let name = self.next_binder;
+        self.next_binder =
+            self.next_binder
+                .checked_sub(1)
+                .ok_or_else(|| DirectError::Unsupported {
+                    feature: "exhausted direct-HOL binder names".to_owned(),
+                })?;
+        Ok(name)
+    }
+
     fn lower_expr(
         &mut self,
         id: ExprId,
@@ -356,13 +608,7 @@ impl<C: ConversionTactic> DirectHol<C> {
             Expr::Lam { ty, body, .. } => {
                 let ty_value = self.lower_expr(*ty, tables, context)?;
                 let ty = Self::expect_type(ty_value)?;
-                let name = self.next_binder;
-                self.next_binder =
-                    self.next_binder
-                        .checked_sub(1)
-                        .ok_or_else(|| DirectError::Unsupported {
-                            feature: "exhausted direct-HOL binder names".to_owned(),
-                        })?;
+                let name = self.take_binder_name()?;
                 let binder = self
                     .kernel
                     .tm_fv(name, ty)

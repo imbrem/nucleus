@@ -11,10 +11,14 @@ data rather than treated as frontend policy; success means the selected
 backend's checked constructions succeeded.
 
 `direct::DirectHol` is the first intentionally small backend. It lowers a
-monomorphic, non-dependent, theorem-free fragment directly into HOL. It also exposes a
-proof-producing `ConversionTactic` boundary: beta, eta, delta, iota, and zeta
-reduction belong in an LCF tactic whose successful steps are checked by the
-kernel, whether its search uses normalization, an e-graph, or another method.
+monomorphic, non-dependent fragment directly into HOL and checks basic
+implication proofs through resident HOL sequent rules. Lean proof lambdas and
+bound hypotheses drive identity, weakening, and implication introduction;
+successful theorem declarations return real `ThmId` correspondence entries.
+It also exposes a proof-producing `ConversionTactic` boundary: beta, eta,
+delta, iota, and zeta reduction belong in an LCF tactic whose successful steps
+are checked by the kernel, whether its search uses normalization, an e-graph,
+or another method.
 
 The supported schema is pinned and inventoried in
 [`docs/lean4export-3.1.md`](docs/lean4export-3.1.md). The `stream` module is

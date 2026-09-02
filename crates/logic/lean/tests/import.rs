@@ -1,9 +1,9 @@
 use std::convert::Infallible;
 use std::io::Cursor;
 
-use covalence_logic_lean::direct::DirectHol;
+use covalence_logic_lean::direct::{DirectDerivation, DirectHol};
 use covalence_logic_lean::syntax::{Declaration, DefinitionSafety, LeanSyntax, Record, Tables};
-use covalence_logic_lean::{Artifacts, Backend, BackendArtifacts, Metadata, import};
+use covalence_logic_lean::{Artifacts, Backend, BackendArtifacts, ImportError, Metadata, import};
 
 const META: &str = r#"{"meta":{"exporter":{"name":"lean4export","version":"3.1.0"},"lean":{"githash":"411dce7db58a3afc60ecab2d211acd1042b593dc","version":"4.34.0-rc2"},"format":{"version":"3.1.0"}}}"#;
 
@@ -98,4 +98,48 @@ fn direct_backend_lowers_a_small_monomorphic_fragment() {
         imported.hol_to_lean().values().map(Vec::len).sum::<usize>(),
         5
     );
+}
+
+fn projection_proof(bound_variable: usize) -> String {
+    format!(
+        "{META}\n\
+         {{\"in\":1,\"str\":{{\"pre\":0,\"str\":\"P\"}}}}\n\
+         {{\"in\":2,\"str\":{{\"pre\":0,\"str\":\"Q\"}}}}\n\
+         {{\"in\":3,\"str\":{{\"pre\":0,\"str\":\"proof\"}}}}\n\
+         {{\"in\":4,\"str\":{{\"pre\":0,\"str\":\"proofAgain\"}}}}\n\
+         {{\"ie\":0,\"sort\":0}}\n\
+         {{\"axiom\":{{\"name\":1,\"levelParams\":[],\"type\":0,\"isUnsafe\":false}}}}\n\
+         {{\"ie\":1,\"const\":{{\"name\":1,\"us\":[]}}}}\n\
+         {{\"axiom\":{{\"name\":2,\"levelParams\":[],\"type\":0,\"isUnsafe\":false}}}}\n\
+         {{\"ie\":2,\"const\":{{\"name\":2,\"us\":[]}}}}\n\
+         {{\"ie\":3,\"forallE\":{{\"name\":0,\"type\":2,\"body\":1,\"binderInfo\":\"default\"}}}}\n\
+         {{\"ie\":4,\"forallE\":{{\"name\":0,\"type\":1,\"body\":3,\"binderInfo\":\"default\"}}}}\n\
+         {{\"ie\":5,\"bvar\":{bound_variable}}}\n\
+         {{\"ie\":6,\"lam\":{{\"name\":0,\"type\":2,\"body\":5,\"binderInfo\":\"default\"}}}}\n\
+         {{\"ie\":7,\"lam\":{{\"name\":0,\"type\":1,\"body\":6,\"binderInfo\":\"default\"}}}}\n\
+         {{\"thm\":{{\"name\":3,\"levelParams\":[],\"type\":4,\"value\":7,\"all\":[]}}}}\n\
+         {{\"ie\":8,\"const\":{{\"name\":3,\"us\":[]}}}}\n\
+         {{\"thm\":{{\"name\":4,\"levelParams\":[],\"type\":4,\"value\":8,\"all\":[]}}}}\n"
+    )
+}
+
+#[test]
+fn direct_backend_checks_an_implication_projection_proof() {
+    let imported = import(Cursor::new(projection_proof(1)), DirectHol::new()).unwrap();
+    assert_eq!(imported.theorem_derivations().len(), 2);
+    for (theorem, derivation) in imported.theorem_derivations() {
+        let DirectDerivation::Proof { steps, .. } = derivation else {
+            panic!("expected checked proof derivation")
+        };
+        assert!(!steps.is_empty());
+        let resident = imported.backend().kernel().thm().get(*theorem).unwrap();
+        assert!(resident.lhs.rows().next().is_none());
+        assert!(resident.rhs.rows().next().is_some());
+    }
+}
+
+#[test]
+fn direct_backend_rejects_a_proof_of_the_wrong_proposition() {
+    let error = import(Cursor::new(projection_proof(0)), DirectHol::new()).unwrap_err();
+    assert!(matches!(error, ImportError::Backend { .. }));
 }
