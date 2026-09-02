@@ -1,7 +1,7 @@
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
 use covalence_data_spectec::{
     ClauseId, DeclarationId, IlClauseSchema, IlDocument, IlExpression, IlExpressionKind,
-    IlGrammarSymbol, IlProductionSchema, IlRuleSchema, IlSchemaError, IlType, Limits,
+    IlGrammarSymbol, IlKind, IlProductionSchema, IlRuleSchema, IlSchemaError, IlType, Limits,
 };
 use covalence_logic_hol::{Kernel, Tag, TmTag};
 use covalence_nucleus_spectec::{
@@ -958,6 +958,42 @@ fn generic_hol_schema_declares_every_wasm3_signature() {
             .unwrap()
     );
     assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+}
+
+#[test]
+fn generic_hol_schema_preserves_kind_qualified_duplicate_names() {
+    let bytes = br#"(typ "same" (inst (alias nat)))
+        (typ "same" (inst (alias nat)))
+        (rel "same" "same" nat
+          (rule "base" (exp "x" nat) "same" (var "x")))"#;
+    let il = IlDocument::parse(bytes, Limits::default()).unwrap();
+    let source = Source::new(
+        drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle"),
+        drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        "test",
+        "revision",
+        &il,
+    )
+    .unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+
+    let schema = declare_hol_schema(&source, &mut kernel, value, bool_ty).unwrap();
+
+    assert_eq!(
+        schema.named(IlKind::Type, "same"),
+        [
+            DeclarationId::new(1, None).unwrap(),
+            DeclarationId::new(2, None).unwrap(),
+        ]
+    );
+    assert_eq!(
+        schema.named(IlKind::Relation, "same"),
+        [DeclarationId::new(3, None).unwrap()]
+    );
+    assert!(schema.named(IlKind::Definition, "same").is_empty());
 }
 
 #[test]

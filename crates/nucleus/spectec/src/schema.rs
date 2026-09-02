@@ -127,6 +127,7 @@ pub struct HolSchema {
     value: Ref,
     bool_ty: Ref,
     declarations: BTreeMap<DeclarationId, HolDeclaration>,
+    names: BTreeMap<IlKind, BTreeMap<String, Vec<DeclarationId>>>,
 }
 
 impl HolSchema {
@@ -152,6 +153,18 @@ impl HolSchema {
     #[must_use]
     pub fn declaration(&self, id: DeclarationId) -> Option<HolDeclaration> {
         self.declarations.get(&id).copied()
+    }
+
+    /// Returns every structural selector carrying an exact kind-qualified name.
+    ///
+    /// Names are lookup metadata rather than trusted identity, so duplicate
+    /// declarations remain visible in exact source order.
+    #[must_use]
+    pub fn named(&self, kind: IlKind, name: &str) -> &[DeclarationId] {
+        self.names
+            .get(&kind)
+            .and_then(|declarations| declarations.get(name))
+            .map_or(&[], Vec::as_slice)
     }
 
     /// Returns the number of checked declaration signatures.
@@ -214,6 +227,7 @@ pub fn declare_hol_schema(
         .map_err(|source| HolSchemaError::Kernel { source })?;
     let mut roots = vec![value, bool_ty, value_identity];
     let mut declarations = BTreeMap::new();
+    let mut names = BTreeMap::<IlKind, BTreeMap<String, Vec<DeclarationId>>>::new();
     for declaration in source.il().declarations() {
         let schema = source
             .il()
@@ -246,6 +260,12 @@ pub fn declare_hol_schema(
                 reference,
             },
         );
+        names
+            .entry(declaration.kind())
+            .or_default()
+            .entry(declaration.name().to_owned())
+            .or_default()
+            .push(declaration.id());
     }
     *kernel = staged;
     Ok(HolSchema {
@@ -253,6 +273,7 @@ pub fn declare_hol_schema(
         value,
         bool_ty,
         declarations,
+        names,
     })
 }
 
