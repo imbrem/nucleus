@@ -33,25 +33,39 @@ honest stop.
   `contraction`, `reordering`, `equiv1`, `equiv2`, `equiv_pos1`, `equiv_pos2`,
   `implies_neg1`, `implies_neg2`, `implies`, `true`, `false`, `ite1`, `ite2`,
   `equiv_simplify`, `implies_simplify`, `or_simplify`, `subproof`, plus
-  `resolution`, `refl`, `symm`, `trans`, `cong`, `xor1`, `xor2`, `xor_pos2`,
-  `not_symm`, `distinct_elim`, `and`, a Boolean-only `evaluate`, and the
-  `bool-double-not-elim`, `bool-eq-true`, `bool-eq-false`, `eq-refl`,
-  `eq-symm`, `ite-true-cond`, `ite-false-cond`, `ite-eq`, `ite-eq-branch`
-  RARE rewrites.
+  `resolution`, `th_resolution`, `refl`, `symm`, `trans`, `cong`, `xor1`,
+  `xor2`, `xor_pos2`, `not_symm`, `distinct_elim`, `and`, a Boolean-only
+  `evaluate`, and the `bool-double-not-elim`, `bool-eq-true`, `bool-eq-false`,
+  `bool-xor-refl`, `distinct-binary-elim`, `eq-refl`, `eq-symm`,
+  `ite-true-cond`, `ite-false-cond`, `ite-eq`, `ite-eq-branch` RARE rewrites.
+  That is 51 accepted names, and every one has evidence: the live cvc5 corpus
+  exercises 41 of them and hand-written proofs cover the 10 cvc5 1.3.4 never
+  emits, with `replays_a_live_cvc5_qf_uf_rule_corpus` asserting the union is
+  exactly the accepted set, so an accepting arm cannot ship untested.
 - Every arithmetic rule fails closed with `ArithmeticTheoryMissing`, which is
-  deliberately distinct from `Unsupported`: `poly_simp`, `poly_simp_rel`,
-  `la_generic`, `la_mult_pos`, `la_mult_neg`, `la_disequality`, `la_rw_eq`,
-  `la_totality`, `la_tautology`, `comp_simplify`, `div_intro`, every `arith-*`
+  deliberately distinct from `Unsupported`. The classification is by rule
+  family rather than by a list of individual names, so a family member this
+  build has never seen is still refused by name instead of reaching a user
+  rule handler: the `la_*` and `lia_*` linear-arithmetic rules, cvc5's
+  `poly_simp*` extensions, `div_intro`, the numeric simplifiers
+  (`comp_simplify`, `div_simplify`, `minus_simplify`, `mod_simplify`,
+  `prod_simplify`, `sum_simplify`, `unary_minus_simplify`), every `arith-*`
   RARE name, `mod-elim`, `div-elim`, and `evaluate` on a numeric-sorted
-  equation.
+  equation. `classifies_every_arithmetic_rule_by_family` asserts the whole
+  inventory and that none of it reaches userspace. The residual is naming, not
+  acceptance: a future RARE arithmetic rewrite spelled with neither the
+  `arith-` prefix nor those two names would fail closed as `Unsupported`
+  rather than by the arithmetic error.
 
 `covalence_logic_alethe::lower_qf_uflia` is therefore not a checker. It
-returns a `Lowering` with no theorem accessor, no `ThmId`, no conversion into
-a `Refutation` and no rule-handler parameter, and it reports the first
-arithmetic rule that stopped the proof. A proof that replays to its end
-without needing arithmetic is refused rather than certified, because whether a
-QF_UFLIA problem's unsatisfiability is purely propositional is not visible in
-its input. Issue 1208 tracks the checked arithmetic, and issue 1210 tracks the
+returns a `Lowering` with no theorem accessor, no `ThmId`, no kernel accessor,
+no conversion into a `Refutation` and no rule-handler parameter, and it
+reports the first arithmetic rule that stopped the proof. A proof that derives
+the empty clause without needing arithmetic is refused rather than certified,
+whether the arithmetic step it then states comes before the end of the proof
+or the proof has no arithmetic step at all, because whether a QF_UFLIA
+problem's unsatisfiability is purely propositional is not visible in its
+input. Issue 1208 tracks the checked arithmetic, and issue 1210 tracks the
 compact literal rows it would need; this frontend depends on neither and emits
 no literal row.
 
