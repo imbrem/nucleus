@@ -9,11 +9,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 mod add_slice;
+mod semantics;
 
 pub use add_slice::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSliceError, AddSlicePlan,
     ClauseCoverage, Coverage, CoverageArtifact, CoverageDisposition, CoverageParts, CoveragePlan,
     DeclarationCoverage, Disposition, Rejection, RuleCoverage, SourceSpan, TranslationCase,
+};
+pub use semantics::{
+    AddOperation, AddRouteAgreement, AddSemanticsError, EvaluationError, ParameterInstruction,
+    Program, ProgramError, parameter_add_program, prove_parameter_add_agreement,
 };
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};

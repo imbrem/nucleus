@@ -28,3 +28,10 @@ translation CID; it remains provenance rather than theorem authority.
 Decoding rechecks the closed schema, CID profiles, selector and case uniqueness,
 and translate/reject invariants. Source verification then rebuilds the plan from
 the linked elaborated document and requires exact coverage equality.
+
+`Program<I>` and `ParameterInstruction<Operation>` are the generic executable
+schema boundary for semantic routes. `prove_parameter_add_agreement` constructs
+the selected result directly and independently interprets the parameter-add
+instruction data, then asks the public HOL kernel to check their syntactic
+congruence and premise-free equality theorem. The word carrier and addition
+operation remain abstract; this first theorem adds no integer axiom.

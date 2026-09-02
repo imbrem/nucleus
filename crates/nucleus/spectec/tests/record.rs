@@ -4,7 +4,8 @@ use covalence_logic_hol::Kernel;
 use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoveragePlan,
-    Disposition, KernelRoot, Source, TYPE_NAME, TranslationCase,
+    Disposition, KernelRoot, ParameterInstruction, Program, ProgramError, Source, TYPE_NAME,
+    TranslationCase, parameter_add_program, prove_parameter_add_agreement,
 };
 
 #[test]
@@ -98,6 +99,93 @@ fn generic_coverage_artifact_composes_without_add_policy() {
     let (actual_bundle, actual_ast, plan) = artifact.into_parts();
     assert_eq!((actual_bundle, actual_ast), (bundle, ast));
     assert_eq!(plan.declarations()[0].id, id);
+}
+
+#[test]
+fn generic_program_schema_interprets_parameter_add() {
+    let program = parameter_add_program();
+    assert_eq!(
+        program.instructions(),
+        &[
+            ParameterInstruction::LocalGet(0),
+            ParameterInstruction::LocalGet(1),
+            ParameterInstruction::Binary(covalence_nucleus_spectec::AddOperation::I32Add),
+            ParameterInstruction::Return,
+        ]
+    );
+    assert_eq!(
+        program.evaluate(
+            |index| Ok::<_, ()>([20_u32, 22][usize::try_from(index).unwrap()]),
+            |_operation, left, right| Ok::<_, ()>(left + right),
+        ),
+        Ok(42)
+    );
+
+    let malformed = Program::new(vec![
+        ParameterInstruction::LocalGet(0),
+        ParameterInstruction::Binary(covalence_nucleus_spectec::AddOperation::I32Add),
+        ParameterInstruction::Return,
+    ]);
+    assert!(matches!(
+        malformed.evaluate(|_| Ok::<_, ()>(1_u32), |_, left, right| Ok(left + right)),
+        Err(ProgramError::Evaluation(_))
+    ));
+}
+
+#[test]
+fn public_kernel_checks_direct_and_interpreted_add_agreement() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let word_ty = kernel.ty_fv(1, star).unwrap();
+    let unary = kernel.ty_arr(word_ty, word_ty).unwrap();
+    let binary = kernel.ty_arr(word_ty, unary).unwrap();
+    let add = kernel.tm_fv(2, binary).unwrap();
+    let left = kernel.tm_fv(3, word_ty).unwrap();
+    let right = kernel.tm_fv(4, word_ty).unwrap();
+
+    let before_theorems = kernel.thm().live_theorems().count();
+    let agreement =
+        prove_parameter_add_agreement(&mut kernel, bool_ty, word_ty, add, left, right).unwrap();
+
+    assert_ne!(agreement.direct, agreement.interpreted);
+    assert!(
+        kernel
+            .tm_eq(agreement.direct, agreement.interpreted)
+            .unwrap()
+    );
+    let theorem = kernel.thm().get(agreement.theorem).unwrap();
+    assert!(theorem.lhs.rows().next().is_none());
+    let conclusions = theorem.rhs.rows().collect::<Vec<_>>();
+    assert_eq!(conclusions.len(), 1);
+    assert_eq!(conclusions[0].len(), 1);
+    assert!(conclusions[0][0].is_positive());
+    assert_eq!(
+        conclusions[0][0].magnitude(),
+        u32::try_from(agreement.proposition.get()).unwrap()
+    );
+    assert_eq!(kernel.thm().live_theorems().count(), before_theorems + 1);
+    assert_eq!(kernel.classifier(agreement.proposition).unwrap(), bool_ty);
+}
+
+#[test]
+fn checked_add_agreement_is_transactional() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let word_ty = kernel.ty_fv(1, star).unwrap();
+    let left = kernel.tm_fv(2, word_ty).unwrap();
+    let right = kernel.tm_fv(3, word_ty).unwrap();
+    let wrong_add = kernel.tm_fv(4, word_ty).unwrap();
+    let before_rows = kernel.len();
+    let before_theorems = kernel.thm().live_theorems().count();
+
+    assert!(
+        prove_parameter_add_agreement(&mut kernel, bool_ty, word_ty, wrong_add, left, right)
+            .is_err()
+    );
+    assert_eq!(kernel.len(), before_rows);
+    assert_eq!(kernel.thm().live_theorems().count(), before_theorems);
 }
 
 #[test]
