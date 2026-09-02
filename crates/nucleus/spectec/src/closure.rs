@@ -81,68 +81,124 @@ pub fn least_closed_predicate<F>(
 where
     F: FnOnce(&mut Kernel, Ref) -> Result<Ref, KernelError>,
 {
-    let mut staged = kernel.fork();
-    let arrows = predicate_arrows(&staged, predicate_ty, bool_ty)?;
-    if arrows.is_empty() {
+    let mut family =
+        least_closed_family(kernel, bool_ty, &[predicate_ty], |kernel, candidates| {
+            build_closure(kernel, candidates[0])
+        })?;
+    family.pop().ok_or(LeastPredicateError::NotPredicate)
+}
+
+/// Simultaneously defines the least family satisfying a shared closure.
+///
+/// Every resulting predicate quantifies over the entire candidate family, so
+/// rules may refer mutually to any candidate supplied to `build_closure`.
+/// Predicate order is preserved in both the callback and result.
+///
+/// # Errors
+///
+/// Returns an error for an empty family, a classifier that is not a curried
+/// predicate with at least one domain, a non-Boolean shared closure, name-space
+/// exhaustion, or any rejected checked constructor. `kernel` is unchanged on
+/// failure.
+pub fn least_closed_family<F>(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    predicate_tys: &[Ref],
+    build_closure: F,
+) -> Result<Vec<LeastPredicate>, LeastPredicateError>
+where
+    F: FnOnce(&mut Kernel, &[Ref]) -> Result<Ref, KernelError>,
+{
+    if predicate_tys.is_empty() {
         return Err(LeastPredicateError::NotPredicate);
     }
-    let roots = [bool_ty, predicate_ty];
+    let mut staged = kernel.fork();
+    let arrows = predicate_tys
+        .iter()
+        .map(|&predicate_ty| predicate_arrows(&staged, predicate_ty, bool_ty))
+        .collect::<Result<Vec<_>, _>>()?;
+    if arrows.iter().any(Vec::is_empty) {
+        return Err(LeastPredicateError::NotPredicate);
+    }
+    let roots = std::iter::once(bool_ty)
+        .chain(predicate_tys.iter().copied())
+        .collect::<Vec<_>>();
     let base = staged
         .fresh_name(&roots)
         .map_err(|source| LeastPredicateError::Kernel { source })?;
-    let candidate = staged
-        .tm_fv(base, predicate_ty)
-        .map_err(|source| LeastPredicateError::Kernel { source })?;
-    let closure = build_closure(&mut staged, candidate)
-        .map_err(|source| LeastPredicateError::Kernel { source })?;
-    let mut arguments = Vec::with_capacity(arrows.len());
-    let mut applied = candidate;
-    for (offset, &(_, domain)) in arrows.iter().enumerate() {
-        let name = base
-            .checked_add(u64::try_from(offset).map_err(|_| LeastPredicateError::NotPredicate)? + 1)
-            .ok_or(LeastPredicateError::NotPredicate)?;
-        let argument = staged
-            .tm_fv(name, domain)
-            .map_err(|source| LeastPredicateError::Kernel { source })?;
-        applied = staged
-            .app(applied, argument)
-            .map_err(|source| LeastPredicateError::Kernel { source })?;
-        arguments.push(argument);
+    let mut offset = 0_u64;
+    let mut candidates = Vec::with_capacity(predicate_tys.len());
+    for &predicate_ty in predicate_tys {
+        let name = next_name(base, &mut offset)?;
+        candidates.push(
+            staged
+                .tm_fv(name, predicate_ty)
+                .map_err(|source| LeastPredicateError::Kernel { source })?,
+        );
     }
+    let closure = build_closure(&mut staged, &candidates)
+        .map_err(|source| LeastPredicateError::Kernel { source })?;
     let bool_tail = staged
         .ty_arr(bool_ty, bool_ty)
         .map_err(|source| LeastPredicateError::Kernel { source })?;
     let bool_binary = staged
         .ty_arr(bool_ty, bool_tail)
         .map_err(|source| LeastPredicateError::Kernel { source })?;
-    let logic_name = base
-        .checked_add(
-            u64::try_from(arguments.len()).map_err(|_| LeastPredicateError::NotPredicate)? + 1,
-        )
-        .ok_or(LeastPredicateError::NotPredicate)?;
-    let logic = staged
-        .tm_fv(logic_name, bool_binary)
-        .map_err(|source| LeastPredicateError::Kernel { source })?;
-    let implication = staged
-        .imp_tm(bool_ty, logic, closure, applied)
-        .map_err(|source| LeastPredicateError::Kernel { source })?;
-    let characterization = staged
-        .forall_tm(bool_ty, candidate, implication)
-        .map_err(|source| LeastPredicateError::Kernel { source })?;
-    let mut predicate = characterization;
-    for ((arrow, _), argument) in arrows.iter().zip(&arguments).rev() {
-        predicate = staged
-            .lam_at(*arrow, *argument, predicate)
+    let mut predicates = Vec::with_capacity(predicate_tys.len());
+    for ((&predicate_ty, &candidate), predicate_arrows) in
+        predicate_tys.iter().zip(&candidates).zip(&arrows)
+    {
+        let mut arguments = Vec::with_capacity(predicate_arrows.len());
+        let mut applied = candidate;
+        for &(_, domain) in predicate_arrows {
+            let name = next_name(base, &mut offset)?;
+            let argument = staged
+                .tm_fv(name, domain)
+                .map_err(|source| LeastPredicateError::Kernel { source })?;
+            applied = staged
+                .app(applied, argument)
+                .map_err(|source| LeastPredicateError::Kernel { source })?;
+            arguments.push(argument);
+        }
+        let logic_name = next_name(base, &mut offset)?;
+        let logic = staged
+            .tm_fv(logic_name, bool_binary)
             .map_err(|source| LeastPredicateError::Kernel { source })?;
+        let implication = staged
+            .imp_tm(bool_ty, logic, closure, applied)
+            .map_err(|source| LeastPredicateError::Kernel { source })?;
+        let mut characterization = implication;
+        for &family_candidate in candidates.iter().rev() {
+            characterization = staged
+                .forall_tm(bool_ty, family_candidate, characterization)
+                .map_err(|source| LeastPredicateError::Kernel { source })?;
+        }
+        let mut predicate = characterization;
+        for ((arrow, _), argument) in predicate_arrows.iter().zip(&arguments).rev() {
+            predicate = staged
+                .lam_at(*arrow, *argument, predicate)
+                .map_err(|source| LeastPredicateError::Kernel { source })?;
+        }
+        predicates.push(LeastPredicate {
+            predicate_ty,
+            candidate,
+            closure,
+            characterization,
+            predicate,
+        });
     }
     *kernel = staged;
-    Ok(LeastPredicate {
-        predicate_ty,
-        candidate,
-        closure,
-        characterization,
-        predicate,
-    })
+    Ok(predicates)
+}
+
+fn next_name(base: u64, offset: &mut u64) -> Result<u64, LeastPredicateError> {
+    let name = base
+        .checked_add(*offset)
+        .ok_or(LeastPredicateError::NotPredicate)?;
+    *offset = offset
+        .checked_add(1)
+        .ok_or(LeastPredicateError::NotPredicate)?;
+    Ok(name)
 }
 
 /// Constructs the universally closed proposition for one candidate rule.

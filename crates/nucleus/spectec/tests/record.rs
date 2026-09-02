@@ -6,7 +6,7 @@ use covalence_nucleus_spectec::{
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
     CoveragePlan, Disposition, HolRule, IndexErasure, KernelRoot, SelectedCompileError,
     SelectedCompiler, Source, TYPE_NAME, TranslationCase, close_hol_rule, close_hol_rules,
-    declare_hol_schema, least_closed_predicate,
+    declare_hol_schema, least_closed_family, least_closed_predicate,
 };
 
 #[test]
@@ -58,6 +58,52 @@ fn least_closed_predicate_is_transactional() {
         .is_err()
     );
     assert_eq!(kernel.arena().len(), before);
+}
+
+#[test]
+fn least_closed_family_supports_mutual_rules() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let predicate_ty = kernel.ty_arr(value, bool_ty).unwrap();
+    let witness = kernel.tm_fv(40, value).unwrap();
+
+    let family = least_closed_family(
+        &mut kernel,
+        bool_ty,
+        &[predicate_ty, predicate_ty],
+        |kernel, candidates| {
+            let left_premise = kernel.app(candidates[1], witness)?;
+            let right_premise = kernel.app(candidates[0], witness)?;
+            let left = close_hol_rule(
+                kernel,
+                bool_ty,
+                candidates[0],
+                &HolRule::new(Vec::new(), vec![left_premise], vec![witness]),
+            )?;
+            let right = close_hol_rule(
+                kernel,
+                bool_ty,
+                candidates[1],
+                &HolRule::new(Vec::new(), vec![right_premise], vec![witness]),
+            )?;
+            close_hol_rules(kernel, bool_ty, &[left, right])
+        },
+    )
+    .unwrap();
+
+    assert_eq!(family.len(), 2);
+    assert_ne!(family[0].candidate, family[1].candidate);
+    assert_eq!(family[0].closure, family[1].closure);
+    assert_eq!(
+        kernel.arena().tag(family[0].predicate),
+        Some(Tag::Tm(TmTag::Lam))
+    );
+    assert_eq!(
+        kernel.arena().tag(family[1].predicate),
+        Some(Tag::Tm(TmTag::Lam))
+    );
 }
 
 #[test]

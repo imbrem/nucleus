@@ -20,7 +20,7 @@ pub use add_slice::{
 };
 pub use closure::{
     HolRule, LeastPredicate, LeastPredicateError, close_hol_rule, close_hol_rules,
-    least_closed_predicate,
+    least_closed_family, least_closed_predicate,
 };
 pub use schema::{HolDeclaration, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema};
 pub use selected::{SelectedCompileError, SelectedCompiler, SelectedKernel, SelectedRoot};
