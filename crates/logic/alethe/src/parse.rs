@@ -153,15 +153,15 @@ fn symbols(expression: &Expr) -> Result<Vec<String>, ParseError> {
 pub fn parse_alethe(input: &str) -> Result<AletheProof, ParseError> {
     let document = parse_smt(input).map_err(|source| ParseError::Syntax { source })?;
     let mut expressions = document.expressions();
-    if let [expression] = expressions {
-        if let ExprKind::List(node) = expression.node() {
-            let items = SpannedRepr::list_items(node);
-            if items
-                .first()
-                .is_some_and(|item| matches!(item.node(), ExprKind::List(_)))
-            {
-                expressions = items;
-            }
+    if let [expression] = expressions
+        && let ExprKind::List(node) = expression.node()
+    {
+        let items = SpannedRepr::list_items(node);
+        if items
+            .first()
+            .is_some_and(|item| matches!(item.node(), ExprKind::List(_)))
+        {
+            expressions = items;
         }
     }
     expressions
