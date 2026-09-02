@@ -4,8 +4,8 @@ pub mod drisl;
 
 use std::sync::Arc;
 
-pub use covalence_data_num::Int;
 use covalence_data_num::Num;
+pub use covalence_data_num::{DecodeLimit, Int};
 
 /// A cheap-to-clone handle to an immutable CBOR value.
 #[derive(Clone, Debug, PartialEq)]

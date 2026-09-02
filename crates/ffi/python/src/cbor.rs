@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use covalence_data_cbor::{Int, Value, ValueKind};
+use covalence_data_cbor::{DecodeLimit, Int, Value, ValueKind};
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::{
     IntoPyObjectExt,
@@ -37,13 +37,13 @@ impl PyCbor {
     }
 }
 
-/// Converts a Python `int` to an exact integer.
+/// Converts a Python `int` to an exact integer under a caller's size bound.
 ///
 /// `int.to_bytes` pads to whatever width it is given, so the result is trimmed
 /// to the shortest sign-preserving form before decoding. Without that,
 /// `-2**k` — whose padded form carries a redundant `0xff` — would be rejected
 /// as non-canonical.
-fn python_int(value: &Bound<'_, PyInt>) -> PyResult<Int> {
+pub(crate) fn python_int(value: &Bound<'_, PyInt>, limit: DecodeLimit) -> PyResult<Int> {
     let bits: usize = value.call_method0("bit_length")?.extract()?;
     let length = bits / 8 + 1;
     let kwargs = PyDict::new(value.py());
@@ -56,14 +56,21 @@ fn python_int(value: &Bound<'_, PyInt>) -> PyResult<Int> {
     {
         bytes = &bytes[1..];
     }
-    Int::from_canonical_bytes(bytes).map_err(|error| PyValueError::new_err(error.to_string()))
+    Int::from_canonical_bytes_with_limit(bytes, limit)
+        .map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
-fn rust_int<'py>(python: Python<'py>, value: &Int) -> PyResult<Bound<'py, PyAny>> {
+/// Converts an exact integer to a Python `int`.
+///
+/// Goes through bytes rather than a decimal string: `CPython` caps `int(str)` at
+/// 4300 digits by default, which a literal near the size limit exceeds.
+pub(crate) fn rust_int<'py>(python: Python<'py>, value: &Int) -> PyResult<Bound<'py, PyAny>> {
+    let bytes = PyBytes::new(python, &value.to_canonical_bytes());
+    let kwargs = PyDict::new(python);
+    kwargs.set_item("signed", true)?;
     python
         .get_type::<PyInt>()
-        .call1((value.to_string(),))
-        .map(Bound::into_any)
+        .call_method("from_bytes", (bytes, "big"), Some(&kwargs))
 }
 
 const MAX_CONTAINER_DEPTH: usize = 256;
@@ -83,7 +90,7 @@ fn from_python(
         return Ok(Value::bool(value.extract()?));
     }
     if let Ok(value) = value.cast::<PyInt>() {
-        return Ok(Value::integer(python_int(value)?));
+        return Ok(Value::integer(python_int(value, DecodeLimit::default())?));
     }
     if let Ok(value) = value.cast::<PyBytes>() {
         return Ok(Value::bytes(value.as_bytes()));
@@ -145,7 +152,9 @@ fn equals_python(value: &Value, other: &Bound<'_, PyAny>) -> PyResult<Option<boo
             if other.is_instance_of::<PyBool>() || !other.is_instance_of::<PyInt>() {
                 return Ok(None);
             }
-            Ok(Some(value == &python_int(other.cast::<PyInt>()?)?))
+            Ok(Some(
+                value == &python_int(other.cast::<PyInt>()?, DecodeLimit::default())?,
+            ))
         }
         ValueKind::Bytes(value) => Ok(other
             .cast::<PyBytes>()
@@ -215,7 +224,10 @@ impl PyCbor {
 
     #[staticmethod]
     fn integer(value: &Bound<'_, PyInt>) -> PyResult<Self> {
-        Ok(Self::wrap(Value::integer(python_int(value)?)))
+        Ok(Self::wrap(Value::integer(python_int(
+            value,
+            DecodeLimit::default(),
+        )?)))
     }
 
     #[staticmethod]
