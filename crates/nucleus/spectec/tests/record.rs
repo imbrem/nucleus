@@ -79,6 +79,41 @@ fn add_slice_exhaustively_classifies_exact_structural_forms() {
 }
 
 #[test]
+fn add_slice_rejects_selected_rule_body_drift() {
+    let original = Source::wasm3().unwrap();
+    let mut bytes = covalence_data_spectec::WASM_3_AST_BYTES.to_vec();
+    let rule = bytes
+        .windows(b"\"binop-val\"".len())
+        .position(|window| window == b"\"binop-val\"")
+        .unwrap();
+    let relative = bytes[rule..]
+        .windows(b"\"binop_\"".len())
+        .enumerate()
+        .filter_map(|(position, window)| (window == b"\"binop_\"").then_some(position))
+        .nth(1)
+        .unwrap();
+    let operation = rule + relative;
+    bytes[operation + 4] = b'X';
+    let il = IlDocument::parse(&bytes, Limits::default()).unwrap();
+    let changed = Source::new(
+        original.bundle(),
+        original.ast(),
+        original.release(),
+        original.revision(),
+        &il,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        AddSlicePlan::build(&changed),
+        Err(covalence_nucleus_spectec::AddSliceError::SemanticShape {
+            case: TranslationCase::BinaryOperationValueRule,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn generic_coverage_artifact_composes_without_add_policy() {
     let bundle = drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle");
     let ast = drisl::address(CidCodec::Raw, CidHash::Sha256, b"ast");

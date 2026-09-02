@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};
-use covalence_data_spectec::{ClauseId, DeclarationId, IlError, IlKind, RuleId};
+use covalence_data_spectec::{ClauseId, DeclarationId, IlError, IlKind, IlNode, RuleId};
 use covalence_lib_error::snafu::Snafu;
 
 use crate::Source;
@@ -404,6 +404,7 @@ impl CoveragePlan<Disposition> {
                 actual: seen.len(),
             });
         }
+        validate_supported_rule_shapes(source)?;
         Ok(Self {
             declarations,
             clauses,
@@ -473,6 +474,16 @@ pub enum AddSliceError {
     RuleShape {
         /// Exact structural selector.
         id: RuleId,
+    },
+    /// A selected semantic rule's elaborated body changed shape.
+    #[snafu(display(
+        "SpecTec add case {case:?} has an unexpected elaborated node at path {path:?}"
+    ))]
+    SemanticShape {
+        /// Closed translation case whose body failed validation.
+        case: TranslationCase,
+        /// One-based path of the first mismatched node.
+        path: Vec<u32>,
     },
     /// Nested rule inventory rejected malformed IL.
     #[snafu(display("could not inventory SpecTec add rules: {source}"))]
@@ -554,6 +565,101 @@ const NUMERICS: &str = "source/3.1-numerics.scalar.spectec";
 const CONFIGURATIONS: &str = "source/4.0-execution.configurations.spectec";
 const EXECUTION: &str = "source/4.3-execution.instructions.spectec";
 const VALUES: &str = "source/1.1-syntax.values.spectec";
+
+#[derive(Clone, Copy)]
+enum ExpectedNode {
+    List(usize),
+    Symbol(&'static str),
+    String(&'static str),
+}
+
+fn validate_supported_rule_shapes(source: &Source) -> Result<(), AddSliceError> {
+    expect_nodes(
+        source,
+        DeclarationId::new(628, None).expect("fixed selector is nonzero"),
+        &[52],
+        TranslationCase::BinaryOperationValueRule,
+        &[
+            (&[], ExpectedNode::List(10)),
+            (&[1], ExpectedNode::Symbol("rule")),
+            (&[2], ExpectedNode::String("binop-val")),
+            (&[8], ExpectedNode::String("%~>%")),
+            (&[9], ExpectedNode::List(3)),
+            (&[9, 1], ExpectedNode::Symbol("tup")),
+            (&[9, 2], ExpectedNode::List(4)),
+            (&[9, 2, 1], ExpectedNode::Symbol("list")),
+            (&[9, 2, 2, 2], ExpectedNode::String("CONST%%")),
+            (&[9, 2, 3, 2], ExpectedNode::String("CONST%%")),
+            (&[9, 2, 4, 2], ExpectedNode::String("BINOP%%")),
+            (&[9, 3, 2, 2], ExpectedNode::String("CONST%%")),
+            (&[10, 1], ExpectedNode::Symbol("if")),
+            (&[10, 2, 1], ExpectedNode::Symbol("mem")),
+            (&[10, 2, 3, 1], ExpectedNode::Symbol("call")),
+            (&[10, 2, 3, 2], ExpectedNode::String("binop_")),
+        ],
+    )?;
+    expect_nodes(
+        source,
+        DeclarationId::new(630, None).expect("fixed selector is nonzero"),
+        &[30],
+        TranslationCase::LocalGetRule,
+        &[
+            (&[], ExpectedNode::List(8)),
+            (&[1], ExpectedNode::Symbol("rule")),
+            (&[2], ExpectedNode::String("local.get")),
+            (&[6], ExpectedNode::String("%~>%")),
+            (&[7, 1], ExpectedNode::Symbol("tup")),
+            (&[7, 2, 1], ExpectedNode::Symbol("case")),
+            (&[7, 2, 2], ExpectedNode::String("%;%")),
+            (&[7, 3, 1], ExpectedNode::Symbol("list")),
+            (&[8, 1], ExpectedNode::Symbol("if")),
+            (&[8, 2, 1], ExpectedNode::Symbol("cmp")),
+            (&[8, 2, 4, 1], ExpectedNode::Symbol("call")),
+            (&[8, 2, 4, 2], ExpectedNode::String("local")),
+        ],
+    )?;
+    expect_nodes(
+        source,
+        DeclarationId::new(628, None).expect("fixed selector is nonzero"),
+        &[27],
+        TranslationCase::ReturnFrameRule,
+        &[
+            (&[], ExpectedNode::List(9)),
+            (&[1], ExpectedNode::Symbol("rule")),
+            (&[2], ExpectedNode::String("return-frame")),
+            (&[8], ExpectedNode::String("%~>%")),
+            (&[9, 1], ExpectedNode::Symbol("tup")),
+            (&[9, 2, 1], ExpectedNode::Symbol("list")),
+            (&[9, 2, 2, 1], ExpectedNode::Symbol("case")),
+            (&[9, 2, 2, 2], ExpectedNode::String("FRAME_%{%}%")),
+        ],
+    )
+}
+
+fn expect_nodes(
+    source: &Source,
+    declaration: DeclarationId,
+    base: &[u32],
+    case: TranslationCase,
+    expectations: &[(&[u32], ExpectedNode)],
+) -> Result<(), AddSliceError> {
+    for (path, expected) in expectations {
+        let path = base.iter().chain(path.iter()).copied().collect::<Vec<_>>();
+        if !matches_expected(source.il().node(declaration, &path), *expected) {
+            return Err(AddSliceError::SemanticShape { case, path });
+        }
+    }
+    Ok(())
+}
+
+fn matches_expected(actual: Option<IlNode<'_>>, expected: ExpectedNode) -> bool {
+    match (actual, expected) {
+        (Some(IlNode::List(actual)), ExpectedNode::List(expected)) => actual == expected,
+        (Some(IlNode::Symbol(actual)), ExpectedNode::Symbol(expected))
+        | (Some(IlNode::String(actual)), ExpectedNode::String(expected)) => actual == expected,
+        _ => false,
+    }
+}
 
 const fn span(path: &'static str, first_line: u32, last_line: u32) -> SourceSpan {
     SourceSpan {
