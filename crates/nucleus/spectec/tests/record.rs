@@ -39,6 +39,13 @@ impl RelationalResolver for TestRelationalResolver {
         "name range exhausted".to_owned()
     }
 
+    fn case_error(
+        &mut self,
+        source: covalence_nucleus_spectec::RelationalCaseError,
+    ) -> Self::Error {
+        source.to_string()
+    }
+
     fn binding(
         &mut self,
         _binding: &covalence_data_spectec::IlBinding<'_>,
@@ -70,6 +77,14 @@ impl RelationalResolver for TestRelationalResolver {
             "y" => Ok(self.y),
             _ => Err("unbound variable".to_owned()),
         }
+    }
+
+    fn argument(
+        &mut self,
+        _kernel: &mut Kernel,
+        _argument: &covalence_data_spectec::IlArgument<'_>,
+    ) -> Result<covalence_logic_hol::Ref, Self::Error> {
+        Err("unexpected non-expression argument".to_owned())
     }
 
     fn operation(
@@ -271,6 +286,54 @@ fn relational_expression_fold_turns_calls_into_graph_premises() {
     assert!(
         kernel
             .equivalent(kernel.classifier(closure).unwrap(), bool_ty)
+            .unwrap()
+    );
+}
+
+#[test]
+fn complete_clause_api_lowers_patterns_result_and_premises() {
+    let il = IlDocument::parse(
+        b"(def \"pick\" (exp \"a\" nat) (exp \"b\" nat) nat (clause (exp (var \"x\")) (exp (var \"y\")) (var \"x\") (if (bool true)) else))",
+        Limits::default(),
+    )
+    .unwrap();
+    let clause = il
+        .clauses(DeclarationId::new(1, None).unwrap())
+        .unwrap()
+        .remove(0);
+    let schema = IlClauseSchema::decode(&il.clause_cursor(clause.id()).unwrap()).unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let binary_tail = kernel.ty_arr(value, value).unwrap();
+    let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
+    let graph_tail = kernel.ty_arr(value, bool_ty).unwrap();
+    let graph_ty = kernel.ty_arr(value, graph_tail).unwrap();
+    let x = kernel.tm_fv(1, value).unwrap();
+    let y = kernel.tm_fv(2, value).unwrap();
+    let add = kernel.tm_fv(3, binary_ty).unwrap();
+    let graph = kernel.tm_fv(4, graph_ty).unwrap();
+    let formal_inputs = [
+        kernel.tm_fv(10, value).unwrap(),
+        kernel.tm_fv(11, value).unwrap(),
+    ];
+    let formal_result = kernel.tm_fv(12, value).unwrap();
+    let resolver = TestRelationalResolver {
+        x,
+        y,
+        add,
+        graph,
+        bool_ty,
+    };
+    let case = RelationalExpressionAlgebra::new(&mut kernel, resolver, bool_ty, 100)
+        .clause(&schema, &formal_inputs, formal_result)
+        .unwrap();
+
+    assert!(case.otherwise);
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(case.produces).unwrap(), bool_ty)
             .unwrap()
     );
 }

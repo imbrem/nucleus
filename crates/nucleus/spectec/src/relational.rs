@@ -1,8 +1,8 @@
 //! Relational HOL expression lowering over the generic expression fold.
 
 use covalence_data_spectec::{
-    IlArgument, IlBinding, IlDomain, IlExpression, IlExpressionView, IlIteration, IlPremise,
-    IlSchemaError,
+    IlArgument, IlBinding, IlClauseSchema, IlDomain, IlExpression, IlExpressionView, IlIteration,
+    IlPremise, IlSchemaError,
 };
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref};
@@ -238,6 +238,9 @@ pub trait RelationalResolver {
     /// Reports exhaustion of the caller-selected name range.
     fn name_exhausted(&mut self) -> Self::Error;
 
+    /// Converts exact-clause assembly failure.
+    fn case_error(&mut self, source: RelationalCaseError) -> Self::Error;
+
     /// Registers one checked term for an explicit IL binding.
     ///
     /// # Errors
@@ -264,6 +267,18 @@ pub trait RelationalResolver {
     ///
     /// Returns an error for an unbound variable or incompatible target term.
     fn variable(&mut self, kernel: &mut Kernel, name: &str) -> Result<Ref, Self::Error>;
+
+    /// Resolves one non-expression type, definition, or grammar argument.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unbound higher-order name, unresolved type
+    /// family argument, or incompatible checked classifier.
+    fn argument(
+        &mut self,
+        kernel: &mut Kernel,
+        argument: &IlArgument<'_>,
+    ) -> Result<Ref, Self::Error>;
 
     /// Lowers one non-variable, non-call constructor from child values.
     ///
@@ -366,6 +381,82 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
             references.push(reference);
         }
         Ok(references)
+    }
+
+    /// Lowers one heterogeneous argument as a relational term.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first expression or resolver failure. Expression arguments
+    /// retain introduced graph binders and premises; other categories are
+    /// resolved as already checked terms.
+    pub fn argument(&mut self, argument: &IlArgument<'_>) -> Result<RelationalTerm, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        match argument {
+            IlArgument::Expression(expression) => fold_expression(expression, self),
+            IlArgument::Type(_) | IlArgument::Definition(_) | IlArgument::Grammar(_) => self
+                .resolver
+                .argument(self.kernel, argument)
+                .map(|value| RelationalTerm::new(value, Vec::new(), Vec::new())),
+        }
+    }
+
+    /// Lowers one complete definition clause to an exact ordered graph case.
+    ///
+    /// The algebra should be scoped to this clause so resolver bindings do not
+    /// leak into a sibling clause.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first binding, pattern, expression, premise, relation,
+    /// iteration, arity, or checked HOL failure.
+    pub fn clause(
+        &mut self,
+        schema: &IlClauseSchema<'_>,
+        formal_inputs: &[Ref],
+        formal_result: Ref,
+    ) -> Result<HolCase, R::Error>
+    where
+        R: RelationalResolver,
+    {
+        let explicit_locals = self.bindings(schema.bindings())?;
+        let patterns = schema
+            .arguments()
+            .iter()
+            .map(|argument| self.argument(argument))
+            .collect::<Result<Vec<_>, _>>()?;
+        let result = fold_expression(schema.result(), self)?;
+        let conditions = schema
+            .premises()
+            .iter()
+            .map(|premise| self.premise(premise))
+            .collect::<Result<Vec<_>, _>>()?;
+        let semantic_binders = conditions
+            .iter()
+            .flat_map(|condition| condition.binders().iter().copied())
+            .collect::<Vec<_>>();
+        let semantic_premises = conditions
+            .iter()
+            .flat_map(|condition| condition.premises().iter().copied())
+            .collect::<Vec<_>>();
+        let otherwise = conditions.iter().any(RelationalCondition::otherwise);
+        relational_hol_case(
+            self.kernel,
+            self.bool_ty,
+            &RelationalClause {
+                formal_inputs,
+                formal_result,
+                explicit_locals: &explicit_locals,
+                patterns: &patterns,
+                result: &result,
+                semantic_binders: &semantic_binders,
+                semantic_premises: &semantic_premises,
+                otherwise,
+            },
+        )
+        .map_err(|source| self.resolver.case_error(source))
     }
 
     /// Returns the next unused name after lowering.
