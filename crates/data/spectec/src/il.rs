@@ -65,6 +65,67 @@ pub struct DeclarationId {
     member: Option<NonZeroU32>,
 }
 
+/// Stable structural selector for a nested `rule` form.
+///
+/// `path` contains one-based child positions from the selected declaration's
+/// outer list to the rule list. Names remain audit metadata rather than part
+/// of identity.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RuleId {
+    declaration: DeclarationId,
+    path: Vec<NonZeroU32>,
+}
+
+impl RuleId {
+    /// Constructs a rule selector from one-based child positions.
+    ///
+    /// Returns `None` for an empty path or any zero position.
+    #[must_use]
+    pub fn new(declaration: DeclarationId, path: impl IntoIterator<Item = u32>) -> Option<Self> {
+        let path = path
+            .into_iter()
+            .map(NonZeroU32::new)
+            .collect::<Option<Vec<_>>>()?;
+        if path.is_empty() {
+            return None;
+        }
+        Some(Self { declaration, path })
+    }
+
+    /// Returns the containing declaration selector.
+    #[must_use]
+    pub const fn declaration(&self) -> DeclarationId {
+        self.declaration
+    }
+
+    /// Returns the one-based expression path within the declaration.
+    #[must_use]
+    pub fn path(&self) -> impl ExactSizeIterator<Item = u32> + '_ {
+        self.path.iter().map(|position| position.get())
+    }
+}
+
+/// One nested rule discovered inside an elaborated declaration.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct IlRule {
+    id: RuleId,
+    name: String,
+}
+
+impl IlRule {
+    /// Returns the stable structural selector.
+    #[must_use]
+    pub const fn id(&self) -> &RuleId {
+        &self.id
+    }
+
+    /// Returns the exact name emitted by `SpecTec`.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 impl DeclarationId {
     /// Constructs a structural selector.
     ///
@@ -273,6 +334,35 @@ impl IlDocument {
             }
         }
     }
+
+    /// Inventories every nested `rule` form in deterministic tree order.
+    ///
+    /// Rule identity is the declaration selector plus a one-based expression
+    /// path. This includes premise rules nested inside outer rules, avoiding
+    /// source-name assumptions and silent omission of deeper forms.
+    /// # Errors
+    ///
+    /// Returns an error when a `rule` form lacks its required quoted name.
+    pub fn rules(&self, id: DeclarationId) -> Result<Option<Vec<IlRule>>, IlError> {
+        let Some(expression) = self.expression(id) else {
+            return Ok(None);
+        };
+        let mut rules = Vec::new();
+        collect_rules(expression, id, &mut Vec::new(), &mut rules)?;
+        Ok(Some(rules))
+    }
+
+    /// Resolves an exact structural rule selector.
+    #[must_use]
+    pub fn rule(&self, id: &RuleId) -> Option<&Expr> {
+        let mut expression = self.expression(id.declaration)?;
+        for position in &id.path {
+            let items = list_items(expression)?;
+            let index = usize::try_from(position.get()).ok()?.checked_sub(1)?;
+            expression = items.get(index)?;
+        }
+        (symbol(list_items(expression)?.first()) == Some("rule")).then_some(expression)
+    }
 }
 
 /// Why an elaborated S-expression is not a recognized IL declaration envelope.
@@ -319,6 +409,14 @@ pub enum IlError {
     MissingName {
         /// Declaration selector.
         id: DeclarationId,
+    },
+    /// A nested rule omitted its quoted name.
+    #[snafu(display("SpecTec rule at {id:?} path {path:?} has no quoted name"))]
+    MissingRuleName {
+        /// Containing declaration selector.
+        id: DeclarationId,
+        /// One-based expression path within the declaration.
+        path: Vec<u32>,
     },
 }
 
@@ -376,4 +474,40 @@ fn string(expression: Option<&Expr>) -> Option<&str> {
         Atom::String(value) => Some(value),
         _ => None,
     }
+}
+
+fn collect_rules(
+    expression: &Expr,
+    declaration: DeclarationId,
+    path: &mut Vec<NonZeroU32>,
+    rules: &mut Vec<IlRule>,
+) -> Result<(), IlError> {
+    let Some(items) = list_items(expression) else {
+        return Ok(());
+    };
+    if symbol(items.first()) == Some("rule") {
+        let name = string(items.get(1)).ok_or_else(|| IlError::MissingRuleName {
+            id: declaration,
+            path: path.iter().map(|position| position.get()).collect(),
+        })?;
+        rules.push(IlRule {
+            id: RuleId {
+                declaration,
+                path: path.clone(),
+            },
+            name: name.to_owned(),
+        });
+    }
+    for (index, child) in items.iter().enumerate() {
+        let Ok(position) = u32::try_from(index + 1) else {
+            return Ok(());
+        };
+        let Some(position) = NonZeroU32::new(position) else {
+            return Ok(());
+        };
+        path.push(position);
+        collect_rules(child, declaration, path, rules)?;
+        path.pop();
+    }
+    Ok(())
 }

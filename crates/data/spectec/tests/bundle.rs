@@ -2,13 +2,74 @@ use std::path::{Path, PathBuf};
 
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{
-    ArtifactError, AstError, AstSummary, BundleManifest, IlDocument, IlKind, Limits, ManifestError,
-    SPECTEC_VERSION, WASM_3_RELEASE, WASM_3_REVISION, WASM_3_SOURCES, WASM_UPSTREAM, canonical_ast,
-    parse_ast,
+    ArtifactError, AstError, AstSummary, BundleManifest, DeclarationId, IlDocument, IlKind, Limits,
+    ManifestError, RuleId, SPECTEC_VERSION, WASM_3_RELEASE, WASM_3_REVISION, WASM_3_SOURCES,
+    WASM_UPSTREAM, canonical_ast, parse_ast,
 };
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor/wasm-3.0")
+}
+
+#[test]
+fn official_il_rule_inventory_has_stable_nested_selectors() {
+    let il = covalence_data_spectec::wasm3_bundle().unwrap();
+    let il = il.il();
+
+    let pure = DeclarationId::new(628, None).unwrap();
+    let pure_rules = il.rules(pure).unwrap().unwrap();
+    assert_eq!(pure_rules.len(), 78);
+    let binop = RuleId::new(pure, [52]).unwrap();
+    assert_eq!(
+        pure_rules
+            .iter()
+            .find(|rule| rule.id() == &binop)
+            .unwrap()
+            .name(),
+        "binop-val"
+    );
+    assert_eq!(il.rules(pure).unwrap().unwrap(), pure_rules);
+    assert!(std::ptr::eq(
+        il.rule(&binop).unwrap(),
+        il.rule(&binop).unwrap()
+    ));
+
+    let read = DeclarationId::new(630, None).unwrap();
+    let local_get = RuleId::new(read, [30]).unwrap();
+    assert_eq!(
+        il.rules(read)
+            .unwrap()
+            .unwrap()
+            .iter()
+            .find(|rule| rule.id() == &local_get)
+            .unwrap()
+            .name(),
+        "local.get"
+    );
+
+    let step = DeclarationId::new(631, Some(1)).unwrap();
+    let nested_pure = RuleId::new(step, [5, 8]).unwrap();
+    assert_eq!(
+        il.rules(step)
+            .unwrap()
+            .unwrap()
+            .iter()
+            .find(|rule| rule.id() == &nested_pure)
+            .unwrap()
+            .name(),
+        "Step_pure"
+    );
+    assert!(il.rule(&RuleId::new(pure, [51]).unwrap()).is_some());
+    assert!(il.rule(&RuleId::new(pure, [999]).unwrap()).is_none());
+    assert!(RuleId::new(pure, []).is_none());
+    assert!(RuleId::new(pure, [0]).is_none());
+
+    let malformed =
+        IlDocument::parse(b"(rel \"R\" x (rule missing-name))", Limits::default()).unwrap();
+    assert!(matches!(
+        malformed.rules(DeclarationId::new(1, None).unwrap()),
+        Err(covalence_data_spectec::IlError::MissingRuleName { .. })
+    ));
 }
 
 #[test]
