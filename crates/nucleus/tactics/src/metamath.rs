@@ -19,7 +19,7 @@
 //! than to their repeated flat-symbol length. The artifact record links the
 //! exported expression term back to its canonical flat conclusion.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
@@ -226,9 +226,7 @@ enum Event {
     Apply {
         pop: usize,
         floats: usize,
-        logical: bool,
-        premises: Vec<Expr>,
-        conclusion: Expr,
+        rule: Option<usize>,
     },
     Save,
     Heap(usize),
@@ -237,6 +235,10 @@ enum Event {
 #[derive(Default)]
 struct Trace {
     events: Vec<Event>,
+    // Assigned on first checked occurrence, so later HOL replay need not
+    // reconstruct and re-hash expression-sized rule keys.
+    rules: Vec<RuleInstance>,
+    rule_indices: HashMap<RuleInstance, usize>,
 }
 
 impl ReplayObserver for Trace {
@@ -258,12 +260,26 @@ impl ReplayObserver for Trace {
         _depth: usize,
     ) {
         let floats = target.frame.floats.len();
+        let rule = if target.conclusion.typecode() == "|-" {
+            let instance = RuleInstance {
+                premises: args[floats..].to_vec(),
+                conclusion: pushed.clone(),
+            };
+            if let Some(index) = self.rule_indices.get(&instance) {
+                Some(*index)
+            } else {
+                let index = self.rules.len();
+                self.rule_indices.insert(instance.clone(), index);
+                self.rules.push(instance);
+                Some(index)
+            }
+        } else {
+            None
+        };
         self.events.push(Event::Apply {
             pop: args.len(),
             floats,
-            logical: target.conclusion.typecode() == "|-",
-            premises: args[floats..].to_vec(),
-            conclusion: pushed.clone(),
+            rule,
         });
     }
 
@@ -370,7 +386,7 @@ impl<'db> GroundSession<'db> {
             &mut next_expression_name,
             &mut expressions,
             assertion,
-            &trace.events,
+            &trace,
         )?;
         self.kernel = staged;
         self.expressions = expressions;
@@ -388,24 +404,17 @@ fn import_trace(
     next_expression_name: &mut u64,
     expressions: &mut HashMap<Expr, Ref>,
     assertion: &Assertion,
-    events: &[Event],
+    trace: &Trace,
 ) -> Result<GroundImport, GroundReplayError> {
-    let rules = collect_rules(events);
     let (layouts, mut predicate_apps) = encode_rules(
         kernel,
         phi,
         predicate,
         next_expression_name,
         expressions,
-        &rules,
+        &trace.rules,
     )?;
     let (closed, extraction_paths) = closed_formula(kernel, bool_ty, &layouts)?;
-    let rule_index: HashMap<RuleInstance, usize> = rules
-        .iter()
-        .cloned()
-        .enumerate()
-        .map(|(index, rule)| (rule, index))
-        .collect();
     let theorem = replay_events(
         kernel,
         phi,
@@ -413,10 +422,10 @@ fn import_trace(
         predicate,
         next_expression_name,
         expressions,
-        events,
+        &trace.events,
+        &trace.rules,
         &layouts,
         &extraction_paths,
-        &rule_index,
         closed,
         &mut predicate_apps,
     )?;
@@ -430,33 +439,9 @@ fn import_trace(
         assertion,
         closed,
         theorem,
-        rules.len(),
+        trace.rules.len(),
         &mut predicate_apps,
     )
-}
-
-fn collect_rules(events: &[Event]) -> Vec<RuleInstance> {
-    let mut seen = HashSet::new();
-    let mut rules = Vec::new();
-    for event in events {
-        let Event::Apply {
-            logical: true,
-            premises,
-            conclusion,
-            ..
-        } = event
-        else {
-            continue;
-        };
-        let rule = RuleInstance {
-            premises: premises.clone(),
-            conclusion: conclusion.clone(),
-        };
-        if seen.insert(rule.clone()) {
-            rules.push(rule);
-        }
-    }
-    rules
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -505,15 +490,18 @@ fn replay_events(
     next_expression_name: &mut u64,
     expressions: &mut HashMap<Expr, Ref>,
     events: &[Event],
+    rules: &[RuleInstance],
     layouts: &[RuleLayout],
     extraction_paths: &[ExtractionPath],
-    rule_index: &HashMap<RuleInstance, usize>,
     closed: Ref,
     predicate_apps: &mut HashMap<Expr, Ref>,
 ) -> Result<ThmId, GroundReplayError> {
     let mut stack = Vec::<Slot>::new();
     let mut heap = Vec::<Slot>::new();
     let mut extracted_clauses = vec![None; layouts.len()];
+    // An essential expression always denotes the same theorem within this
+    // import: the predicate, closed rule set, and expression carrier are fixed.
+    let mut essential_theorems = HashMap::<Expr, ThmId>::new();
     for event in events {
         match event {
             Event::Float(expression) => {
@@ -521,6 +509,10 @@ fn replay_events(
                 stack.push(Slot::Syntax);
             }
             Event::Essential(expression) => {
+                if let Some(theorem) = essential_theorems.get(expression) {
+                    stack.push(Slot::Proved(*theorem));
+                    continue;
+                }
                 let encoded =
                     encode_expr(kernel, phi, next_expression_name, expressions, expression)?;
                 let applied =
@@ -530,29 +522,20 @@ fn replay_events(
                 let specialized = forall_elim(kernel, assumed_derivable, predicate)?;
                 let assumed_closed = kernel.identity(positive(closed))?;
                 let theorem = modus_ponens(kernel, specialized.theorem, assumed_closed)?;
+                essential_theorems.insert(expression.clone(), theorem);
                 stack.push(Slot::Proved(theorem));
             }
-            Event::Apply {
-                pop,
-                floats,
-                logical,
-                premises,
-                conclusion,
-            } => {
+            Event::Apply { pop, floats, rule } => {
                 if stack.len() < *pop || *floats > *pop {
                     return Err(trace_error("assertion stack underflow"));
                 }
                 let args = stack.split_off(stack.len() - pop);
-                if !logical {
+                let Some(index) = *rule else {
                     stack.push(Slot::Syntax);
                     continue;
-                }
-                let rule = RuleInstance {
-                    premises: premises.clone(),
-                    conclusion: conclusion.clone(),
                 };
-                let index = *rule_index
-                    .get(&rule)
+                let instance = rules
+                    .get(index)
                     .ok_or_else(|| trace_error("logical rule instance is absent"))?;
                 let mut theorem = if let Some(theorem) = extracted_clauses[index] {
                     theorem
@@ -562,7 +545,7 @@ fn replay_events(
                     theorem
                 };
                 let proof_args = &args[*floats..];
-                if proof_args.len() != premises.len() {
+                if proof_args.len() != instance.premises.len() {
                     return Err(trace_error("essential argument count changed"));
                 }
                 for slot in proof_args {
