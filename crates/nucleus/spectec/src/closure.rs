@@ -42,6 +42,100 @@ pub struct LeastPredicate {
     pub predicate: Ref,
 }
 
+/// Transactional two-phase construction of a mutually recursive least family.
+pub struct LeastFamilyBuilder<'a> {
+    target: &'a mut Kernel,
+    staged: Kernel,
+    bool_ty: Ref,
+    predicate_tys: Vec<Ref>,
+    arrows: Vec<Vec<(Ref, Ref)>>,
+    candidates: Vec<Ref>,
+    base: u64,
+    offset: u64,
+}
+
+impl LeastFamilyBuilder<'_> {
+    /// Returns the staged kernel and checked candidate predicates together.
+    ///
+    /// Rows constructed in the staged kernel become resident only when
+    /// [`finish`](Self::finish) succeeds.
+    pub fn parts(&mut self) -> (&mut Kernel, &[Ref]) {
+        (&mut self.staged, &self.candidates)
+    }
+
+    /// Finalizes the family using one checked shared closure proposition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `closure` is not Boolean, name allocation is
+    /// exhausted, or checked quantification, implication, or abstraction
+    /// fails. The target kernel remains unchanged on failure.
+    pub fn finish(mut self, closure: Ref) -> Result<Vec<LeastPredicate>, LeastPredicateError> {
+        let bool_tail = self
+            .staged
+            .ty_arr(self.bool_ty, self.bool_ty)
+            .map_err(|source| LeastPredicateError::Kernel { source })?;
+        let bool_binary = self
+            .staged
+            .ty_arr(self.bool_ty, bool_tail)
+            .map_err(|source| LeastPredicateError::Kernel { source })?;
+        let mut predicates = Vec::with_capacity(self.predicate_tys.len());
+        for ((&predicate_ty, &candidate), predicate_arrows) in self
+            .predicate_tys
+            .iter()
+            .zip(&self.candidates)
+            .zip(&self.arrows)
+        {
+            let mut arguments = Vec::with_capacity(predicate_arrows.len());
+            let mut applied = candidate;
+            for &(_, domain) in predicate_arrows {
+                let name = next_name(self.base, &mut self.offset)?;
+                let argument = self
+                    .staged
+                    .tm_fv(name, domain)
+                    .map_err(|source| LeastPredicateError::Kernel { source })?;
+                applied = self
+                    .staged
+                    .app(applied, argument)
+                    .map_err(|source| LeastPredicateError::Kernel { source })?;
+                arguments.push(argument);
+            }
+            let logic_name = next_name(self.base, &mut self.offset)?;
+            let logic = self
+                .staged
+                .tm_fv(logic_name, bool_binary)
+                .map_err(|source| LeastPredicateError::Kernel { source })?;
+            let implication = self
+                .staged
+                .imp_tm(self.bool_ty, logic, closure, applied)
+                .map_err(|source| LeastPredicateError::Kernel { source })?;
+            let mut characterization = implication;
+            for &family_candidate in self.candidates.iter().rev() {
+                characterization = self
+                    .staged
+                    .forall_tm(self.bool_ty, family_candidate, characterization)
+                    .map_err(|source| LeastPredicateError::Kernel { source })?;
+            }
+            let mut predicate = characterization;
+            for ((arrow, _), argument) in predicate_arrows.iter().zip(&arguments).rev() {
+                predicate = self
+                    .staged
+                    .lam_at(*arrow, *argument, predicate)
+                    .map_err(|source| LeastPredicateError::Kernel { source })?;
+            }
+            predicates.push(LeastPredicate {
+                predicate_ty,
+                candidate,
+                closure,
+                characterization,
+                predicate,
+            });
+        }
+        *self.target = self.staged;
+        Ok(predicates)
+    }
+}
+
 /// Why a least-closure definition could not be constructed.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
@@ -86,6 +180,59 @@ where
             build_closure(kernel, candidates[0])
         })?;
     family.pop().ok_or(LeastPredicateError::NotPredicate)
+}
+
+/// Begins a transactional mutually recursive least-family construction.
+///
+/// This two-phase form lets userspace compilers lower source rules against the
+/// checked candidate predicates before supplying their shared closure.
+///
+/// # Errors
+///
+/// Returns an error for an empty family, a classifier not ending in Boolean,
+/// or checked candidate/name construction failure. `kernel` is unchanged.
+pub fn begin_least_closed_family<'a>(
+    kernel: &'a mut Kernel,
+    bool_ty: Ref,
+    predicate_tys: &[Ref],
+) -> Result<LeastFamilyBuilder<'a>, LeastPredicateError> {
+    if predicate_tys.is_empty() {
+        return Err(LeastPredicateError::NotPredicate);
+    }
+    let mut staged = kernel.fork();
+    let arrows = predicate_tys
+        .iter()
+        .map(|&predicate_ty| predicate_arrows(&staged, predicate_ty, bool_ty))
+        .collect::<Result<Vec<_>, _>>()?;
+    if arrows.iter().any(Vec::is_empty) {
+        return Err(LeastPredicateError::NotPredicate);
+    }
+    let roots = std::iter::once(bool_ty)
+        .chain(predicate_tys.iter().copied())
+        .collect::<Vec<_>>();
+    let base = staged
+        .fresh_name(&roots)
+        .map_err(|source| LeastPredicateError::Kernel { source })?;
+    let mut offset = 0_u64;
+    let mut candidates = Vec::with_capacity(predicate_tys.len());
+    for &predicate_ty in predicate_tys {
+        let name = next_name(base, &mut offset)?;
+        candidates.push(
+            staged
+                .tm_fv(name, predicate_ty)
+                .map_err(|source| LeastPredicateError::Kernel { source })?,
+        );
+    }
+    Ok(LeastFamilyBuilder {
+        target: kernel,
+        staged,
+        bool_ty,
+        predicate_tys: predicate_tys.to_vec(),
+        arrows,
+        candidates,
+        base,
+        offset,
+    })
 }
 
 /// Simultaneously defines the least family satisfying a shared closure.

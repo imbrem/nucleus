@@ -11,8 +11,8 @@ use covalence_nucleus_spectec::{
     HolEmbedding, HolRule, IndexErasure, KernelRoot, RelationalCall, RelationalClause,
     RelationalCondition, RelationalDefinitionSource, RelationalExpressionAlgebra,
     RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler, Source, TYPE_NAME,
-    TranslationCase, TypeAlgebra, TypeChildren, close_graph_equation, close_hol_rule,
-    close_hol_rules, declare_hol_schema, fold_expression, fold_grammar, fold_type,
+    TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family, close_graph_equation,
+    close_hol_rule, close_hol_rules, declare_hol_schema, fold_expression, fold_grammar, fold_type,
     least_closed_family, least_closed_predicate, ordered_cases, relational_definition,
     relational_hol_case, relational_hol_rule,
 };
@@ -757,6 +757,37 @@ fn least_closed_family_supports_mutual_rules() {
     assert_eq!(
         kernel.arena().tag(family[1].predicate),
         Some(Tag::Tm(TmTag::Lam))
+    );
+}
+
+#[test]
+fn two_phase_least_family_exposes_candidates_transactionally() {
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let predicate_ty = kernel.ty_arr(value, bool_ty).unwrap();
+    let witness = kernel.tm_fv(10, value).unwrap();
+    let mut builder =
+        begin_least_closed_family(&mut kernel, bool_ty, &[predicate_ty, predicate_ty]).unwrap();
+    let closure = {
+        let (staged, candidates) = builder.parts();
+        let left = staged.app(candidates[0], witness).unwrap();
+        let right = staged.app(candidates[1], witness).unwrap();
+        staged
+            .op2(covalence_logic_hol::builtin::Op2::And, left, right)
+            .unwrap()
+    };
+    let family = builder.finish(closure).unwrap();
+
+    assert_eq!(family.len(), 2);
+    assert!(
+        kernel
+            .equivalent(
+                kernel.classifier(family[0].predicate).unwrap(),
+                predicate_ty
+            )
+            .unwrap()
     );
 }
 

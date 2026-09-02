@@ -25,8 +25,8 @@ pub use add_slice::{
     DeclarationCoverage, Disposition, Rejection, RuleCoverage, SourceSpan, TranslationCase,
 };
 pub use closure::{
-    HolRule, LeastPredicate, LeastPredicateError, close_hol_rule, close_hol_rules,
-    least_closed_family, least_closed_predicate,
+    HolRule, LeastFamilyBuilder, LeastPredicate, LeastPredicateError, begin_least_closed_family,
+    close_hol_rule, close_hol_rules, least_closed_family, least_closed_predicate,
 };
 pub use expression::{ExpressionAlgebra, fold_expression};
 pub use grammar::{GrammarAlgebra, GrammarArgument, GrammarChildren, fold_grammar};
