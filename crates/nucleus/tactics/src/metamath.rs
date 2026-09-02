@@ -11,6 +11,13 @@
 //! grammar parser in the first running bridge and is intentionally explicit in
 //! [`GroundImport::rule_instances`]. Relating `L'` to the full schematic
 //! database logic is a separate transport theorem.
+//!
+//! Since `L'` contains only ground instances, exact Metamath expressions are
+//! interned as opaque carrier terms. Their structure has already been checked
+//! by replay and no rule in `L'` inspects or substitutes inside them. This keeps
+//! the checked arena proportional to the number of distinct expressions rather
+//! than to their repeated flat-symbol length. The artifact record links the
+//! exported expression term back to its canonical flat conclusion.
 
 use std::collections::{HashMap, HashSet};
 
@@ -21,9 +28,8 @@ use covalence_logic_hol_derived::{ForallError, forall_elim};
 use covalence_logic_metamath::{Assertion, Database, Expr, MmError, ReplayObserver, Subst, replay};
 
 const TYPE_NAME: u64 = 0;
-const CONCAT_NAME: u64 = 1;
-const PREDICATE_NAME: u64 = 2;
-const FIRST_SYMBOL_NAME: u64 = 3;
+const PREDICATE_NAME: u64 = 1;
+const FIRST_EXPRESSION_NAME: u64 = 2;
 
 /// A checked theorem obtained by replaying one Metamath proof.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -62,7 +68,7 @@ pub struct GroundArtifactRecord {
 }
 
 impl GroundArtifactRecord {
-    /// Encodes this record in the deterministic `nucleus.metamath-ground.v1`
+    /// Encodes this record in the deterministic `nucleus.metamath-ground.v2`
     /// binary format.
     ///
     /// Integers are fixed-width big-endian. Strings are UTF-8 prefixed by a
@@ -74,7 +80,7 @@ impl GroundArtifactRecord {
     /// Returns an error only on a platform whose string length cannot fit the
     /// format's `u64` length field.
     pub fn encode(&self) -> Result<Vec<u8>, GroundReplayError> {
-        const MAGIC: &[u8] = b"nucleus.metamath-ground.v1\0";
+        const MAGIC: &[u8] = b"nucleus.metamath-ground.v2\0";
         let mut bytes =
             Vec::with_capacity(MAGIC.len() + self.label.len() + self.conclusion.len() + 128);
         bytes.extend_from_slice(MAGIC);
@@ -296,10 +302,8 @@ pub struct GroundSession<'db> {
     kernel: Kernel,
     phi: Ref,
     bool_ty: Ref,
-    concat: Ref,
     predicate: Ref,
-    next_symbol_name: u64,
-    symbols: HashMap<String, Ref>,
+    next_expression_name: u64,
     expressions: HashMap<Expr, Ref>,
 }
 
@@ -308,16 +312,13 @@ impl<'db> GroundSession<'db> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the checked kernel rejects the fixed carrier,
-    /// predicate, or concatenation-function declarations.
+    /// Returns an error if the checked kernel rejects the fixed carrier or
+    /// predicate declaration.
     pub fn new(db: &'db Database) -> Result<Self, GroundReplayError> {
         let mut kernel = Kernel::new();
         let star = kernel.star()?;
         let phi = kernel.ty_fv(TYPE_NAME, star)?;
         let bool_ty = kernel.bool_ty(star)?;
-        let phi_to_phi = kernel.ty_arr(phi, phi)?;
-        let concat_ty = kernel.ty_arr(phi, phi_to_phi)?;
-        let concat = kernel.tm_fv(CONCAT_NAME, concat_ty)?;
         let pred_ty = kernel.ty_arr(phi, bool_ty)?;
         let predicate = kernel.tm_fv(PREDICATE_NAME, pred_ty)?;
         Ok(Self {
@@ -325,10 +326,8 @@ impl<'db> GroundSession<'db> {
             kernel,
             phi,
             bool_ty,
-            concat,
             predicate,
-            next_symbol_name: FIRST_SYMBOL_NAME,
-            symbols: HashMap::new(),
+            next_expression_name: FIRST_EXPRESSION_NAME,
             expressions: HashMap::new(),
         })
     }
@@ -361,25 +360,21 @@ impl<'db> GroundSession<'db> {
         replay(self.db, assertion, &mut trace)?;
 
         let mut staged = self.kernel.fork();
-        let mut symbols = self.symbols.clone();
         let mut expressions = self.expressions.clone();
-        let mut next_symbol_name = self.next_symbol_name;
+        let mut next_expression_name = self.next_expression_name;
         let result = import_trace(
             &mut staged,
             self.phi,
             self.bool_ty,
-            self.concat,
             self.predicate,
-            &mut next_symbol_name,
-            &mut symbols,
+            &mut next_expression_name,
             &mut expressions,
             assertion,
             &trace.events,
         )?;
         self.kernel = staged;
-        self.symbols = symbols;
         self.expressions = expressions;
-        self.next_symbol_name = next_symbol_name;
+        self.next_expression_name = next_expression_name;
         Ok(result)
     }
 }
@@ -389,10 +384,8 @@ fn import_trace(
     kernel: &mut Kernel,
     phi: Ref,
     bool_ty: Ref,
-    concat: Ref,
     predicate: Ref,
-    next_symbol_name: &mut u64,
-    symbols: &mut HashMap<String, Ref>,
+    next_expression_name: &mut u64,
     expressions: &mut HashMap<Expr, Ref>,
     assertion: &Assertion,
     events: &[Event],
@@ -401,10 +394,8 @@ fn import_trace(
     let (layouts, mut predicate_apps) = encode_rules(
         kernel,
         phi,
-        concat,
         predicate,
-        next_symbol_name,
-        symbols,
+        next_expression_name,
         expressions,
         &rules,
     )?;
@@ -419,10 +410,8 @@ fn import_trace(
         kernel,
         phi,
         bool_ty,
-        concat,
         predicate,
-        next_symbol_name,
-        symbols,
+        next_expression_name,
         expressions,
         events,
         &layouts,
@@ -435,10 +424,8 @@ fn import_trace(
         kernel,
         phi,
         bool_ty,
-        concat,
         predicate,
-        next_symbol_name,
-        symbols,
+        next_expression_name,
         expressions,
         assertion,
         closed,
@@ -476,10 +463,8 @@ fn collect_rules(events: &[Event]) -> Vec<RuleInstance> {
 fn encode_rules(
     kernel: &mut Kernel,
     phi: Ref,
-    concat: Ref,
     predicate: Ref,
-    next_symbol_name: &mut u64,
-    symbols: &mut HashMap<String, Ref>,
+    next_expression_name: &mut u64,
     expressions: &mut HashMap<Expr, Ref>,
     rules: &[RuleInstance],
 ) -> Result<(Vec<RuleLayout>, HashMap<Expr, Ref>), GroundReplayError> {
@@ -489,9 +474,7 @@ fn encode_rules(
         let conclusion = encode_expr(
             kernel,
             phi,
-            concat,
-            next_symbol_name,
-            symbols,
+            next_expression_name,
             expressions,
             &rule.conclusion,
         )?;
@@ -503,15 +486,7 @@ fn encode_rules(
             &mut predicate_apps,
         )?;
         for premise in rule.premises.iter().rev() {
-            let encoded = encode_expr(
-                kernel,
-                phi,
-                concat,
-                next_symbol_name,
-                symbols,
-                expressions,
-                premise,
-            )?;
+            let encoded = encode_expr(kernel, phi, next_expression_name, expressions, premise)?;
             let antecedent =
                 predicate_app(kernel, predicate, premise, encoded, &mut predicate_apps)?;
             formula = kernel.op2(Op2::Imp, antecedent, formula)?;
@@ -526,10 +501,8 @@ fn replay_events(
     kernel: &mut Kernel,
     phi: Ref,
     bool_ty: Ref,
-    concat: Ref,
     predicate: Ref,
-    next_symbol_name: &mut u64,
-    symbols: &mut HashMap<String, Ref>,
+    next_expression_name: &mut u64,
     expressions: &mut HashMap<Expr, Ref>,
     events: &[Event],
     layouts: &[RuleLayout],
@@ -544,27 +517,12 @@ fn replay_events(
     for event in events {
         match event {
             Event::Float(expression) => {
-                let _ = encode_expr(
-                    kernel,
-                    phi,
-                    concat,
-                    next_symbol_name,
-                    symbols,
-                    expressions,
-                    expression,
-                )?;
+                let _ = encode_expr(kernel, phi, next_expression_name, expressions, expression)?;
                 stack.push(Slot::Syntax);
             }
             Event::Essential(expression) => {
-                let encoded = encode_expr(
-                    kernel,
-                    phi,
-                    concat,
-                    next_symbol_name,
-                    symbols,
-                    expressions,
-                    expression,
-                )?;
+                let encoded =
+                    encode_expr(kernel, phi, next_expression_name, expressions, expression)?;
                 let applied =
                     predicate_app(kernel, predicate, expression, encoded, predicate_apps)?;
                 let derivable = derivable_formula(kernel, bool_ty, predicate, closed, applied)?;
@@ -643,10 +601,8 @@ fn finish_import(
     kernel: &mut Kernel,
     phi: Ref,
     bool_ty: Ref,
-    concat: Ref,
     predicate: Ref,
-    next_symbol_name: &mut u64,
-    symbols: &mut HashMap<String, Ref>,
+    next_expression_name: &mut u64,
     expressions: &mut HashMap<Expr, Ref>,
     assertion: &Assertion,
     closed: Ref,
@@ -657,9 +613,7 @@ fn finish_import(
     let expression = encode_expr(
         kernel,
         phi,
-        concat,
-        next_symbol_name,
-        symbols,
+        next_expression_name,
         expressions,
         &assertion.conclusion,
     )?;
@@ -683,42 +637,21 @@ fn finish_import(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn encode_expr(
     kernel: &mut Kernel,
     phi: Ref,
-    concat: Ref,
-    next_symbol_name: &mut u64,
-    symbols: &mut HashMap<String, Ref>,
+    next_expression_name: &mut u64,
     expressions: &mut HashMap<Expr, Ref>,
     expression: &Expr,
 ) -> Result<Ref, GroundReplayError> {
     if let Some(encoded) = expressions.get(expression) {
         return Ok(*encoded);
     }
-    let mut parts = Vec::new();
-    for symbol in expression.symbols() {
-        let encoded = if let Some(encoded) = symbols.get(symbol) {
-            *encoded
-        } else {
-            let name = *next_symbol_name;
-            *next_symbol_name = next_symbol_name
-                .checked_add(1)
-                .ok_or_else(|| trace_error("symbol-name space is exhausted"))?;
-            let encoded = kernel.tm_fv(name, phi)?;
-            symbols.insert(symbol.to_owned(), encoded);
-            encoded
-        };
-        parts.push(encoded);
-    }
-    let mut iter = parts.into_iter().rev();
-    let mut encoded = iter
-        .next()
-        .ok_or_else(|| trace_error("Metamath expression has no typecode"))?;
-    for part in iter {
-        let partial = kernel.app(concat, part)?;
-        encoded = kernel.app(partial, encoded)?;
-    }
+    let name = *next_expression_name;
+    *next_expression_name = next_expression_name
+        .checked_add(1)
+        .ok_or_else(|| trace_error("expression-name space is exhausted"))?;
+    let encoded = kernel.tm_fv(name, phi)?;
     expressions.insert(expression.clone(), encoded);
     Ok(encoded)
 }
@@ -931,6 +864,26 @@ mod tests {
     }
 
     #[test]
+    fn ground_expression_interning_assigns_distinct_syntax_rows() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().expect("star");
+        let phi = kernel.ty_fv(TYPE_NAME, star).expect("carrier");
+        let mut next = FIRST_EXPRESSION_NAME;
+        let mut expressions = HashMap::new();
+        let left = Expr::new("|-", vec!["ph".into()]);
+        let right = Expr::new("|-", vec!["ps".into()]);
+        let first = encode_expr(&mut kernel, phi, &mut next, &mut expressions, &left)
+            .expect("first expression");
+        let repeated = encode_expr(&mut kernel, phi, &mut next, &mut expressions, &left)
+            .expect("repeated expression");
+        let distinct = encode_expr(&mut kernel, phi, &mut next, &mut expressions, &right)
+            .expect("distinct expression");
+        assert_eq!(first, repeated);
+        assert_ne!(first, distinct);
+        assert_eq!(expressions.len(), 2);
+    }
+
+    #[test]
     #[ignore = "requires NUCLEUS_METAMATH_CORPUS; full upstream hol.mm replay"]
     fn every_hol_mm_theorem_becomes_a_checked_hol_derivation() {
         let root = std::env::var("NUCLEUS_METAMATH_CORPUS").expect("corpus checkout");
@@ -973,6 +926,34 @@ mod tests {
             theorem.rhs.rows().next(),
             Some(&[positive(imported.proposition)][..])
         );
+    }
+
+    #[test]
+    #[ignore = "requires NUCLEUS_METAMATH_CORPUS and NUCLEUS_METAMATH_LABEL"]
+    fn benchmark_one_set_mm_ground_replay() {
+        let root = std::env::var("NUCLEUS_METAMATH_CORPUS").expect("corpus checkout");
+        let label = std::env::var("NUCLEUS_METAMATH_LABEL").expect("theorem label");
+        let repetitions = std::env::var("NUCLEUS_METAMATH_REPETITIONS")
+            .map_or(1, |value| value.parse().expect("positive repetition count"));
+        assert!(repetitions > 0, "repetition count must be positive");
+        let source = std::fs::read_to_string(std::path::Path::new(&root).join("set.mm"))
+            .expect("read set.mm");
+        let db = parse(&source).expect("parse set.mm");
+        for repetition in 0..repetitions {
+            let mut session = GroundSession::new(&db).expect("session");
+            let started = std::time::Instant::now();
+            let imported = session
+                .import(assertion(&db, &label))
+                .expect("checked HOL replay");
+            let replay_ms = started.elapsed().as_secs_f64() * 1_000.0;
+            let arena = session.kernel.into_arena();
+            eprintln!(
+                "{{\"label\":{label:?},\"repetition\":{repetition},\"replay_ms\":{replay_ms:.3},\"rule_instances\":{},\"arena_rows\":{},\"arena\":\"{}\"}}",
+                imported.rule_instances,
+                arena.len(),
+                arena.addr()
+            );
+        }
     }
 
     #[test]
