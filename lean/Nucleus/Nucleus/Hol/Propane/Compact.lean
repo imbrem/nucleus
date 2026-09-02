@@ -2,7 +2,7 @@ import Mathlib.Data.List.Infix
 import Nucleus.Bytes
 
 /-!
-# Compact natural and byte expressions
+# Compact natural, integer, and byte expressions
 
 This is the first Propane value-language slice.  It fixes the observable
 meaning of compact literals and the small operation vocabulary needed by a
@@ -23,6 +23,7 @@ universe u
 inductive Ty where
   | bool
   | nat
+  | int
   | bytes
   deriving DecidableEq, Repr
 
@@ -30,6 +31,7 @@ inductive Ty where
 @[reducible] def Ty.denote : Ty → Type
   | .bool => Bool
   | .nat => Nat
+  | .int => Int
   | .bytes => Nucleus.Bytes
 
 /-- Whether `needle` occurs contiguously in `haystack`. -/
@@ -41,6 +43,7 @@ of whether a table later stores them inline or behind an arena pointer. -/
 inductive Expr : Ty → Type where
   | bool (value : Bool) : Expr .bool
   | nat (value : Nat) : Expr .nat
+  | int (value : Int) : Expr .int
   | bytes (literal : Nucleus.Bytes) : Expr .bytes
   | add (left right : Expr .nat) : Expr .nat
   | le (left right : Expr .nat) : Expr .bool
@@ -55,6 +58,7 @@ inductive Expr : Ty → Type where
 def Expr.eval {type : Ty} : Expr type → type.denote
   | .bool value => value
   | .nat value => value
+  | .int value => value
   | .bytes literal => literal
   | .add left right => left.eval + right.eval
   | .le left right => decide (left.eval ≤ right.eval)
@@ -71,6 +75,7 @@ structure Target where
   Term : Ty → Type u
   bool : Bool → Term .bool
   nat : Nat → Term .nat
+  int : Int → Term .int
   bytes : Nucleus.Bytes → Term .bytes
   add : Term .nat → Term .nat → Term .nat
   le : Term .nat → Term .nat → Term .bool
@@ -84,6 +89,7 @@ structure Target where
 def Expr.lower {type : Ty} (target : Target) : Expr type → target.Term type
   | .bool value => target.bool value
   | .nat literal => target.nat literal
+  | .int literal => target.int literal
   | .bytes literal => target.bytes literal
   | .add left right => target.add (left.lower target) (right.lower target)
   | .le left right => target.le (left.lower target) (right.lower target)
@@ -103,6 +109,7 @@ structure Sound (target : Target) where
   denote : {type : Ty} → target.Term type → type.denote
   bool (value : Bool) : denote (target.bool value) = value
   nat (value : Nat) : denote (target.nat value) = value
+  int (value : Int) : denote (target.int value) = value
   bytes (literal : Nucleus.Bytes) : denote (target.bytes literal) = literal
   add (left right : target.Term .nat) :
     denote (target.add left right) = denote left + denote right
@@ -129,6 +136,7 @@ def direct : Target where
   Term := Ty.denote
   bool := id
   nat := id
+  int := id
   bytes := id
   add := (· + ·)
   le := fun left right => decide (left ≤ right)
@@ -143,6 +151,7 @@ def directSound : direct.Sound where
   denote := id
   bool := by intro; rfl
   nat := by intro; rfl
+  int := by intro; rfl
   bytes := by intro; rfl
   add := by intros; rfl
   le := by intros; rfl
@@ -164,7 +173,7 @@ end Target
 external precondition, not an extra logical type or a claim about an invalid
 slice. -/
 def Expr.Bounded : {type : Ty} → Expr type → Prop
-  | _, .bool _ | _, .nat _ | _, .bytes _ => True
+  | _, .bool _ | _, .nat _ | _, .int _ | _, .bytes _ => True
   | _, .add left right | _, .le left right | _, .lt left right =>
       left.Bounded ∧ right.Bounded
   | _, .cat left right | _, .substring left right =>
@@ -182,6 +191,7 @@ theorem Expr.lower_sound (target : Target) (sound : target.Sound)
   induction expression with
   | bool value => exact sound.bool value
   | nat literal => exact sound.nat literal
+  | int literal => exact sound.int literal
   | bytes literal => exact sound.bytes literal
   | add left right ihLeft ihRight =>
       rw [Expr.lower, Expr.eval, sound.add, ihLeft bounded.1, ihRight bounded.2]

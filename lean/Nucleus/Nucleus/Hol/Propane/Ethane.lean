@@ -50,6 +50,7 @@ def bytesEquiv : Nucleus.Bytes ≃ ByteSeq where
 def default : (type : Compact.Ty) → type.denote
   | .bool => false
   | .nat => 0
+  | .int => 0
   | .bytes => Nucleus.Bytes.empty
 
 def semantic (type : Compact.Ty) : Pointed := ⟨type.denote, default type⟩
@@ -99,6 +100,8 @@ structure InitPackage where
     (naturalLiteral value).value = naturalToNat (naturals.ofNat value)
   naturalToNat_ofNat (value : Nat) :
     naturalToNat (naturals.ofNat value) = value
+  integerLiteral (value : Int) : Term types .int
+  integerLiteral_value (value : Int) : (integerLiteral value).value = value
   bool (value : Bool) : Term types .bool
   bytes (literal : Nucleus.Bytes) : Term types .bytes
   bytes_presentation (literal : Nucleus.Bytes) :
@@ -147,6 +150,7 @@ def target (package : InitPackage) : Compact.Target where
   Term := Term package.types
   bool := package.bool
   nat := package.naturalLiteral
+  int := package.integerLiteral
   bytes := package.bytes
   add := package.add
   le := package.le
@@ -163,6 +167,7 @@ def sound (package : InitPackage) : package.target.Sound where
   bool := package.bool_value
   nat := fun value => (package.naturalLiteral_from_package value).trans
     (package.naturalToNat_ofNat value)
+  int := package.integerLiteral_value
   bytes := package.bytes_value
   add := package.add_value
   le := package.le_value
