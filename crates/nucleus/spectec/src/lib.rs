@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod add_slice;
 mod closure;
+mod document;
 mod expression;
 mod grammar;
 mod grammar_definition;
@@ -31,6 +32,7 @@ pub use closure::{
     begin_least_closed_family_avoiding, close_hol_rule, close_hol_rules, least_closed_family,
     least_closed_predicate,
 };
+pub use document::{RelationalDocumentDefinition, relational_document};
 pub use expression::{ExpressionAlgebra, fold_expression};
 pub use grammar::{GrammarAlgebra, GrammarArgument, GrammarChildren, fold_grammar};
 pub use grammar_definition::{RelationalGrammarDefinition, relational_grammar_declaration};

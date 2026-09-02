@@ -10,7 +10,7 @@ use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref, Tag, TyTag};
 
 use crate::{
-    ExpressionAlgebra, HolCase, HolFamilyError, HolRule, HolSchema, LeastPredicate,
+    ExpressionAlgebra, HolCase, HolFamilyError, HolRule, HolSchema, HolTheoryError, LeastPredicate,
     LeastPredicateError, Source, begin_least_closed_family_avoiding, close_hol_rule,
     close_hol_rules, existential_case, fold_expression,
 };
@@ -336,6 +336,9 @@ pub trait RelationalResolver {
 
     /// Converts exact predicate-family assembly failure.
     fn family_error(&mut self, source: HolFamilyError) -> Self::Error;
+
+    /// Converts complete-theory coverage or conjunction failure.
+    fn theory_error(&mut self, source: HolTheoryError) -> Self::Error;
 
     /// Registers one checked term for an explicit IL binding.
     ///
