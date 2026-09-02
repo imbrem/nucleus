@@ -1,6 +1,8 @@
 //! Relational HOL expression lowering over the generic expression fold.
 
-use covalence_data_spectec::{IlBinding, IlExpression, IlExpressionKind, IlSchemaError};
+use covalence_data_spectec::{
+    IlArgument, IlBinding, IlExpression, IlExpressionView, IlSchemaError,
+};
 use covalence_logic_hol::{Kernel, KernelError, Ref};
 
 use crate::{ExpressionAlgebra, HolRule};
@@ -93,11 +95,7 @@ pub trait RelationalResolver {
     /// # Errors
     ///
     /// Returns an error for an unbound variable or incompatible target term.
-    fn variable(
-        &mut self,
-        kernel: &mut Kernel,
-        expression: &IlExpression<'_>,
-    ) -> Result<Ref, Self::Error>;
+    fn variable(&mut self, kernel: &mut Kernel, name: &str) -> Result<Ref, Self::Error>;
 
     /// Lowers one non-variable, non-call constructor from child values.
     ///
@@ -108,7 +106,7 @@ pub trait RelationalResolver {
     fn operation(
         &mut self,
         kernel: &mut Kernel,
-        expression: &IlExpression<'_>,
+        expression: &IlExpressionView<'_>,
         children: &[Ref],
     ) -> Result<Ref, Self::Error>;
 
@@ -122,8 +120,9 @@ pub trait RelationalResolver {
     fn call(
         &mut self,
         kernel: &mut Kernel,
-        expression: &IlExpression<'_>,
-        arguments: &[Ref],
+        name: &str,
+        arguments: &[IlArgument<'_>],
+        expression_arguments: &[Ref],
     ) -> Result<Ref, Self::Error>;
 }
 
@@ -249,10 +248,13 @@ impl<R: RelationalResolver> ExpressionAlgebra for RelationalExpressionAlgebra<'_
             binders.extend(child.binders);
             premises.extend(child.premises);
         }
-        let value = match expression.kind() {
-            IlExpressionKind::Variable => self.resolver.variable(self.kernel, expression)?,
-            IlExpressionKind::Call => {
-                let prefix = self.resolver.call(self.kernel, expression, &values)?;
+        let view = expression
+            .view()
+            .map_err(|source| self.resolver.schema_error(source))?;
+        let value = match &view {
+            IlExpressionView::Variable(name) => self.resolver.variable(self.kernel, name)?,
+            IlExpressionView::Call { name, arguments } => {
+                let prefix = self.resolver.call(self.kernel, name, arguments, &values)?;
                 let name = self.take_name()?;
                 let result = self
                     .kernel
@@ -266,7 +268,7 @@ impl<R: RelationalResolver> ExpressionAlgebra for RelationalExpressionAlgebra<'_
                 premises.push(premise);
                 result
             }
-            _ => self.resolver.operation(self.kernel, expression, &values)?,
+            _ => self.resolver.operation(self.kernel, &view, &values)?,
         };
         Ok(RelationalTerm::new(value, binders, premises))
     }

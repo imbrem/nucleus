@@ -1,7 +1,7 @@
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
 use covalence_data_spectec::{
     ClauseId, DeclarationId, IlClauseSchema, IlDocument, IlExpression, IlExpressionKind,
-    IlGrammarSymbol, IlNode, IlProductionSchema, IlSchemaError, IlType, Limits,
+    IlGrammarSymbol, IlProductionSchema, IlSchemaError, IlType, Limits,
 };
 use covalence_logic_hol::{Kernel, Tag, TmTag};
 use covalence_nucleus_spectec::{
@@ -47,11 +47,11 @@ impl RelationalResolver for TestRelationalResolver {
     fn variable(
         &mut self,
         _kernel: &mut Kernel,
-        expression: &IlExpression<'_>,
+        name: &str,
     ) -> Result<covalence_logic_hol::Ref, Self::Error> {
-        match expression.cursor().child(1).map(|cursor| cursor.node()) {
-            Some(IlNode::String("x")) => Ok(self.x),
-            Some(IlNode::String("y")) => Ok(self.y),
+        match name {
+            "x" => Ok(self.x),
+            "y" => Ok(self.y),
             _ => Err("unbound variable".to_owned()),
         }
     }
@@ -59,10 +59,17 @@ impl RelationalResolver for TestRelationalResolver {
     fn operation(
         &mut self,
         kernel: &mut Kernel,
-        expression: &IlExpression<'_>,
+        expression: &covalence_data_spectec::IlExpressionView<'_>,
         children: &[covalence_logic_hol::Ref],
     ) -> Result<covalence_logic_hol::Ref, Self::Error> {
-        if expression.kind() != IlExpressionKind::Binary || children.len() != 2 {
+        if !matches!(
+            expression,
+            covalence_data_spectec::IlExpressionView::Binary {
+                operator: "add",
+                ..
+            }
+        ) || children.len() != 2
+        {
             return Err("unexpected primitive".to_owned());
         }
         let partial = kernel
@@ -76,10 +83,14 @@ impl RelationalResolver for TestRelationalResolver {
     fn call(
         &mut self,
         kernel: &mut Kernel,
-        _expression: &IlExpression<'_>,
-        arguments: &[covalence_logic_hol::Ref],
+        name: &str,
+        _arguments: &[covalence_data_spectec::IlArgument<'_>],
+        expression_arguments: &[covalence_logic_hol::Ref],
     ) -> Result<covalence_logic_hol::Ref, Self::Error> {
-        let [argument] = arguments else {
+        if name != "f" {
+            return Err("unknown definition".to_owned());
+        }
+        let [argument] = expression_arguments else {
             return Err("call arity mismatch".to_owned());
         };
         kernel
