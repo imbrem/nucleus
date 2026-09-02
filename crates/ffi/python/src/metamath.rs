@@ -61,6 +61,8 @@ pub struct PyAssertion {
     #[pyo3(get)]
     hypothesis_labels: Vec<String>,
     #[pyo3(get)]
+    active_float_labels: Vec<String>,
+    #[pyo3(get)]
     disjoint_pairs: Vec<(String, String)>,
     #[pyo3(get)]
     proof_encoding: Option<&'static str>,
@@ -89,6 +91,11 @@ impl PyAssertion {
             label: assertion.label.clone(),
             conclusion: Py::new(python, PyExpression::from(&assertion.conclusion))?,
             hypothesis_labels,
+            active_float_labels: assertion
+                .scope_floats
+                .iter()
+                .map(|hypothesis| hypothesis.label.clone())
+                .collect(),
             disjoint_pairs: assertion.frame.disjoints.clone(),
             proof_encoding,
         })

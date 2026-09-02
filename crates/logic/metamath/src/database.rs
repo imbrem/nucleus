@@ -99,6 +99,9 @@ pub struct Assertion {
     pub frame: Frame,
     /// `Some(proof)` for a `$p` theorem, `None` for a `$a` axiom.
     pub proof: Option<Proof>,
+    /// Every `$f` hypothesis active where this assertion is stated, including
+    /// non-mandatory floats for dummy variables used only by its proof.
+    pub scope_floats: Vec<FloatHyp>,
     /// The **full** set of `$d` pairs active in this assertion's scope, over
     /// *all* variables (not filtered to the mandatory frame). This is the set a
     /// `$p` theorem's proof checks generated distinct-variable obligations
@@ -156,6 +159,59 @@ impl Default for Database {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn rename_symbol_table(
+    symbols: &FnvHashMap<String, bool>,
+    f: &dyn Fn(&str) -> String,
+) -> Result<FnvHashMap<String, bool>, MmError> {
+    // Sort the source hash map so collision diagnostics are deterministic.
+    let mut sources: Vec<(&str, bool)> = symbols
+        .iter()
+        .map(|(name, is_var)| (name.as_str(), *is_var))
+        .collect();
+    sources.sort_unstable();
+
+    let kind = |is_var: bool| {
+        if is_var {
+            SymbolKind::Variable
+        } else {
+            SymbolKind::Constant
+        }
+    };
+    // Keep the source symbol until all collisions have been checked so an
+    // error can name both sides.
+    let mut claimed: FnvHashMap<String, (bool, &str)> = FnvHashMap::default();
+    for (name, is_var) in sources {
+        match claimed.entry(f(name)) {
+            Entry::Occupied(entry) => {
+                let renamed = entry.key().clone();
+                let (prev_var, prev) = *entry.get();
+                return Err(if prev_var == is_var {
+                    MmError::RenamingNotInjective {
+                        renamed,
+                        first: prev.to_owned(),
+                        second: name.to_owned(),
+                    }
+                } else {
+                    MmError::RenamingCollision {
+                        renamed,
+                        previous: prev.to_owned(),
+                        previous_kind: kind(prev_var),
+                        symbol: name.to_owned(),
+                        kind: kind(is_var),
+                    }
+                });
+            }
+            Entry::Vacant(entry) => {
+                entry.insert((is_var, name));
+            }
+        }
+    }
+    Ok(claimed
+        .into_iter()
+        .map(|(renamed, (is_var, _))| (renamed, is_var))
+        .collect())
 }
 
 impl Database {
@@ -378,6 +434,12 @@ impl Database {
         proof: Option<Proof>,
     ) -> Result<(), MmError> {
         let frame = self.build_frame(&conclusion, &label)?;
+        let scope_floats: Vec<FloatHyp> = self
+            .scopes
+            .iter()
+            .flat_map(|s| s.floats.iter())
+            .cloned()
+            .collect();
         // The full in-scope `$d` set (all variables, unfiltered) — what a proof
         // checks its generated obligations against.
         let scope_disjoints: Vec<(String, String)> = self
@@ -393,6 +455,7 @@ impl Database {
             conclusion,
             frame,
             proof,
+            scope_floats,
             scope_disjoints,
         }));
         Ok(())
@@ -467,62 +530,7 @@ impl Database {
             essentials: fr.essentials.iter().map(rename_ess).collect(),
             disjoints: rename_pairs(&fr.disjoints),
         };
-
-        // Symbols map: check injectivity + kind consistency. The walk is sorted
-        // by source symbol because `self.symbols` is a hash map: iterating it
-        // directly visits symbols in table-layout order, so which of several
-        // colliding pairs gets reported is arbitrary and shifts whenever an
-        // unrelated symbol is declared. Sorting pins the diagnostic to the
-        // lexicographically first collision, which stays put as `f` is
-        // debugged.
-        let mut sources: Vec<(&str, bool)> = self
-            .symbols
-            .iter()
-            .map(|(name, is_var)| (name.as_str(), *is_var))
-            .collect();
-        sources.sort_unstable();
-
-        let kind = |is_var: bool| {
-            if is_var {
-                SymbolKind::Variable
-            } else {
-                SymbolKind::Constant
-            }
-        };
-        // renamed → (kind, the source symbol that claimed it), so a collision
-        // can name *both* sides rather than just the image they share.
-        let mut claimed: FnvHashMap<String, (bool, &str)> = FnvHashMap::default();
-        for (name, is_var) in sources {
-            match claimed.entry(f(name)) {
-                Entry::Occupied(entry) => {
-                    let renamed = entry.key().clone();
-                    let (prev_var, prev) = *entry.get();
-                    return Err(if prev_var == is_var {
-                        MmError::RenamingNotInjective {
-                            renamed,
-                            first: prev.to_owned(),
-                            second: name.to_owned(),
-                        }
-                    } else {
-                        MmError::RenamingCollision {
-                            renamed,
-                            previous: prev.to_owned(),
-                            previous_kind: kind(prev_var),
-                            symbol: name.to_owned(),
-                            kind: kind(is_var),
-                        }
-                    });
-                }
-                Entry::Vacant(entry) => {
-                    entry.insert((is_var, name));
-                }
-            }
-        }
-        // Drop the provenance now that every rename has been checked.
-        let symbols: FnvHashMap<String, bool> = claimed
-            .into_iter()
-            .map(|(renamed, (is_var, _))| (renamed, is_var))
-            .collect();
+        let symbols = rename_symbol_table(&self.symbols, f)?;
 
         let statements = self
             .statements
@@ -538,6 +546,7 @@ impl Database {
                     conclusion: rename_expr(&a.conclusion),
                     frame: rename_frame(&a.frame),
                     proof: a.proof.clone(),
+                    scope_floats: a.scope_floats.iter().map(rename_float).collect(),
                     scope_disjoints: rename_pairs(&a.scope_disjoints),
                 }),
             })
@@ -562,8 +571,8 @@ impl Database {
     }
 
     /// Render this database to canonical `.mm` source (see the `emit` module).
-    /// The result re-parses to a structurally-equivalent database (same symbols
-    /// and assertion statements/frames), normalising scope structure.
+    /// The result re-parses to a semantically equivalent database, normalising
+    /// scope structure and hypothesis labels.
     #[must_use]
     pub fn to_mm_string(&self) -> String {
         crate::emit::to_mm_string(self)

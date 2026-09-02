@@ -300,15 +300,15 @@ pub enum MmError {
         label: String,
     },
 
-    /// A proof cited an essential hypothesis belonging to another scope block.
+    /// A proof cited a floating or essential hypothesis outside its scope.
     #[snafu(display(
-        "proof of {theorem} references {label}, an essential hypothesis that is not active \
+        "proof of {theorem} references {label}, a hypothesis that is not active \
          where {theorem} is asserted"
     ))]
     InactiveHypothesis {
         /// The theorem being proved.
         theorem: String,
-        /// The `$e` label it cited.
+        /// The `$f` or `$e` label it cited.
         label: String,
     },
 

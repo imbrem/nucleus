@@ -133,6 +133,30 @@ fn a_proof_may_not_cite_a_sibling_block_essential() {
     );
 }
 
+#[test]
+fn a_proof_may_not_cite_an_out_of_scope_float() {
+    let db = parse(include_str!("fixtures/out-of-scope-float.mm")).unwrap();
+    let error = verify_all(&db).unwrap_err();
+    assert!(
+        matches!(&error, MmError::InactiveHypothesis { theorem, label }
+            if theorem == "bad" && label == "old"),
+        "{error}"
+    );
+}
+
+#[test]
+fn an_active_non_mandatory_float_remains_usable() {
+    let input = "\
+        $c term |- $.\n\
+        $v x y $.\n\
+        tx $f term x $.\n\
+        ty $f term y $.\n\
+        ${ h $e term y $. ax $a |- x $. $}\n\
+        th $p |- x $= tx ty ty ax $.\n";
+    let db = parse(input).unwrap();
+    assert_eq!(verify_all(&db).unwrap(), 1);
+}
+
 // --- the normal cases, which must keep verifying ---------------------------
 
 /// The "demo0" database from the Metamath book: a self-contained proof that
