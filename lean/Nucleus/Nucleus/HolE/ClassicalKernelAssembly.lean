@@ -1,4 +1,5 @@
 import Nucleus.HolE.ClassicalCoreKernelLaws
+import Nucleus.HolE.ClassicalConditional
 import Nucleus.HolE.ClassicalSubtypeKernelLaws
 import Nucleus.HolE.ClassicalTypeExistentialKernelLaws
 import Nucleus.HolE.ClassicalTypeUniversalKernelLaw

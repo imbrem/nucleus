@@ -5,6 +5,7 @@
 //! admitted only through public checked [`Kernel`](covalence_logic_hol::Kernel)
 //! operations.
 
+mod conditional;
 mod coproduct;
 mod equality;
 mod exists;
@@ -17,6 +18,9 @@ mod natural_rec;
 mod subtype;
 mod syntax;
 
+pub use conditional::{
+    Conditional, ConditionalError, conditional, conditional_when_false, conditional_when_true,
+};
 pub use coproduct::{
     Coproduct, CoproductBranch, CoproductCandidate, CoproductCandidateLaws, CoproductCases,
     CoproductComputation, CoproductEliminator, CoproductError, CoproductExhaustiveness,
