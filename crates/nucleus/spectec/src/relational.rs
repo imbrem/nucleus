@@ -7,7 +7,7 @@ use covalence_data_spectec::{
     IlExpression, IlExpressionView, IlIteration, IlKind, IlPremise, IlRuleSchema, IlSchemaError,
 };
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref, Tag, TyTag};
+use covalence_logic_hol::{Kernel, KernelError, Ref, Tag, TyTag, builtin::Op1, builtin::Op2};
 
 use crate::{
     ExpressionAlgebra, HolCase, HolFamilyError, HolRule, HolSchema, HolTheoryError, LeastPredicate,
@@ -857,6 +857,8 @@ pub(crate) fn graph_domains(
 ///
 /// Every nested relation premise resolves against the checked candidate family
 /// during rule lowering. Rule-local bindings are isolated from sibling rules.
+/// A consecutive `otherwise` chain is guarded by the negated applicability of
+/// the preceding alternatives; a new unguarded rule starts a new chain.
 ///
 /// # Errors
 ///
@@ -923,14 +925,28 @@ where
             .map_err(|source| resolver.kernel_error(source))?;
         let mut closures = Vec::new();
         for (relation, &candidate) in relations.iter().zip(candidates) {
+            let mut preceding = None;
             for schema in relation.rules {
                 let rule_resolver = scoped.clause_scope();
                 let mut algebra =
                     RelationalExpressionAlgebra::new(staged, rule_resolver, bool_ty, next_name);
-                let rule = algebra.rule(schema)?;
+                let (mut rule, otherwise) = algebra.ordered_rule(schema)?;
                 next_name = algebra.next_name();
+                if otherwise {
+                    if preceding.is_some_and(|guard| depends_on_any(staged, guard, candidates)) {
+                        return Err(resolver.relation_otherwise());
+                    }
+                    let guard = ordered_rule_guard(staged, bool_ty, preceding, &rule)
+                        .map_err(|source| resolver.kernel_error(source))?;
+                    rule.premises.push(guard);
+                }
                 closures.push(
                     close_hol_rule(staged, bool_ty, candidate, &rule)
+                        .map_err(|source| resolver.kernel_error(source))?,
+                );
+                let preceding_chain = if otherwise { preceding } else { None };
+                preceding = Some(
+                    extend_ordered_applicability(staged, bool_ty, preceding_chain, &rule)
                         .map_err(|source| resolver.kernel_error(source))?,
                 );
             }
@@ -957,6 +973,69 @@ where
         .collect::<Result<Vec<_>, _>>()?;
     *kernel = staged;
     Ok(definitions)
+}
+
+fn depends_on_any(kernel: &Kernel, root: Ref, needles: &[Ref]) -> bool {
+    let needles = needles.iter().copied().collect::<BTreeSet<_>>();
+    let mut seen = BTreeSet::new();
+    let mut pending = vec![root];
+    while let Some(reference) = pending.pop() {
+        if needles.contains(&reference) {
+            return true;
+        }
+        if seen.insert(reference)
+            && let Some(children) = kernel.arena().children(reference)
+        {
+            pending.extend(children);
+        }
+    }
+    false
+}
+
+fn ordered_rule_guard(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    preceding: Option<Ref>,
+    current: &HolRule,
+) -> Result<Ref, KernelError> {
+    debug_assert_eq!(current.conclusion.len(), 1);
+    let argument = current.conclusion[0];
+    let Some(preceding) = preceding else {
+        return kernel.bool(bool_ty, true);
+    };
+    let applicable = kernel.app(preceding, argument)?;
+    kernel.op1(Op1::Not, applicable)
+}
+
+fn extend_ordered_applicability(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    preceding: Option<Ref>,
+    rule: &HolRule,
+) -> Result<Ref, KernelError> {
+    debug_assert_eq!(rule.conclusion.len(), 1);
+    let conclusion = rule.conclusion[0];
+    let argument_ty = kernel.classifier(conclusion)?;
+    let roots = rule
+        .binders
+        .iter()
+        .chain(rule.premises.iter())
+        .copied()
+        .chain(preceding)
+        .chain([conclusion, bool_ty])
+        .collect::<Vec<_>>();
+    let formal = kernel.tm_fv(kernel.fresh_name(&roots)?, argument_ty)?;
+    let mut premises = rule.premises.clone();
+    premises.push(kernel.eq(bool_ty, formal, conclusion)?);
+    let current = existential_case(kernel, bool_ty, &rule.binders, &premises)?;
+    let body = if let Some(preceding) = preceding {
+        let prior = kernel.app(preceding, formal)?;
+        kernel.op2(Op2::Or, prior, current)?
+    } else {
+        current
+    };
+    let predicate_ty = kernel.ty_arr(argument_ty, bool_ty)?;
+    kernel.lam_at(predicate_ty, formal, body)
 }
 
 /// Decodes and lowers the complete recursive relation root containing `id`.
@@ -1411,20 +1490,33 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
     where
         R: RelationalResolver,
     {
+        let (rule, otherwise) = self.ordered_rule(schema)?;
+        if otherwise {
+            return Err(self.resolver.relation_otherwise());
+        }
+        Ok(rule)
+    }
+
+    fn ordered_rule(&mut self, schema: &IlRuleSchema<'_>) -> Result<(HolRule, bool), R::Error>
+    where
+        R: RelationalResolver,
+    {
         let mut binders = self.bindings(schema.bindings())?;
         let mut premises = self.take_binding_premises();
         let conclusion = fold_expression(schema.conclusion(), self)?;
         binders.extend_from_slice(conclusion.binders());
         premises.extend_from_slice(conclusion.premises());
+        let mut otherwise = false;
         for premise in schema.premises() {
             let condition = self.premise(premise)?;
-            if condition.otherwise() {
-                return Err(self.resolver.relation_otherwise());
-            }
+            otherwise |= condition.otherwise();
             binders.extend_from_slice(condition.binders());
             premises.extend_from_slice(condition.premises());
         }
-        Ok(HolRule::new(binders, premises, vec![conclusion.value()]))
+        Ok((
+            HolRule::new(binders, premises, vec![conclusion.value()]),
+            otherwise,
+        ))
     }
 
     /// Returns the next unused name after lowering.

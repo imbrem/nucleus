@@ -1513,6 +1513,32 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
 }
 
 #[test]
+fn parameterized_relations_encode_consecutive_otherwise_fallback() {
+    let bytes = br#"(rel "R" "R" nat
+        (rule "base" (exp "x" nat) "R" (var "x"))
+        (rule "fallback" (exp "x" nat) "R" (var "x") else))"#;
+    let il = IlDocument::parse(bytes, Limits::default()).unwrap();
+    let source = Source::new(
+        drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle"),
+        drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        "test",
+        "revision",
+        &il,
+    )
+    .unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let theorem_count = kernel.thm().live_theorems().count();
+
+    let document = parameterized_document(&source, &mut kernel, value, bool_ty).unwrap();
+
+    assert_eq!(document.semantics.constraints().len(), 1);
+    assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+}
+
+#[test]
 fn generic_hol_schema_preserves_kind_qualified_duplicate_names() {
     let bytes = br#"(typ "same" (inst (alias nat)))
         (typ "same" (inst (alias nat)))
