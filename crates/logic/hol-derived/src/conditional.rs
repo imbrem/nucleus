@@ -50,21 +50,25 @@ pub struct Conditional {
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum ConditionalError {
+    /// A checked kernel operation rejected the derived step.
     #[snafu(display("conditional construction was rejected: {source}"))]
     Kernel {
         /// Underlying checked failure.
         source: KernelError,
     },
+    /// The graph witness could not be introduced as a Hilbert choice.
     #[snafu(display("conditional choice introduction failed: {source}"))]
     Choice {
         /// Underlying choice-introduction failure.
         source: ExistsError,
     },
+    /// Two checked rows could not be certified as structurally identical.
     #[snafu(display("conditional syntax certification failed: {source}"))]
     Syntax {
         /// Underlying structural certification failure.
         source: SyntaxError,
     },
+    /// Capture-avoiding substitution into the graph body could not be derived.
     #[snafu(display("conditional substitution failed: {source}"))]
     Substitution {
         /// Underlying capture-avoiding substitution failure.
@@ -285,13 +289,6 @@ fn branch_law_inner(
     let beta = kernel.tm_beta_fact(None, application, substitution.fact)?;
     kernel.union_syn_fact(beta)?;
     join_same_syntax(kernel, substitution.output, target_proposition)?;
-    if !kernel.equivalent(choice.proposition, target_proposition)? {
-        return Err(ConditionalError::Kernel {
-            source: KernelError::InvalidTheoremRule {
-                rule: "conditional beta conversion",
-            },
-        });
-    }
     kernel.convert_conclusions(choice.theorem, choice.proposition, target_proposition)?;
     let true_condition = kernel.identity(positive(conditional.condition_true))?;
     let true_condition = kernel.eqt_elim(true_condition)?;
@@ -418,6 +415,32 @@ mod tests {
             )
             .is_err()
         );
+        assert_eq!(kernel.arena(), &before);
+    }
+
+    #[test]
+    fn malformed_branch_law_is_transactional() {
+        let (mut kernel, bool_ty, ty, binder, condition, then_branch, else_branch) = fixture();
+        let conditional = conditional(
+            &mut kernel,
+            bool_ty,
+            ty,
+            binder,
+            condition,
+            then_branch,
+            else_branch,
+        )
+        .unwrap();
+        let truth = kernel.bool(bool_ty, true).unwrap();
+        let forged = Conditional {
+            body: truth,
+            ..conditional
+        };
+        let before = kernel.arena().clone();
+
+        assert!(conditional_when_true(&mut kernel, bool_ty, forged).is_err());
+        assert_eq!(kernel.arena(), &before);
+        assert!(conditional_when_false(&mut kernel, bool_ty, forged).is_err());
         assert_eq!(kernel.arena(), &before);
     }
 
