@@ -179,6 +179,12 @@ pub fn parameterized_document(
         implicit_binders: Vec::new(),
         shared: Arc::clone(&shared),
     };
+    for (_, declaration) in schema.declarations() {
+        let classifier = staged
+            .classifier(declaration.reference())
+            .map_err(|source| ParameterizedError::Kernel { source })?;
+        resolver.canonical_type(&staged, classifier)?;
+    }
     let semantics = relational_document(&mut staged, &mut resolver, source, &schema, &[])?;
     let interpretation = shared
         .lock()
