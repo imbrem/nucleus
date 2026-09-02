@@ -1708,6 +1708,43 @@ impl nucleus::proof::host::HostKernel for ProofState {
         })
     }
 
+    fn deduct_antisym(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        bool_type: u64,
+        p: u64,
+        q: u64,
+        left: u64,
+        right: u64,
+    ) -> wasmtime::Result<Result<nucleus::proof::host::AntisymmThm, String>> {
+        let (bool_type, p, q, left, right) = match (
+            reference(bool_type),
+            reference(p),
+            reference(q),
+            theorem_id(left),
+            theorem_id(right),
+        ) {
+            (Ok(bool_type), Ok(p), Ok(q), Ok(left), Ok(right)) => (bool_type, p, q, left, right),
+            (Err(error), _, _, _, _)
+            | (_, Err(error), _, _, _)
+            | (_, _, Err(error), _, _)
+            | (_, _, _, Err(error), _)
+            | (_, _, _, _, Err(error)) => {
+                return Ok(Err(error));
+            }
+        };
+        Ok(self
+            .table
+            .get_mut(&kernel)?
+            .0
+            .deduct_antisym(bool_type, p, q, left, right)
+            .map(|result| nucleus::proof::host::AntisymmThm {
+                equality: u64_from_ref(result.equality),
+                theorem: u64::from(result.theorem.get().unsigned_abs()),
+            })
+            .map_err(|error| error.to_string()))
+    }
+
     fn inf_exists(
         &mut self,
         kernel: Resource<HostKernel>,
@@ -2706,7 +2743,9 @@ pub async fn load_proof_with_cas_async(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nucleus::proof::host::{Host, HostBlob, HostBytes, HostIndexCas};
+    use nucleus::proof::host::{
+        Host, HostBlob, HostBytes, HostIndexCas, HostKernel as HostKernelApi,
+    };
 
     #[test]
     fn bytes_and_blobs_round_trip_through_both_cas_views() {
@@ -2770,6 +2809,60 @@ mod tests {
                 .is_some()
         );
         assert_eq!(result.source, result.target);
+    }
+
+    #[test]
+    fn wit_deduction_antisymmetry_returns_a_checked_equality() {
+        let mut state = ProofState::default();
+        let resource = HostKernelApi::new(&mut state).expect("kernel resource");
+        let star = HostKernelApi::kind_star(&mut state, Resource::new_borrow(resource.rep()))
+            .expect("host call")
+            .expect("star");
+        let bool_ty =
+            HostKernelApi::bool_type(&mut state, Resource::new_borrow(resource.rep()), star)
+                .expect("host call")
+                .expect("bool type");
+        let truth = HostKernelApi::bool_lit(
+            &mut state,
+            Resource::new_borrow(resource.rep()),
+            bool_ty,
+            true,
+        )
+        .expect("host call")
+        .expect("truth");
+        let identity = state
+            .table
+            .get_mut(&resource)
+            .expect("kernel resource")
+            .0
+            .identity(covalence_logic_hol::Lit::positive(
+                i32::try_from(truth).expect("reference fits i32"),
+            ))
+            .expect("identity");
+        let result = HostKernelApi::deduct_antisym(
+            &mut state,
+            Resource::new_borrow(resource.rep()),
+            bool_ty,
+            truth,
+            truth,
+            u64::from(identity.get().unsigned_abs()),
+            u64::from(identity.get().unsigned_abs()),
+        )
+        .expect("host call")
+        .expect("deduction antisymmetry");
+        let kernel = &state.table.get(&resource).expect("kernel resource").0;
+        assert!(
+            kernel
+                .thm()
+                .get(theorem_id(result.theorem).expect("theorem ID"))
+                .is_some()
+        );
+        assert_eq!(
+            kernel
+                .arena()
+                .bool_value(reference(result.equality).expect("equality")),
+            None
+        );
     }
 
     #[test]

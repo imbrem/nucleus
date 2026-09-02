@@ -879,6 +879,31 @@ impl GuestKernel for HostKernel {
             .map_err(|error| error.to_string())
     }
 
+    fn deduct_antisym(
+        &self,
+        bool_type: u64,
+        p: u64,
+        q: u64,
+        left: u64,
+        right: u64,
+    ) -> Result<wit::AntisymmThm, String> {
+        let result = self
+            .0
+            .borrow_mut()
+            .deduct_antisym(
+                reference(bool_type)?,
+                reference(p)?,
+                reference(q)?,
+                theorem_id(left)?,
+                theorem_id(right)?,
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(wit::AntisymmThm {
+            equality: ref_index(result.equality),
+            theorem: result.theorem.get().unsigned_abs().into(),
+        })
+    }
+
     fn inf_exists(&self, bool_type: u64) -> Result<wit::InfinityAxiom, String> {
         let axiom = self
             .0

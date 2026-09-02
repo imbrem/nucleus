@@ -72,6 +72,12 @@ interface host {
         theorem: u64,
     }
 
+    /// Result of HOL Boolean deduction antisymmetry.
+    record antisymm-thm {
+        equality: u64,
+        theorem: u64,
+    }
+
     /// Result of universal introduction.
     record forall-thm {
         universal: u64,
@@ -342,6 +348,11 @@ interface host {
 
         /// From `G |- p = true`, derive `G |- p`.
         eqt-elim: func(theorem: u64) -> result<u64, string>;
+
+        /// From mutual entailments, discharge the opposed unit premises and
+        /// conclude object-language Boolean equality.
+        deduct-antisym: func(bool-type: u64, p: u64, q: u64, left: u64, right: u64)
+            -> result<antisymm-thm, string>;
 
         /// Concludes the axiom of infinity, consuming the `ax.inf` capability.
         ///
