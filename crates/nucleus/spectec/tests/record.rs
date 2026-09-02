@@ -8,13 +8,14 @@ use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
     CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase,
-    HolEmbedding, HolRule, IndexErasure, KernelRoot, RelationalCall, RelationalClause,
-    RelationalCondition, RelationalDefinitionSource, RelationalExpressionAlgebra,
+    HolEmbedding, HolRule, HolTheoryError, IndexErasure, KernelRoot, RelationalCall,
+    RelationalClause, RelationalCondition, RelationalDefinitionSource, RelationalExpressionAlgebra,
     RelationalRelation, RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler,
     Source, TYPE_NAME, TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family,
-    close_graph_equation, close_hol_rule, close_hol_rules, declare_hol_schema, fold_expression,
-    fold_grammar, fold_type, least_closed_family, least_closed_predicate, ordered_cases,
-    relational_definition, relational_hol_case, relational_hol_rule, relational_relations,
+    close_graph_equation, close_hol_rule, close_hol_rules, close_hol_theory, declare_hol_schema,
+    fold_expression, fold_grammar, fold_type, least_closed_family, least_closed_predicate,
+    ordered_cases, relational_definition, relational_hol_case, relational_hol_rule,
+    relational_relations,
 };
 
 #[derive(Clone)]
@@ -780,6 +781,85 @@ fn ordered_graph_constraints_encode_otherwise_without_minting_facts() {
             .unwrap()
     );
     assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+}
+
+#[test]
+fn complete_hol_theory_requires_exact_structural_coverage() {
+    let bytes = b"(typ \"A\" (inst (alias nat))) (typ \"B\" (inst (alias nat)))";
+    let il = IlDocument::parse(bytes, Limits::default()).unwrap();
+    let source = Source::new(
+        drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle"),
+        drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        "test",
+        "revision",
+        &il,
+    )
+    .unwrap();
+    let first = DeclarationId::new(1, None).unwrap();
+    let second = DeclarationId::new(2, None).unwrap();
+    let foreign = DeclarationId::new(3, None).unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let truth = kernel.bool(bool_ty, true).unwrap();
+    let falsity = kernel.bool(bool_ty, false).unwrap();
+    let theorem_count = kernel.thm().live_theorems().count();
+    let mut constraints = std::collections::BTreeMap::from([(first, truth)]);
+
+    assert!(matches!(
+        close_hol_theory(&source, &mut kernel, bool_ty, &constraints),
+        Err(HolTheoryError::Missing { id }) if id == second
+    ));
+    constraints.insert(second, falsity);
+    constraints.insert(foreign, truth);
+    assert!(matches!(
+        close_hol_theory(&source, &mut kernel, bool_ty, &constraints),
+        Err(HolTheoryError::Foreign { id }) if id == foreign
+    ));
+    constraints.remove(&foreign);
+    let theory = close_hol_theory(&source, &mut kernel, bool_ty, &constraints).unwrap();
+
+    assert_eq!(theory.constraints(), [(first, truth), (second, falsity)]);
+    assert!(
+        kernel
+            .equivalent(kernel.classifier(theory.proposition()).unwrap(), bool_ty)
+            .unwrap()
+    );
+    assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+}
+
+#[test]
+fn complete_hol_theory_is_transactional_on_non_boolean_constraint() {
+    let bytes = b"(typ \"A\" (inst (alias nat)))";
+    let il = IlDocument::parse(bytes, Limits::default()).unwrap();
+    let source = Source::new(
+        drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle"),
+        drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        "test",
+        "revision",
+        &il,
+    )
+    .unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let not_boolean = kernel.tm_fv(1, value).unwrap();
+    let before = kernel.arena().len();
+
+    assert!(matches!(
+        close_hol_theory(
+            &source,
+            &mut kernel,
+            bool_ty,
+            &std::collections::BTreeMap::from([(
+                DeclarationId::new(1, None).unwrap(),
+                not_boolean,
+            )]),
+        ),
+        Err(HolTheoryError::Kernel { .. })
+    ));
+    assert_eq!(kernel.arena().len(), before);
 }
 
 #[test]

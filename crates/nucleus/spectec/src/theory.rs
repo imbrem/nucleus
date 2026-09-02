@@ -1,9 +1,60 @@
 //! Exact HOL model constraints for ordered and potentially non-monotone definitions.
 
+use std::collections::{BTreeMap, BTreeSet};
+
+use covalence_data_spectec::DeclarationId;
+use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
     Kernel, KernelError, Ref,
     builtin::{Op1, Op2},
 };
+
+use crate::Source;
+
+/// A complete source-ordered set of declaration constraints.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HolTheory {
+    constraints: Vec<(DeclarationId, Ref)>,
+    proposition: Ref,
+}
+
+impl HolTheory {
+    /// Returns declaration constraints in exact elaborated source order.
+    #[must_use]
+    pub fn constraints(&self) -> &[(DeclarationId, Ref)] {
+        &self.constraints
+    }
+
+    /// Returns their checked conjunction.
+    #[must_use]
+    pub const fn proposition(&self) -> Ref {
+        self.proposition
+    }
+}
+
+/// Why declaration constraints could not form one complete HOL theory.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum HolTheoryError {
+    /// A source declaration has no semantic constraint.
+    #[snafu(display("SpecTec declaration {id:?} has no HOL semantic constraint"))]
+    Missing {
+        /// Uncovered structural selector.
+        id: DeclarationId,
+    },
+    /// A constraint names no declaration in the exact source.
+    #[snafu(display("HOL semantic constraint names foreign SpecTec declaration {id:?}"))]
+    Foreign {
+        /// Selector outside the source inventory.
+        id: DeclarationId,
+    },
+    /// The checked conjunction could not be constructed.
+    #[snafu(display("could not construct complete SpecTec HOL theory: {source}"))]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+}
 
 /// Applicability and result proposition for one source-ordered clause.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,10 +163,61 @@ pub fn conjoin_constraints(
     conjoin(kernel, bool_ty, constraints)
 }
 
+/// Transactionally closes exactly one constraint per source declaration into
+/// one source-ordered HOL model proposition.
+///
+/// Structural selectors, not names, establish coverage. The result is checked
+/// syntax only and does not assume the proposition or mint a theorem fact.
+///
+/// # Errors
+///
+/// Returns the first missing declaration in source order, the first foreign
+/// selector in map order, or a checked Boolean-conjunction failure. `kernel`
+/// is unchanged on failure.
+pub fn close_hol_theory(
+    source: &Source,
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    constraints: &BTreeMap<DeclarationId, Ref>,
+) -> Result<HolTheory, HolTheoryError> {
+    let source_ids = source
+        .declarations()
+        .iter()
+        .map(crate::SourceDeclaration::id)
+        .collect::<BTreeSet<_>>();
+    if let Some(&id) = constraints.keys().find(|id| !source_ids.contains(id)) {
+        return Err(HolTheoryError::Foreign { id });
+    }
+    let ordered = source
+        .declarations()
+        .iter()
+        .map(|declaration| {
+            constraints
+                .get(&declaration.id())
+                .copied()
+                .map(|constraint| (declaration.id(), constraint))
+                .ok_or(HolTheoryError::Missing {
+                    id: declaration.id(),
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut staged = kernel.fork();
+    let propositions = ordered
+        .iter()
+        .map(|(_, constraint)| *constraint)
+        .collect::<Vec<_>>();
+    let proposition = conjoin_constraints(&mut staged, bool_ty, &propositions)
+        .map_err(|source| HolTheoryError::Kernel { source })?;
+    *kernel = staged;
+    Ok(HolTheory {
+        constraints: ordered,
+        proposition,
+    })
+}
+
 fn conjoin(kernel: &mut Kernel, bool_ty: Ref, propositions: &[Ref]) -> Result<Ref, KernelError> {
-    let Some((&first, rest)) = propositions.split_first() else {
-        return kernel.bool(bool_ty, true);
-    };
-    rest.iter()
-        .try_fold(first, |left, &right| kernel.op2(Op2::And, left, right))
+    let truth = kernel.bool(bool_ty, true)?;
+    propositions
+        .iter()
+        .try_fold(truth, |left, &right| kernel.op2(Op2::And, left, right))
 }

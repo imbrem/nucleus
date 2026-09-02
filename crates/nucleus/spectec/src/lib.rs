@@ -42,7 +42,8 @@ pub use schema::{
 };
 pub use selected::{SelectedCompileError, SelectedCompiler, SelectedKernel, SelectedRoot};
 pub use theory::{
-    HolCase, close_graph_equation, conjoin_constraints, existential_case, ordered_cases,
+    HolCase, HolTheory, HolTheoryError, close_graph_equation, close_hol_theory,
+    conjoin_constraints, existential_case, ordered_cases,
 };
 pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
 
