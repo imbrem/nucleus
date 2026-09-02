@@ -9,8 +9,8 @@ use covalence_data_cas::IndexCas as InnerIndexCas;
 use covalence_lib_hash::O256;
 use covalence_logic_cas::CasFact;
 use covalence_logic_hol::{
-    Arena as InnerArena, Import, ImportId, Kernel as InnerKernel, Link, LinkFormat, Ref, Resolver,
-    Sort as InnerSort, SynFactId, SynRel, Table as InnerTable, wire,
+    Arena as InnerArena, Import, ImportId, Kernel as InnerKernel, Link, LinkFormat, Lit, Ref,
+    Resolver, Sort as InnerSort, SynFactId, SynRel, Table as InnerTable, wire,
 };
 use covalence_nucleus_tactics::{RewriteDirection, iterate_unary, rewrite_proposition};
 
@@ -24,6 +24,7 @@ use covalence_nucleus_tactics::{RewriteDirection, iterate_unary, rewrite_proposi
 )]
 mod bindings;
 
+use bindings::exports::nucleus::proof::alethe::{Guest as GuestAlethe, Literal as WitLiteral};
 use bindings::exports::nucleus::proof::host::{
     self as wit, Arena, ArenaBorrow, Blob, BlobBorrow, Bytes, BytesBorrow, Guest, GuestArena,
     GuestBlob, GuestBytes, GuestIndexCas, GuestKernel, GuestTable, Sort, SynRel as WitSynRel,
@@ -152,6 +153,36 @@ impl GuestTactics for Component {
             target: ref_index(result.target()),
             theorem: u64::from(result.theorem().get().unsigned_abs()),
         })
+    }
+}
+
+impl GuestAlethe for Component {
+    fn assume(
+        kernel: bindings::exports::nucleus::proof::host::KernelBorrow<'_>,
+        proposition: WitLiteral,
+    ) -> Result<u64, String> {
+        kernel
+            .get::<HostKernel>()
+            .0
+            .borrow_mut()
+            .identity(literal(proposition)?)
+            .map(theorem_index)
+            .map_err(|error| error.to_string())
+    }
+
+    fn resolution(
+        kernel: bindings::exports::nucleus::proof::host::KernelBorrow<'_>,
+        left: u64,
+        right: u64,
+        pivot: WitLiteral,
+    ) -> Result<u64, String> {
+        kernel
+            .get::<HostKernel>()
+            .0
+            .borrow_mut()
+            .resolve(theorem_id(left)?, theorem_id(right)?, literal(pivot)?)
+            .map(theorem_index)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -1234,6 +1265,20 @@ fn reference(value: u64) -> Result<Ref, String> {
 fn theorem_id(value: u64) -> Result<covalence_logic_hol::ThmId, String> {
     let value = i32::try_from(value).map_err(|_| "theorem slot exceeds i32".to_owned())?;
     covalence_logic_hol::ThmId::new(value).ok_or_else(|| "theorem slots are one-based".to_owned())
+}
+
+fn theorem_index(value: covalence_logic_hol::ThmId) -> u64 {
+    u64::from(value.get().unsigned_abs())
+}
+
+fn literal(value: WitLiteral) -> Result<Lit, String> {
+    let proposition = reference(value.proposition)?;
+    let literal = Lit::positive(proposition.get());
+    Ok(if value.positive {
+        literal
+    } else {
+        literal.negated()
+    })
 }
 
 fn import_id(value: u64) -> Result<ImportId, String> {
