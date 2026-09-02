@@ -429,6 +429,10 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/../../proof/alethe/tests/fixtures/cvc5-qf-uf/proof.alethe"
     ));
+    const QF_UFLIA: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../proof/alethe/tests/fixtures/cvc5-qf-uflia/proof.alethe"
+    ));
 
     #[test]
     fn rejects_deeply_nested_input() {
@@ -496,6 +500,75 @@ mod tests {
             parse_alethe("(step t (cl) :rule resolution :rule refl)"),
             Err(ParseError::Malformed { .. })
         ));
+    }
+
+    #[test]
+    fn parses_a_real_cvc5_qf_uflia_proof() {
+        // cvc5 1.3.4 on a nonstrict-inequality problem, at the
+        // `--proof-granularity=dsl-rewrite` flags the crate replays under.
+        let proof = parse_alethe(QF_UFLIA).expect("fixture parses");
+        assert_eq!(proof.commands().len(), 127);
+        let anchors = proof
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                AletheCommand::Anchor { step, args } => Some((step.as_str(), args.len())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            anchors,
+            [("t6", 0), ("t19", 0)],
+            "every anchor is a plain :step"
+        );
+        let discharges = proof
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                AletheCommand::Step {
+                    id,
+                    rule,
+                    discharge,
+                    ..
+                } if rule == "subproof" => Some((id.as_str(), discharge.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            discharges,
+            [
+                (
+                    "t6",
+                    vec!["t6.a0".to_owned(), "t6.a1".to_owned(), "t6.a2".to_owned()]
+                ),
+                ("t19", vec!["t19.a0".to_owned(), "t19.a1".to_owned()]),
+            ],
+            "a subproof discharges its frame's assumptions in order"
+        );
+        // Rational literals and premises before args are both real shapes.
+        assert!(proof.commands().iter().any(|command| matches!(
+            command,
+            AletheCommand::Step { rule, args, .. } if rule == "la_generic" && args.len() == 2
+        )));
+        assert!(proof.commands().iter().any(|command| matches!(
+            command,
+            AletheCommand::Step { rule, premises, .. }
+                if rule == "poly_simp_rel" && premises.len() == 1
+        )));
+    }
+
+    #[test]
+    fn parses_the_selected_qf_uflia_problem() {
+        let source = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../proof/alethe/tests/fixtures/cvc5-qf-uflia/problem.smt2"
+        ));
+        let problem = parse_smtlib2(source).expect("problem parses");
+        assert!(matches!(
+            problem.commands().first(),
+            Some(SmtCommand::SetLogic(logic)) if logic == "QF_UFLIA"
+        ));
+        assert_eq!(problem.commands().len(), 6);
     }
 
     #[test]

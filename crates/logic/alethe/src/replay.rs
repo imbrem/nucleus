@@ -1,11 +1,75 @@
-//! Proof-producing `QF_UF` replay through checked HOL operations.
+//! Proof-producing replay of `QF_UF` Alethe proofs through checked HOL
+//! operations, plus a checked-but-unproving lowering of `QF_UFLIA` input.
+//!
+//! # The `QF_UFLIA` lowering states no arithmetic
+//!
+//! This tree has no HOL integer theory: `crates/logic/hol` and
+//! `crates/logic/hol-derived` know Peano naturals with addition and
+//! multiplication, no order relation, and no subtraction, and `theories/`
+//! holds only the checked Boolean init package. So `Int` and `Real` lower to
+//! ordinary uninterpreted type constants, numerals lower to fresh
+//! uninterpreted term constants interned on their exact spelling, and the
+//! arithmetic operators lower to monomorphic uninterpreted function constants.
+//! Nothing relates them, which is why every arithmetic Alethe rule fails
+//! closed with [`Error::ArithmeticTheoryMissing`] and why [`lower_qf_uflia`]
+//! returns a [`Lowering`] that deliberately exposes no theorem. Issue 1208
+//! tracks the checked arithmetic that would change this.
+//!
+//! # The frontend performs no arithmetic normalization
+//!
+//! Every syntactic distinction cvc5 draws survives lowering: `-3` and `(- 3)`
+//! are different rows, `5` and `5/1` are different rows in different sorts,
+//! `(> a b)` is not rewritten to `(< b a)`, and nothing is constant-folded.
+//! cvc5 relates those spellings with its own `evaluate` and `arith-elim-*`
+//! steps, so identifying them here would silently assume the arithmetic facts
+//! those steps are supposed to justify. For the same reason a non-reduced
+//! rational spelling such as `2/4` interns as its own constant instead of
+//! being reduced: that can only cause a false rejection, never a false
+//! acceptance, and reducing it would need bignum arithmetic this crate does
+//! not carry.
+//!
+//! # The checked rule set is propositional
+//!
+//! Every rule this module implements is checked against ordinary HOL: the CNF
+//! and plumbing rules inspect only propositional structure over already
+//! lowered atoms, so they are theory-agnostic and hold whatever those atoms
+//! are. `ite1`, `ite2` and the `ite-*` RARE rewrites go through issue 1214's
+//! HOL conditional and one Boolean case split, again with no new kernel
+//! capability. What is missing is arithmetic, and it is missing loudly.
+//!
+//! Two families are deliberately narrow. The `*_simplify` rules are an
+//! open-ended rewrite family in the Alethe specification, so only the
+//! equations cvc5 1.3.4 states are implemented and any other is rejected with
+//! its shape printed. The RARE rewrite names are producer-version scoped -
+//! cvc5 emits names outside the measured inventory in plain `QF_UF` - so an
+//! unrecognized name reaches the user rule handler instead of being shadowed.
+//!
+//! # Subproof scoping diverges from the Alethe specification
+//!
+//! Alethe Definition 6.1 forbids a subproof step from citing a premise
+//! outside its own subproof. cvc5 1.3.4 emits such references constantly, so
+//! this replayer permits them; that is sound in a sequent setting because the
+//! outer premise's own antecedent merges into the frame's and survives
+//! discharge. The opposite direction, an outer step citing a step inside a
+//! closed frame, is rejected with [`Error::OutOfScopePremise`].
+//!
+//! # This module adds no assumption, capability, or wire commitment
+//!
+//! The rows it emits are `ty.fv`, `ty.arr`, `tm.fv`, `tm.app`, `tm.eq`,
+//! `tm.op1` and `tm.op2`: pre-existing v1 tags the `QF_UF` path already
+//! emitted. No compact literal row, no builtin-table entry, no new function on
+//! the `arena` or `kernel` resources, no change to the checked init package,
+//! no new crate dependency, and nothing added to the trusted computing base.
+//! Replacing the uninterpreted numeric vocabulary with a real integer theory
+//! is three body swaps inside private `Replayer` methods, so the migration is
+//! wire-free.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use covalence_data_sexpr::{Atom, Expr, ExprKind, Repr, SpannedRepr};
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    Kernel, KernelError, Lit, Ref, SynRel, Tag, ThmId, TmTag,
+    AmbPred, Kernel, KernelError, Lit, Ref, SynRel, Tag, ThmId, TmTag,
     builtin::{Op1, Op2},
     init,
 };
@@ -16,12 +80,137 @@ use covalence_logic_hol_derived::{
 
 use crate::{AletheCommand, AletheProof, SmtCommand, SmtProblem};
 
+/// One SMT-LIB logic this crate reads.
+///
+/// The allowlist is exact: input naming any other logic fails closed, and each
+/// entry has its own entry point, so widening one never widens another.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Logic {
+    /// Quantifier-free uninterpreted functions, replayed to a refutation.
+    QfUf,
+    /// Quantifier-free linear integer arithmetic with uninterpreted functions,
+    /// lowered but never certified. See [`lower_qf_uflia`].
+    QfUflia,
+}
+
+impl Logic {
+    /// Returns the logic named by an SMT-LIB `set-logic` argument.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "QF_UF" => Some(Self::QfUf),
+            "QF_UFLIA" => Some(Self::QfUflia),
+            _ => None,
+        }
+    }
+
+    /// Returns the SMT-LIB spelling of this logic.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::QfUf => "QF_UF",
+            Self::QfUflia => "QF_UFLIA",
+        }
+    }
+}
+
 /// A checked refutation bound to one exact normalized SMT assertion set.
 #[derive(Debug)]
 pub struct Refutation {
     kernel: Kernel,
+    logic: Logic,
     theorem: ThmId,
     assertions: Vec<Lit>,
+    rules: BTreeSet<String>,
+}
+
+/// The first arithmetic Alethe rule that stopped a `QF_UFLIA` lowering.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArithmeticGap {
+    step: String,
+    rule: String,
+    domain: String,
+}
+
+impl ArithmeticGap {
+    /// Returns the Alethe step index that could not be checked.
+    #[must_use]
+    pub fn step(&self) -> &str {
+        &self.step
+    }
+
+    /// Returns the Alethe rule name that needs arithmetic.
+    #[must_use]
+    pub fn rule(&self) -> &str {
+        &self.rule
+    }
+
+    /// Returns the arithmetic domain that rule reasons in.
+    #[must_use]
+    pub fn domain(&self) -> &str {
+        &self.domain
+    }
+}
+
+/// A checked lowering of a `QF_UFLIA` problem and proof that proves nothing.
+///
+/// This type has no theorem accessor, no kernel accessor, and no conversion
+/// into a [`Refutation`], on purpose: every one of those would hand out a
+/// checked theorem this build did not certify. The lowering is faithful, but
+/// no HOL theory in this tree relates the constants it emits, so the proof
+/// always stops at an arithmetic rule; [`Self::arithmetic_gap`] names the
+/// first one. Issue 1208 tracks the checked arithmetic that would let this
+/// become a refutation.
+#[derive(Debug)]
+pub struct Lowering {
+    /// The arena the lowered rows live in, kept so the lowering owns what its
+    /// literals refer to. Nothing reads it outside this crate's own tests:
+    /// handing it out would hand out the step theorems of a proof this build
+    /// explicitly did not certify.
+    #[allow(dead_code)]
+    kernel: Kernel,
+    logic: Logic,
+    assertions: Vec<Lit>,
+    steps: usize,
+    rules: BTreeSet<String>,
+    gap: ArithmeticGap,
+}
+
+impl Lowering {
+    /// Returns the logic this lowering was accepted under.
+    #[must_use]
+    pub const fn logic(&self) -> Logic {
+        self.logic
+    }
+
+    /// Returns the lowered problem assertions in source order.
+    #[must_use]
+    pub fn assertions(&self) -> &[Lit] {
+        &self.assertions
+    }
+
+    /// Returns how many Alethe assumptions and steps were checked before the
+    /// arithmetic gap.
+    #[must_use]
+    pub const fn steps(&self) -> usize {
+        self.steps
+    }
+
+    /// Returns the distinct Alethe rules checked before the gap.
+    ///
+    /// A RARE rewrite contributes both `rare_rewrite` and its own name. This
+    /// is what makes "these rules replayed and that one stopped it" a
+    /// machine-checked statement rather than a claim in a commit message.
+    #[must_use]
+    pub const fn checked_rules(&self) -> &BTreeSet<String> {
+        &self.rules
+    }
+
+    /// Returns the first arithmetic rule this build cannot check.
+    #[must_use]
+    pub const fn arithmetic_gap(&self) -> &ArithmeticGap {
+        &self.gap
+    }
 }
 
 /// Checked context offered to a user-defined handler for an unknown rule.
@@ -40,6 +229,10 @@ pub struct RuleRequest<'a> {
     /// Checked premise theorem indices.
     pub premises: &'a [ThmId],
     /// Untrusted rule arguments from the parsed proof.
+    ///
+    /// For `rule == "rare_rewrite"`, `args[0]` is the RARE rewrite name and
+    /// the rest are its untrusted operands. Read the terms a handler needs off
+    /// `clause` and `premises`, never by rebuilding them from these.
     pub args: &'a [Expr],
 }
 
@@ -71,6 +264,12 @@ impl Refutation {
         &self.kernel
     }
 
+    /// Returns the logic this refutation was accepted under.
+    #[must_use]
+    pub const fn logic(&self) -> Logic {
+        self.logic
+    }
+
     /// Returns the theorem whose premises are exactly the normalized problem
     /// assertions and whose conclusion is empty.
     #[must_use]
@@ -84,6 +283,14 @@ impl Refutation {
         &self.assertions
     }
 
+    /// Returns the distinct Alethe rules this replay actually checked.
+    ///
+    /// A RARE rewrite contributes both `rare_rewrite` and its own name.
+    #[must_use]
+    pub const fn checked_rules(&self) -> &BTreeSet<String> {
+        &self.rules
+    }
+
     /// Consumes the result and returns its checked kernel.
     #[must_use]
     pub fn into_kernel(self) -> Kernel {
@@ -91,7 +298,7 @@ impl Refutation {
     }
 }
 
-/// Why a `QF_UF` problem or Alethe derivation was rejected.
+/// Why a `QF_UF` or `QF_UFLIA` problem or Alethe derivation was rejected.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum Error {
@@ -115,11 +322,11 @@ pub enum Error {
     /// A userspace-derived polymorphic conditional was rejected.
     #[snafu(transparent)]
     Conditional { source: ConditionalError },
-    /// Input uses a command, rule, sort, or term outside `QF_UF`.
-    #[snafu(display("unsupported QF_UF input: {message}"))]
+    /// Input uses a command, rule, sort, or term this replayer does not read.
+    #[snafu(display("unsupported SMT-LIB or Alethe input: {message}"))]
     Unsupported { message: String },
     /// Input is structurally inconsistent or names absent data.
-    #[snafu(display("malformed QF_UF input: {message}"))]
+    #[snafu(display("malformed SMT-LIB or Alethe input: {message}"))]
     Malformed { message: String },
     /// A proof assumption is not one of the requested problem assertions.
     #[snafu(display("Alethe assumption is not asserted by the requested problem"))]
@@ -134,20 +341,74 @@ pub enum Error {
     /// The proof ended without an empty clause.
     #[snafu(display("Alethe proof does not derive the empty clause"))]
     NoRefutation,
-    /// A term nests more deeply than the replayer lowers.
-    #[snafu(display("term nesting exceeds the replay budget of {limit} levels"))]
+    /// A rule states arithmetic that no HOL theory in this tree provides.
+    ///
+    /// This is deliberately distinct from [`Error::Unsupported`]: it means the
+    /// rule is understood and its requirement is precisely known, and that
+    /// this build cannot meet it. Issue 1208 tracks the checked arithmetic.
+    #[snafu(display(
+        "Alethe step {step:?} rule {rule:?} needs checked {domain} arithmetic, which no HOL theory in this tree provides; issue 1208 tracks it"
+    ))]
+    ArithmeticTheoryMissing {
+        /// Alethe step index that stated the rule.
+        step: String,
+        /// Alethe rule or rare-rewrite name.
+        rule: String,
+        /// Arithmetic domain the rule reasons in.
+        domain: String,
+    },
+    /// A `QF_UFLIA` proof replayed to its end, which this build must not
+    /// certify because it has no checked arithmetic to have used.
+    #[snafu(display(
+        "QF_UFLIA lowering reached the end of the proof without an arithmetic gap, which this build must not certify; issue 1208 tracks it"
+    ))]
+    NoArithmeticGap,
+    /// A subproof frame is structurally inconsistent.
+    #[snafu(display("Alethe subproof frame {frame:?} is malformed: {message}"))]
+    Frame {
+        /// Anchor step index naming the frame.
+        frame: String,
+        /// What was inconsistent about it.
+        message: String,
+    },
+    /// A step names a premise whose subproof frame has already closed.
+    #[snafu(display(
+        "Alethe step {step:?} names premise {premise:?} from a closed subproof frame"
+    ))]
+    OutOfScopePremise {
+        /// Step naming the premise.
+        step: String,
+        /// Premise index that has left scope.
+        premise: String,
+    },
+    /// A term builds a deeper row tree than the replayer lowers.
+    #[snafu(display("term exceeds the replay budget of {limit} levels of checked rows"))]
     TermTooDeep {
-        /// Greatest nesting depth the replayer lowers.
+        /// Greatest row depth the replayer lowers.
         limit: usize,
     },
 }
 
-/// Greatest term nesting depth `Replayer` lowers.
+/// Greatest depth of checked rows `Replayer` builds for one term.
 ///
-/// Lowering recurses once per nesting level over untrusted problem and proof
-/// text, so the budget keeps a deeply nested term a rejected input rather than
-/// an aborted process.
+/// The budget bounds the row tree, not the s-expression text. Lowering
+/// recurses once per nesting level, but it also folds an n-ary connective,
+/// chain, `distinct` or application into a row chain whose depth is the
+/// arity: a flat `(or p ... p)` is one level of text and n-1 levels of rows,
+/// and every rule body that walks that chain recurses once per level. Each
+/// fold therefore charges the rows it will build against this budget before
+/// it lowers its operands, so a wide term is a rejected input rather than an
+/// aborted process.
 const MAX_TERM_DEPTH: usize = 256;
+
+/// Charges `rows` levels of folded rows against a lowering depth.
+///
+/// Saturating, because the count comes from untrusted input: a charge past
+/// the budget is refused by the next `term_at`, and no arithmetic here may
+/// wrap back under it.
+const fn charge(depth: usize, rows: usize) -> usize {
+    depth.saturating_add(rows)
+}
 
 #[derive(Clone, Copy, Debug)]
 struct Term {
@@ -168,11 +429,168 @@ impl Term {
     }
 }
 
+/// Which reader is lowering a term.
+///
+/// Integer lexing is identical in both: cvc5 1.3.4 accepts a bare `-3` as
+/// SMT-LIB input by default and treats it as an integer token, so the only
+/// competing reading is "undeclared symbol", which is an error rather than a
+/// different value. The genuine dialect difference is that the Alethe printer
+/// emits rational literals and `Real`-sorted terms that `QF_UFLIA` input
+/// cannot contain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Dialect {
+    /// The SMT-LIB problem, which has no rationals.
+    SmtLib,
+    /// The Alethe proof, which has rationals.
+    Alethe,
+}
+
+/// Which numeral grammar an atom spelling matches.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NumeralKind {
+    /// `-?(0|[1-9][0-9]*)`.
+    Integer,
+    /// `-?(0|[1-9][0-9]*)/[1-9][0-9]*`.
+    Rational,
+}
+
+/// One of the two numeric sorts an arithmetic operand may carry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NumericSort {
+    Int,
+    Real,
+}
+
+/// The monomorphic arithmetic operator constants of one numeric sort.
+///
+/// The kernel gives `tm_fv` one fixed type, and cvc5 uses `+`, `-` and `*` at
+/// both `Int` and `Real` inside a single proof, so there is one set per sort
+/// rather than a polymorphic head.
+#[derive(Clone, Copy, Debug)]
+struct Operators {
+    add: Ref,
+    sub: Ref,
+    neg: Ref,
+    mul: Ref,
+    lt: Ref,
+    le: Ref,
+    gt: Ref,
+    ge: Ref,
+}
+
+/// The uninterpreted vocabulary that stands in for arithmetic.
+///
+/// Numerals are interned on their exact accepted spelling, so two occurrences
+/// of one spelling are literally the same row and join by reflexivity, while
+/// two spellings get distinct `tm.fv` names that both `require_same_syntax`
+/// and `join_same_syntax` discriminate. The name always comes from the
+/// freshness counter and never from the value: deriving it from the value is
+/// the one way two different numerals could become the same row.
+struct Numeric {
+    int_ty: Ref,
+    real_ty: Ref,
+    int: Operators,
+    real: Operators,
+    to_real: Ref,
+    to_int: Ref,
+    int_numerals: HashMap<String, Ref>,
+    rational_numerals: HashMap<String, Ref>,
+}
+
+/// One open `anchor` scope and the assumptions it must discharge.
+struct Frame {
+    /// The anchor's `:step` index. Only a step with this index closes it.
+    id: String,
+    /// Frame-local assumptions in introduction order.
+    assumptions: Vec<(String, Lit)>,
+    /// Every index bound while this frame was open, dropped on close.
+    bound: Vec<String>,
+    /// Theorem of the last direct child step, the frame's conclusion.
+    last: Option<ThmId>,
+    /// Set by the first child step; further `assume` commands then fail.
+    sealed: bool,
+}
+
+/// What the exported arena is allowed to rest on, snapshotted before replay.
+///
+/// The refutation's own sequent says which assertions it used; it says nothing
+/// about the arena-level declarations a consumer reads alongside it. A rule
+/// handler holds `&mut Kernel`, so without this snapshot it could add an axiom
+/// capability, a logical-context proposition, an import, or an ambient typing
+/// predicate the problem never had, and the exported `Refutation` would carry
+/// them. Every field here is append-only in the kernel, so equality with the
+/// snapshot is exactly "replay widened nothing".
+#[derive(Debug)]
+struct TrustSurface {
+    /// Ambient predicates, assumed rather than checked.
+    ambient: Vec<AmbPred>,
+    /// Enabled Ethane axiom capabilities, such as `ax.inf` and `ax.sub`.
+    axioms: Vec<String>,
+    /// Propositions in the arena's logical context.
+    context: Vec<Ref>,
+    /// How many foreign arenas the arena refers to.
+    imports: usize,
+}
+
+impl TrustSurface {
+    fn of(kernel: &Kernel) -> Self {
+        let arena = kernel.arena();
+        Self {
+            ambient: arena.ambient_predicates().to_vec(),
+            axioms: arena.axioms().map(str::to_owned).collect(),
+            context: arena.context().collect(),
+            imports: arena.imports().len(),
+        }
+    }
+
+    /// Requires `kernel` to declare exactly the snapshotted trust surface.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Malformed`] naming the widened component.
+    fn require_unchanged(&self, kernel: &Kernel) -> Result<(), Error> {
+        let actual = Self::of(kernel);
+        let widened = if actual.ambient != self.ambient {
+            format!(
+                "ambient predicate context from {:?} to {:?}",
+                self.ambient, actual.ambient
+            )
+        } else if actual.axioms != self.axioms {
+            format!(
+                "axiom capabilities from {:?} to {:?}",
+                self.axioms, actual.axioms
+            )
+        } else if actual.context != self.context {
+            format!(
+                "logical context from {:?} to {:?}",
+                self.context, actual.context
+            )
+        } else if actual.imports != self.imports {
+            format!("import count from {} to {}", self.imports, actual.imports)
+        } else {
+            return Ok(());
+        };
+        Err(Error::Malformed {
+            message: format!("replay changed the {widened}"),
+        })
+    }
+}
+
 struct Replayer {
     kernel: Kernel,
     init: init::Compiled,
     star: Ref,
     bool_ty: Ref,
+    logic: Logic,
+    /// The arena's exported trust surface right after `Kernel::with_init`.
+    ///
+    /// `check_exact_goal` inspects only the refutation's own sequent, so a
+    /// rule handler holding `&mut Kernel` could otherwise widen what the
+    /// exported arena rests on and still pass every other gate. Requiring
+    /// this snapshot unchanged closes that.
+    surface: TrustSurface,
+    numeric: Option<Numeric>,
+    dialect: Dialect,
     next_name: u64,
     sorts: HashMap<String, Ref>,
     functions: HashMap<String, Term>,
@@ -183,10 +601,27 @@ struct Replayer {
     assertion_terms: Vec<Term>,
     assertion_transports: Vec<(Ref, Ref)>,
     steps: HashMap<String, ThmId>,
+    frames: Vec<Frame>,
+    /// Every index ever bound, never pruned, so uniqueness outlives a frame.
+    seen: HashSet<String>,
+    /// The outermost empty clause, recorded the moment a step derives it.
+    ///
+    /// `run_proof` needs it only at the end, but `lower_proof` needs to know
+    /// whether one was ever derived even on the error path: a `QF_UFLIA`
+    /// proof that reached a refutation and then stated an arithmetic step
+    /// must be refused exactly like one that reached the end.
+    refutation: Option<ThmId>,
+    /// Every Alethe rule that passed its exact-clause postcheck.
+    ///
+    /// This is replay coverage, recorded so a test can state which rules a
+    /// proof actually exercised rather than only that it replayed: a producer
+    /// upgrade that stops emitting a rule then fails loudly instead of
+    /// quietly retiring the evidence for it.
+    rules: BTreeSet<String>,
 }
 
 impl Replayer {
-    fn new() -> Result<Self, Error> {
+    fn new(logic: Logic) -> Result<Self, Error> {
         const MANIFEST: &str = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../../theories/init-boolean.checked.json"
@@ -201,11 +636,16 @@ impl Replayer {
         let bool_ty = init.get("bool").ok_or_else(|| Error::Malformed {
             message: "Boolean init has no bool definition".to_owned(),
         })?;
+        let surface = TrustSurface::of(&kernel);
         Ok(Self {
             kernel,
             init,
             star,
             bool_ty,
+            logic,
+            surface,
+            numeric: None,
+            dialect: Dialect::SmtLib,
             next_name: 0,
             sorts: HashMap::new(),
             functions: HashMap::new(),
@@ -216,7 +656,296 @@ impl Replayer {
             assertion_terms: Vec::new(),
             assertion_transports: Vec::new(),
             steps: HashMap::new(),
+            frames: Vec::new(),
+            seen: HashSet::new(),
+            refutation: None,
+            rules: BTreeSet::new(),
         })
+    }
+
+    /// Returns the numeric vocabulary, which only `QF_UFLIA` allocates.
+    fn numeric(&self) -> Result<&Numeric, Error> {
+        self.numeric.as_ref().ok_or_else(|| Error::Unsupported {
+            message: format!(
+                "arithmetic sorts and terms require QF_UFLIA, not {}",
+                self.logic.name()
+            ),
+        })
+    }
+
+    fn fresh_constant(&mut self, ty: Ref) -> Result<Ref, Error> {
+        let name = self.name()?;
+        Ok(self.kernel.tm_fv(name, ty)?)
+    }
+
+    fn binary_ty(&mut self, domain: Ref, codomain: Ref) -> Result<Ref, Error> {
+        let inner = self.kernel.ty_arr(domain, codomain)?;
+        Ok(self.kernel.ty_arr(domain, inner)?)
+    }
+
+    fn allocate_operators(&mut self, sort: Ref) -> Result<Operators, Error> {
+        let binary = self.binary_ty(sort, sort)?;
+        let unary = self.kernel.ty_arr(sort, sort)?;
+        let relation = self.binary_ty(sort, self.bool_ty)?;
+        // Allocation order is part of the arena layout; see `allocate_numeric`.
+        let add = self.fresh_constant(binary)?;
+        let sub = self.fresh_constant(binary)?;
+        let neg = self.fresh_constant(unary)?;
+        let mul = self.fresh_constant(binary)?;
+        let lt = self.fresh_constant(relation)?;
+        let le = self.fresh_constant(relation)?;
+        let gt = self.fresh_constant(relation)?;
+        let ge = self.fresh_constant(relation)?;
+        Ok(Operators {
+            add,
+            sub,
+            neg,
+            mul,
+            lt,
+            le,
+            gt,
+            ge,
+        })
+    }
+
+    /// Allocates the `QF_UFLIA` numeric vocabulary in one fixed order.
+    ///
+    /// The order is index-stable on purpose: allocating eagerly in the
+    /// `set-logic` arm makes every arena row index a function of the accepted
+    /// logic alone, so a `QF_UF` arena is byte-identical to one built before
+    /// this vocabulary existed. Reordering these calls changes every row index
+    /// a test pins.
+    fn allocate_numeric(&mut self) -> Result<(), Error> {
+        if self.numeric.is_some() {
+            return Err(Error::Malformed {
+                message: "duplicate set-logic command".to_owned(),
+            });
+        }
+        // `Int` and `Real` are built exactly like `(declare-sort U 0)`: an
+        // uninterpreted type constant, needing no new kernel capability, no
+        // new row tag and no init-package entry.
+        let int_name = self.name()?;
+        let int_ty = self.kernel.ty_fv(int_name, self.star)?;
+        let real_name = self.name()?;
+        let real_ty = self.kernel.ty_fv(real_name, self.star)?;
+        let int = self.allocate_operators(int_ty)?;
+        let real = self.allocate_operators(real_ty)?;
+        let to_real_ty = self.kernel.ty_arr(int_ty, real_ty)?;
+        let to_real = self.fresh_constant(to_real_ty)?;
+        let to_int_ty = self.kernel.ty_arr(real_ty, int_ty)?;
+        let to_int = self.fresh_constant(to_int_ty)?;
+        self.numeric = Some(Numeric {
+            int_ty,
+            real_ty,
+            int,
+            real,
+            to_real,
+            to_int,
+            int_numerals: HashMap::new(),
+            rational_numerals: HashMap::new(),
+        });
+        Ok(())
+    }
+
+    /// Interns one accepted integer spelling as a fresh uninterpreted
+    /// constant, returning the same row for every later occurrence.
+    fn int_numeral(&mut self, spelling: &str) -> Result<Ref, Error> {
+        let int_ty = self.numeric()?.int_ty;
+        if let Some(reference) = self.numeric()?.int_numerals.get(spelling).copied() {
+            return Ok(reference);
+        }
+        let reference = self.fresh_constant(int_ty)?;
+        self.numeric
+            .as_mut()
+            .expect("the numeric vocabulary was read above")
+            .int_numerals
+            .insert(spelling.to_owned(), reference);
+        Ok(reference)
+    }
+
+    /// Interns one accepted rational spelling as a fresh uninterpreted
+    /// constant. Spellings are not reduced, so `2/4` and `1/2` stay distinct.
+    fn rational_numeral(&mut self, spelling: &str) -> Result<Ref, Error> {
+        let real_ty = self.numeric()?.real_ty;
+        if let Some(reference) = self.numeric()?.rational_numerals.get(spelling).copied() {
+            return Ok(reference);
+        }
+        let reference = self.fresh_constant(real_ty)?;
+        self.numeric
+            .as_mut()
+            .expect("the numeric vocabulary was read above")
+            .rational_numerals
+            .insert(spelling.to_owned(), reference);
+        Ok(reference)
+    }
+
+    /// Lowers one numeral atom under the current dialect.
+    ///
+    /// A spelling outside the canonical grammar is rejected rather than
+    /// normalized, so `007`, `-0`, `+3`, `1.5` and `1/0` all fail closed.
+    fn numeral_term(&mut self, spelling: &str) -> Result<Term, Error> {
+        match numeral_kind(spelling) {
+            Some(NumeralKind::Integer) => self.int_numeral(spelling).map(Term::positive),
+            Some(NumeralKind::Rational) if self.dialect == Dialect::Alethe => {
+                self.rational_numeral(spelling).map(Term::positive)
+            }
+            Some(NumeralKind::Rational) => Err(Error::Malformed {
+                message: format!("rational literal {spelling:?} is not QF_UFLIA input syntax"),
+            }),
+            None => Err(Error::Malformed {
+                message: format!("numeral {spelling:?} is not a canonical spelling"),
+            }),
+        }
+    }
+
+    /// Reads the numeric sort of one lowered operand.
+    fn numeric_sort(&self, operator: &str, term: Ref) -> Result<NumericSort, Error> {
+        let classifier = self.kernel.classifier(term)?;
+        let numeric = self.numeric()?;
+        if self.kernel.equivalent(classifier, numeric.int_ty)? {
+            return Ok(NumericSort::Int);
+        }
+        if self.kernel.equivalent(classifier, numeric.real_ty)? {
+            return Ok(NumericSort::Real);
+        }
+        Err(Error::Malformed {
+            message: format!("{operator} operands must be Int or Real"),
+        })
+    }
+
+    fn numeric_operators(&self, sort: NumericSort) -> Result<Operators, Error> {
+        let numeric = self.numeric()?;
+        Ok(match sort {
+            NumericSort::Int => numeric.int,
+            NumericSort::Real => numeric.real,
+        })
+    }
+
+    /// Lowers an arithmetic application as an uninterpreted function spine.
+    ///
+    /// SMT-LIB Ints declares `+`, `-` and `*` `:left-assoc`, and cvc5 1.3.4
+    /// emits `+` at arities two through twelve, `-` at one and two, `*` at two
+    /// and the four order relations at two only. The chainable comparison form
+    /// is rejected rather than guessed, because an untested association is
+    /// exactly the bug class a right-associative `=>` already produced once.
+    fn arithmetic(
+        &mut self,
+        operator: &str,
+        arguments: &[Expr],
+        depth: usize,
+    ) -> Result<Term, Error> {
+        // Each further operand stacks two application rows.
+        let depth = charge(depth, 2 * arguments.len());
+        // Operands lower first and in source order, so `:named` registration
+        // and `ite` binder names still follow the printed order.
+        let operands = arguments
+            .iter()
+            .map(|argument| self.term_at(argument, depth).map(|term| term.reference))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (first, rest) = operands.split_first().ok_or_else(|| Error::Malformed {
+            message: format!("{operator} requires at least one argument"),
+        })?;
+        // Sorts are inferred from the first operand and then required of every
+        // other one; over 147 measured cvc5 problem and proof pairs this check
+        // never fires, so it bounds the lowering rather than restricting it.
+        let sort = self.numeric_sort(operator, *first)?;
+        for &operand in rest {
+            if self.numeric_sort(operator, operand)? != sort {
+                return Err(Error::Malformed {
+                    message: format!(
+                        "{operator} operands have different sorts, {:?} and {:?}",
+                        self.kernel.classifier(*first)?,
+                        self.kernel.classifier(operand)?
+                    ),
+                });
+            }
+        }
+        let operators = self.numeric_operators(sort)?;
+        if operator == "-" && rest.is_empty() {
+            let applied = self.kernel.app(operators.neg, *first)?;
+            return Ok(Term::positive(applied));
+        }
+        if matches!(operator, "<" | "<=" | ">" | ">=") && operands.len() != 2 {
+            return Err(Error::Unsupported {
+                message: format!(
+                    "chainable {operator} at arity {}, where cvc5 emits only the binary form",
+                    operands.len()
+                ),
+            });
+        }
+        if rest.is_empty() {
+            return Err(Error::Malformed {
+                message: format!("{operator} requires at least two arguments, got 1"),
+            });
+        }
+        let head = match operator {
+            "+" => operators.add,
+            "-" => operators.sub,
+            "*" => operators.mul,
+            "<" => operators.lt,
+            "<=" => operators.le,
+            ">" => operators.gt,
+            ">=" => operators.ge,
+            _ => unreachable!("the caller limits arithmetic operators"),
+        };
+        let mut result = *first;
+        for &operand in rest {
+            result = self.kernel.app(head, result)?;
+            result = self.kernel.app(result, operand)?;
+        }
+        Ok(Term::positive(result))
+    }
+
+    /// Lowers `to_real` or `to_int` as an uninterpreted coercion constant.
+    fn coercion(&mut self, operator: &str, argument: &Expr, depth: usize) -> Result<Term, Error> {
+        let operand = self.term_at(argument, depth)?.reference;
+        let head = if operator == "to_real" {
+            self.numeric()?.to_real
+        } else {
+            self.numeric()?.to_int
+        };
+        // `Kernel::app` raises a classifier mismatch itself, so the operand
+        // sort needs no separate check.
+        let applied = self.kernel.app(head, operand)?;
+        Ok(Term::positive(applied))
+    }
+
+    /// Rejects a declared name this reader would otherwise read as a numeral
+    /// or a builtin sort.
+    ///
+    /// cvc5 forecloses the numeral case itself, rejecting `(declare-const -3
+    /// Int)` as a parse error, so refusing it here costs nothing and makes the
+    /// two readers agree on one reading per spelling.
+    fn require_declarable_name(name: &str) -> Result<(), Error> {
+        if matches!(name, "Bool" | "Int" | "Real") {
+            return Err(Error::Malformed {
+                message: format!("declared name {name:?} is a builtin sort"),
+            });
+        }
+        // `numeral_kind` accepts only canonical spellings, but `term_at`
+        // routes every `signed_numeral_spelling` to the numeral reader, so
+        // the wider test is the one that decides whether a declaration could
+        // ever be resolved. Rejecting at the declaration names the reason
+        // once instead of failing at every use site.
+        if signed_numeral_spelling(name) || numeral_kind(name).is_some() {
+            return Err(Error::Malformed {
+                message: format!("declared symbol {name:?} is spelled as a numeral"),
+            });
+        }
+        // `term_at` dispatches these heads to the arithmetic and coercion
+        // vocabulary before it consults the declared functions, so a declared
+        // one would lower to a row nothing can reach. QF_UF never allocates
+        // that vocabulary, but the two logics agree on one reading per
+        // spelling rather than disagreeing by configuration.
+        if matches!(
+            name,
+            "+" | "-" | "*" | "<" | "<=" | ">" | ">=" | "to_real" | "to_int"
+        ) {
+            return Err(Error::Malformed {
+                message: format!("declared symbol {name:?} is an arithmetic operator"),
+            });
+        }
+        Ok(())
     }
 
     fn name(&mut self) -> Result<u64, Error> {
@@ -231,17 +960,23 @@ impl Replayer {
     }
 
     fn ingest_problem(&mut self, problem: &SmtProblem) -> Result<(), Error> {
+        self.dialect = Dialect::SmtLib;
         let mut logic = None;
         for command in problem.commands() {
             match command {
                 SmtCommand::SetLogic(value) => {
-                    if logic.replace(value.as_str()).is_some() || value != "QF_UF" {
+                    let declared = Logic::from_name(value);
+                    if logic.replace(value.as_str()).is_some() || declared != Some(self.logic) {
                         return Err(Error::Unsupported {
                             message: format!("logic {value:?}"),
                         });
                     }
+                    if self.logic == Logic::QfUflia {
+                        self.allocate_numeric()?;
+                    }
                 }
                 SmtCommand::DeclareSort { name, arity: 0 } => {
+                    Self::require_declarable_name(name)?;
                     if self.sorts.contains_key(name) {
                         return Err(Error::Malformed {
                             message: format!("duplicate sort {name:?}"),
@@ -268,9 +1003,9 @@ impl Replayer {
                 }
             }
         }
-        if logic != Some("QF_UF") {
+        if logic.and_then(Logic::from_name) != Some(self.logic) {
             return Err(Error::Unsupported {
-                message: "problem must declare QF_UF".to_owned(),
+                message: format!("problem must declare {}", self.logic.name()),
             });
         }
         Ok(())
@@ -282,6 +1017,7 @@ impl Replayer {
         parameters: &[Expr],
         result: &Expr,
     ) -> Result<(), Error> {
+        Self::require_declarable_name(name)?;
         if self.functions.contains_key(name) {
             return Err(Error::Malformed {
                 message: format!("duplicate function {name:?}"),
@@ -310,10 +1046,17 @@ impl Replayer {
         Ok(())
     }
 
+    /// Resolves an SMT-LIB sort name.
+    ///
+    /// `Real` is deliberately absent: `QF_UFLIA` input has no `Real` sort, and
+    /// the numeric vocabulary's `real_ty` exists only to lower proof terms.
     fn sort(&self, expression: &Expr) -> Result<Ref, Error> {
         let name = symbol(expression)?;
         if name == "Bool" {
             return Ok(self.bool_ty);
+        }
+        if name == "Int" {
+            return Ok(self.numeric()?.int_ty);
         }
         self.sorts
             .get(name)
@@ -348,6 +1091,13 @@ impl Replayer {
                     {
                         return Ok(*term);
                     }
+                    // Numerals are consulted after the `let` scan and before
+                    // the constants, `@` names and declared functions, and
+                    // only when the logic allocated a numeric vocabulary, so a
+                    // QF_UF arena reads exactly as it did before.
+                    if self.numeric.is_some() && signed_numeral_spelling(value) {
+                        return self.numeral_term(value);
+                    }
                     if value == "true" {
                         return Ok(Term::positive(self.kernel.bool(self.bool_ty, true)?));
                     }
@@ -377,6 +1127,10 @@ impl Replayer {
                             message: format!("unknown function {value:?}"),
                         })
                 }
+                // The reader classifies an atom as a number only when its
+                // first byte is a digit, so `10` and `1/1` arrive here while
+                // `-3` and `-1/3` arrive as symbols. Both must be handled.
+                Atom::Number(value) if self.numeric.is_some() => self.numeral_term(value),
                 other => Err(Error::Unsupported {
                     message: format!("term atom {other:?}"),
                 }),
@@ -403,7 +1157,19 @@ impl Replayer {
                     "let" if items.len() == 3 => self.let_term(&items[1], &items[2], depth),
                     "and" | "or" => self.fold_boolean(symbol(head)?, &items[1..], depth),
                     "=>" => self.fold_implication(&items[1..], depth),
+                    operator @ ("+" | "-" | "*" | "<" | "<=" | ">" | ">=")
+                        if self.numeric.is_some() =>
+                    {
+                        self.arithmetic(operator, &items[1..], depth)
+                    }
+                    operator @ ("to_real" | "to_int")
+                        if self.numeric.is_some() && items.len() == 2 =>
+                    {
+                        self.coercion(operator, &items[1], depth)
+                    }
                     _ => {
+                        // Each argument stacks one application row.
+                        let depth = charge(depth, items.len());
                         let mut function = self.term_at(head, depth)?.reference;
                         for argument in &items[1..] {
                             let argument = self.term_at(argument, depth)?.reference;
@@ -417,6 +1183,8 @@ impl Replayer {
     }
 
     fn fold_xor(&mut self, arguments: &[Expr], depth: usize) -> Result<Term, Error> {
+        // Each further operand stacks an equality and a negation.
+        let depth = charge(depth, 2 * arguments.len());
         let (first, rest) = arguments.split_first().ok_or_else(|| Error::Malformed {
             message: "xor requires at least two arguments".to_owned(),
         })?;
@@ -447,6 +1215,8 @@ impl Replayer {
     }
 
     fn chain_equality(&mut self, arguments: &[Expr], depth: usize) -> Result<Term, Error> {
+        // One equality per adjacent pair, folded under a conjunction chain.
+        let depth = charge(depth, arguments.len());
         let mut terms = arguments.iter();
         let mut left = self
             .term_at(
@@ -471,6 +1241,10 @@ impl Replayer {
     }
 
     fn distinct(&mut self, arguments: &[Expr], depth: usize) -> Result<Term, Error> {
+        // `distinct` is quadratic: one disequality per unordered pair, each
+        // two rows deep, folded under a conjunction chain.
+        let pairs = arguments.len().saturating_mul(arguments.len() - 1) / 2;
+        let depth = charge(depth, pairs.saturating_add(2));
         let terms = arguments
             .iter()
             .map(|argument| self.term_at(argument, depth).map(|term| term.reference))
@@ -499,6 +1273,9 @@ impl Replayer {
         else_: &Expr,
         depth: usize,
     ) -> Result<Term, Error> {
+        // `conditional` stacks an equality, a conjunction, a disjunction, an
+        // abstraction and a choice above the deepest operand.
+        let depth = charge(depth, 5);
         let condition = self.term_at(condition, depth)?.reference;
         let then_ = self.term_at(then_, depth)?.reference;
         let else_ = self.term_at(else_, depth)?.reference;
@@ -554,6 +1331,11 @@ impl Replayer {
                 });
             };
             let name = symbol(name)?;
+            if numeral_kind(name).is_some() {
+                return Err(Error::Malformed {
+                    message: format!("let binder {name:?} is spelled as a numeral"),
+                });
+            }
             if scope.contains_key(name) {
                 return Err(Error::Malformed {
                     message: format!("duplicate let binding {name:?}"),
@@ -606,6 +1388,8 @@ impl Replayer {
         arguments: &[Expr],
         depth: usize,
     ) -> Result<Term, Error> {
+        // Each further operand stacks one binary row.
+        let depth = charge(depth, arguments.len());
         let (first, rest) = arity_at_least_two(operator, arguments)?;
         let mut result = self.term_at(first, depth)?.reference;
         for argument in rest {
@@ -622,6 +1406,8 @@ impl Replayer {
     /// Lowers `=>`, which SMT-LIB Core declares `:right-assoc`, so that
     /// `(=> a b c)` denotes `a -> (b -> c)` rather than `(a -> b) -> c`.
     fn fold_implication(&mut self, arguments: &[Expr], depth: usize) -> Result<Term, Error> {
+        // Each further antecedent stacks one implication row.
+        let depth = charge(depth, arguments.len());
         arity_at_least_two("=>", arguments)?;
         // Lower left to right, so `:named` registration and `ite` binder names
         // still follow source order, then fold the lowered rows right.
@@ -639,20 +1425,37 @@ impl Replayer {
         Ok(Term::positive(result))
     }
 
-    fn ingest_proof(
-        mut self,
+    #[allow(clippy::too_many_lines)]
+    fn run_proof(
+        &mut self,
         proof: &AletheProof,
         handler: &mut impl RuleHandler,
-    ) -> Result<Refutation, Error> {
-        let mut refutation = None;
+    ) -> Result<ThmId, Error> {
+        self.dialect = Dialect::Alethe;
         for command in proof.commands() {
             match command {
                 AletheCommand::Assume { id, term } => {
                     let term = self.term(term)?;
                     let formula = Lit::positive(term.reference.get());
-                    self.match_assertion(formula)?;
+                    match self.frames.last() {
+                        // An outermost assumption must be one of the problem
+                        // assertions. A frame-local one must not be checked
+                        // against them: it is a subformula, and 3 of 490
+                        // measured frames assume an assertion's negation.
+                        None => self.match_assertion(formula)?,
+                        Some(frame) if frame.sealed => {
+                            return Err(Error::Frame {
+                                frame: frame.id.clone(),
+                                message: format!("assume {id:?} follows the frame's first step"),
+                            });
+                        }
+                        Some(_) => {}
+                    }
                     let theorem = self.kernel.identity(formula)?;
-                    self.insert_step(id, theorem)?;
+                    self.bind_step(id, theorem, false)?;
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.assumptions.push((id.clone(), formula));
+                    }
                 }
                 AletheCommand::Step {
                     id,
@@ -662,6 +1465,10 @@ impl Replayer {
                     args,
                     discharge,
                 } => {
+                    if self.frames.last().is_some_and(|frame| frame.id == *id) {
+                        self.close_frame(id, clause, rule, premises, args, discharge)?;
+                        continue;
+                    }
                     let built_in_rejects_args = !args.is_empty()
                         && matches!(
                             rule.as_str(),
@@ -681,37 +1488,67 @@ impl Replayer {
                                 | "distinct_elim"
                                 | "evaluate"
                                 | "false"
+                                | "and_neg"
+                                | "and_intro"
+                                | "or"
+                                | "not_and"
+                                | "not_not"
+                                | "contraction"
+                                | "reordering"
+                                | "equiv1"
+                                | "equiv2"
+                                | "equiv_pos1"
+                                | "implies_neg1"
+                                | "implies_neg2"
+                                | "true"
+                                | "ite1"
+                                | "ite2"
+                                | "equiv_simplify"
+                                | "implies_simplify"
+                                | "or_simplify"
+                                | "subproof"
                         );
+                    // Only `subproof`, dispatched above, discharges anything.
                     if !discharge.is_empty() || built_in_rejects_args {
                         return Err(Error::Unsupported {
                             message: format!("{rule} attributes"),
                         });
                     }
-                    let clause = clause
-                        .iter()
-                        .map(|term| self.term(term).map(Term::literal))
-                        .collect::<Result<Vec<_>, _>>()?;
+                    let clause = self.lower_clause(clause)?;
                     let premises = premises
                         .iter()
-                        .map(|name| {
-                            self.steps
-                                .get(name)
-                                .copied()
-                                .ok_or_else(|| Error::Malformed {
-                                    message: format!("unknown premise {name:?}"),
-                                })
-                        })
+                        .map(|name| self.resolve_premise(id, name))
                         .collect::<Result<Vec<_>, _>>()?;
-                    let theorem = self.apply_rule(rule, &clause, &premises, args, handler)?;
+                    let theorem = self
+                        .apply_rule(rule, &clause, &premises, args, handler)
+                        .map_err(|error| error.at_step(id))?;
                     let theorem = self.check_clause(id, theorem, &clause)?;
-                    self.insert_step(id, theorem)?;
-                    if clause.is_empty() {
-                        refutation = Some(theorem);
+                    self.record_rule(rule, args);
+                    self.bind_step(id, theorem, true)?;
+                    // Alethe Definition 7.2 puts the empty clause in the
+                    // outermost proof, and an inner `(cl)` is a frame-local
+                    // contradiction under frame-local assumptions.
+                    if clause.is_empty() && self.frames.is_empty() {
+                        self.refutation = Some(theorem);
                     }
                 }
-                AletheCommand::Anchor { .. } => {
-                    return Err(Error::Unsupported {
-                        message: "anchor".to_owned(),
+                AletheCommand::Anchor { step, args } => {
+                    if !args.is_empty() {
+                        return Err(Error::Unsupported {
+                            message: "anchor context arguments, which bind, sko_ex, sko_forall, let and onepoint need and this replayer has no substitution model for".to_owned(),
+                        });
+                    }
+                    if self.seen.contains(step) {
+                        return Err(Error::Malformed {
+                            message: format!("duplicate step {step:?}"),
+                        });
+                    }
+                    self.frames.push(Frame {
+                        id: step.clone(),
+                        assumptions: Vec::new(),
+                        bound: Vec::new(),
+                        last: None,
+                        sealed: false,
                     });
                 }
                 AletheCommand::DefineFun { .. } => {
@@ -721,25 +1558,252 @@ impl Replayer {
                 }
             }
         }
-        let theorem = refutation.ok_or(Error::NoRefutation)?;
+        if let Some(frame) = self.frames.last() {
+            return Err(Error::Frame {
+                frame: frame.id.clone(),
+                message: "anchor is never closed".to_owned(),
+            });
+        }
+        let theorem = self.refutation.ok_or(Error::NoRefutation)?;
         for &(source, target) in &self.assertion_transports {
             self.kernel.convert_theorem(theorem, source, target)?;
         }
         self.kernel.weaken(theorem, &self.assertions, &[])?;
         self.kernel.contract_theorem(theorem)?;
         self.check_exact_goal(theorem)?;
+        Ok(theorem)
+    }
+
+    fn ingest_proof(
+        mut self,
+        proof: &AletheProof,
+        handler: &mut impl RuleHandler,
+    ) -> Result<Refutation, Error> {
+        let theorem = self.run_proof(proof, handler)?;
         Ok(Refutation {
             kernel: self.kernel,
+            logic: self.logic,
             theorem,
             assertions: self.assertions,
+            rules: self.rules,
         })
     }
 
-    fn insert_step(&mut self, id: &str, theorem: ThmId) -> Result<(), Error> {
-        if self.steps.insert(id.to_owned(), theorem).is_some() {
+    /// Lowers a `QF_UFLIA` proof up to its first arithmetic rule.
+    ///
+    /// Deriving the empty clause without needing arithmetic is itself an
+    /// error: this build has no checked arithmetic it could have used, so a
+    /// proof that needed none is evidence the lowering, not the proof, is
+    /// wrong. The guard is "a refutation was derived", not "the proof reached
+    /// its end", so a proof that refutes and then states an arithmetic step is
+    /// refused too.
+    fn lower_proof(mut self, proof: &AletheProof) -> Result<Lowering, Error> {
+        let outcome = self.run_proof(proof, &mut RejectUnknownRules);
+        if self.refutation.is_some() {
+            return Err(Error::NoArithmeticGap);
+        }
+        match outcome {
+            Ok(_) => Err(Error::NoArithmeticGap),
+            Err(Error::ArithmeticTheoryMissing { step, rule, domain }) => Ok(Lowering {
+                kernel: self.kernel,
+                logic: self.logic,
+                assertions: self.assertions,
+                steps: self.seen.len(),
+                rules: self.rules,
+                gap: ArithmeticGap { step, rule, domain },
+            }),
+            Err(other) => Err(other),
+        }
+    }
+
+    fn lower_clause(&mut self, clause: &[Expr]) -> Result<Vec<Lit>, Error> {
+        clause
+            .iter()
+            .map(|term| self.term(term).map(Term::literal))
+            .collect()
+    }
+
+    /// Closes the innermost frame with its `subproof` step.
+    fn close_frame(
+        &mut self,
+        id: &str,
+        clause: &[Expr],
+        rule: &str,
+        premises: &[String],
+        args: &[Expr],
+        discharge: &[String],
+    ) -> Result<(), Error> {
+        if rule != "subproof" {
+            return Err(Error::Frame {
+                frame: id.to_owned(),
+                message: format!(
+                    "closed by rule {rule:?}; only subproof concludes a frame in this replayer"
+                ),
+            });
+        }
+        if !premises.is_empty() || !args.is_empty() {
+            return Err(Error::Frame {
+                frame: id.to_owned(),
+                message: "subproof takes neither premises nor args".to_owned(),
+            });
+        }
+        let clause = self.lower_clause(clause)?;
+        let frame = self.frames.pop().expect("the caller matched an open frame");
+        // Frame-local indices leave scope with the frame, so no later step can
+        // name an inner theorem at all. The theorems themselves are retained:
+        // `Kernel::remove_theorem` reuses slots, so a stale handle would alias
+        // a different theorem.
+        for bound in &frame.bound {
+            self.steps.remove(bound);
+        }
+        let theorem = self.subproof(&frame, &clause, discharge)?;
+        let theorem = self.check_clause(id, theorem, &clause)?;
+        self.record_rule(rule, args);
+        self.bind_step(id, theorem, true)
+    }
+
+    /// Discharges a frame's assumptions into the clause Alethe states.
+    ///
+    /// Alethe Rule 10 concludes `not phi_1, ..., not phi_n, psi` from a
+    /// frame's assumptions and its last step. In this multi-conclusion sequent
+    /// kernel that is `not_right` applied once per assumption; the rest
+    /// reconciles the sequent-level polarity with the object-level `tm.not`
+    /// row the clause names, and checks well-formedness.
+    ///
+    /// A lying `:discharge` list cannot be unsound: `weaken` then `not_right`
+    /// on a literal absent from the antecedent composes to plain right
+    /// weakening. What keeps a frame-local assumption out of the refutation is
+    /// that assumptions enter only through `Kernel::identity`, so they sit in
+    /// the antecedent and leave it only by discharge or proof, and
+    /// `check_exact_goal` requires the final antecedent to be the assertion
+    /// set exactly.
+    fn subproof(
+        &mut self,
+        frame: &Frame,
+        clause: &[Lit],
+        discharge: &[String],
+    ) -> Result<ThmId, Error> {
+        let ids = frame
+            .assumptions
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect::<Vec<_>>();
+        if discharge.len() != ids.len() || discharge.iter().zip(&ids).any(|(named, id)| named != id)
+        {
+            return Err(Error::Frame {
+                frame: frame.id.clone(),
+                message: format!(
+                    "discharge {discharge:?} does not name the frame assumptions {ids:?} in order"
+                ),
+            });
+        }
+        if clause.len() < ids.len() {
+            return Err(Error::Frame {
+                frame: frame.id.clone(),
+                message: format!(
+                    "clause has {} literals, fewer than the {} discharged assumptions",
+                    clause.len(),
+                    ids.len()
+                ),
+            });
+        }
+        let last = frame.last.ok_or_else(|| Error::Frame {
+            frame: frame.id.clone(),
+            message: "frame has no step to conclude".to_owned(),
+        })?;
+        // `resolution` returns a single premise unchanged, so a frame's last
+        // theorem can alias an earlier step's, and the discharge below mutates
+        // in place. The copy is mandatory, not hygiene.
+        let mut theorem = self.kernel.copy_theorem(last)?;
+        self.kernel.contract_theorem(theorem)?;
+        for (index, &(_, assumption)) in frame.assumptions.iter().enumerate() {
+            let stated = clause[index];
+            // The clause literal must be the negation of this assumption and
+            // nothing else. Without this precheck a stated literal such as
+            // `(or (not a) x)` would fold soundly but would consume `x` from
+            // the frame's own conclusion, which is not what Alethe means.
+            if strip_negations(&self.kernel, stated)?
+                != strip_negations(&self.kernel, assumption.negated())?
+            {
+                return Err(Error::Frame {
+                    frame: frame.id.clone(),
+                    message: format!(
+                        "clause literal {index} is not the negation of discharged assumption {:?}",
+                        ids[index]
+                    ),
+                });
+            }
+            // Weaken only when the assumption is absent, because `not_right`
+            // removes exactly one antecedent occurrence; weakening an already
+            // present literal would leave the original undischarged.
+            if !has_unit_premise(&self.kernel, theorem, assumption)? {
+                self.kernel.weaken(theorem, &[assumption], &[])?;
+            }
+            self.kernel.not_right(theorem, assumption)?;
+            if stated != assumption.negated() {
+                // `not_right` leaves the sequent-level negative literal on the
+                // assumption's own row, and the clause spells the same literal
+                // as a different row. Folding reaches it directly when that
+                // row's leaves are the sequent-level literal; when the
+                // assumption is itself a negation, which 419 of 1368 measured
+                // discharged assumptions are, the leaves lie one level deeper
+                // and the conclusion must be flattened to them first.
+                theorem = if let Ok(folded) = self.kernel.fold_conclusion(theorem, stated) {
+                    folded
+                } else {
+                    let flattened = self
+                        .kernel
+                        .flatten_conclusion(theorem, assumption.negated())?;
+                    self.kernel.fold_conclusion(flattened, stated)?
+                };
+            }
+        }
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// Records one rule, and its RARE name, as checked.
+    fn record_rule(&mut self, rule: &str, args: &[Expr]) {
+        self.rules.insert(rule.to_owned());
+        if rule == "rare_rewrite"
+            && let Some(name) = args.first().and_then(string_value)
+        {
+            self.rules.insert(name.to_owned());
+        }
+    }
+
+    /// Resolves one premise index in the current scope.
+    fn resolve_premise(&self, step: &str, premise: &str) -> Result<ThmId, Error> {
+        if let Some(theorem) = self.steps.get(premise).copied() {
+            return Ok(theorem);
+        }
+        if self.seen.contains(premise) {
+            return Err(Error::OutOfScopePremise {
+                step: step.to_owned(),
+                premise: premise.to_owned(),
+            });
+        }
+        Err(Error::Malformed {
+            message: format!("unknown premise {premise:?}"),
+        })
+    }
+
+    /// Binds one Alethe index to a checked theorem in the current scope.
+    fn bind_step(&mut self, id: &str, theorem: ThmId, is_step: bool) -> Result<(), Error> {
+        // Indices are globally unique in Alethe, and `seen` is never pruned,
+        // so uniqueness still holds after a frame drops its bindings.
+        if !self.seen.insert(id.to_owned()) {
             return Err(Error::Malformed {
                 message: format!("duplicate step {id:?}"),
             });
+        }
+        self.steps.insert(id.to_owned(), theorem);
+        if let Some(frame) = self.frames.last_mut() {
+            frame.bound.push(id.to_owned());
+            if is_step {
+                frame.last = Some(theorem);
+                frame.sealed = true;
+            }
         }
         Ok(())
     }
@@ -765,6 +1829,35 @@ impl Replayer {
         args: &[Expr],
         handler: &mut impl RuleHandler,
     ) -> Result<ThmId, Error> {
+        // Arithmetic rules are refused before any argument is inspected, and
+        // with their own error, so that "this build has no arithmetic" is a
+        // machine-checkable property rather than an unwritten handler. The
+        // classification is by rule family, so a family member this build has
+        // never seen never reaches the handler arm below.
+        if let Some(domain) = arithmetic_rule_domain(rule) {
+            return Err(Error::ArithmeticTheoryMissing {
+                step: String::new(),
+                rule: rule.to_owned(),
+                domain: domain.to_owned(),
+            });
+        }
+        // Premise arity is checked centrally, before dispatch: a handler
+        // that ignored a premise the producer thought load-bearing would be
+        // fail-open, which is the posture this module does not have.
+        let arity = match rule {
+            "refl" | "distinct_elim" | "equiv_pos2" | "or_pos" | "xor_pos2" | "evaluate"
+            | "false" | "and_pos" | "and_neg" | "or_neg" | "not_not" | "equiv_pos1"
+            | "implies_neg1" | "implies_neg2" | "true" | "equiv_simplify" | "implies_simplify"
+            | "or_simplify" => Some(0),
+            "symm" | "implies" | "and" | "xor1" | "xor2" | "not_symm" | "or" | "not_and"
+            | "not_or" | "contraction" | "reordering" | "equiv1" | "equiv2" | "ite1" | "ite2" => {
+                Some(1)
+            }
+            _ => None,
+        };
+        if let Some(expected) = arity {
+            require_premises(rule, premises, expected)?;
+        }
         match rule {
             "resolution" | "th_resolution" => self.resolution(premises),
             "refl" | "distinct_elim" => self.reflexivity(clause),
@@ -774,12 +1867,32 @@ impl Replayer {
             "equiv_pos2" => self.equiv_pos2(clause),
             "implies" => self.implies(premises),
             "or_pos" => self.or_pos(clause),
+            "and_pos" => self.and_positive(clause, args),
+            "and_neg" => self.and_negative(clause),
+            "and_intro" => self.and_introduction(clause, premises),
+            "or_neg" => self.or_negative(clause, args),
+            "or" => self.or_elimination(clause, premises),
+            "not_and" => self.not_and(clause, premises),
+            "not_or" => self.not_or(clause, premises, args),
+            "not_not" => self.not_not(clause),
+            "contraction" | "reordering" => self.restate_premise(rule, premises),
+            "equiv1" => self.equiv_one(premises),
+            "equiv2" => self.equiv_two(premises),
+            "equiv_pos1" => self.equiv_pos1(clause),
+            "implies_neg1" => self.implies_negative(clause, true),
+            "implies_neg2" => self.implies_negative(clause, false),
+            "true" => self.true_rule(clause),
+            "ite1" => self.ite_elimination(premises, false),
+            "ite2" => self.ite_elimination(premises, true),
+            "equiv_simplify" => self.equiv_simplify(clause),
+            "implies_simplify" => self.implies_simplify(clause),
+            "or_simplify" => self.or_simplify(clause),
             "and" => self.and_elimination(clause, premises, args),
             "xor1" => self.xor_one(clause, premises),
             "xor2" => self.xor_two(clause, premises),
             "xor_pos2" => self.xor_positive_two(clause, premises),
             "not_symm" => self.not_symmetry(clause, premises),
-            "rare_rewrite" => self.rare_rewrite(clause, args),
+            "rare_rewrite" => self.rare_rewrite(clause, premises, args, handler),
             "evaluate" => self.evaluate(clause),
             "false" => self.false_rule(clause),
             // A `hole` step is a solver trust placeholder carrying no checked
@@ -800,6 +1913,927 @@ impl Replayer {
                     message: format!("rule {other:?}"),
                 }),
         }
+    }
+
+    /// Returns the stated clause as a set of canonical literals.
+    ///
+    /// Canonicalization pushes an object-level `tm.not` row into the
+    /// literal's polarity, so a clause literal and the sequent literal a
+    /// checked rule produces compare equal however cvc5 printed it.
+    fn stated_clause_set(&self, clause: &[Lit]) -> Result<BTreeSet<Lit>, Error> {
+        clause
+            .iter()
+            .map(|literal| canonical_clause_literal(&self.kernel, *literal))
+            .collect()
+    }
+
+    /// Expands conclusion literals until the stated clause is reached.
+    ///
+    /// Expansion is directed by the stated clause rather than run to
+    /// exhaustion, which keeps a disjunct Alethe states as one literal, such
+    /// as the left operand of `(or (or a b) c)`, intact. Only a positive
+    /// negation row and the requested head at the requested polarity are
+    /// expanded, so no other connective is flattened by accident.
+    fn expand_towards(
+        &mut self,
+        mut theorem: ThmId,
+        stated: &BTreeSet<Lit>,
+        head: Op2,
+        want_positive: bool,
+    ) -> Result<ThmId, Error> {
+        loop {
+            let mut expandable = None;
+            for literal in conclusion_literals(&self.kernel, theorem)? {
+                if stated.contains(&canonical_clause_literal(&self.kernel, literal)?) {
+                    continue;
+                }
+                let formula = reference(literal.magnitude())?;
+                let arena = self.kernel.arena();
+                let negation = literal.is_positive() && arena.op1(formula) == Some(Op1::Not);
+                let requested =
+                    literal.is_positive() == want_positive && arena.op2(formula) == Some(head);
+                if negation || requested {
+                    expandable = Some(literal);
+                    break;
+                }
+            }
+            let Some(literal) = expandable else {
+                break;
+            };
+            theorem = self.kernel.expand_conclusion(theorem, literal, None)?;
+        }
+        Ok(theorem)
+    }
+
+    /// Folds a sequent-level literal back into the object-level row Alethe
+    /// states for it.
+    ///
+    /// `fold_conclusion` reaches the leaves of the whole disjunctive tree, so
+    /// a conclusion stated one level up has to be flattened to those leaves
+    /// first. Folding is attempted before flattening because a leaf that is
+    /// itself `Or`- or `Imp`-headed cannot be flattened at all, and neither
+    /// operation mutates the theorem when it fails.
+    fn fold_into(&mut self, theorem: ThmId, leaf: Lit, folded: Lit) -> Result<ThmId, Error> {
+        if let Ok(result) = self.kernel.fold_conclusion(theorem, folded) {
+            return Ok(result);
+        }
+        let flattened = self.kernel.flatten_conclusion(theorem, leaf)?;
+        Ok(self.kernel.fold_conclusion(flattened, folded)?)
+    }
+
+    /// Makes `target` occur literally in a theorem's conclusion.
+    ///
+    /// Three spellings reach the same proposition: the literal itself, a
+    /// syntactically equal row, and the sequent-level literal an object-level
+    /// negation row folds to.
+    fn align_conclusion(&mut self, theorem: ThmId, target: Lit) -> Result<ThmId, Error> {
+        let literals = conclusion_literals(&self.kernel, theorem)?;
+        if literals.contains(&target) {
+            return Ok(theorem);
+        }
+        let wanted = reference(target.magnitude())?;
+        for literal in &literals {
+            if literal.is_positive() != target.is_positive() {
+                continue;
+            }
+            let candidate = reference(literal.magnitude())?;
+            if candidate != wanted && join_same_syntax(&mut self.kernel, candidate, wanted).is_ok()
+            {
+                self.kernel
+                    .convert_conclusions(theorem, candidate, wanted)?;
+                return Ok(theorem);
+            }
+        }
+        let leaf = canonical_clause_literal(&self.kernel, target)?;
+        self.fold_into(theorem, leaf, target)
+    }
+
+    /// Copies a premise and states its conclusion as `target`.
+    ///
+    /// The copy is mandatory rather than hygiene: `resolution` returns a
+    /// single premise unchanged, so a premise handle can alias an earlier
+    /// step's theorem, and the conversion below mutates in place.
+    fn premise_stating(&mut self, premise: ThmId, target: Lit) -> Result<ThmId, Error> {
+        let theorem = self.kernel.copy_theorem(premise)?;
+        self.align_conclusion(theorem, target)
+    }
+
+    /// Derives `phi_i |- (phi_1 or ... or phi_n)` for one flattened disjunct.
+    fn disjunction_injection(
+        &mut self,
+        disjunction: Ref,
+        index: usize,
+    ) -> Result<(Ref, ThmId), Error> {
+        let Some((left, right)) = binary_operands(&self.kernel, disjunction, Op2::Or) else {
+            if index != 0 {
+                return Err(Error::Malformed {
+                    message: "disjunct index is outside the disjunction".to_owned(),
+                });
+            }
+            return Ok((
+                disjunction,
+                self.kernel.identity(Lit::positive(disjunction.get()))?,
+            ));
+        };
+        let left_arity = disjunction_arity(&self.kernel, left);
+        let (selected, theorem, other) = if index < left_arity {
+            let (selected, theorem) = self.disjunction_injection(left, index)?;
+            (selected, theorem, right)
+        } else {
+            let (selected, theorem) = self.disjunction_injection(right, index - left_arity)?;
+            (selected, theorem, left)
+        };
+        self.kernel
+            .weaken(theorem, &[], &[Lit::positive(other.get())])?;
+        let theorem = self
+            .kernel
+            .or_right(theorem, Lit::positive(disjunction.get()))?;
+        Ok((selected, theorem))
+    }
+
+    /// Derives `phi_1, ..., phi_n |- (phi_1 and ... and phi_n)`.
+    fn conjunction_introduction(&mut self, conjunction: Ref) -> Result<(ThmId, Vec<Lit>), Error> {
+        match binary_operands(&self.kernel, conjunction, Op2::And) {
+            None => {
+                let literal = Lit::positive(conjunction.get());
+                Ok((self.kernel.identity(literal)?, vec![literal]))
+            }
+            Some((left, right)) => {
+                let (left_theorem, mut leaves) = self.conjunction_introduction(left)?;
+                let (right_theorem, right_leaves) = self.conjunction_introduction(right)?;
+                let theorem = self.kernel.and_right(
+                    left_theorem,
+                    right_theorem,
+                    Lit::positive(conjunction.get()),
+                )?;
+                leaves.extend(right_leaves);
+                Ok((theorem, leaves))
+            }
+        }
+    }
+
+    /// Introduces a conjunction from one checked premise per conjunct.
+    fn conjunction_from_premises(
+        &mut self,
+        conjunction: Ref,
+        premises: &[ThmId],
+        cursor: &mut usize,
+    ) -> Result<ThmId, Error> {
+        if let Some((left, right)) = binary_operands(&self.kernel, conjunction, Op2::And) {
+            let left_theorem = self.conjunction_from_premises(left, premises, cursor)?;
+            let right_theorem = self.conjunction_from_premises(right, premises, cursor)?;
+            return Ok(self.kernel.and_right(
+                left_theorem,
+                right_theorem,
+                Lit::positive(conjunction.get()),
+            )?);
+        }
+        let premise = premises
+            .get(*cursor)
+            .copied()
+            .ok_or_else(|| Error::Malformed {
+                message: "and_intro states more conjuncts than it has premises".to_owned(),
+            })?;
+        *cursor += 1;
+        self.premise_stating(premise, Lit::positive(conjunction.get()))
+    }
+
+    /// Returns the leaves `fold_conclusion` would demand for `formula`.
+    fn disjunct_leaves(&mut self, formula: Lit) -> Result<Vec<Lit>, Error> {
+        let theorem = self.kernel.identity(formula)?;
+        let theorem = self.kernel.flatten_conclusion(theorem, formula)?;
+        conclusion_literals(&self.kernel, theorem)
+    }
+
+    /// Proves `|- c, (c = false)` and `|- not c, (c = true)`.
+    ///
+    /// Both halves are ordinary checked derivations over `not_left`,
+    /// `false_left`, `deduct_antisym` and `not_right`, and the equality rows
+    /// are the conditional's own, so a branch law cuts against them directly.
+    fn boolean_case_split(&mut self, conditional: Conditional) -> Result<(ThmId, ThmId), Error> {
+        let condition = Lit::positive(conditional.condition.get());
+        let falsehood = self.kernel.bool(self.bool_ty, false)?;
+        let when_false = self.equality_under_negation(conditional.condition, falsehood)?;
+        let stated = positive_theorem_equality(&self.kernel, when_false)?;
+        let when_false = self.convert_equality(when_false, stated, conditional.condition_false)?;
+        self.kernel.not_right(when_false, condition.negated())?;
+
+        let truth = self.kernel.bool(self.bool_ty, true)?;
+        let assumption = self.kernel.identity(condition)?;
+        let when_true = self.equality_to_true(
+            conditional.condition,
+            truth,
+            assumption,
+            conditional.condition_true,
+        )?;
+        self.kernel.not_right(when_true, condition)?;
+        Ok((when_false, when_true))
+    }
+
+    /// Returns the lowered conditional whose term the proof names.
+    fn find_conditional(&mut self, term: Ref) -> Result<Conditional, Error> {
+        let cached = self.conditionals.clone();
+        cached
+            .into_iter()
+            .find_map(|(_, _, _, conditional)| {
+                (conditional.term == term)
+                    .then_some(conditional)
+                    .or_else(|| {
+                        join_same_syntax(&mut self.kernel, conditional.term, term)
+                            .ok()
+                            .map(|_| conditional)
+                    })
+            })
+            .ok_or_else(|| Error::Malformed {
+                message: "step does not name a lowered conditional".to_owned(),
+            })
+    }
+
+    /// `|- not (phi_1 and ... and phi_n), phi_i`, reusing the `and` projection.
+    fn and_positive(&mut self, clause: &[Lit], args: &[Expr]) -> Result<ThmId, Error> {
+        let index = index_argument("and_pos", args)?;
+        let [conjunction_literal, _] = clause else {
+            return Err(Error::Malformed {
+                message: "and_pos requires two literals".to_owned(),
+            });
+        };
+        // cvc5 states the negated conjunction through a `:named` alias, which
+        // resolves to a positive `tm.not` row rather than to the sequent-level
+        // negative literal, so the polarity is read after canonicalization.
+        let conjunction_literal = &canonical_clause_literal(&self.kernel, *conjunction_literal)?;
+        if conjunction_literal.is_positive() {
+            return Err(Error::Malformed {
+                message: "and_pos requires a negated conjunction".to_owned(),
+            });
+        }
+        let conjunction = reference(conjunction_literal.magnitude())?;
+        let (_, theorem) = self.and_projection(conjunction, index)?;
+        self.kernel
+            .not_right(theorem, Lit::positive(conjunction.get()))?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// `|- (phi_1 and ... and phi_n), not phi_1, ..., not phi_n`.
+    fn and_negative(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let Some((conjunction_literal, conjuncts)) = clause.split_first() else {
+            return Err(Error::Malformed {
+                message: "and_neg requires a clause".to_owned(),
+            });
+        };
+        if !conjunction_literal.is_positive() {
+            return Err(Error::Malformed {
+                message: "and_neg requires a positive conjunction".to_owned(),
+            });
+        }
+        let conjunction = reference(conjunction_literal.magnitude())?;
+        let (theorem, leaves) = self.conjunction_introduction(conjunction)?;
+        if leaves.len() != conjuncts.len() {
+            return Err(Error::Malformed {
+                message: format!(
+                    "and_neg states {} conjuncts, the conjunction has {}",
+                    conjuncts.len(),
+                    leaves.len()
+                ),
+            });
+        }
+        for leaf in leaves {
+            self.kernel.not_right(theorem, leaf)?;
+        }
+        Ok(theorem)
+    }
+
+    /// `|- (phi_1 and ... and phi_n)` from one checked premise per conjunct.
+    fn and_introduction(&mut self, clause: &[Lit], premises: &[ThmId]) -> Result<ThmId, Error> {
+        let conjunction = positive_unit(clause, "and_intro")?;
+        let mut cursor = 0;
+        let theorem = self.conjunction_from_premises(conjunction, premises, &mut cursor)?;
+        if cursor != premises.len() {
+            return Err(Error::Malformed {
+                message: format!(
+                    "and_intro states {cursor} conjuncts and {} premises",
+                    premises.len()
+                ),
+            });
+        }
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// `|- (phi_1 or ... or phi_n), not phi_i`.
+    fn or_negative(&mut self, clause: &[Lit], args: &[Expr]) -> Result<ThmId, Error> {
+        let index = index_argument("or_neg", args)?;
+        let [disjunction_literal, _] = clause else {
+            return Err(Error::Malformed {
+                message: "or_neg requires two literals".to_owned(),
+            });
+        };
+        if !disjunction_literal.is_positive() {
+            return Err(Error::Malformed {
+                message: "or_neg requires a positive disjunction".to_owned(),
+            });
+        }
+        let disjunction = reference(disjunction_literal.magnitude())?;
+        let (selected, theorem) = self.disjunction_injection(disjunction, index)?;
+        self.kernel
+            .not_right(theorem, Lit::positive(selected.get()))?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// `|- phi_1, ..., phi_n` from a disjunction premise.
+    fn or_elimination(&mut self, clause: &[Lit], premises: &[ThmId]) -> Result<ThmId, Error> {
+        let [premise] = premises else {
+            return Err(Error::Malformed {
+                message: "or requires one premise".to_owned(),
+            });
+        };
+        let stated = self.stated_clause_set(clause)?;
+        let theorem = self.kernel.copy_theorem(*premise)?;
+        let theorem = self.expand_towards(theorem, &stated, Op2::Or, true)?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// `|- not phi_1, ..., not phi_n` from a negated conjunction premise.
+    fn not_and(&mut self, clause: &[Lit], premises: &[ThmId]) -> Result<ThmId, Error> {
+        let [premise] = premises else {
+            return Err(Error::Malformed {
+                message: "not_and requires one premise".to_owned(),
+            });
+        };
+        let stated = self.stated_clause_set(clause)?;
+        let theorem = self.kernel.copy_theorem(*premise)?;
+        let theorem = self.expand_towards(theorem, &stated, Op2::And, false)?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// `|- not phi_i` from a negated disjunction premise.
+    fn not_or(
+        &mut self,
+        clause: &[Lit],
+        premises: &[ThmId],
+        args: &[Expr],
+    ) -> Result<ThmId, Error> {
+        let index = index_argument("not_or", args)?;
+        let [premise] = premises else {
+            return Err(Error::Malformed {
+                message: "not_or requires one premise".to_owned(),
+            });
+        };
+        if clause.len() != 1 {
+            return Err(Error::Malformed {
+                message: "not_or requires a unit clause".to_owned(),
+            });
+        }
+        let conclusions = conclusion_literals(&self.kernel, *premise)?;
+        let [stated] = conclusions.as_slice() else {
+            return Err(Error::Malformed {
+                message: "not_or premise must be a unit clause".to_owned(),
+            });
+        };
+        let mut source = self.kernel.copy_theorem(*premise)?;
+        let mut literal = *stated;
+        // cvc5 states the premise either as the sequent-level negative
+        // literal or as a positive `tm.not` row; one expansion relates them.
+        if literal.is_positive()
+            && self.kernel.arena().op1(reference(literal.magnitude())?) == Some(Op1::Not)
+        {
+            source = self.kernel.expand_conclusion(source, literal, None)?;
+            let expanded = conclusion_literals(&self.kernel, source)?;
+            let [only] = expanded.as_slice() else {
+                return Err(Error::Malformed {
+                    message: "not_or premise must be a unit clause".to_owned(),
+                });
+            };
+            literal = *only;
+        }
+        let disjunction = reference(literal.magnitude())?;
+        if literal.is_positive() || self.kernel.arena().op2(disjunction) != Some(Op2::Or) {
+            return Err(Error::Malformed {
+                message: "not_or premise must conclude a negated disjunction".to_owned(),
+            });
+        }
+        let (selected, injection) = self.disjunction_injection(disjunction, index)?;
+        let theorem = self
+            .kernel
+            .resolve(injection, source, Lit::positive(disjunction.get()))?;
+        self.kernel
+            .not_right(theorem, Lit::positive(selected.get()))?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// `|- not not not phi, phi`.
+    fn not_not(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let [negated, proposition] = clause else {
+            return Err(Error::Malformed {
+                message: "not_not requires two literals".to_owned(),
+            });
+        };
+        // One level only: the clause literal is the negation of the double
+        // negation, and that double negation is the row this discharges.
+        let triple = canonical_clause_literal(&self.kernel, *negated)?.negated();
+        if !triple.is_positive() {
+            return Err(Error::Malformed {
+                message: "not_not requires a negated triple negation".to_owned(),
+            });
+        }
+        let theorem = self.kernel.identity(triple)?;
+        let theorem = self.kernel.flatten_conclusion(theorem, triple)?;
+        let theorem = self.align_conclusion(theorem, *proposition)?;
+        self.kernel.not_right(theorem, triple)?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// Restates one premise, letting the exact-clause postcheck do the work.
+    ///
+    /// `contraction` removes duplicate literals and `reordering` permutes
+    /// them; an Alethe clause denotes a disjunction, so both are the identity
+    /// on the checked sequent. Neither may return the premise handle itself,
+    /// which a later step may still cite under its own stated clause.
+    fn restate_premise(&mut self, rule: &str, premises: &[ThmId]) -> Result<ThmId, Error> {
+        let [premise] = premises else {
+            return Err(Error::Malformed {
+                message: format!("{rule} requires one premise"),
+            });
+        };
+        let theorem = self.kernel.copy_theorem(*premise)?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// `|- not phi_1, phi_2` from a premise stating `(= phi_1 phi_2)`.
+    fn equiv_one(&mut self, premises: &[ThmId]) -> Result<ThmId, Error> {
+        let [premise] = premises else {
+            return Err(Error::Malformed {
+                message: "equiv1 requires one premise".to_owned(),
+            });
+        };
+        let equality = positive_theorem_equality(&self.kernel, *premise)?;
+        let [_domain, left, _right] = equality_children(&self.kernel, equality)?;
+        let assumption = self.kernel.identity(Lit::positive(left.get()))?;
+        let theorem = self.kernel.eq_mp(*premise, assumption)?;
+        self.kernel.not_right(theorem, Lit::positive(left.get()))?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// `|- phi_1, not phi_2` from a premise stating `(= phi_1 phi_2)`.
+    fn equiv_two(&mut self, premises: &[ThmId]) -> Result<ThmId, Error> {
+        let [premise] = premises else {
+            return Err(Error::Malformed {
+                message: "equiv2 requires one premise".to_owned(),
+            });
+        };
+        let reversed = equality_symmetry(&mut self.kernel, self.bool_ty, *premise)?;
+        let [_domain, right, _left] = equality_children(&self.kernel, reversed.equality)?;
+        let assumption = self.kernel.identity(Lit::positive(right.get()))?;
+        let theorem = self.kernel.eq_mp(reversed.theorem, assumption)?;
+        self.kernel.not_right(theorem, Lit::positive(right.get()))?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// `|- not (= phi_1 phi_2), phi_1, not phi_2`.
+    fn equiv_pos1(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let [not_equality, _, _] = clause else {
+            return Err(Error::Malformed {
+                message: "equiv_pos1 requires three literals".to_owned(),
+            });
+        };
+        let not_equality = &canonical_clause_literal(&self.kernel, *not_equality)?;
+        if not_equality.is_positive() {
+            return Err(Error::Malformed {
+                message: "equiv_pos1 has invalid polarities".to_owned(),
+            });
+        }
+        let equality = reference(not_equality.magnitude())?;
+        let [_domain, _left, right] = equality_children(&self.kernel, equality)?;
+        let assumption = self.kernel.identity(not_equality.negated())?;
+        let reversed = equality_symmetry(&mut self.kernel, self.bool_ty, assumption)?;
+        let right_assumption = self.kernel.identity(Lit::positive(right.get()))?;
+        let theorem = self.kernel.eq_mp(reversed.theorem, right_assumption)?;
+        self.kernel.not_right(theorem, not_equality.negated())?;
+        self.kernel.not_right(theorem, Lit::positive(right.get()))?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// `|- (phi_1 => phi_2), phi_1` and `|- (phi_1 => phi_2), not phi_2`.
+    fn implies_negative(&mut self, clause: &[Lit], antecedent_side: bool) -> Result<ThmId, Error> {
+        let [implication_literal, _] = clause else {
+            return Err(Error::Malformed {
+                message: "implies_neg requires two literals".to_owned(),
+            });
+        };
+        if !implication_literal.is_positive() {
+            return Err(Error::Malformed {
+                message: "implies_neg requires a positive implication".to_owned(),
+            });
+        }
+        let implication = reference(implication_literal.magnitude())?;
+        let Some((antecedent, consequent)) = binary_operands(&self.kernel, implication, Op2::Imp)
+        else {
+            return Err(Error::Malformed {
+                message: "implies_neg requires an implication".to_owned(),
+            });
+        };
+        let antecedent = Lit::positive(antecedent.get());
+        let consequent = Lit::positive(consequent.get());
+        let theorem = if antecedent_side {
+            let theorem = self.kernel.identity(antecedent)?;
+            self.kernel.weaken(theorem, &[], &[consequent])?;
+            self.kernel.imp_right(theorem, *implication_literal)?
+        } else {
+            let theorem = self.kernel.identity(consequent)?;
+            self.kernel.weaken(theorem, &[antecedent], &[])?;
+            let theorem = self.kernel.imp_right(theorem, *implication_literal)?;
+            self.kernel.not_right(theorem, consequent)?;
+            theorem
+        };
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// `|- true`.
+    fn true_rule(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let [literal] = clause else {
+            return Err(Error::Malformed {
+                message: "true requires one literal".to_owned(),
+            });
+        };
+        Ok(self.kernel.true_right(*literal)?)
+    }
+
+    /// `|- phi_1, phi_3` and `|- not phi_1, phi_2` from an `ite` premise.
+    ///
+    /// Each is one branch law under one case of the condition: the case split
+    /// proves `|- c, (c = false)`, the branch law proves
+    /// `(c = false) |- ite = phi_3`, and the premise proves `|- ite`.
+    fn ite_elimination(&mut self, premises: &[ThmId], when_true: bool) -> Result<ThmId, Error> {
+        let rule = if when_true { "ite2" } else { "ite1" };
+        let [premise] = premises else {
+            return Err(Error::Malformed {
+                message: format!("{rule} requires one premise"),
+            });
+        };
+        let conclusions = conclusion_literals(&self.kernel, *premise)?;
+        let [source] = conclusions.as_slice() else {
+            return Err(Error::Malformed {
+                message: format!("{rule} premise must be a unit clause"),
+            });
+        };
+        if !source.is_positive() {
+            return Err(Error::Malformed {
+                message: format!("{rule} premise must conclude a conditional"),
+            });
+        }
+        let conditional = self.find_conditional(reference(source.magnitude())?)?;
+        let condition = Lit::positive(conditional.condition.get());
+        let (when_false_split, when_true_split) = self.boolean_case_split(conditional)?;
+        let (split, equality, law, pivot) = if when_true {
+            (
+                when_true_split,
+                conditional.condition_true,
+                conditional_when_true(&mut self.kernel, self.bool_ty, conditional)?,
+                condition.negated(),
+            )
+        } else {
+            (
+                when_false_split,
+                conditional.condition_false,
+                conditional_when_false(&mut self.kernel, self.bool_ty, conditional)?,
+                condition,
+            )
+        };
+        let combined = self.kernel.cut(split, law, Lit::positive(equality.get()))?;
+        self.kernel.not_left(combined, pivot)?;
+        let premise = self.premise_stating(*premise, Lit::positive(conditional.term.get()))?;
+        let theorem = self.kernel.eq_mp(combined, premise)?;
+        self.kernel.not_right(theorem, pivot.negated())?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// The three Boolean equality simplifications cvc5 states.
+    ///
+    /// The family is open-ended in the Alethe specification, so an
+    /// unrecognized equation is rejected with its shape printed rather than
+    /// guessed at.
+    fn equiv_simplify(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let target = positive_unit(clause, "equiv_simplify")?;
+        let [_bool_ty, equality, result] = equality_children(&self.kernel, target)?;
+        if self.kernel.arena().tag(equality) != Some(Tag::Tm(TmTag::Eq)) {
+            return Err(Error::Unsupported {
+                message: "equiv_simplify over a non-equality".to_owned(),
+            });
+        }
+        let [_domain, left, right] = equality_children(&self.kernel, equality)?;
+        if self.kernel.arena().bool_value(result) == Some(true)
+            && join_same_syntax(&mut self.kernel, left, right).is_ok()
+        {
+            return self.reflexive_equality_is_true(clause);
+        }
+        match self.kernel.arena().bool_value(right) {
+            Some(true) => self.bool_eq_true(clause),
+            Some(false) => self.bool_eq_false(clause),
+            None => Err(Error::Unsupported {
+                message: format!(
+                    "equiv_simplify pattern relating {:?} and {:?}",
+                    self.kernel.arena().tag(equality),
+                    self.kernel.arena().tag(result)
+                ),
+            }),
+        }
+    }
+
+    /// `|- (= (= t t) true)`, shared with the `eq-refl` RARE rewrite.
+    fn reflexive_equality_is_true(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let target = positive_unit(clause, "eq-refl")?;
+        let [_bool_ty, proposition, truth] = equality_children(&self.kernel, target)?;
+        if self.kernel.arena().bool_value(truth) != Some(true) {
+            return Err(Error::Malformed {
+                message: "reflexive equality must rewrite to true".to_owned(),
+            });
+        }
+        let [_domain, left, right] = equality_children(&self.kernel, proposition)?;
+        join_same_syntax(&mut self.kernel, left, right)?;
+        let proved = self.kernel.refl(self.bool_ty, left)?;
+        let theorem = self.convert_equality(proved.theorem, proved.equality, proposition)?;
+        self.equality_to_true(proposition, truth, theorem, target)
+    }
+
+    /// `|- (= (=> phi false) (not phi))`, the one implication simplification
+    /// cvc5 states in the measured corpus.
+    fn implies_simplify(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let target = positive_unit(clause, "implies_simplify")?;
+        let [_bool_ty, implication, negation] = equality_children(&self.kernel, target)?;
+        let Some((antecedent, consequent)) = binary_operands(&self.kernel, implication, Op2::Imp)
+        else {
+            return Err(Error::Unsupported {
+                message: "implies_simplify over a non-implication".to_owned(),
+            });
+        };
+        if self.kernel.arena().bool_value(consequent) != Some(false)
+            || self.kernel.arena().op1(negation) != Some(Op1::Not)
+        {
+            return Err(Error::Unsupported {
+                message: "implies_simplify pattern other than (=> phi false) = (not phi)"
+                    .to_owned(),
+            });
+        }
+        let negated = sole_child(&self.kernel, negation)?;
+        join_same_syntax(&mut self.kernel, antecedent, negated)?;
+        let antecedent = Lit::positive(antecedent.get());
+        let falsehood = Lit::positive(consequent.get());
+        let negation_literal = Lit::positive(negation.get());
+        let implication_literal = Lit::positive(implication.get());
+
+        let forward = self.kernel.identity(implication_literal)?;
+        let forward = self
+            .kernel
+            .expand_conclusion(forward, implication_literal, None)?;
+        let absurd = self.kernel.false_left(falsehood)?;
+        let forward = self.kernel.cut(forward, absurd, falsehood)?;
+        let forward = self.fold_into(forward, antecedent.negated(), negation_literal)?;
+
+        let backward = self.kernel.identity(negation_literal)?;
+        let backward = self
+            .kernel
+            .expand_conclusion(backward, negation_literal, None)?;
+        self.kernel.not_left(backward, antecedent.negated())?;
+        self.kernel.weaken(backward, &[], &[falsehood])?;
+        let backward = self.kernel.imp_right(backward, implication_literal)?;
+
+        let result =
+            self.kernel
+                .deduct_antisym(self.bool_ty, implication, negation, forward, backward)?;
+        self.convert_equality(result.theorem, result.equality, target)
+    }
+
+    /// `|- (= (or ... true ...) true)`, the one disjunction simplification
+    /// cvc5 states in the measured corpus.
+    fn or_simplify(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let target = positive_unit(clause, "or_simplify")?;
+        let [_bool_ty, disjunction, truth] = equality_children(&self.kernel, target)?;
+        if self.kernel.arena().op2(disjunction) != Some(Op2::Or)
+            || self.kernel.arena().bool_value(truth) != Some(true)
+        {
+            return Err(Error::Unsupported {
+                message: "or_simplify pattern other than (or phi true) = true".to_owned(),
+            });
+        }
+        let disjunction_literal = Lit::positive(disjunction.get());
+        let truth_literal = Lit::positive(truth.get());
+        let leaves = self.disjunct_leaves(disjunction_literal)?;
+        let position = leaves
+            .iter()
+            .position(|leaf| constant_value(&self.kernel, *leaf) == Some(true))
+            .ok_or_else(|| Error::Unsupported {
+                message: "or_simplify over a disjunction with no true disjunct".to_owned(),
+            })?;
+        let selected = leaves[position];
+        let backward = self.kernel.identity(truth_literal)?;
+        if selected != truth_literal {
+            let leaf = reference(selected.magnitude())?;
+            join_same_syntax(&mut self.kernel, truth, leaf)?;
+            self.kernel.convert_conclusions(backward, truth, leaf)?;
+        }
+        for (index, leaf) in leaves.iter().enumerate() {
+            if index != position {
+                self.kernel.weaken(backward, &[], &[*leaf])?;
+            }
+        }
+        let backward = self.kernel.fold_conclusion(backward, disjunction_literal)?;
+        let forward = self.kernel.true_right(truth_literal)?;
+        let result =
+            self.kernel
+                .deduct_antisym(self.bool_ty, disjunction, truth, forward, backward)?;
+        self.convert_equality(result.theorem, result.equality, target)
+    }
+
+    /// `|- (= (ite c x x) x)`.
+    ///
+    /// Both branch laws state the same equation once the branches are joined,
+    /// so the two cases of the condition resolve away against each other.
+    fn ite_equal_branches(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let target = positive_unit(clause, "ite-eq-branch")?;
+        let [_bool_ty, source, branch] = equality_children(&self.kernel, target)?;
+        let conditional = self.find_conditional(source)?;
+        join_same_syntax(&mut self.kernel, conditional.then_branch, branch)?;
+        join_same_syntax(&mut self.kernel, conditional.else_branch, branch)?;
+        let when_true = conditional_when_true(&mut self.kernel, self.bool_ty, conditional)?;
+        let when_true = self.restate_equality(when_true, target)?;
+        let when_false = conditional_when_false(&mut self.kernel, self.bool_ty, conditional)?;
+        let when_false = self.restate_equality(when_false, target)?;
+        self.resolve_condition_cases(conditional, when_true, when_false)
+    }
+
+    /// `|- (= (ite c (= (ite c t e) t) (= (ite c t e) e)) true)`.
+    ///
+    /// Under each case of the condition the outer conditional reduces to that
+    /// branch, and the branch is the inner conditional's own branch law, so it
+    /// is true.
+    fn ite_selects_its_branch(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let target = positive_unit(clause, "ite-eq")?;
+        let [_bool_ty, source, truth] = equality_children(&self.kernel, target)?;
+        if self.kernel.arena().bool_value(truth) != Some(true) {
+            return Err(Error::Malformed {
+                message: "ite-eq must rewrite to true".to_owned(),
+            });
+        }
+        let outer = self.find_conditional(source)?;
+        let when_true = self.ite_branch_holds(outer, target, truth, true)?;
+        let when_false = self.ite_branch_holds(outer, target, truth, false)?;
+        self.resolve_condition_cases(outer, when_true, when_false)
+    }
+
+    /// Proves the `ite-eq` target under one case of the condition.
+    fn ite_branch_holds(
+        &mut self,
+        outer: Conditional,
+        target: Ref,
+        truth: Ref,
+        when_true: bool,
+    ) -> Result<ThmId, Error> {
+        let (case, branch) = if when_true {
+            (outer.condition_true, outer.then_branch)
+        } else {
+            (outer.condition_false, outer.else_branch)
+        };
+        let [_domain, inner_term, _side] = equality_children(&self.kernel, branch)?;
+        let inner = self.find_conditional(inner_term)?;
+        let inner_case = if when_true {
+            inner.condition_true
+        } else {
+            inner.condition_false
+        };
+        let inner_law = if when_true {
+            conditional_when_true(&mut self.kernel, self.bool_ty, inner)?
+        } else {
+            conditional_when_false(&mut self.kernel, self.bool_ty, inner)?
+        };
+        // The two conditionals share a condition, so assuming the outer case
+        // discharges the inner one.
+        let assumption = self.kernel.identity(Lit::positive(case.get()))?;
+        let assumption = self.convert_equality(assumption, case, inner_case)?;
+        let inner_law = self
+            .kernel
+            .cut(assumption, inner_law, Lit::positive(inner_case.get()))?;
+        let inner_law = self.restate_equality(inner_law, branch)?;
+        let branch_target = self.kernel.eq(self.bool_ty, branch, truth)?;
+        let branch_true = self.equality_to_true(branch, truth, inner_law, branch_target)?;
+        let outer_law = if when_true {
+            conditional_when_true(&mut self.kernel, self.bool_ty, outer)?
+        } else {
+            conditional_when_false(&mut self.kernel, self.bool_ty, outer)?
+        };
+        let chain = equality_transitivity(&mut self.kernel, self.bool_ty, outer_law, branch_true)?;
+        let theorem = self.convert_equality(chain.theorem, chain.equality, target)?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// Restates an equality theorem's conclusion as the stated row.
+    fn restate_equality(&mut self, theorem: ThmId, target: Ref) -> Result<ThmId, Error> {
+        let stated = positive_theorem_equality(&self.kernel, theorem)?;
+        self.convert_equality(theorem, stated, target)
+    }
+
+    /// Discharges both cases of one condition against a case split.
+    ///
+    /// Each case theorem states the same conclusion under its own case
+    /// assumption, so cutting the split into each and resolving on the
+    /// condition leaves the conclusion alone.
+    fn resolve_condition_cases(
+        &mut self,
+        conditional: Conditional,
+        when_true: ThmId,
+        when_false: ThmId,
+    ) -> Result<ThmId, Error> {
+        let (split_false, split_true) = self.boolean_case_split(conditional)?;
+        let positive = self.kernel.cut(
+            split_false,
+            when_false,
+            Lit::positive(conditional.condition_false.get()),
+        )?;
+        let negative = self.kernel.cut(
+            split_true,
+            when_true,
+            Lit::positive(conditional.condition_true.get()),
+        )?;
+        let theorem = self.kernel.resolve(
+            positive,
+            negative,
+            Lit::positive(conditional.condition.get()),
+        )?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// `|- (= (= a b) (= b a))`.
+    ///
+    /// The RARE name set is producer-version dependent: cvc5 1.3.4 emits this
+    /// one in plain `QF_UF`, outside the measured `QF_UFLIA` inventory.
+    fn equality_symmetry_rewrite(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let target = positive_unit(clause, "eq-symm")?;
+        let [_bool_ty, left, right] = equality_children(&self.kernel, target)?;
+        let forward = self.symmetric_entailment(left, right)?;
+        let backward = self.symmetric_entailment(right, left)?;
+        let result = self
+            .kernel
+            .deduct_antisym(self.bool_ty, left, right, forward, backward)?;
+        self.convert_equality(result.theorem, result.equality, target)
+    }
+
+    /// Derives `(= a b) |- (= b a)` for two stated equality rows.
+    fn symmetric_entailment(&mut self, from: Ref, to: Ref) -> Result<ThmId, Error> {
+        if self.kernel.arena().tag(from) != Some(Tag::Tm(TmTag::Eq))
+            || self.kernel.arena().tag(to) != Some(Tag::Tm(TmTag::Eq))
+        {
+            return Err(Error::Malformed {
+                message: "eq-symm relates two equalities".to_owned(),
+            });
+        }
+        let assumption = self.kernel.identity(Lit::positive(from.get()))?;
+        let reversed = equality_symmetry(&mut self.kernel, self.bool_ty, assumption)?;
+        self.convert_equality(reversed.theorem, reversed.equality, to)
+    }
+
+    /// `|- (= (not (not phi)) phi)`.
+    fn double_negation_elimination(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
+        let target = positive_unit(clause, "bool-double-not-elim")?;
+        let [_bool_ty, double, proposition] = equality_children(&self.kernel, target)?;
+        if self.kernel.arena().op1(double) != Some(Op1::Not) {
+            return Err(Error::Malformed {
+                message: "bool-double-not-elim requires a double negation".to_owned(),
+            });
+        }
+        let single = sole_child(&self.kernel, double)?;
+        if self.kernel.arena().op1(single) != Some(Op1::Not) {
+            return Err(Error::Malformed {
+                message: "bool-double-not-elim requires a double negation".to_owned(),
+            });
+        }
+        let inner = sole_child(&self.kernel, single)?;
+        join_same_syntax(&mut self.kernel, inner, proposition)?;
+        let double_literal = Lit::positive(double.get());
+        let proposition_literal = Lit::positive(proposition.get());
+
+        let forward = self.kernel.identity(double_literal)?;
+        let forward = self.kernel.flatten_conclusion(forward, double_literal)?;
+        let forward = self.align_conclusion(forward, proposition_literal)?;
+
+        let backward = self.kernel.identity(proposition_literal)?;
+        let backward = self.fold_into(backward, proposition_literal, double_literal)?;
+
+        let result =
+            self.kernel
+                .deduct_antisym(self.bool_ty, double, proposition, forward, backward)?;
+        self.convert_equality(result.theorem, result.equality, target)
     }
 
     fn or_pos(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
@@ -965,37 +2999,93 @@ impl Replayer {
         Ok(result)
     }
 
-    fn rare_rewrite(&mut self, clause: &[Lit], args: &[Expr]) -> Result<ThmId, Error> {
+    /// Applies one RARE rewrite named by `args[0]`.
+    ///
+    /// cvc5 states `:premises` before `:args` on some rewrites, so premises
+    /// are threaded through and every premise-free name asserts an empty list
+    /// rather than dropping one silently. An unrecognized name reaches the
+    /// user handler: the name set is producer-version dependent, and a
+    /// built-in arm that shadowed the whole rule would leave no userspace
+    /// remedy for a cvc5 upgrade.
+    fn rare_rewrite(
+        &mut self,
+        clause: &[Lit],
+        premises: &[ThmId],
+        args: &[Expr],
+        handler: &mut impl RuleHandler,
+    ) -> Result<ThmId, Error> {
         let Some(name) = args.first().and_then(string_value) else {
             return Err(Error::Malformed {
                 message: "rare_rewrite requires a string rule name".to_owned(),
             });
         };
+        if let Some(domain) = rare_rewrite_arithmetic_domain(name) {
+            return Err(Error::ArithmeticTheoryMissing {
+                step: String::new(),
+                rule: name.to_owned(),
+                domain: domain.to_owned(),
+            });
+        }
         match name {
             "eq-refl" => {
-                let target = positive_unit(clause, "rare_rewrite eq-refl")?;
-                let [_bool_ty, proposition, truth] = equality_children(&self.kernel, target)?;
-                if self.kernel.arena().bool_value(truth) != Some(true) {
-                    return Err(Error::Malformed {
-                        message: "eq-refl must rewrite to true".to_owned(),
-                    });
-                }
-                let [_domain, left, right] = equality_children(&self.kernel, proposition)?;
-                join_same_syntax(&mut self.kernel, left, right)?;
-                let proved = self.kernel.refl(self.bool_ty, left)?;
-                let theorem =
-                    self.convert_equality(proved.theorem, proved.equality, proposition)?;
-                self.equality_to_true(proposition, truth, theorem, target)
+                require_no_premises(name, premises)?;
+                self.reflexive_equality_is_true(clause)
             }
-            "bool-xor-refl" => self.evaluate(clause),
-            "distinct-binary-elim" => self.reflexivity(clause),
-            "bool-eq-true" => self.bool_eq_true(clause),
-            "bool-eq-false" => self.bool_eq_false(clause),
-            "ite-true-cond" => self.ite_constant(clause, true),
-            "ite-false-cond" => self.ite_constant(clause, false),
-            other => Err(Error::Unsupported {
-                message: format!("rare_rewrite {other:?}"),
-            }),
+            "bool-double-not-elim" => {
+                require_no_premises(name, premises)?;
+                self.double_negation_elimination(clause)
+            }
+            "eq-symm" => {
+                require_no_premises(name, premises)?;
+                self.equality_symmetry_rewrite(clause)
+            }
+            "ite-eq-branch" => {
+                require_no_premises(name, premises)?;
+                self.ite_equal_branches(clause)
+            }
+            "ite-eq" => {
+                require_no_premises(name, premises)?;
+                self.ite_selects_its_branch(clause)
+            }
+            "bool-xor-refl" => {
+                require_no_premises(name, premises)?;
+                self.evaluate(clause)
+            }
+            "distinct-binary-elim" => {
+                require_no_premises(name, premises)?;
+                self.reflexivity(clause)
+            }
+            "bool-eq-true" => {
+                require_no_premises(name, premises)?;
+                self.bool_eq_true(clause)
+            }
+            "bool-eq-false" => {
+                require_no_premises(name, premises)?;
+                self.bool_eq_false(clause)
+            }
+            "ite-true-cond" => {
+                require_no_premises(name, premises)?;
+                self.ite_constant(clause, true)
+            }
+            "ite-false-cond" => {
+                require_no_premises(name, premises)?;
+                self.ite_constant(clause, false)
+            }
+            other => {
+                let bool_ty = self.bool_ty;
+                handler
+                    .apply(RuleRequest {
+                        kernel: &mut self.kernel,
+                        bool_ty,
+                        rule: "rare_rewrite",
+                        clause,
+                        premises,
+                        args,
+                    })?
+                    .ok_or_else(|| Error::Unsupported {
+                        message: format!("rare_rewrite {other:?}"),
+                    })
+            }
         }
     }
 
@@ -1375,9 +3465,27 @@ impl Replayer {
         Ok(theorem)
     }
 
+    /// Checks the Boolean constant folding `evaluate` states.
+    ///
+    /// Two gates run before any derivation. The stated equation must not be
+    /// between numeric-sorted terms, and the proposition must be Boolean all
+    /// the way down. Without them an arithmetic evaluation would be rejected
+    /// only because a Boolean derivation happened not to apply, which is an
+    /// accident rather than a decision, and it stops holding the moment
+    /// arithmetic terms are lowerable at all.
     fn evaluate(&mut self, clause: &[Lit]) -> Result<ThmId, Error> {
         let target = positive_unit(clause, "evaluate")?;
         let [_bool_ty, proposition, constant] = equality_children(&self.kernel, target)?;
+        for side in [proposition, constant] {
+            if let Some(domain) = self.arithmetic_domain(side)? {
+                return Err(Error::ArithmeticTheoryMissing {
+                    step: String::new(),
+                    rule: "evaluate".to_owned(),
+                    domain: domain.to_owned(),
+                });
+            }
+        }
+        self.require_boolean_evaluable(proposition, 0)?;
         if self.kernel.arena().bool_value(constant) != Some(false) {
             return Err(Error::Unsupported {
                 message: "evaluate result other than false".to_owned(),
@@ -1415,6 +3523,79 @@ impl Replayer {
             self.kernel
                 .deduct_antisym(self.bool_ty, proposition, constant, left, right)?;
         self.convert_equality(result.theorem, result.equality, target)
+    }
+
+    /// Returns the numeric sort of `term`, if it has one.
+    fn arithmetic_domain(&self, term: Ref) -> Result<Option<&'static str>, Error> {
+        let Ok(numeric) = self.numeric() else {
+            return Ok(None);
+        };
+        let classifier = self.kernel.classifier(term)?;
+        if self.kernel.equivalent(classifier, numeric.int_ty)? {
+            return Ok(Some("integer"));
+        }
+        if self.kernel.equivalent(classifier, numeric.real_ty)? {
+            return Ok(Some("rational"));
+        }
+        Ok(None)
+    }
+
+    /// Requires every node of a folded proposition to be Boolean structure.
+    ///
+    /// The one non-constant leaf allowed is an equality between operands the
+    /// kernel already identifies, which reflexivity discharges and which is
+    /// sort-agnostic.
+    fn require_boolean_evaluable(&self, term: Ref, depth: usize) -> Result<(), Error> {
+        if depth >= MAX_TERM_DEPTH {
+            return Err(Error::TermTooDeep {
+                limit: MAX_TERM_DEPTH,
+            });
+        }
+        let arena = self.kernel.arena();
+        if arena.bool_value(term).is_some() {
+            return Ok(());
+        }
+        if arena.op1(term) == Some(Op1::Not)
+            || matches!(arena.op2(term), Some(Op2::And | Op2::Or | Op2::Imp))
+        {
+            let children = arena
+                .children(term)
+                .ok_or_else(|| Error::Malformed {
+                    message: "Boolean operator has no operands".to_owned(),
+                })?
+                .collect::<Vec<_>>();
+            for child in children {
+                self.require_boolean_evaluable(child, depth + 1)?;
+            }
+            return Ok(());
+        }
+        if arena.tag(term) == Some(Tag::Tm(TmTag::Eq)) {
+            let [_domain, left, right] = equality_children(&self.kernel, term)?;
+            if left == right || self.kernel.equivalent(left, right)? {
+                return Ok(());
+            }
+        }
+        // A numeric-sorted node, or one applied to numeric-sorted operands, is
+        // arithmetic rather than merely unimplemented, and must say so.
+        let mut candidates = vec![term];
+        if let Some(children) = arena.children(term) {
+            candidates.extend(children);
+        }
+        for candidate in candidates {
+            if let Some(domain) = self.arithmetic_domain(candidate)? {
+                return Err(Error::ArithmeticTheoryMissing {
+                    step: String::new(),
+                    rule: "evaluate".to_owned(),
+                    domain: domain.to_owned(),
+                });
+            }
+        }
+        Err(Error::Unsupported {
+            message: format!(
+                "evaluate over a subterm this build cannot fold: {:?}",
+                arena.tag(term)
+            ),
+        })
     }
 
     fn equality_to_false(
@@ -1480,11 +3661,18 @@ impl Replayer {
         Ok(theorem)
     }
 
+    /// Resolves the premises left to right into one clause.
+    ///
+    /// The first premise is copied rather than returned, because a one-premise
+    /// `resolution` would otherwise bind the new step to the theorem an
+    /// earlier step already owns, and `check_clause` mutates the step's
+    /// theorem in place. This is the same invariant `restate_premise` and
+    /// `subproof` state for themselves.
     fn resolution(&mut self, premises: &[ThmId]) -> Result<ThmId, Error> {
         let (first, rest) = premises.split_first().ok_or_else(|| Error::Malformed {
             message: "resolution has no premises".to_owned(),
         })?;
-        let mut result = *first;
+        let mut result = self.kernel.copy_theorem(*first)?;
         for &next in rest {
             let mut next = next;
             let left = conclusion_literals(&self.kernel, result)?;
@@ -1600,7 +3788,7 @@ impl Replayer {
     #[allow(clippy::too_many_lines)]
     fn congruence(&mut self, clause: &[Lit], premises: &[ThmId]) -> Result<ThmId, Error> {
         let target = positive_unit(clause, "cong")?;
-        let [_domain, compact_left, compact_right] = equality_children(&self.kernel, target)?;
+        let [domain, compact_left, compact_right] = equality_children(&self.kernel, target)?;
         if let Some(theorem) =
             self.conditional_congruence(target, compact_left, compact_right, premises)?
         {
@@ -1645,6 +3833,11 @@ impl Replayer {
             }
         }
         if left_args.len() != premises.len() || right_args.len() != premises.len() {
+            if let Some(theorem) =
+                self.boolean_congruence(target, compact_left, compact_right, premises)?
+            {
+                return Ok(theorem);
+            }
             return Err(Error::Malformed {
                 message: format!(
                     "cong premise count {} does not match application arities {} and {} for {compact_left:?} {:?} and {compact_right:?} {:?}; conditional terms {:?}",
@@ -1688,7 +3881,11 @@ impl Replayer {
         join_same_syntax(&mut self.kernel, equality, raw_target)?;
         self.kernel
             .convert_conclusions(theorem, equality, raw_target)?;
-        let classifier = self.kernel.syn_refl(None, SynRel::Conv, self.bool_ty)?;
+        // An equality row stores its operand type as its first child, so the
+        // conversion evidence must be reflexivity on that type rather than on
+        // the Boolean result type. The two coincide only when the congruence
+        // relates Boolean-sorted operands.
+        let classifier = self.kernel.syn_refl(None, SynRel::Conv, domain)?;
         let left = self.kernel.syn_symm(None, left_expansion.fact)?;
         let right = self.kernel.syn_symm(None, right_expansion.fact)?;
         let conversion = self.kernel.syn_congr(
@@ -1704,6 +3901,126 @@ impl Replayer {
         self.kernel
             .convert_conclusions(theorem, raw_target, target)?;
         Ok(theorem)
+    }
+
+    /// Congruence over a lowered Boolean connective tree.
+    ///
+    /// `cong` over an n-ary `and`, `or` or `=>` states one premise per
+    /// operand, but the lowering folds those operands into a binary opcode
+    /// tree, so the application-spine derivation sees arity two and cannot
+    /// consume the premises. This proves the two trees equivalent instead, by
+    /// entailment in both directions over the same checked premises.
+    fn boolean_congruence(
+        &mut self,
+        target: Ref,
+        left: Ref,
+        right: Ref,
+        premises: &[ThmId],
+    ) -> Result<Option<ThmId>, Error> {
+        let arena = self.kernel.arena();
+        let unary = arena.op1(left).is_some() && arena.op1(left) == arena.op1(right);
+        let binary = arena.op2(left).is_some() && arena.op2(left) == arena.op2(right);
+        if !unary && !binary {
+            return Ok(None);
+        }
+        let forward = self.boolean_entailment(left, right, premises)?;
+        let backward = self.boolean_entailment(right, left, premises)?;
+        let result = self
+            .kernel
+            .deduct_antisym(self.bool_ty, left, right, forward, backward)?;
+        self.convert_equality(result.theorem, result.equality, target)
+            .map(Some)
+    }
+
+    /// Derives `from |- to` for two Boolean trees of the same shape.
+    ///
+    /// Each connective is discharged by its own checked kernel rule, and a
+    /// leaf by one premise equality, so the result rests on nothing but the
+    /// premises `cong` states and the sequent calculus.
+    fn boolean_entailment(
+        &mut self,
+        from: Ref,
+        to: Ref,
+        premises: &[ThmId],
+    ) -> Result<ThmId, Error> {
+        let arena = self.kernel.arena();
+        let operator = match (
+            arena.op1(from),
+            arena.op1(to),
+            arena.op2(from),
+            arena.op2(to),
+        ) {
+            (Some(Op1::Not), Some(Op1::Not), _, _) => None,
+            (_, _, Some(left), Some(right)) if left == right => Some(left),
+            _ => {
+                return self.leaf_entailment(from, to, premises);
+            }
+        };
+        if join_same_syntax(&mut self.kernel, from, to).is_ok() {
+            return self.leaf_entailment(from, to, premises);
+        }
+        let Some(operator) = operator else {
+            let inner_from = sole_child(&self.kernel, from)?;
+            let inner_to = sole_child(&self.kernel, to)?;
+            // Negation reverses the entailment, and the object-level rows are
+            // reached from the sequent-level literals by one fold each.
+            let theorem = self.boolean_entailment(inner_to, inner_from, premises)?;
+            self.kernel
+                .not_left(theorem, Lit::positive(inner_from.get()))?;
+            self.kernel
+                .not_right(theorem, Lit::positive(inner_to.get()))?;
+            let theorem = self
+                .kernel
+                .fold_premise(theorem, Lit::positive(from.get()))?;
+            return Ok(self
+                .kernel
+                .fold_conclusion(theorem, Lit::positive(to.get()))?);
+        };
+        let (from_left, from_right) =
+            binary_operands(&self.kernel, from, operator).ok_or_else(|| Error::Malformed {
+                message: "cong operand is not the stated connective".to_owned(),
+            })?;
+        let (to_left, to_right) =
+            binary_operands(&self.kernel, to, operator).ok_or_else(|| Error::Malformed {
+                message: "cong operand is not the stated connective".to_owned(),
+            })?;
+        match operator {
+            Op2::And => {
+                let left = self.boolean_entailment(from_left, to_left, premises)?;
+                let right = self.boolean_entailment(from_right, to_right, premises)?;
+                let theorem = self
+                    .kernel
+                    .and_right(left, right, Lit::positive(to.get()))?;
+                Ok(self
+                    .kernel
+                    .fold_premise(theorem, Lit::positive(from.get()))?)
+            }
+            Op2::Or => {
+                let left = self.boolean_entailment(from_left, to_left, premises)?;
+                let right = self.boolean_entailment(from_right, to_right, premises)?;
+                let theorem = self
+                    .kernel
+                    .or_left(left, right, Lit::positive(from.get()))?;
+                Ok(self.kernel.or_right(theorem, Lit::positive(to.get()))?)
+            }
+            Op2::Imp => {
+                // The antecedent is contravariant, so its entailment runs the
+                // other way.
+                let antecedent = self.boolean_entailment(to_left, from_left, premises)?;
+                let consequent = self.boolean_entailment(from_right, to_right, premises)?;
+                let theorem =
+                    self.kernel
+                        .imp_left(antecedent, consequent, Lit::positive(from.get()))?;
+                Ok(self.kernel.imp_right(theorem, Lit::positive(to.get()))?)
+            }
+        }
+    }
+
+    /// Derives `from |- to` from one premise equality between the two.
+    fn leaf_entailment(&mut self, from: Ref, to: Ref, premises: &[ThmId]) -> Result<ThmId, Error> {
+        let equality = self.operand_equality(from, to, premises)?;
+        let assumption = self.kernel.identity(Lit::positive(from.get()))?;
+        Ok(self.kernel.eq_mp(equality, assumption)?)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1747,24 +4064,31 @@ impl Replayer {
             }
             return Ok(None);
         };
-        let Some(value) = self.kernel.arena().bool_value(right_conditional.condition) else {
-            return Ok(None);
-        };
-        if join_same_syntax(
+        // A constant right condition selects one branch outright; otherwise
+        // the congruence is proved under both cases of the left condition.
+        let branches_agree = join_same_syntax(
             &mut self.kernel,
             left_conditional.then_branch,
             right_conditional.then_branch,
         )
-        .is_err()
-            || join_same_syntax(
+        .is_ok()
+            && join_same_syntax(
                 &mut self.kernel,
                 left_conditional.else_branch,
                 right_conditional.else_branch,
             )
-            .is_err()
-        {
-            return Ok(None);
-        }
+            .is_ok();
+        let constant = self.kernel.arena().bool_value(right_conditional.condition);
+        let Some(value) = constant.filter(|_| branches_agree) else {
+            return self
+                .general_conditional_congruence(
+                    target,
+                    left_conditional,
+                    right_conditional,
+                    premises,
+                )
+                .map(Some);
+        };
         let [condition_premise, ..] = premises else {
             return Err(Error::Malformed {
                 message: "conditional congruence has no condition premise".to_owned(),
@@ -1821,6 +4145,100 @@ impl Replayer {
             equality_transitivity(&mut self.kernel, self.bool_ty, left_law, right_law.theorem)?;
         self.convert_equality(result.theorem, result.equality, target)
             .map(Some)
+    }
+
+    /// Congruence between two lowered conditionals with any condition.
+    ///
+    /// Both branches are proved under one case of the left condition and the
+    /// cases are then resolved away, so the result rests only on the premise
+    /// equalities, the two branch laws of issue 1214's HOL conditional, and
+    /// the case split.
+    fn general_conditional_congruence(
+        &mut self,
+        target: Ref,
+        left: Conditional,
+        right: Conditional,
+        premises: &[ThmId],
+    ) -> Result<ThmId, Error> {
+        let condition = self.operand_equality(left.condition, right.condition, premises)?;
+        let then_branch = self.operand_equality(left.then_branch, right.then_branch, premises)?;
+        let else_branch = self.operand_equality(left.else_branch, right.else_branch, premises)?;
+        let (split_false, split_true) = self.boolean_case_split(left)?;
+        let when_true =
+            self.conditional_branch_congruence(target, left, right, condition, then_branch, true)?;
+        let when_false =
+            self.conditional_branch_congruence(target, left, right, condition, else_branch, false)?;
+        let positive = self.kernel.cut(
+            split_false,
+            when_false,
+            Lit::positive(left.condition_false.get()),
+        )?;
+        let negative = self.kernel.cut(
+            split_true,
+            when_true,
+            Lit::positive(left.condition_true.get()),
+        )?;
+        let theorem =
+            self.kernel
+                .resolve(positive, negative, Lit::positive(left.condition.get()))?;
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
+    }
+
+    /// Proves the congruence target under one case of the left condition.
+    fn conditional_branch_congruence(
+        &mut self,
+        target: Ref,
+        left: Conditional,
+        right: Conditional,
+        condition: ThmId,
+        branch: ThmId,
+        when_true: bool,
+    ) -> Result<ThmId, Error> {
+        let (left_case, right_case) = if when_true {
+            (left.condition_true, right.condition_true)
+        } else {
+            (left.condition_false, right.condition_false)
+        };
+        let left_law = if when_true {
+            conditional_when_true(&mut self.kernel, self.bool_ty, left)?
+        } else {
+            conditional_when_false(&mut self.kernel, self.bool_ty, left)?
+        };
+        // The right condition takes the same case: `c_r = c_l` from the
+        // premise, then `c_l = v` from the case assumption.
+        let condition = self.kernel.copy_theorem(condition)?;
+        let reversed = equality_symmetry(&mut self.kernel, self.bool_ty, condition)?;
+        let assumption = self.kernel.identity(Lit::positive(left_case.get()))?;
+        let right_condition =
+            equality_transitivity(&mut self.kernel, self.bool_ty, reversed.theorem, assumption)?;
+        let right_condition = self.convert_equality(
+            right_condition.theorem,
+            right_condition.equality,
+            right_case,
+        )?;
+        let right_law = if when_true {
+            conditional_when_true(&mut self.kernel, self.bool_ty, right)?
+        } else {
+            conditional_when_false(&mut self.kernel, self.bool_ty, right)?
+        };
+        let right_law =
+            self.kernel
+                .cut(right_condition, right_law, Lit::positive(right_case.get()))?;
+        let right_law = equality_symmetry(&mut self.kernel, self.bool_ty, right_law)?;
+        let branch = self.kernel.copy_theorem(branch)?;
+        let chain = equality_transitivity(&mut self.kernel, self.bool_ty, left_law, branch)?;
+        let chain = equality_transitivity(
+            &mut self.kernel,
+            self.bool_ty,
+            chain.theorem,
+            right_law.theorem,
+        )?;
+        let theorem = self.convert_equality(chain.theorem, chain.equality, target)?;
+        // The case assumption enters twice, from the left branch law and from
+        // the right condition, and `cut` discharges one antecedent row.
+        self.kernel.contract_theorem(theorem)?;
+        Ok(theorem)
     }
 
     fn equality_congruence(
@@ -1967,8 +4385,14 @@ impl Replayer {
         }
         actual = conclusion_literals(&self.kernel, theorem)?;
         let mut expected = expected.to_vec();
-        actual.sort_unstable();
-        expected.sort_unstable();
+        // An Alethe clause denotes a disjunction, so set equality is the
+        // exact criterion and collapsing duplicates weakens nothing. It is
+        // required: `reordering` states literals that the premise theorem
+        // already contracted, and `contraction` states the collapsed form of
+        // a premise that still carries duplicates. The other direction, an
+        // actual literal the clause does not state, is unaffected.
+        sort_and_dedup(&mut actual);
+        sort_and_dedup(&mut expected);
         if actual != expected {
             for wanted in &expected {
                 let wanted_reference = reference(wanted.magnitude())?;
@@ -1990,19 +4414,21 @@ impl Replayer {
             }
             self.kernel.contract_theorem(theorem)?;
             actual = conclusion_literals(&self.kernel, theorem)?;
-            actual.sort_unstable();
+            sort_and_dedup(&mut actual);
         }
         if actual != expected {
-            let canonical_actual = actual
+            let mut canonical_actual = actual
                 .iter()
                 .copied()
                 .map(|literal| canonical_clause_literal(&self.kernel, literal))
                 .collect::<Result<Vec<_>, _>>()?;
-            let canonical_expected = expected
+            let mut canonical_expected = expected
                 .iter()
                 .copied()
                 .map(|literal| canonical_clause_literal(&self.kernel, literal))
                 .collect::<Result<Vec<_>, _>>()?;
+            sort_and_dedup(&mut canonical_actual);
+            sort_and_dedup(&mut canonical_expected);
             if canonical_actual == canonical_expected {
                 return Ok(theorem);
             }
@@ -2016,6 +4442,13 @@ impl Replayer {
     }
 
     fn check_exact_goal(&self, theorem: ThmId) -> Result<(), Error> {
+        // This check inspects the refutation's own sequent only, so a rule
+        // handler holding `&mut Kernel` could otherwise widen what the arena
+        // rests on -- an unchecked `hol.sort` ambient predicate through
+        // `tm_ref`/`import_literal`, an `ax.inf`/`ax.sub` capability through
+        // `add_axiom`, a proposition through `add_context`, or a foreign
+        // arena through `import_literal` -- and pass every other gate.
+        self.surface.require_unchanged(&self.kernel)?;
         let value = self
             .kernel
             .thm()
@@ -2046,6 +4479,120 @@ impl Replayer {
         }
         Ok(())
     }
+}
+
+/// Pushes object-level negations into a lowered literal's polarity.
+///
+/// Two spellings of one Alethe literal, the sequent-level negative literal on
+/// `a` and any `tm.not` row over it, reduce to the same result, which is what
+/// makes the subproof discharge check independent of how cvc5 printed the
+/// clause.
+fn strip_negations(kernel: &Kernel, literal: Lit) -> Result<Lit, Error> {
+    let mut literal = literal;
+    loop {
+        let formula = reference(literal.magnitude())?;
+        if kernel.arena().op1(formula) != Some(Op1::Not) {
+            return Ok(literal);
+        }
+        let child = kernel
+            .arena()
+            .children(formula)
+            .and_then(|mut children| children.next())
+            .ok_or_else(|| Error::Malformed {
+                message: "negation has no operand".to_owned(),
+            })?;
+        let positive = Lit::positive(child.get());
+        literal = if literal.is_positive() {
+            positive.negated()
+        } else {
+            positive
+        };
+    }
+}
+
+/// Returns the two operands of a binary opcode row, if it is that opcode.
+fn binary_operands(kernel: &Kernel, term: Ref, operator: Op2) -> Option<(Ref, Ref)> {
+    if kernel.arena().op2(term) != Some(operator) {
+        return None;
+    }
+    let mut children = kernel
+        .arena()
+        .children(term)
+        .expect("a checked binary operator has children");
+    Some((
+        children
+            .next()
+            .expect("a binary operator has a left operand"),
+        children
+            .next()
+            .expect("a binary operator has a right operand"),
+    ))
+}
+
+/// Returns the sole operand of a unary opcode row.
+fn sole_child(kernel: &Kernel, term: Ref) -> Result<Ref, Error> {
+    kernel
+        .arena()
+        .children(term)
+        .and_then(|mut children| children.next())
+        .ok_or_else(|| Error::Malformed {
+            message: "unary operator has no operand".to_owned(),
+        })
+}
+
+/// Returns the constant value a signed literal states, if it states one.
+fn constant_value(kernel: &Kernel, literal: Lit) -> Option<bool> {
+    let reference = reference(literal.magnitude()).ok()?;
+    kernel
+        .arena()
+        .bool_value(reference)
+        .map(|value| value == literal.is_positive())
+}
+
+/// Counts the flattened disjuncts of a lowered `or` tree.
+fn disjunction_arity(kernel: &Kernel, term: Ref) -> usize {
+    if kernel.arena().op2(term) != Some(Op2::Or) {
+        return 1;
+    }
+    kernel
+        .arena()
+        .children(term)
+        .expect("a checked binary operator has children")
+        .map(|child| disjunction_arity(kernel, child))
+        .sum()
+}
+
+/// Reads the single natural-number index an Alethe rule states in `:args`.
+fn index_argument(rule: &str, args: &[Expr]) -> Result<usize, Error> {
+    let [argument] = args else {
+        return Err(Error::Malformed {
+            message: format!("{rule} requires one index argument, got {}", args.len()),
+        });
+    };
+    number_value(argument)?
+        .parse::<usize>()
+        .map_err(|_| Error::Malformed {
+            message: format!("{rule} index is not a natural number"),
+        })
+}
+
+/// Rejects a premise list of the wrong length before a rule inspects it.
+fn require_premises(rule: &str, premises: &[ThmId], expected: usize) -> Result<(), Error> {
+    if premises.len() == expected {
+        return Ok(());
+    }
+    Err(Error::Malformed {
+        message: format!(
+            "rule {rule:?} takes {expected} premises, got {}",
+            premises.len()
+        ),
+    })
+}
+
+/// Sorts a clause into the canonical order the exact postcheck compares.
+fn sort_and_dedup(literals: &mut Vec<Lit>) {
+    literals.sort_unstable();
+    literals.dedup();
 }
 
 fn canonical_clause_literal(kernel: &Kernel, literal: Lit) -> Result<Lit, Error> {
@@ -2091,9 +4638,165 @@ pub fn replay_qf_uf_with_handler(
     proof: &AletheProof,
     handler: &mut impl RuleHandler,
 ) -> Result<Refutation, Error> {
-    let mut replayer = Replayer::new()?;
+    let mut replayer = Replayer::new(Logic::QfUf)?;
     replayer.ingest_problem(problem)?;
     replayer.ingest_proof(proof, handler)
+}
+
+/// Lowers a `QF_UFLIA` problem and proof into checked rows and reports the
+/// first arithmetic rule this build cannot check.
+///
+/// This proves nothing, and the returned [`Lowering`] deliberately offers no
+/// theorem, no theorem index, and no conversion into a [`Refutation`]. There
+/// is also no handler-taking variant: the extension point is not offered on
+/// this path, because filling the arithmetic gap from userspace is exactly
+/// what must not happen while no HOL theory in this tree states arithmetic.
+/// Issue 1208 tracks the checked arithmetic that would change this.
+///
+/// # Errors
+///
+/// Returns [`Error`] for unsupported syntax, unasserted assumptions, missing
+/// premises, mismatched clauses, or any rejected checked derivation, and
+/// [`Error::NoArithmeticGap`] if the proof replayed to its end, which this
+/// build must not certify.
+pub fn lower_qf_uflia(problem: &SmtProblem, proof: &AletheProof) -> Result<Lowering, Error> {
+    let mut replayer = Replayer::new(Logic::QfUflia)?;
+    replayer.ingest_problem(problem)?;
+    replayer.lower_proof(proof)
+}
+
+impl Error {
+    /// Attaches the Alethe step index to an error raised while checking it.
+    fn at_step(self, step: &str) -> Self {
+        match self {
+            Self::ArithmeticTheoryMissing {
+                step: stated,
+                rule,
+                domain,
+            } if stated.is_empty() => Self::ArithmeticTheoryMissing {
+                step: step.to_owned(),
+                rule,
+                domain,
+            },
+            other => other,
+        }
+    }
+}
+
+/// The Alethe simplification rules that evaluate numeric operators.
+///
+/// Alethe spells Boolean and numeric simplification alike, so this family is
+/// the one place the classification below cannot read the rule's domain off
+/// its name. The complement -- the simplifiers this build states, which are
+/// Boolean -- is asserted against this set by
+/// `classifies_every_arithmetic_rule_by_family`.
+const NUMERIC_SIMPLIFY: &[&str] = &[
+    "comp_simplify",
+    "div_simplify",
+    "minus_simplify",
+    "mod_simplify",
+    "prod_simplify",
+    "sum_simplify",
+    "unary_minus_simplify",
+];
+
+/// Names the arithmetic domain a top-level Alethe rule reasons in.
+///
+/// The classification is by rule family, not by individual name: Alethe's
+/// arithmetic rules are exactly the `la_`/`lia_` linear-arithmetic family, the
+/// numeric simplifiers, `div_intro`, and cvc5's `poly_simp` extensions, which
+/// cvc5 emits more often than any other arithmetic rule. A family member this
+/// build has never seen is therefore still refused by name rather than
+/// falling through to the generic unsupported path, where a user
+/// `RuleHandler` would see it.
+fn arithmetic_rule_domain(rule: &str) -> Option<&'static str> {
+    let arithmetic = rule.starts_with("la_")
+        || rule.starts_with("lia_")
+        || rule.starts_with("poly_simp")
+        || rule == "div_intro"
+        || NUMERIC_SIMPLIFY.contains(&rule);
+    arithmetic.then_some("integer or rational")
+}
+
+/// Names the arithmetic domain a RARE rewrite reasons in.
+fn rare_rewrite_arithmetic_domain(name: &str) -> Option<&'static str> {
+    (name.starts_with("arith-") || matches!(name, "mod-elim" | "div-elim"))
+        .then_some("integer or rational")
+}
+
+/// Rejects a premise on a RARE rewrite that states its conclusion outright.
+fn require_no_premises(name: &str, premises: &[ThmId]) -> Result<(), Error> {
+    if premises.is_empty() {
+        return Ok(());
+    }
+    Err(Error::Malformed {
+        message: format!(
+            "rare_rewrite {name:?} takes no premises, got {}",
+            premises.len()
+        ),
+    })
+}
+
+/// Returns whether a symbol spelling can only be a signed numeral.
+///
+/// The reader classifies an atom whose first byte is a digit as a number, so a
+/// numeral reaches the symbol arm only carrying its sign.
+fn signed_numeral_spelling(spelling: &str) -> bool {
+    spelling
+        .strip_prefix('-')
+        .is_some_and(|rest| rest.starts_with(|character: char| character.is_ascii_digit()))
+}
+
+/// Classifies one canonical numeral spelling, rejecting every other one.
+///
+/// Non-canonical spellings are rejected rather than normalized, so there is no
+/// second place where two spellings of one value could disagree.
+fn numeral_kind(spelling: &str) -> Option<NumeralKind> {
+    let (negative, body) = match spelling.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, spelling),
+    };
+    let kind = match body.split_once('/') {
+        None if canonical_natural(body) => NumeralKind::Integer,
+        Some((numerator, denominator))
+            if canonical_natural(numerator) && positive_natural(denominator) =>
+        {
+            NumeralKind::Rational
+        }
+        _ => return None,
+    };
+    // A zero magnitude has one canonical spelling, so the signed one is not it.
+    if negative && body.starts_with('0') {
+        return None;
+    }
+    Some(kind)
+}
+
+/// Matches `0 | [1-9][0-9]*`, so `007` and the empty spelling are rejected.
+fn canonical_natural(digits: &str) -> bool {
+    match digits.as_bytes() {
+        [b'0'] => true,
+        [first, rest @ ..] if first.is_ascii_digit() && *first != b'0' => {
+            rest.iter().all(u8::is_ascii_digit)
+        }
+        _ => false,
+    }
+}
+
+/// Matches `[1-9][0-9]*`, so a rational denominator is never zero.
+fn positive_natural(digits: &str) -> bool {
+    digits != "0" && canonical_natural(digits)
+}
+
+/// Returns whether `literal` occurs as a unit row in a theorem's antecedent.
+fn has_unit_premise(kernel: &Kernel, theorem: ThmId, literal: Lit) -> Result<bool, Error> {
+    let value = kernel.thm().get(theorem).ok_or_else(|| Error::Malformed {
+        message: format!("missing theorem {theorem:?}"),
+    })?;
+    Ok(value
+        .lhs
+        .rows()
+        .any(|row| matches!(row, [single] if *single == literal)))
 }
 
 /// Requires the SMT-LIB Core minimum arity shared by `and`, `or` and `=>`.
@@ -2275,6 +4978,7 @@ fn application_spine(kernel: &Kernel, mut term: Ref) -> Result<(Ref, Vec<Ref>), 
 mod tests {
     use super::*;
     use crate::{parse_alethe, parse_cvc5_output, parse_smtlib2};
+    use covalence_logic_hol::{KindTag, TyTag};
     use std::io::Write as _;
     use std::process::{Command, Stdio};
 
@@ -2301,12 +5005,54 @@ mod tests {
         assert!(theorem.rhs.rows().next().is_none());
     }
 
+    /// The producer this crate's live corpora are measured against.
+    ///
+    /// Pinned because the corpus assertions are about what cvc5 emits, not
+    /// only about what replays: a different build that stops emitting a rule
+    /// must fail loudly rather than retire the evidence for it silently.
+    const CVC5_VERSION: &str = "cvc5 1.3.4";
+
+    /// The proof flags this crate reads.
+    ///
+    /// `--proof-granularity=dsl-rewrite` is hole-free on 143 of 143 measured
+    /// `QF_UFLIA` problems; `dsl-rewrite-strict` leaves a `hole` step on 6.3%
+    /// of them, and a `hole` states an unchecked solver step this replayer
+    /// rejects outright. `--no-proof-allow-trust` refuses a trusted step in
+    /// the producer as well.
+    const CVC5_FLAGS: &[&str] = &[
+        "--produce-proofs",
+        "--proof-format-mode=alethe",
+        "--proof-granularity=dsl-rewrite",
+        "--no-proof-allow-trust",
+        "--dump-proofs",
+        "--lang=smt2",
+    ];
+
+    #[test]
+    fn pins_the_measured_producer() {
+        let output = Command::new("cvc5")
+            .arg("--version")
+            .output()
+            .expect("cvc5 is part of the Nix test environment");
+        let reported = String::from_utf8(output.stdout).expect("cvc5 emits UTF-8");
+        assert!(
+            reported.starts_with(CVC5_VERSION),
+            "the live corpora are measured against {CVC5_VERSION}, got: {reported}"
+        );
+    }
+
     #[test]
     fn generates_and_replays_a_proof_with_cvc5() {
         generate_and_replay(PROBLEM);
     }
 
+    /// Replays a live cvc5 corpus and states which rules it exercised.
+    ///
+    /// The rule assertion is the point: "it replays" lets coverage evaporate
+    /// silently when a producer upgrade rewrites a problem differently, and
+    /// then a rule this crate claims to check has no live evidence at all.
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn replays_a_live_cvc5_qf_uf_rule_corpus() {
         const CASES: &[&str] = &[
             "(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(assert (not (= a a)))\n(check-sat)\n",
@@ -2330,42 +5076,178 @@ mod tests {
             "(set-logic QF_UF)\n(declare-const p Bool)\n(assert (! p :named hyp))\n(assert (not p))\n(check-sat)\n",
             "(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(declare-const b U)\n(declare-const c U)\n(assert (= a b c))\n(assert (not (= a c)))\n(check-sat)\n",
             "(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(declare-const b U)\n(declare-const c U)\n(assert (distinct a b c))\n(assert (= b c))\n(check-sat)\n",
+            // `or`, `and`, `or_pos`: a CNF refutation over one conjunction.
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const q Bool)\n(declare-const r Bool)\n(assert (and (or p q) (or (not p) r) (or (not q) r) (not r)))\n(check-sat)\n",
+            // `subproof`, `implies_neg1`, `implies_neg2`, `contraction`,
+            // `reordering`, `or`, `cong`, `implies`.
+            "(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(declare-const b U)\n(declare-const c U)\n(declare-fun f (U) U)\n(assert (or (= a b) (= b c)))\n(assert (not (= (f a) (f b))))\n(assert (not (= (f b) (f c))))\n(check-sat)\n",
+            // `and_pos`, `and_neg` on top of the frame machinery.
+            "(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(declare-const b U)\n(declare-const c U)\n(declare-const d U)\n(declare-fun f (U U) U)\n(assert (or (and (= a b) (= c d)) (and (= a c) (= b d))))\n(assert (not (= (f a c) (f b d))))\n(assert (not (= (f a b) (f c d))))\n(check-sat)\n",
+            // `or_neg`.
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const q Bool)\n(declare-const r Bool)\n(assert (not (or p q r)))\n(assert (not (and p q r)))\n(assert (or (not p) (not (not q))))\n(assert (= p (not (not (not q)))))\n(assert (ite p q (not q)))\n(assert q)\n(check-sat)\n",
+            // `ite1`, `ite2`, `equiv1`, `equiv2`, `equiv_simplify`, `true`,
+            // and the `eq-symm`, `eq-refl` and `ite-eq` RARE rewrites.
+            "(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(declare-const b U)\n(declare-const c U)\n(declare-const p Bool)\n(assert (= (ite p a b) c))\n(assert (not (= a c)))\n(assert (not (= b c)))\n(check-sat)\n",
+            // `and_intro`.
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const q Bool)\n(assert p)\n(assert q)\n(assert (not (and p q)))\n(check-sat)\n",
+            // `equiv_pos1`.
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const q Bool)\n(assert (= p q))\n(assert (not p))\n(assert q)\n(check-sat)\n",
+            // `or_simplify` and the Boolean `evaluate`.
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const q Bool)\n(assert (not (or p q true)))\n(check-sat)\n",
+            // The `bool-double-not-elim` RARE rewrite.
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const q Bool)\n(assert (or (not p) (not (not q))))\n(assert p)\n(assert (not q))\n(check-sat)\n",
+            // The `ite-eq-branch` RARE rewrite, and `not_symm`.
+            "(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(declare-const b U)\n(declare-const p Bool)\n(assert (not (= (ite p a a) a)))\n(assert (= a b))\n(check-sat)\n",
         ];
+        let mut covered = BTreeSet::new();
         for problem in CASES {
-            generate_and_replay(problem);
+            covered.extend(generate_and_replay(problem));
         }
+        let live = covered.clone();
+        // Every rule this crate checks and cvc5 emits in QF_UF must have live
+        // evidence here. A rule that cvc5 stopped emitting fails this test
+        // rather than quietly losing its coverage.
+        for rule in [
+            "and",
+            "and_intro",
+            "and_neg",
+            "and_pos",
+            "cong",
+            "contraction",
+            "distinct_elim",
+            "equiv1",
+            "equiv2",
+            "equiv_pos1",
+            "equiv_pos2",
+            "equiv_simplify",
+            "evaluate",
+            "false",
+            "implies",
+            "implies_neg1",
+            "implies_neg2",
+            "ite1",
+            "ite2",
+            "not_symm",
+            "or",
+            "or_neg",
+            "or_pos",
+            "or_simplify",
+            "rare_rewrite",
+            "refl",
+            "reordering",
+            "resolution",
+            "subproof",
+            "symm",
+            "trans",
+            "true",
+            "xor1",
+            "xor2",
+            "xor_pos2",
+            // RARE rewrite names, which are producer-version scoped.
+            "bool-double-not-elim",
+            "bool-eq-false",
+            "eq-refl",
+            "eq-symm",
+            "ite-eq",
+            "ite-eq-branch",
+        ] {
+            assert!(
+                live.contains(rule),
+                "no live cvc5 proof in this corpus exercises {rule:?}; covered: {live:?}"
+            );
+        }
+        // Live evidence plus hand-written evidence must account for every
+        // accepting arm exactly. An arm added without a proof that exercises
+        // it fails here, which is the whole point of a checker's rule table.
+        for (rule, _, _) in WRITTEN_RULES {
+            covered.extend(replay_written_rule(rule));
+        }
+        let accepted = ACCEPTED_RULES
+            .iter()
+            .map(|rule| (*rule).to_owned())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            accepted.len(),
+            ACCEPTED_RULES.len(),
+            "ACCEPTED_RULES repeats a name"
+        );
+        assert_eq!(
+            covered, accepted,
+            "the accepting arms and their evidence disagree"
+        );
     }
 
-    fn generate_and_replay(problem_source: &str) {
-        let mut child = Command::new("cvc5")
-            .args([
-                "--produce-proofs",
-                "--proof-format-mode=alethe",
-                "--proof-granularity=dsl-rewrite",
-                "--no-proof-allow-trust",
-                "--dump-proofs",
-                "--lang=smt2",
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("cvc5 is part of the Nix test environment");
-        child
-            .stdin
-            .take()
-            .expect("cvc5 stdin")
-            .write_all(problem_source.as_bytes())
-            .expect("write problem to cvc5");
-        let output = child.wait_with_output().expect("wait for cvc5");
-        assert!(output.status.success(), "cvc5 failed: {output:?}");
-        let stdout = String::from_utf8(output.stdout).expect("cvc5 emits UTF-8");
+    /// Every Alethe rule and RARE rewrite name `apply_rule`, `close_frame` and
+    /// `rare_rewrite` accept, in the order `Refutation::checked_rules` sorts.
+    ///
+    /// `replays_a_live_cvc5_qf_uf_rule_corpus` asserts this is exactly what
+    /// the live corpus and [`WRITTEN_RULES`] between them exercise, so an
+    /// accepting arm cannot ship without evidence and a name cannot linger
+    /// here after its arm is deleted.
+    const ACCEPTED_RULES: &[&str] = &[
+        "and",
+        "and_intro",
+        "and_neg",
+        "and_pos",
+        "bool-double-not-elim",
+        "bool-eq-false",
+        "bool-eq-true",
+        "bool-xor-refl",
+        "cong",
+        "contraction",
+        "distinct-binary-elim",
+        "distinct_elim",
+        "eq-refl",
+        "eq-symm",
+        "equiv1",
+        "equiv2",
+        "equiv_pos1",
+        "equiv_pos2",
+        "equiv_simplify",
+        "evaluate",
+        "false",
+        "implies",
+        "implies_neg1",
+        "implies_neg2",
+        "implies_simplify",
+        "ite-eq",
+        "ite-eq-branch",
+        "ite-false-cond",
+        "ite-true-cond",
+        "ite1",
+        "ite2",
+        "not_and",
+        "not_not",
+        "not_or",
+        "not_symm",
+        "or",
+        "or_neg",
+        "or_pos",
+        "or_simplify",
+        "rare_rewrite",
+        "refl",
+        "reordering",
+        "resolution",
+        "subproof",
+        "symm",
+        "th_resolution",
+        "trans",
+        "true",
+        "xor1",
+        "xor2",
+        "xor_pos2",
+    ];
+
+    fn generate_and_replay(problem_source: &str) -> BTreeSet<String> {
+        let stdout = solve_with_cvc5(problem_source);
         let problem = parse_smtlib2(problem_source).expect("problem parses");
         let proof = parse_cvc5_output(&stdout).expect("generated proof parses");
-        replay_qf_uf(&problem, &proof).unwrap_or_else(|error| {
+        let refutation = replay_qf_uf(&problem, &proof).unwrap_or_else(|error| {
             panic!(
                 "generated proof replays for:\n{problem_source}\nproof:\n{stdout}\nerror: {error}"
             )
         });
+        refutation.checked_rules().clone()
     }
 
     #[test]
@@ -2388,8 +5270,12 @@ mod tests {
     /// Lowers `problem_source` and returns its kernel with the lowered
     /// assertion rows in source order.
     fn lowered_assertions(problem_source: &str) -> (Kernel, Vec<Ref>) {
+        lowered_assertions_for(Logic::QfUf, problem_source)
+    }
+
+    fn lowered_assertions_for(logic: Logic, problem_source: &str) -> (Kernel, Vec<Ref>) {
         let problem = parse_smtlib2(problem_source).expect("problem parses");
-        let mut replayer = Replayer::new().expect("checked Boolean init compiles");
+        let mut replayer = Replayer::new(logic).expect("checked Boolean init compiles");
         replayer.ingest_problem(&problem).expect("problem lowers");
         let rows = replayer
             .assertion_terms
@@ -2587,6 +5473,62 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_wide_term_before_it_recurses() {
+        // A flat n-ary connective is one s-expression level deep and folds
+        // into an n-1 deep row chain. Every rule body that walks that chain
+        // recurses once per level, so the budget has to bound the rows: a
+        // checker that aborts the process on adversarial input cannot report
+        // an honest rejection.
+        let source = |arity: usize| {
+            format!(
+                "(set-logic QF_UF)\n(declare-const p Bool)\n(assert (or{}))\n(check-sat)\n",
+                " p".repeat(arity)
+            )
+        };
+        let proof = parse_alethe("(assume a0 p)").expect("proof parses");
+        let problem = parse_smtlib2(&source(MAX_TERM_DEPTH + 1)).expect("problem parses");
+        assert!(matches!(
+            replay_qf_uf(&problem, &proof),
+            Err(Error::TermTooDeep {
+                limit: MAX_TERM_DEPTH
+            })
+        ));
+        // `distinct` is quadratic, so its budget is reached at a much smaller
+        // arity than a binary fold's.
+        let wide = format!(
+            "(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(assert (distinct{}))\n(check-sat)\n",
+            " a".repeat(MAX_TERM_DEPTH)
+        );
+        let problem = parse_smtlib2(&wide).expect("problem parses");
+        assert!(matches!(
+            replay_qf_uf(&problem, &proof),
+            Err(Error::TermTooDeep {
+                limit: MAX_TERM_DEPTH
+            })
+        ));
+        // Just inside the budget the walkers run to completion and the
+        // replay returns an ordinary error rather than overflowing a stack.
+        let arity = MAX_TERM_DEPTH - 2;
+        let problem = parse_smtlib2(&source(arity)).expect("problem parses");
+        assert!(matches!(
+            replay_qf_uf(&problem, &proof),
+            Err(Error::UnassertedAssumption)
+        ));
+        // A rule body descends the same chain, so the deepest walk a proof
+        // can ask for is exercised too.
+        let wide = parse_alethe(&format!(
+            "(assume a0 (! (or{}) :named @p_1))\n\
+             (step t0 (cl (not @p_1) p) :rule or_pos)",
+            " p".repeat(arity)
+        ))
+        .expect("proof parses");
+        assert!(
+            replay_qf_uf(&problem, &wide).is_err(),
+            "a wide disjunction must not certify anything here"
+        );
+    }
+
+    #[test]
     fn checks_a_user_defined_rule_handler() {
         struct ReflexivityHandler;
 
@@ -2650,6 +5592,1894 @@ mod tests {
         assert!(matches!(
             replay_qf_uf(&problem, &proof),
             Err(Error::Unsupported { .. })
+        ));
+    }
+
+    // --- QF_UFLIA frontend -------------------------------------------------
+
+    const UFLIA_PROBLEM: &str = "(set-logic QF_UFLIA)\n\
+         (declare-fun f (Int) Int)\n\
+         (declare-const x Int)\n\
+         (assert (= (f x) x))\n\
+         (check-sat)\n";
+
+    const UFLIA_FIXTURE_PROBLEM: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../proof/alethe/tests/fixtures/cvc5-qf-uflia/problem.smt2"
+    ));
+    const UFLIA_FIXTURE_PROOF: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../proof/alethe/tests/fixtures/cvc5-qf-uflia/proof.alethe"
+    ));
+
+    /// Lowers `sources` as Alethe proof terms against `problem_source`.
+    fn lowered_proof_terms(problem_source: &str, sources: &[&str]) -> (Kernel, Vec<Ref>) {
+        let mut replayer = uflia_replayer(problem_source);
+        let rows = sources
+            .iter()
+            .map(|source| lower_proof_term(&mut replayer, source).expect("term lowers"))
+            .collect();
+        (replayer.kernel, rows)
+    }
+
+    fn uflia_replayer(problem_source: &str) -> Replayer {
+        let problem = parse_smtlib2(problem_source).expect("problem parses");
+        let mut replayer = Replayer::new(Logic::QfUflia).expect("checked Boolean init compiles");
+        replayer.ingest_problem(&problem).expect("problem lowers");
+        replayer.dialect = Dialect::Alethe;
+        replayer
+    }
+
+    fn lower_proof_term(replayer: &mut Replayer, source: &str) -> Result<Ref, Error> {
+        let proof = parse_alethe(&format!("(assume a0 {source})")).expect("term parses");
+        let [AletheCommand::Assume { term, .. }] = proof.commands() else {
+            panic!("one assume command");
+        };
+        replayer.term(term).map(|term| term.reference)
+    }
+
+    #[test]
+    fn interns_one_numeral_spelling_as_one_row() {
+        let (mut kernel, rows) =
+            lowered_proof_terms(UFLIA_PROBLEM, &["5", "5", "7", "(f 5)", "(f 5)"]);
+        let [first, second, seven, applied, applied_again] = rows.as_slice() else {
+            panic!("five terms lower to five rows");
+        };
+        assert_eq!(first, second, "one spelling interns to one row");
+        assert_ne!(first, seven, "distinct values are distinct rows");
+        // Applications are appended rather than hash-consed, so two `(f 5)`
+        // terms are two rows over one shared numeral row, and join.
+        join_same_syntax(&mut kernel, *applied, *applied_again)
+            .expect("two occurrences of (f 5) join");
+        assert!(
+            join_same_syntax(&mut kernel, *first, *seven).is_err(),
+            "5 and 7 must never join"
+        );
+    }
+
+    #[test]
+    fn separates_spellings_the_producer_relates_by_a_rule() {
+        // cvc5 states `(= (- 3) -3)` as an `evaluate` step, so identifying the
+        // two spellings here would turn that step into reflexivity and assume
+        // the arithmetic fact it is supposed to justify.
+        let (mut kernel, rows) = lowered_proof_terms(UFLIA_PROBLEM, &["-3", "(- 3)", "5", "5/1"]);
+        let [bare, applied, integer, rational] = rows.as_slice() else {
+            panic!("four terms lower to four rows");
+        };
+        assert_ne!(bare, applied, "-3 and (- 3) are different rows");
+        assert!(
+            join_same_syntax(&mut kernel, *bare, *applied).is_err(),
+            "-3 and (- 3) must never join"
+        );
+        assert_ne!(integer, rational, "5 and 5/1 are different rows");
+        assert!(
+            !kernel
+                .equivalent(
+                    kernel.classifier(*integer).expect("classifier"),
+                    kernel.classifier(*rational).expect("classifier"),
+                )
+                .expect("classifiers compare"),
+            "5 is Int-sorted and 5/1 is Real-sorted"
+        );
+    }
+
+    #[test]
+    fn reads_bare_negative_numerals_in_both_dialects() {
+        let mut replayer = uflia_replayer(
+            "(set-logic QF_UFLIA)\n(declare-const x Int)\n(assert (= x -3))\n(check-sat)\n",
+        );
+        let from_input = replayer.numeric().expect("numeric vocabulary").int_numerals["-3"];
+        let from_proof = lower_proof_term(&mut replayer, "-3").expect("term lowers");
+        assert_eq!(
+            from_input, from_proof,
+            "one spelling interns to one row in both readers"
+        );
+    }
+
+    #[test]
+    fn rejects_rational_literals_in_smtlib_input() {
+        let problem = parse_smtlib2(
+            "(set-logic QF_UFLIA)\n(declare-const x Int)\n(assert (= x 1/1))\n(check-sat)\n",
+        )
+        .expect("problem parses");
+        let mut replayer = Replayer::new(Logic::QfUflia).expect("init compiles");
+        assert!(matches!(
+            replayer.ingest_problem(&problem),
+            Err(Error::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_the_real_sort_in_input() {
+        let problem = parse_smtlib2(
+            "(set-logic QF_UFLIA)\n(declare-const r Real)\n(assert (= r r))\n(check-sat)\n",
+        )
+        .expect("problem parses");
+        let mut replayer = Replayer::new(Logic::QfUflia).expect("init compiles");
+        assert!(matches!(
+            replayer.ingest_problem(&problem),
+            Err(Error::Unsupported { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_non_canonical_numeral_spellings() {
+        let mut replayer = uflia_replayer(UFLIA_PROBLEM);
+        for spelling in ["007", "-0", "1/0", "1.5", "0/0", "-0/1", "1/01"] {
+            assert!(
+                matches!(
+                    lower_proof_term(&mut replayer, spelling),
+                    Err(Error::Malformed { .. })
+                ),
+                "numeral {spelling:?} was not rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_declarations_that_collide_with_the_reader() {
+        for source in [
+            "(set-logic QF_UFLIA)\n(declare-const -3 Int)\n(check-sat)\n",
+            "(set-logic QF_UFLIA)\n(declare-sort Int 0)\n(check-sat)\n",
+            "(set-logic QF_UFLIA)\n(declare-sort Real 0)\n(check-sat)\n",
+            "(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const Bool U)\n(check-sat)\n",
+            // Declarable in SMT-LIB, unreachable through this reader: the
+            // numeral arm and the arithmetic arm both run before the declared
+            // functions are consulted.
+            "(set-logic QF_UFLIA)\n(declare-const -007 Int)\n(check-sat)\n",
+            "(set-logic QF_UFLIA)\n(declare-fun + (Int Int) Int)\n(check-sat)\n",
+            "(set-logic QF_UFLIA)\n(declare-fun to_real (Int) Real)\n(check-sat)\n",
+            "(set-logic QF_UF)\n(declare-sort U 0)\n(declare-fun < (U U) Bool)\n(check-sat)\n",
+        ] {
+            let problem = parse_smtlib2(source).expect("problem parses");
+            let logic = if source.contains("QF_UFLIA") {
+                Logic::QfUflia
+            } else {
+                Logic::QfUf
+            };
+            let mut replayer = Replayer::new(logic).expect("init compiles");
+            assert!(
+                matches!(
+                    replayer.ingest_problem(&problem),
+                    Err(Error::Malformed { .. })
+                ),
+                "declaration accepted in: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_let_binder_spelled_as_a_numeral() {
+        let mut replayer = uflia_replayer(UFLIA_PROBLEM);
+        assert!(matches!(
+            lower_proof_term(&mut replayer, "(let ((-3 x)) -3)"),
+            Err(Error::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn folds_arithmetic_operators_the_way_cvc5_states_them() {
+        let (mut kernel, rows) = lowered_proof_terms(
+            "(set-logic QF_UFLIA)\n\
+             (declare-const x Int)\n\
+             (declare-const y Int)\n\
+             (declare-const z Int)\n\
+             (assert (= x x))\n\
+             (check-sat)\n",
+            &[
+                "(+ x y z)",
+                "(+ (+ x y) z)",
+                "(+ x (+ y z))",
+                "(- x y)",
+                "(< x y)",
+                "(> x y)",
+            ],
+        );
+        let [flat, left, right, difference, less, greater] = rows.as_slice() else {
+            panic!("six terms lower to six rows");
+        };
+        join_same_syntax(&mut kernel, *flat, *left)
+            .expect("SMT-LIB Ints declares + left-associative");
+        assert!(
+            join_same_syntax(&mut kernel, *flat, *right).is_err(),
+            "(+ x y z) must not lower like (+ x (+ y z))"
+        );
+        assert!(
+            join_same_syntax(&mut kernel, *difference, *less).is_err(),
+            "different operators are different heads"
+        );
+        assert!(
+            join_same_syntax(&mut kernel, *less, *greater).is_err(),
+            "(< x y) must not be normalized into (> y x)"
+        );
+    }
+
+    #[test]
+    fn rejects_arithmetic_shapes_this_reader_does_not_read() {
+        let mut replayer = uflia_replayer(
+            "(set-logic QF_UFLIA)\n\
+             (declare-const x Int)\n\
+             (declare-const y Int)\n\
+             (declare-const p Bool)\n\
+             (assert (= x x))\n\
+             (check-sat)\n",
+        );
+        // The chainable comparison form is refused rather than guessed.
+        assert!(matches!(
+            lower_proof_term(&mut replayer, "(< x y x)"),
+            Err(Error::Unsupported { .. })
+        ));
+        assert!(matches!(
+            lower_proof_term(&mut replayer, "(+ x p)"),
+            Err(Error::Malformed { .. })
+        ));
+        assert!(matches!(
+            lower_proof_term(&mut replayer, "(+ x)"),
+            Err(Error::Malformed { .. })
+        ));
+        assert!(matches!(
+            lower_proof_term(&mut replayer, "(to_real p)"),
+            Err(Error::Kernel { .. })
+        ));
+        // to_real lifts Int into Real, and its result is not an Int again.
+        assert!(matches!(
+            lower_proof_term(&mut replayer, "(+ x (to_real x))"),
+            Err(Error::Malformed { .. })
+        ));
+        lower_proof_term(&mut replayer, "(* -1/1 (to_real (- x 1)))")
+            .expect("a Real-sorted product over a coercion lowers");
+    }
+
+    #[test]
+    fn lowers_qf_uflia_without_import_proxy_rows() {
+        // The compact literal rows of issue 1210 have no checked lowering, so
+        // this frontend emits none and adds no dependency on them.
+        let (kernel, _) = lowered_assertions_for(
+            Logic::QfUflia,
+            "(set-logic QF_UFLIA)\n\
+             (declare-fun f (Int) Int)\n\
+             (declare-const x Int)\n\
+             (assert (= (f (+ x -3)) (* 2 x)))\n\
+             (assert (< x 5))\n\
+             (check-sat)\n",
+        );
+        assert_no_import_proxy_rows(&kernel);
+
+        // Problem lowering is only half the arena: a rule body run during
+        // replay emits rows too, so the finished lowering is scanned as well.
+        // `Lowering` deliberately has no public kernel accessor, so the test
+        // reads the private field rather than the crate widening its API.
+        let problem = parse_smtlib2(UFLIA_FIXTURE_PROBLEM).expect("problem parses");
+        let proof = parse_alethe(UFLIA_FIXTURE_PROOF).expect("proof parses");
+        let lowering = lower_qf_uflia(&problem, &proof).expect("the fixture lowers to its gap");
+        assert!(lowering.checked_rules().len() > 1, "rules replayed");
+        assert_no_import_proxy_rows(&lowering.kernel);
+    }
+
+    /// Asserts an arena holds no import-proxy row and no ambient predicate.
+    fn assert_no_import_proxy_rows(kernel: &Kernel) {
+        for index in 1..=kernel.arena().len() {
+            let Ok(value) = i32::try_from(index) else {
+                continue;
+            };
+            let Some(reference) = Ref::new(value) else {
+                continue;
+            };
+            let Some(tag) = kernel.arena().tag(reference) else {
+                continue;
+            };
+            assert!(
+                !matches!(
+                    tag,
+                    Tag::Kind(KindTag::Ref) | Tag::Ty(TyTag::Ref) | Tag::Tm(TmTag::Ref)
+                ),
+                "row {index} is an unchecked import proxy: {tag:?}"
+            );
+        }
+        assert!(
+            kernel.arena().ambient_predicates().is_empty(),
+            "lowering must assume nothing about imported rows"
+        );
+    }
+
+    #[test]
+    fn partitions_the_logic_entry_points() {
+        let uf = parse_smtlib2(PROBLEM).expect("problem parses");
+        let uflia = parse_smtlib2(UFLIA_FIXTURE_PROBLEM).expect("problem parses");
+        let proof = parse_alethe(PROOF).expect("proof parses");
+        assert!(matches!(
+            replay_qf_uf(&uflia, &proof),
+            Err(Error::Unsupported { .. })
+        ));
+        assert!(matches!(
+            lower_qf_uflia(&uf, &proof),
+            Err(Error::Unsupported { .. })
+        ));
+        let unknown = parse_smtlib2("(set-logic QF_LIA)\n(check-sat)\n").expect("problem parses");
+        assert!(matches!(
+            replay_qf_uf(&unknown, &proof),
+            Err(Error::Unsupported { .. })
+        ));
+        assert_eq!(
+            replay_qf_uf(&uf, &proof)
+                .expect("QF_UF still replays")
+                .logic(),
+            Logic::QfUf
+        );
+    }
+
+    #[test]
+    fn lowers_the_qf_uflia_fixture_to_its_arithmetic_gap() {
+        let problem = parse_smtlib2(UFLIA_FIXTURE_PROBLEM).expect("problem parses");
+        let proof = parse_alethe(UFLIA_FIXTURE_PROOF).expect("proof parses");
+        // Every term in this checked-in proof lowers, six propositional rules
+        // replay inside two anchors, and the first thing this build cannot do
+        // is arithmetic.
+        let lowering = lower_qf_uflia(&problem, &proof).expect("the fixture reaches its gap");
+        let gap = lowering.arithmetic_gap();
+        assert_eq!((gap.step(), gap.rule()), ("t6.t1", "poly_simp"));
+        for rule in ["cong", "refl", "equiv_pos2", "implies_neg1", "rare_rewrite"] {
+            assert!(
+                lowering.checked_rules().contains(rule),
+                "{rule} did not replay"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_arithmetic_rules_with_a_named_error() {
+        let problem = parse_smtlib2(
+            "(set-logic QF_UFLIA)\n\
+             (declare-const x Int)\n\
+             (assert (= x 1))\n\
+             (assert (not (= x 1)))\n\
+             (check-sat)\n",
+        )
+        .expect("problem parses");
+        for (source, expected) in [
+            ("(step t0 (cl (= (* 1 x) x)) :rule poly_simp)", "poly_simp"),
+            (
+                "(step t0 (cl (< x 1)) :rule la_generic :args (1/1 1/1))",
+                "la_generic",
+            ),
+            (
+                "(step t0 (cl (= (<= x 1) (>= 1 x))) :rule rare_rewrite :args (\"arith-elim-leq\" x 1))",
+                "arith-elim-leq",
+            ),
+            ("(step t0 (cl (= (+ 5 -6) -1)) :rule evaluate)", "evaluate"),
+            (
+                "(step t0 (cl (= (= 5 6) false)) :rule evaluate)",
+                "evaluate",
+            ),
+        ] {
+            let proof = parse_alethe(source).expect("proof parses");
+            let lowering = lower_qf_uflia(&problem, &proof)
+                .unwrap_or_else(|error| panic!("{source} raised {error} rather than a gap"));
+            let gap = lowering.arithmetic_gap();
+            assert_eq!((gap.step(), gap.rule()), ("t0", expected));
+        }
+        // The same rules are refused on the QF_UF path with the same error.
+        let problem = parse_smtlib2(PROBLEM).expect("problem parses");
+        let proof = parse_alethe("(step t0 (cl) :rule la_generic)").expect("proof parses");
+        assert!(matches!(
+            replay_qf_uf(&problem, &proof),
+            Err(Error::ArithmeticTheoryMissing { .. })
+        ));
+    }
+
+    /// Records every rule the default dispatch delegates to userspace.
+    #[derive(Default)]
+    struct RecordingHandler {
+        seen: Vec<String>,
+    }
+
+    impl RuleHandler for RecordingHandler {
+        fn apply(&mut self, request: RuleRequest<'_>) -> Result<Option<ThmId>, Error> {
+            let name = if request.rule == "rare_rewrite" {
+                args_name(request.args).unwrap_or("rare_rewrite")
+            } else {
+                request.rule
+            };
+            self.seen.push(name.to_owned());
+            Ok(None)
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn classifies_every_arithmetic_rule_by_family() {
+        // The Alethe specification's arithmetic inventory, plus the
+        // `poly_simp` extensions cvc5 adds. Every one must stop with the
+        // named error, before any argument is inspected and before userspace
+        // is consulted, so "this build checks no arithmetic" is a decision
+        // rather than a rule body happening not to apply.
+        const ARITHMETIC: &[&str] = &[
+            "comp_simplify",
+            "div_intro",
+            "div_simplify",
+            "la_disequality",
+            "la_generic",
+            "la_mult_neg",
+            "la_mult_pos",
+            "la_rw_eq",
+            "la_tautology",
+            "la_totality",
+            "lia_generic",
+            "minus_simplify",
+            "mod_simplify",
+            "poly_simp",
+            "poly_simp_rel",
+            "prod_simplify",
+            "sum_simplify",
+            "unary_minus_simplify",
+        ];
+        // Every simplifier this build states is Boolean, and every other rule
+        // it dispatches is propositional or equality reasoning. None may be
+        // swallowed by the arithmetic families above.
+        const NOT_ARITHMETIC: &[&str] = &[
+            "ac_simp",
+            "aci_simp",
+            "and",
+            "and_intro",
+            "and_neg",
+            "and_pos",
+            "and_simplify",
+            "bool_simplify",
+            "cong",
+            "connective_def",
+            "contraction",
+            "distinct_elim",
+            "eq_simplify",
+            "equiv1",
+            "equiv2",
+            "equiv_pos1",
+            "equiv_pos2",
+            "equiv_simplify",
+            "evaluate",
+            "false",
+            "hole",
+            "implies",
+            "implies_neg1",
+            "implies_neg2",
+            "implies_simplify",
+            "ite1",
+            "ite2",
+            "ite_simplify",
+            "not_and",
+            "not_not",
+            "not_or",
+            "not_simplify",
+            "not_symm",
+            "or",
+            "or_neg",
+            "or_pos",
+            "or_simplify",
+            "qnt_simplify",
+            "rare_rewrite",
+            "refl",
+            "reordering",
+            "resolution",
+            "subproof",
+            "symm",
+            "th_resolution",
+            "trans",
+            "true",
+            "xor1",
+            "xor2",
+            "xor_pos2",
+        ];
+        for rule in NOT_ARITHMETIC {
+            assert!(
+                arithmetic_rule_domain(rule).is_none(),
+                "{rule:?} is classified arithmetic"
+            );
+        }
+        // Every numeric simplifier is in the arithmetic inventory, so the one
+        // hand-listed family cannot drift from what the classifier reads.
+        for rule in NUMERIC_SIMPLIFY {
+            assert!(ARITHMETIC.contains(rule), "{rule:?} is not pinned");
+        }
+
+        let problem = parse_smtlib2(PROBLEM).expect("problem parses");
+        let mut handler = RecordingHandler::default();
+        for rule in ARITHMETIC {
+            let proof =
+                parse_alethe(&format!("(step t0 (cl) :rule {rule})")).expect("proof parses");
+            match replay_qf_uf_with_handler(&problem, &proof, &mut handler)
+                .expect_err("an arithmetic rule is refused")
+            {
+                Error::ArithmeticTheoryMissing {
+                    step,
+                    rule: named,
+                    domain,
+                } => {
+                    assert_eq!((step.as_str(), named.as_str()), ("t0", *rule));
+                    assert_eq!(domain, "integer or rational");
+                }
+                other => panic!("{rule:?} raised {other} rather than the named error"),
+            }
+        }
+        // RARE arithmetic rewrites are classified the same way, by name
+        // family rather than by enumeration.
+        for name in ["arith-plus-zero", "arith-mult-one", "div-elim", "mod-elim"] {
+            let proof = parse_alethe(&format!(
+                "(step t0 (cl) :rule rare_rewrite :args (\"{name}\"))"
+            ))
+            .expect("proof parses");
+            match replay_qf_uf_with_handler(&problem, &proof, &mut handler)
+                .expect_err("an arithmetic rewrite is refused")
+            {
+                Error::ArithmeticTheoryMissing { step, rule, .. } => {
+                    assert_eq!((step.as_str(), rule.as_str()), ("t0", name));
+                }
+                other => panic!("{name:?} raised {other} rather than the named error"),
+            }
+        }
+        assert!(
+            handler.seen.is_empty(),
+            "arithmetic reached userspace: {:?}",
+            handler.seen
+        );
+    }
+
+    #[test]
+    fn keeps_boolean_evaluate_checkable() {
+        let problem = parse_smtlib2(
+            "(set-logic QF_UFLIA)\n\
+             (declare-const x Int)\n\
+             (assert (= x 1))\n\
+             (assert (not (= x 1)))\n\
+             (check-sat)\n",
+        )
+        .expect("problem parses");
+        let proof = parse_alethe("(step t0 (cl (= (not true) false)) :rule evaluate)")
+            .expect("proof parses");
+        // The step checks; the proof simply never reaches an empty clause.
+        assert!(matches!(
+            lower_qf_uflia(&problem, &proof),
+            Err(Error::NoRefutation)
+        ));
+    }
+
+    /// The measured reach of this build: every curated cvc5 `QF_UFLIA`
+    /// problem, the rules that replayed, and the first one that stopped it.
+    ///
+    /// The gap is machine-checked rather than asserted in prose. It is
+    /// exactly how far this build reaches today, and it turns into a positive
+    /// corpus one arithmetic rule at a time. Every entry names an arithmetic
+    /// rule: nothing here stops on an unwritten propositional rule.
+    /// One curated problem, its measured gap, and what replayed before it:
+    /// the problem source, the gap's step, rule and domain, how many Alethe
+    /// indices were checked, and exactly which rules replayed. The rule
+    /// column is an equality, not a lower bound, so a change that makes more
+    /// of a proof replay before the same gap fails here rather than passing
+    /// silently.
+    type GapRow = (
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+        usize,
+        &'static [&'static str],
+    );
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn lowers_live_cvc5_qf_uflia_proofs_to_a_named_arithmetic_gap() {
+        const GAPS: &[GapRow] = &[
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)\n(declare-const y Int)\n(assert (= (+ x y) 10))\n(assert (= x 3))\n(assert (not (= y 7)))\n(check-sat)\n",
+                "t3",
+                "poly_simp",
+                "integer or rational",
+                6,
+                &["equiv_pos2"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)\n(assert (< x 5))\n(assert (> x 5))\n(check-sat)\n",
+                "t1",
+                "arith-elim-lt",
+                "integer or rational",
+                3,
+                &["equiv_pos2"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)\n(declare-const y Int)\n(assert (<= x y))\n(assert (<= y x))\n(assert (not (= x y)))\n(check-sat)\n",
+                "t6.t1",
+                "poly_simp",
+                "integer or rational",
+                13,
+                &[
+                    "bool-double-not-elim",
+                    "cong",
+                    "equiv_pos2",
+                    "implies_neg1",
+                    "rare_rewrite",
+                    "refl",
+                ],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)\n(assert (= x (- 3)))\n(assert (> x (- 1)))\n(check-sat)\n",
+                "t2",
+                "evaluate",
+                "integer",
+                4,
+                &["equiv_pos2"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)\n(declare-const y Int)\n(assert (= (- x y) 4))\n(assert (= y 1))\n(assert (not (= x 5)))\n(check-sat)\n",
+                "t2",
+                "poly_simp",
+                "integer or rational",
+                5,
+                &["equiv_pos2"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)\n(assert (= (* 3 x) 12))\n(assert (not (= x 4)))\n(check-sat)\n",
+                "t1",
+                "poly_simp",
+                "integer or rational",
+                3,
+                &["equiv_pos2"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-fun f (Int) Int)\n(declare-const x Int)\n(assert (not (= (f (+ x 1)) (f (+ 1 x)))))\n(check-sat)\n",
+                "t1",
+                "poly_simp",
+                "integer or rational",
+                2,
+                &["equiv_pos2"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)\n(assert (= (* 2 x) 1))\n(check-sat)\n",
+                "t1",
+                "poly_simp",
+                "integer or rational",
+                2,
+                &["equiv_pos2"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const a Int)\n(declare-const b Int)\n(declare-const c Int)\n(declare-const d Int)\n(assert (< a b))\n(assert (< b c))\n(assert (< c d))\n(assert (<= d a))\n(check-sat)\n",
+                "t7.t1",
+                "arith-elim-leq",
+                "integer or rational",
+                16,
+                &[
+                    "bool-double-not-elim",
+                    "cong",
+                    "equiv_pos2",
+                    "implies_neg1",
+                    "rare_rewrite",
+                    "refl",
+                ],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const p1 Int)\n(declare-const p2 Int)\n(declare-const p3 Int)\n(assert (and (<= 1 p1) (<= p1 2)))\n(assert (and (<= 1 p2) (<= p2 2)))\n(assert (and (<= 1 p3) (<= p3 2)))\n(assert (distinct p1 p2 p3))\n(check-sat)\n",
+                "t7.t1",
+                "arith-elim-leq",
+                "integer or rational",
+                16,
+                &[
+                    "bool-double-not-elim",
+                    "cong",
+                    "equiv_pos2",
+                    "implies_neg1",
+                    "rare_rewrite",
+                    "refl",
+                ],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)\n(declare-const b Bool)\n(assert (= x (ite b 1 2)))\n(assert (not (or (= x 1) (= x 2))))\n(check-sat)\n",
+                "t3",
+                "poly_simp",
+                "integer or rational",
+                5,
+                &["equiv1", "equiv_pos2", "equiv_simplify"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-fun g (Int Int) Int)\n(declare-const x Int)\n(assert (= (g x 0) 5))\n(assert (= (g x (- 1 1)) 6))\n(check-sat)\n",
+                "t3",
+                "evaluate",
+                "integer",
+                5,
+                &["cong", "equiv_pos2", "refl"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)\n(declare-const y Int)\n(assert (= y (- x)))\n(assert (= x 2))\n(assert (> y 0))\n(check-sat)\n",
+                "t3",
+                "poly_simp",
+                "integer or rational",
+                6,
+                &["equiv_pos2"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)(declare-const y Int)\n(assert (>= x 1))(assert (>= y 1))\n(assert (<= (+ (* 3 x) (* 5 y)) 7))\n(check-sat)\n",
+                "t4.t1",
+                "arith-elim-lt",
+                "integer or rational",
+                11,
+                &[
+                    "bool-double-not-elim",
+                    "cong",
+                    "equiv_pos2",
+                    "implies_neg1",
+                    "rare_rewrite",
+                ],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-fun f (Int Int) Int)\n(declare-const x Int)(declare-const y Int)(declare-const z Int)\n(assert (= (+ x 1) y))(assert (= (+ y 1) z))\n(assert (not (= (f x z) (f (- z 2) (+ x 2)))))\n(check-sat)\n",
+                "t2",
+                "poly_simp",
+                "integer or rational",
+                5,
+                &["equiv_pos2"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)(declare-const p Bool)(declare-const q Bool)\n(assert (=> p (> x 10)))\n(assert (=> q (< x 0)))\n(assert (or p q))\n(assert (and (>= x 0) (<= x 10)))\n(assert (xor p q))\n(check-sat)\n",
+                "t2",
+                "arith-elim-gt",
+                "integer or rational",
+                7,
+                &["equiv_pos2", "or_pos"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const a Int)(declare-const b Int)(declare-const c Int)\n(assert (distinct a b c))\n(assert (<= 0 a))(assert (<= a 1))\n(assert (<= 0 b))(assert (<= b 1))\n(assert (<= 0 c))(assert (<= c 1))\n(check-sat)\n",
+                "t7.t1",
+                "arith-elim-leq",
+                "integer or rational",
+                19,
+                &[
+                    "bool-double-not-elim",
+                    "cong",
+                    "equiv_pos2",
+                    "implies_neg1",
+                    "rare_rewrite",
+                    "refl",
+                ],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)\n(assert (= (* (- 2) x) 6))\n(assert (not (= x (- 3))))\n(check-sat)\n",
+                "t1",
+                "evaluate",
+                "integer",
+                3,
+                &["equiv_pos2"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-fun p (Int) Bool)\n(declare-const x Int)(declare-const y Int)\n(assert (= (+ x 0) y))\n(assert (p x))\n(assert (not (p y)))\n(check-sat)\n",
+                "t2",
+                "poly_simp",
+                "integer or rational",
+                5,
+                &["equiv_pos2"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)(declare-const y Int)\n(assert (= y (ite (> x 0) (+ x 1) (- x 1))))\n(assert (= y x))\n(check-sat)\n",
+                "t1.t1",
+                "arith-eq-elim-int",
+                "integer or rational",
+                6,
+                &["equiv_pos2", "implies_neg1"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)\n(assert (> (* 3 x) 1))\n(assert (< (* 3 x) 3))\n(check-sat)\n",
+                "t1",
+                "arith-elim-gt",
+                "integer or rational",
+                3,
+                &["equiv_pos2"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const p1 Int)(declare-const p2 Int)(declare-const p3 Int)(declare-const p4 Int)\n(assert (and (<= 1 p1) (<= p1 3)))\n(assert (and (<= 1 p2) (<= p2 3)))\n(assert (and (<= 1 p3) (<= p3 3)))\n(assert (and (<= 1 p4) (<= p4 3)))\n(assert (distinct p1 p2 p3 p4))\n(check-sat)\n",
+                "t8.t1",
+                "arith-elim-leq",
+                "integer or rational",
+                19,
+                &[
+                    "bool-double-not-elim",
+                    "cong",
+                    "equiv_pos2",
+                    "implies_neg1",
+                    "rare_rewrite",
+                    "refl",
+                ],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)(declare-const y Int)\n(assert (= (+ (* 1000000 x) (* 7 y)) 3))\n(assert (= x 0))\n(assert (not (= (* 7 y) 3)))\n(check-sat)\n",
+                "t1",
+                "poly_simp",
+                "integer or rational",
+                4,
+                &["equiv_pos2"],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-fun f (Int) Int)\n(declare-const x Int)(declare-const y Int)\n(assert (<= x y))(assert (<= y x))\n(assert (> (f x) (f y)))\n(check-sat)\n",
+                "t6.t1.t1",
+                "poly_simp",
+                "integer or rational",
+                15,
+                &[
+                    "bool-double-not-elim",
+                    "cong",
+                    "equiv_pos2",
+                    "implies_neg1",
+                    "rare_rewrite",
+                    "refl",
+                ],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)(declare-const b Bool)(declare-const c Bool)\n(declare-fun f (Int) Int)\n(assert (= x (ite b (ite c 1 2) 3)))\n(assert (distinct (f x) (f 1) (f 2) (f 3)))\n(check-sat)\n",
+                "t18",
+                "poly_simp",
+                "integer or rational",
+                42,
+                &[
+                    "and_intro",
+                    "and_neg",
+                    "and_pos",
+                    "cong",
+                    "contraction",
+                    "equiv1",
+                    "equiv_pos2",
+                    "equiv_simplify",
+                    "implies",
+                    "implies_neg1",
+                    "implies_neg2",
+                    "reordering",
+                    "resolution",
+                    "subproof",
+                    "symm",
+                    "trans",
+                ],
+            ),
+            (
+                "(set-logic QF_UFLIA)\n(declare-const x Int)(declare-const y Int)\n(assert (= (+ (* 2 x) (* 2 y)) 3))\n(check-sat)\n",
+                "t1",
+                "poly_simp",
+                "integer or rational",
+                2,
+                &["equiv_pos2"],
+            ),
+        ];
+        for (source, step, rule, domain, steps, rules) in GAPS {
+            let stdout = solve_with_cvc5(source);
+            let problem = parse_smtlib2(source).expect("problem parses");
+            let proof = parse_cvc5_output(&stdout).expect("generated proof parses");
+            let lowering = lower_qf_uflia(&problem, &proof)
+                .unwrap_or_else(|error| panic!("no gap for:\n{source}\nerror: {error}"));
+            let gap = lowering.arithmetic_gap();
+            assert_eq!(
+                (gap.step(), gap.rule(), gap.domain(), lowering.steps()),
+                (*step, *rule, *domain, *steps),
+                "gap moved for:\n{source}"
+            );
+            let replayed = lowering
+                .checked_rules()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                replayed, *rules,
+                "the rules that replay before the gap moved for:\n{source}"
+            );
+            assert_eq!(lowering.logic(), Logic::QfUflia);
+            assert!(!lowering.assertions().is_empty());
+        }
+    }
+
+    #[test]
+    fn refuses_to_certify_a_qf_uflia_proof_that_needed_no_arithmetic() {
+        // Whether a QF_UFLIA problem's unsatisfiability is purely UF is not
+        // visible in the input; it depends on cvc5's normalization. So a proof
+        // that derives the empty clause without ever needing arithmetic is
+        // refused rather than returned, and `Lowering` offers no theorem, no
+        // theorem index and no kernel, so there is no shape in which the
+        // refutation-shaped theorem could be handed out either.
+        let source = "(set-logic QF_UFLIA)\n\
+             (declare-fun f (Int) Int)\n\
+             (declare-const x Int)\n\
+             (declare-const y Int)\n\
+             (assert (= x y))\n\
+             (assert (not (= (f x) (f y))))\n\
+             (check-sat)\n";
+        let stdout = solve_with_cvc5(source);
+        let problem = parse_smtlib2(source).expect("problem parses");
+        let proof = parse_cvc5_output(&stdout).expect("generated proof parses");
+        assert!(matches!(
+            lower_qf_uflia(&problem, &proof),
+            Err(Error::NoArithmeticGap)
+        ));
+
+        // The guard is "a refutation was derived", not "the proof reached its
+        // end": a proof that refutes and then states an arithmetic step must
+        // be refused for the same reason, because the lowering would otherwise
+        // carry a refutation-shaped theorem it never certified.
+        let problem = parse_smtlib2(
+            "(set-logic QF_UFLIA)\n\
+             (declare-const x Int)\n\
+             (declare-const p Bool)\n\
+             (assert p)\n\
+             (assert (not p))\n\
+             (check-sat)\n",
+        )
+        .expect("problem parses");
+        let proof = parse_alethe(
+            "(assume a0 p)\n\
+             (assume a1 (not p))\n\
+             (step t0 (cl) :rule resolution :premises (a0 a1))\n\
+             (step t1 (cl (= (* 1 x) x)) :rule poly_simp)",
+        )
+        .expect("proof parses");
+        assert!(matches!(
+            lower_qf_uflia(&problem, &proof),
+            Err(Error::NoArithmeticGap)
+        ));
+    }
+
+    fn solve_with_cvc5(problem_source: &str) -> String {
+        let mut child = Command::new("cvc5")
+            .args(CVC5_FLAGS)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("cvc5 is part of the Nix test environment");
+        child
+            .stdin
+            .take()
+            .expect("cvc5 stdin")
+            .write_all(problem_source.as_bytes())
+            .expect("write problem to cvc5");
+        let output = child.wait_with_output().expect("wait for cvc5");
+        assert!(output.status.success(), "cvc5 failed: {output:?}");
+        String::from_utf8(output.stdout).expect("cvc5 emits UTF-8")
+    }
+
+    // --- rules with no live cvc5 coverage ------------------------------------
+
+    /// Hand-written proofs for the rules cvc5 1.3.4 rewrites away before it
+    /// reaches them, as `(rule, problem, proof)`.
+    ///
+    /// Every accepting arm the live corpus cannot reach has a row here, and
+    /// `replays_a_live_cvc5_qf_uf_rule_corpus` asserts that the two together
+    /// cover `ACCEPTED_RULES` exactly. An accepting arm added without
+    /// evidence therefore fails a test rather than shipping untested.
+    const WRITTEN_RULES: &[(&str, &str, &str)] = &[
+        (
+            "not_and",
+            "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (declare-const q Bool)\n\
+             (assert p)\n\
+             (assert q)\n\
+             (assert (not (and p q)))\n\
+             (check-sat)\n",
+            "(assume a0 (! p :named @p_1))\n\
+             (assume a1 (! q :named @p_2))\n\
+             (assume a2 (! (not (! (and @p_1 @p_2) :named @p_3)) :named @p_4))\n\
+             (step t0 (cl (not @p_1) (not @p_2)) :rule not_and :premises (a2))\n\
+             (step t1 (cl) :rule resolution :premises (t0 a0 a1))",
+        ),
+        (
+            "not_or",
+            "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (declare-const q Bool)\n\
+             (assert (not (or p q)))\n\
+             (assert p)\n\
+             (check-sat)\n",
+            "(assume a0 (! (not (! (or (! p :named @p_1) (! q :named @p_2)) :named @p_3)) :named @p_4))\n\
+             (assume a1 @p_1)\n\
+             (step t0 (cl (not @p_1)) :rule not_or :premises (a0) :args (0))\n\
+             (step t1 (cl) :rule resolution :premises (t0 a1))",
+        ),
+        (
+            "not_not",
+            "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (assert (not (not p)))\n\
+             (assert (not p))\n\
+             (check-sat)\n",
+            "(assume a0 (! (not (! (not (! p :named @p_1)) :named @p_2)) :named @p_3))\n\
+             (assume a1 @p_2)\n\
+             (step t0 (cl (not @p_3) @p_1) :rule not_not)\n\
+             (step t1 (cl) :rule resolution :premises (t0 a0 a1))",
+        ),
+        (
+            "implies_simplify",
+            "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (assert p)\n\
+             (assert (=> p false))\n\
+             (check-sat)\n",
+            "(assume a0 (! p :named @p_1))\n\
+             (assume a1 (! (=> @p_1 false) :named @p_2))\n\
+             (step t0 (cl (= @p_2 (! (not @p_1) :named @p_3))) :rule implies_simplify)\n\
+             (step t1 (cl (not @p_2) @p_3) :rule equiv1 :premises (t0))\n\
+             (step t2 (cl) :rule resolution :premises (t1 a1 a0))",
+        ),
+        // cvc5 1.3.4 prints `resolution`; `th_resolution` is the Alethe
+        // spelling for a theory-lemma resolution and dispatches identically.
+        (
+            "th_resolution",
+            "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (assert p)\n\
+             (assert (not p))\n\
+             (check-sat)\n",
+            "(assume a0 p)\n\
+             (assume a1 (not p))\n\
+             (step t0 (cl) :rule th_resolution :premises (a0 a1))",
+        ),
+        (
+            "bool-xor-refl",
+            "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (assert (xor p p))\n\
+             (check-sat)\n",
+            "(assume a0 (! (xor p p) :named @p_1))\n\
+             (step t0 (cl (= @p_1 false)) :rule rare_rewrite :args (\"bool-xor-refl\"))\n\
+             (step t1 (cl (not @p_1) false) :rule equiv1 :premises (t0))\n\
+             (step t2 (cl (not false)) :rule false)\n\
+             (step t3 (cl) :rule resolution :premises (t1 a0 t2))",
+        ),
+        (
+            "distinct-binary-elim",
+            "(set-logic QF_UF)\n\
+             (declare-sort U 0)\n\
+             (declare-const a U)\n\
+             (declare-const b U)\n\
+             (assert (distinct a b))\n\
+             (assert (= a b))\n\
+             (check-sat)\n",
+            "(assume a0 (! (distinct a b) :named @p_1))\n\
+             (assume a1 (! (= a b) :named @p_2))\n\
+             (step t0 (cl (= @p_1 (not @p_2))) :rule rare_rewrite :args (\"distinct-binary-elim\"))\n\
+             (step t1 (cl (not @p_1) (not @p_2)) :rule equiv1 :premises (t0))\n\
+             (step t2 (cl) :rule resolution :premises (t1 a0 a1))",
+        ),
+        (
+            "bool-eq-true",
+            "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (assert (= p true))\n\
+             (assert (not p))\n\
+             (check-sat)\n",
+            "(assume a0 (! (= (! p :named @p_1) true) :named @p_2))\n\
+             (assume a1 (! (not @p_1) :named @p_3))\n\
+             (step t0 (cl (= @p_2 @p_1)) :rule rare_rewrite :args (\"bool-eq-true\"))\n\
+             (step t1 (cl (not @p_2) @p_1) :rule equiv1 :premises (t0))\n\
+             (step t2 (cl) :rule resolution :premises (t1 a0 a1))",
+        ),
+        // cvc5 folds a constant `ite` condition away before it prints a
+        // proof, so the only two arms that reach `ite_constant` are written
+        // out here.
+        (
+            "ite-true-cond",
+            "(set-logic QF_UF)\n\
+             (declare-sort U 0)\n\
+             (declare-const a U)\n\
+             (declare-const b U)\n\
+             (assert (not (= (ite true a b) a)))\n\
+             (check-sat)\n",
+            "(assume a0 (! (not (! (= (! (ite true a b) :named @p_1) a) :named @p_2)) :named @p_3))\n\
+             (step t0 (cl @p_2) :rule rare_rewrite :args (\"ite-true-cond\"))\n\
+             (step t1 (cl) :rule resolution :premises (t0 a0))",
+        ),
+        (
+            "ite-false-cond",
+            "(set-logic QF_UF)\n\
+             (declare-sort U 0)\n\
+             (declare-const a U)\n\
+             (declare-const b U)\n\
+             (assert (not (= (ite false a b) b)))\n\
+             (check-sat)\n",
+            "(assume a0 (! (not (! (= (! (ite false a b) :named @p_1) b) :named @p_2)) :named @p_3))\n\
+             (step t0 (cl @p_2) :rule rare_rewrite :args (\"ite-false-cond\"))\n\
+             (step t1 (cl) :rule resolution :premises (t0 a0))",
+        ),
+    ];
+
+    /// Replays one hand-written proof against a real problem.
+    ///
+    /// cvc5 1.3.4 rewrites these shapes away before it reaches the rule under
+    /// test, so the proof is written by hand. The checks are the same ones a
+    /// generated proof passes: every step is checked against its stated
+    /// clause, and the refutation against the exact assertion set.
+    fn replay_written(problem_source: &str, proof_source: &str) -> Result<Refutation, Error> {
+        let problem = parse_smtlib2(problem_source).expect("problem parses");
+        let proof = parse_alethe(proof_source).expect("proof parses");
+        replay_qf_uf(&problem, &proof)
+    }
+
+    /// Replays the hand-written proof for `rule` and returns what it checked.
+    fn replay_written_rule(rule: &str) -> BTreeSet<String> {
+        let (_, problem_source, proof_source) = WRITTEN_RULES
+            .iter()
+            .find(|(name, _, _)| *name == rule)
+            .unwrap_or_else(|| panic!("{rule:?} has no hand-written proof"));
+        let refutation = replay_written(problem_source, proof_source)
+            .unwrap_or_else(|error| panic!("{rule} replays: {error}"));
+        assert!(
+            refutation.checked_rules().contains(rule),
+            "{rule:?} did not record itself: {:?}",
+            refutation.checked_rules()
+        );
+        refutation.checked_rules().clone()
+    }
+
+    #[test]
+    fn checks_not_and() {
+        replay_written_rule("not_and");
+    }
+
+    #[test]
+    fn checks_not_or() {
+        replay_written_rule("not_or");
+    }
+
+    #[test]
+    fn checks_not_not() {
+        replay_written_rule("not_not");
+    }
+
+    #[test]
+    fn checks_implies_simplify() {
+        replay_written_rule("implies_simplify");
+    }
+
+    #[test]
+    fn checks_th_resolution() {
+        replay_written_rule("th_resolution");
+    }
+
+    #[test]
+    fn checks_bool_xor_refl() {
+        replay_written_rule("bool-xor-refl");
+    }
+
+    #[test]
+    fn checks_distinct_binary_elim() {
+        replay_written_rule("distinct-binary-elim");
+    }
+
+    #[test]
+    fn checks_bool_eq_true() {
+        replay_written_rule("bool-eq-true");
+    }
+
+    #[test]
+    fn checks_a_conditional_on_a_constant_condition() {
+        replay_written_rule("ite-true-cond");
+        replay_written_rule("ite-false-cond");
+    }
+
+    #[test]
+    fn restates_a_premise_without_mutating_it() {
+        // A one-premise `resolution` used to return the premise handle, and
+        // `check_clause` then weakened the later step's stated literals into
+        // the earlier step's theorem. Replaying a valid proof must not depend
+        // on what unrelated later steps state.
+        let refutation = replay_written(
+            "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (assert p)\n\
+             (assert (not p))\n\
+             (check-sat)\n",
+            "(assume a0 p)\n\
+             (assume a1 (not p))\n\
+             (step t0 (cl p) :rule resolution :premises (a0))\n\
+             (step t1 (cl p false) :rule resolution :premises (t0))\n\
+             (step t2 (cl) :rule resolution :premises (a0 a1))",
+        )
+        .expect("a restated premise leaves the premise alone");
+        assert!(refutation.checked_rules().contains("resolution"));
+    }
+
+    #[test]
+    fn splits_a_condition_into_its_two_cases() {
+        // The case split carries ite1, ite2 and three RARE rewrites, so its
+        // two sequents are asserted directly rather than only through them.
+        let problem = parse_smtlib2(
+            "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (declare-const q Bool)\n\
+             (declare-const r Bool)\n\
+             (assert (ite p q r))\n\
+             (check-sat)\n",
+        )
+        .expect("problem parses");
+        let mut replayer = Replayer::new(Logic::QfUf).expect("checked Boolean init compiles");
+        replayer.ingest_problem(&problem).expect("problem lowers");
+        let conditional = replayer.conditionals[0].3;
+        let (when_false, when_true) = replayer
+            .boolean_case_split(conditional)
+            .expect("the case split is checked");
+        let condition = Lit::positive(conditional.condition.get());
+        for (theorem, expected) in [
+            (
+                when_false,
+                [condition, Lit::positive(conditional.condition_false.get())],
+            ),
+            (
+                when_true,
+                [
+                    condition.negated(),
+                    Lit::positive(conditional.condition_true.get()),
+                ],
+            ),
+        ] {
+            let value = replayer.kernel.thm().get(theorem).expect("theorem");
+            assert_eq!(value.lhs.rows().count(), 0, "a case split assumes nothing");
+            let mut actual = conclusion_literals(&replayer.kernel, theorem).expect("conclusion");
+            let mut wanted = expected.to_vec();
+            sort_and_dedup(&mut actual);
+            sort_and_dedup(&mut wanted);
+            assert_eq!(actual, wanted);
+        }
+    }
+
+    // --- fail-closed guarantees for the new rules ----------------------------
+
+    #[test]
+    fn rejects_rule_attributes_the_alethe_rule_does_not_take() {
+        let problem = "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (assert p)\n\
+             (assert (not p))\n\
+             (check-sat)\n";
+        for (proof, expected) in [
+            // A premise on a rule that states its own conclusion.
+            (
+                "(assume a0 p)\n(step t0 (cl (= p p)) :rule refl :premises (a0))",
+                "premises",
+            ),
+            (
+                "(assume a0 p)\n(step t0 (cl true) :rule true :premises (a0))",
+                "premises",
+            ),
+            // A missing premise on a rule that consumes one.
+            (
+                "(assume a0 p)\n(step t0 (cl p) :rule contraction)",
+                "premises",
+            ),
+            // An index argument on a rule that takes none.
+            (
+                "(assume a0 p)\n(step t0 (cl true) :rule true :args (0))",
+                "attributes",
+            ),
+            // A discharge list outside a subproof frame.
+            (
+                "(assume a0 p)\n(step t0 (cl p) :rule contraction :premises (a0) :discharge (a0))",
+                "attributes",
+            ),
+        ] {
+            let error = replay_written(problem, proof).expect_err("attribute is refused");
+            assert!(
+                error.to_string().contains(expected),
+                "unexpected error for {proof:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_simplifier_patterns_this_build_does_not_state() {
+        let problem = "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (declare-const q Bool)\n\
+             (assert p)\n\
+             (assert (not p))\n\
+             (check-sat)\n";
+        for proof in [
+            // `equiv_simplify` is an open-ended family; this equation is not
+            // one of the three cvc5 states.
+            "(assume a0 p)\n(step t0 (cl (= (= p q) (= q p))) :rule equiv_simplify)",
+            // `implies_simplify` outside `(=> phi false) = (not phi)`.
+            "(assume a0 p)\n(step t0 (cl (= (=> p true) true)) :rule implies_simplify)",
+            // `or_simplify` over a disjunction with no true disjunct.
+            "(assume a0 p)\n(step t0 (cl (= (or p q) true)) :rule or_simplify)",
+        ] {
+            assert!(
+                matches!(
+                    replay_written(problem, proof),
+                    Err(Error::Unsupported { .. })
+                ),
+                "pattern accepted in {proof:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_projection_index_outside_its_connective() {
+        let problem = "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (declare-const q Bool)\n\
+             (assert (and p q))\n\
+             (assert (not p))\n\
+             (check-sat)\n";
+        for proof in [
+            "(assume a0 (! (and (! p :named @p_1) q) :named @p_2))\n\
+             (step t0 (cl (not @p_2) @p_1) :rule and_pos :args (7))",
+            "(assume a0 (! (and (! p :named @p_1) q) :named @p_2))\n\
+             (step t0 (cl (or @p_1 q) (not @p_1)) :rule or_neg :args (7))",
+        ] {
+            assert!(
+                matches!(replay_written(problem, proof), Err(Error::Malformed { .. })),
+                "index accepted in {proof:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_clause_the_new_rules_do_not_derive() {
+        let problem = "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (declare-const q Bool)\n\
+             (assert (and p q))\n\
+             (assert (not p))\n\
+             (check-sat)\n";
+        for proof in [
+            // `and_pos` at index 0 states the second conjunct.
+            "(assume a0 (! (and p (! q :named @p_1)) :named @p_2))\n\
+             (step t0 (cl (not @p_2) @p_1) :rule and_pos :args (0))",
+            // `contraction` may not drop a literal the premise states.
+            "(assume a0 (! (and p q) :named @p_2))\n\
+             (step t0 (cl (not @p_2) p) :rule and_pos :args (0))\n\
+             (step t1 (cl p) :rule contraction :premises (t0))",
+            // `reordering` may not add one.
+            "(assume a0 (! (and p q) :named @p_2))\n\
+             (step t0 (cl (not @p_2) p) :rule and_pos :args (0))\n\
+             (step t1 (cl (not @p_2) p q) :rule reordering :premises (t0))",
+        ] {
+            assert!(
+                matches!(
+                    replay_written(problem, proof),
+                    Err(Error::ClauseMismatch { .. } | Error::Kernel { .. })
+                ),
+                "clause accepted in {proof:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_a_reordering_that_repeats_a_literal() {
+        // cvc5 states `reordering` clauses with duplicate literals over a
+        // premise whose theorem `contract_theorem` has already collapsed, so
+        // the clause comparison is set equality.
+        let refutation = replay_written(
+            "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (declare-const q Bool)\n\
+             (assert (and p q))\n\
+             (assert (not p))\n\
+             (check-sat)\n",
+            "(assume a0 (! (and (! p :named @p_1) q) :named @p_2))\n\
+             (assume a1 (! (not @p_1) :named @p_3))\n\
+             (step t0 (cl (not @p_2) @p_1) :rule and_pos :args (0))\n\
+             (step t1 (cl @p_1 @p_1 (not @p_2) @p_1) :rule reordering :premises (t0))\n\
+             (step t2 (cl) :rule resolution :premises (t1 a0 a1))",
+        )
+        .expect("a duplicated reordering clause replays");
+        assert!(refutation.checked_rules().contains("reordering"));
+    }
+
+    // --- subproof frames ---------------------------------------------------
+
+    const FRAME_PROBLEM: &str = "(set-logic QF_UF)\n\
+         (declare-sort U 0)\n\
+         (declare-const a U)\n\
+         (declare-const b U)\n\
+         (assert (= a b))\n\
+         (assert (not (= a b)))\n\
+         (check-sat)\n";
+
+    /// Two outer assumptions, a frame assuming one of them, and a frame-local
+    /// refutation of it. Repeated terms are shared through `:named` aliases,
+    /// as cvc5 shares them, because the replayer appends rather than
+    /// hash-conses a term row.
+    const FRAME_PREFIX: &str = "(assume a0 (! (= a b) :named @p_1))\n\
+         (assume a1 (! (not @p_1) :named @p_2))\n\
+         (anchor :step t1)\n\
+         (assume t1.a0 @p_1)\n\
+         (step t1.t0 (cl) :rule resolution :premises (t1.a0 a1))\n";
+
+    fn replay_frame(proof_source: &str) -> Result<Refutation, Error> {
+        let problem = parse_smtlib2(FRAME_PROBLEM).expect("problem parses");
+        let proof = parse_alethe(proof_source).expect("proof parses");
+        replay_qf_uf(&problem, &proof)
+    }
+
+    #[test]
+    fn discharges_a_subproof_frame_assumption() {
+        let refutation = replay_frame(&format!(
+            "{FRAME_PREFIX}\
+             (step t1 (cl @p_2) :rule subproof :discharge (t1.a0))\n\
+             (step t2 (cl) :rule resolution :premises (t1 a0))"
+        ))
+        .expect("the frame discharges and the proof replays");
+        let theorem = refutation
+            .kernel()
+            .thm()
+            .get(refutation.theorem())
+            .expect("refutation theorem");
+        assert_eq!(theorem.lhs.rows().count(), 2);
+        assert!(theorem.rhs.rows().next().is_none());
+    }
+
+    #[test]
+    fn discharges_a_frame_assumption_the_frame_never_used() {
+        // The frame assumes `(not (not (= a b)))`, which the problem never
+        // asserts, so a frame assumption must not be checked against the
+        // assertion set. Its body never uses the assumption, so the discharge
+        // has to left-weaken first. Its last step is another step's theorem
+        // unchanged, so the discharge has to copy before mutating: without the
+        // copy this proof would corrupt `a0` and the final goal check fails.
+        let refutation = replay_frame(
+            "(assume a0 (! (= a b) :named @p_1))\n\
+             (assume a1 (! (not @p_1) :named @p_2))\n\
+             (anchor :step t1)\n\
+             (assume t1.a0 (! (not @p_2) :named @p_3))\n\
+             (step t1.t0 (cl @p_1) :rule resolution :premises (a0))\n\
+             (step t1 (cl (not @p_3) @p_1) :rule subproof :discharge (t1.a0))\n\
+             (step t2 (cl) :rule resolution :premises (a0 a1))",
+        )
+        .expect("an unused frame assumption still discharges");
+        let theorem = refutation
+            .kernel()
+            .thm()
+            .get(refutation.theorem())
+            .expect("refutation theorem");
+        assert_eq!(theorem.lhs.rows().count(), 2);
+    }
+
+    #[test]
+    fn discharges_a_frame_assumption_out_of_the_antecedent() {
+        // The invariant a frame rests on: an assumption enters only through
+        // `Kernel::identity`, so it sits in the antecedent, and `subproof` is
+        // the only thing that takes it back out. Reading the closed frame's
+        // theorem states that directly, because a leftover hypothesis is
+        // otherwise invisible until the final goal check.
+        let problem = parse_smtlib2(
+            "(set-logic QF_UF)\n\
+             (declare-const p Bool)\n\
+             (declare-const q Bool)\n\
+             (assert p)\n\
+             (assert (not p))\n\
+             (assert q)\n\
+             (check-sat)\n",
+        )
+        .expect("problem parses");
+        let proof = parse_alethe(
+            "(assume a0 (! p :named @p_1))\n\
+             (assume a1 (! (not @p_1) :named @p_2))\n\
+             (assume a2 (! q :named @p_3))\n\
+             (anchor :step t1)\n\
+             (assume t1.a0 (! (not @p_3) :named @p_4))\n\
+             (step t1.t0 (cl) :rule resolution :premises (t1.a0 a2))\n\
+             (step t1 (cl (not @p_4)) :rule subproof :discharge (t1.a0))\n\
+             (step t2 (cl) :rule resolution :premises (a0 a1))",
+        )
+        .expect("proof parses");
+        let mut replayer = Replayer::new(Logic::QfUf).expect("checked Boolean init compiles");
+        replayer.ingest_problem(&problem).expect("problem lowers");
+        replayer
+            .run_proof(&proof, &mut RejectUnknownRules)
+            .expect("the proof replays");
+        let frame_local = Lit::positive(replayer.named["@p_4"].reference.get());
+        let assumption = Lit::positive(replayer.named["@p_3"].reference.get());
+        let closed = replayer.steps["t1"];
+        assert!(
+            !has_unit_premise(&replayer.kernel, closed, frame_local)
+                .expect("the closed frame has a theorem"),
+            "the frame-local assumption must not survive in the antecedent"
+        );
+        assert!(
+            has_unit_premise(&replayer.kernel, closed, assumption).expect("theorem"),
+            "an outer premise the frame used stays in the antecedent"
+        );
+    }
+
+    #[test]
+    fn rejects_a_frame_step_cited_outside_its_frame() {
+        // The attack: assume the negation of an assertion inside a frame,
+        // refute it there, then cite the inner empty clause from outside. The
+        // inner index left scope when the frame closed.
+        let error = replay_frame(&format!(
+            "{FRAME_PREFIX}\
+             (step t1 (cl @p_2) :rule subproof :discharge (t1.a0))\n\
+             (step t2 (cl) :rule resolution :premises (t1.t0))"
+        ))
+        .expect_err("an inner index is out of scope");
+        let Error::OutOfScopePremise { step, premise } = &error else {
+            panic!("expected an out-of-scope premise, got {error}");
+        };
+        assert_eq!((step.as_str(), premise.as_str()), ("t2", "t1.t0"));
+    }
+
+    #[test]
+    fn rejects_an_inner_empty_clause_as_the_refutation() {
+        // `t1.t0` derives the empty clause under a frame-local assumption, so
+        // it is not the proof's refutation.
+        assert!(matches!(
+            replay_frame(&format!(
+                "{FRAME_PREFIX}(step t1 (cl @p_2) :rule subproof :discharge (t1.a0))"
+            )),
+            Err(Error::NoRefutation)
+        ));
+    }
+
+    #[test]
+    fn rejects_malformed_subproof_frames() {
+        for proof in [
+            // The discharge list names nothing.
+            format!("{FRAME_PREFIX}(step t1 (cl @p_2) :rule subproof :discharge ())"),
+            // The discharge list names an index that is not an assumption.
+            format!("{FRAME_PREFIX}(step t1 (cl @p_2) :rule subproof :discharge (t1.t0))"),
+            // The clause literal is not the negated assumption.
+            format!("{FRAME_PREFIX}(step t1 (cl @p_1) :rule subproof :discharge (t1.a0))"),
+            // The clause is shorter than the discharge list.
+            format!("{FRAME_PREFIX}(step t1 (cl) :rule subproof :discharge (t1.a0))"),
+            // Another rule may not conclude a frame.
+            format!("{FRAME_PREFIX}(step t1 (cl @p_2) :rule resolution :premises (t1.t0))"),
+            // `subproof` takes no premises.
+            format!(
+                "{FRAME_PREFIX}(step t1 (cl @p_2) :rule subproof :premises (t1.t0) :discharge (t1.a0))"
+            ),
+            // The anchor is never closed.
+            FRAME_PREFIX.to_owned(),
+            // An assume may not follow the frame's first step.
+            format!("{FRAME_PREFIX}(assume t1.a1 @p_1)"),
+        ] {
+            assert!(
+                matches!(replay_frame(&proof), Err(Error::Frame { .. })),
+                "frame accepted in:\n{proof}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_an_anchor_with_context_arguments() {
+        assert!(matches!(
+            replay_frame(
+                "(assume a0 (! (= a b) :named @p_1))\n\
+                 (assume a1 (! (not @p_1) :named @p_2))\n\
+                 (anchor :step t1 :args ((:= x a)))"
+            ),
+            Err(Error::Unsupported { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_frame_index_reused_after_its_frame_closed() {
+        assert!(matches!(
+            replay_frame(&format!(
+                "{FRAME_PREFIX}\
+                 (step t1 (cl @p_2) :rule subproof :discharge (t1.a0))\n\
+                 (step t1.t0 (cl (= a a)) :rule refl)"
+            )),
+            Err(Error::Malformed { .. })
+        ));
+    }
+
+    // --- fail-closed guarantees --------------------------------------------
+
+    /// Refutes `p` and `(not p)` honestly, then adds one hypothesis the
+    /// problem never asserted.
+    struct SmuggleHandler;
+
+    impl RuleHandler for SmuggleHandler {
+        fn apply(&mut self, request: RuleRequest<'_>) -> Result<Option<ThmId>, Error> {
+            if request.rule != "smuggle" {
+                return Ok(None);
+            }
+            let [positive, negative] = request.premises else {
+                return Err(Error::Malformed {
+                    message: "smuggle expects two premises".to_owned(),
+                });
+            };
+            let left = conclusion_literals(request.kernel, *positive)?;
+            let right = conclusion_literals(request.kernel, *negative)?;
+            let ([pivot], [negation]) = (left.as_slice(), right.as_slice()) else {
+                return Err(Error::Malformed {
+                    message: "smuggle expects unit premises".to_owned(),
+                });
+            };
+            let expanded = request
+                .kernel
+                .expand_conclusion(*negative, *negation, None)?;
+            let theorem = request.kernel.resolve(*positive, expanded, *pivot)?;
+            let extra = request.kernel.tm_fv(u64::MAX, request.bool_ty)?;
+            request
+                .kernel
+                .weaken(theorem, &[Lit::positive(extra.get())], &[])?;
+            Ok(Some(theorem))
+        }
+    }
+
+    #[test]
+    fn rejects_a_hypothesis_the_problem_never_asserted() {
+        let problem = parse_smtlib2(
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(assert p)\n(assert (not p))\n(check-sat)\n",
+        )
+        .expect("problem parses");
+        let proof = parse_alethe(
+            "(assume a0 p)\n\
+             (assume a1 (not p))\n\
+             (step t0 (cl) :rule smuggle :premises (a0 a1))",
+        )
+        .expect("proof parses");
+        let error = replay_qf_uf_with_handler(&problem, &proof, &mut SmuggleHandler)
+            .expect_err("an extra hypothesis is not the assertion set");
+        assert!(
+            error.to_string().contains("assertion set"),
+            "unexpected error: {error}"
+        );
+    }
+
+    struct NoResolver;
+
+    impl covalence_logic_hol::Resolver for NoResolver {
+        type Error = std::convert::Infallible;
+
+        fn resolve(
+            &mut self,
+            _link: &covalence_logic_hol::Link,
+        ) -> Result<covalence_logic_hol::Table, Self::Error> {
+            unreachable!("a literal import resolves without I/O")
+        }
+    }
+
+    /// Resolves two complementary unit premises into the empty clause.
+    ///
+    /// This is an honest, fully checked refutation: the widening handlers
+    /// below add their capability on top of it, so what the final gate
+    /// rejects is the widening and not a bad derivation.
+    fn refute_unit_premises(
+        kernel: &mut Kernel,
+        premises: &[ThmId],
+    ) -> Result<(ThmId, Lit), Error> {
+        let [positive, negative] = premises else {
+            return Err(Error::Malformed {
+                message: "smuggle expects two premises".to_owned(),
+            });
+        };
+        let left = conclusion_literals(kernel, *positive)?;
+        let right = conclusion_literals(kernel, *negative)?;
+        let ([pivot], [negation]) = (left.as_slice(), right.as_slice()) else {
+            return Err(Error::Malformed {
+                message: "smuggle expects unit premises".to_owned(),
+            });
+        };
+        let expanded = kernel.expand_conclusion(*negative, *negation, None)?;
+        let theorem = kernel.resolve(*positive, expanded, *pivot)?;
+        Ok((theorem, *pivot))
+    }
+
+    /// Which component of the exported trust surface a handler widens.
+    #[derive(Clone, Copy, Debug)]
+    enum Widening {
+        /// `Kernel::add_axiom`, enabling an Ethane axiom capability.
+        Axiom,
+        /// `Kernel::add_context`, adding a proposition to the arena context.
+        Context,
+    }
+
+    /// Refutes honestly, then widens the arena's exported trust surface.
+    struct WideningHandler(Widening);
+
+    impl RuleHandler for WideningHandler {
+        fn apply(&mut self, request: RuleRequest<'_>) -> Result<Option<ThmId>, Error> {
+            if request.rule != "smuggle" {
+                return Ok(None);
+            }
+            let (theorem, pivot) = refute_unit_premises(request.kernel, request.premises)?;
+            match self.0 {
+                Widening::Axiom => {
+                    request.kernel.add_axiom("ax.inf")?;
+                    request.kernel.add_axiom("ax.sub")?;
+                }
+                Widening::Context => {
+                    request.kernel.add_context(reference(pivot.magnitude())?)?;
+                }
+            }
+            Ok(Some(theorem))
+        }
+    }
+
+    #[test]
+    fn rejects_a_trust_surface_widened_during_replay() {
+        // A handler can derive the empty clause honestly and still leave the
+        // exported arena resting on more than the problem did. The final gate
+        // pins every append-only component, not just ambient predicates.
+        let problem = parse_smtlib2(
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(assert p)\n(assert (not p))\n(check-sat)\n",
+        )
+        .expect("problem parses");
+        let proof = parse_alethe(
+            "(assume a0 p)\n\
+             (assume a1 (not p))\n\
+             (step t0 (cl) :rule smuggle :premises (a0 a1))",
+        )
+        .expect("proof parses");
+        for (widening, expected) in [
+            (Widening::Axiom, "axiom capabilities"),
+            (Widening::Context, "logical context"),
+        ] {
+            let error = replay_qf_uf_with_handler(&problem, &proof, &mut WideningHandler(widening))
+                .expect_err("a widened trust surface is refused");
+            assert!(
+                error.to_string().contains(expected),
+                "{widening:?} was not reported: {error}"
+            );
+        }
+        // The same derivation without the widening is accepted, so what the
+        // gate rejects above is the capability and not the proof.
+        let refutation = replay_qf_uf_with_handler(&problem, &proof, &mut HonestHandler)
+            .expect("the same derivation without a widening is accepted");
+        assert_eq!(refutation.kernel().arena().axioms().len(), 0);
+        assert_eq!(refutation.kernel().arena().context().len(), 0);
+    }
+
+    /// Refutes honestly and widens nothing.
+    struct HonestHandler;
+
+    impl RuleHandler for HonestHandler {
+        fn apply(&mut self, request: RuleRequest<'_>) -> Result<Option<ThmId>, Error> {
+            if request.rule != "smuggle" {
+                return Ok(None);
+            }
+            let (theorem, _) = refute_unit_premises(request.kernel, request.premises)?;
+            Ok(Some(theorem))
+        }
+    }
+
+    /// Refutes honestly, then assumes an unchecked foreign typing predicate.
+    struct AmbientHandler;
+
+    impl RuleHandler for AmbientHandler {
+        fn apply(&mut self, request: RuleRequest<'_>) -> Result<Option<ThmId>, Error> {
+            if request.rule != "smuggle" {
+                return Ok(None);
+            }
+            let (theorem, _) = refute_unit_premises(request.kernel, request.premises)?;
+
+            let mut foreign = Kernel::new();
+            let star = foreign.star()?;
+            let foreign_bool = foreign.bool_ty(star)?;
+            let foreign_variable = foreign.tm_fv(0, foreign_bool)?;
+            let source = request.kernel.import_literal(foreign.into_arena())?;
+            request
+                .kernel
+                .tm_ref(&mut NoResolver, source, foreign_variable, request.bool_ty)?;
+            Ok(Some(theorem))
+        }
+    }
+
+    #[test]
+    fn rejects_an_ambient_predicate_added_during_replay() {
+        let problem = parse_smtlib2(
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(assert p)\n(assert (not p))\n(check-sat)\n",
+        )
+        .expect("problem parses");
+        let proof = parse_alethe(
+            "(assume a0 p)\n\
+             (assume a1 (not p))\n\
+             (step t0 (cl) :rule smuggle :premises (a0 a1))",
+        )
+        .expect("proof parses");
+        let error = replay_qf_uf_with_handler(&problem, &proof, &mut AmbientHandler)
+            .expect_err("an unchecked ambient predicate is refused");
+        assert!(
+            error.to_string().contains("ambient predicate"),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// Recognizes one unknown RARE rewrite by reading its premise.
+    struct RarePremiseHandler {
+        premises: usize,
+        forge: bool,
+    }
+
+    impl RuleHandler for RarePremiseHandler {
+        fn apply(&mut self, request: RuleRequest<'_>) -> Result<Option<ThmId>, Error> {
+            if request.rule != "rare_rewrite" {
+                return Ok(None);
+            }
+            if args_name(request.args) != Some("made-up-rewrite") {
+                return Ok(None);
+            }
+            self.premises = request.premises.len();
+            let [premise] = request.premises else {
+                return Err(Error::Malformed {
+                    message: "made-up-rewrite expects one premise".to_owned(),
+                });
+            };
+            if self.forge {
+                // Returning a theorem for a different clause must still fail.
+                return Ok(Some(*premise));
+            }
+            let target = positive_unit(request.clause, "made-up-rewrite")?;
+            let [_domain, left, right] = equality_children(request.kernel, target)?;
+            join_same_syntax(request.kernel, left, right)?;
+            let proved = request.kernel.refl(request.bool_ty, left)?;
+            join_same_syntax(request.kernel, proved.equality, target)?;
+            request
+                .kernel
+                .convert_conclusions(proved.theorem, proved.equality, target)?;
+            Ok(Some(proved.theorem))
+        }
+    }
+
+    fn args_name(args: &[Expr]) -> Option<&str> {
+        args.first().and_then(string_value)
+    }
+
+    #[test]
+    fn passes_rare_rewrite_premises_through_to_a_handler() {
+        let problem = parse_smtlib2(
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(assert p)\n(assert (not p))\n(check-sat)\n",
+        )
+        .expect("problem parses");
+        let proof = parse_alethe(
+            "(assume a0 p)\n\
+             (assume a1 (not p))\n\
+             (step t0 (cl (= p p)) :rule rare_rewrite :premises (a0) :args (\"made-up-rewrite\" p))\n\
+             (step t1 (cl) :rule resolution :premises (a0 a1))",
+        )
+        .expect("proof parses");
+        let mut handler = RarePremiseHandler {
+            premises: 0,
+            forge: false,
+        };
+        replay_qf_uf_with_handler(&problem, &proof, &mut handler)
+            .expect("the handled rewrite and the refutation replay");
+        assert_eq!(handler.premises, 1, "the premise reached the handler");
+
+        // The exact-clause postcheck still runs on the handler's theorem.
+        let mut handler = RarePremiseHandler {
+            premises: 0,
+            forge: true,
+        };
+        assert!(matches!(
+            replay_qf_uf_with_handler(&problem, &proof, &mut handler),
+            Err(Error::ClauseMismatch { .. } | Error::Kernel { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_premises_on_a_premise_free_rare_rewrite() {
+        let problem = parse_smtlib2(
+            "(set-logic QF_UF)\n(declare-const p Bool)\n(assert p)\n(assert (not p))\n(check-sat)\n",
+        )
+        .expect("problem parses");
+        let proof = parse_alethe(
+            "(assume a0 p)\n\
+             (step t0 (cl (= (= p p) true)) :rule rare_rewrite :premises (a0) :args (\"eq-refl\" p))",
+        )
+        .expect("proof parses");
+        assert!(matches!(
+            replay_qf_uf(&problem, &proof),
+            Err(Error::Malformed { .. })
         ));
     }
 }
