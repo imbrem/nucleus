@@ -1,9 +1,10 @@
 //! Compatibility surface for the former matrix API.
 //!
-//! `Matrix` and `Matrix` are untrusted construction and projection values. Every
-//! live arena slot is backed by the selected tagged runtime: raw arenas carry
-//! [`tagged::Checked`] syntax, while [`ClassicalKernel`] carries sealed
-//! [`tagged::Theorem`] facts. One-based IDs are only external handles.
+//! [`Matrix`] is an untrusted construction and projection value. Canonical
+//! tagged packing gates every insertion and mutation, so a resident slot is
+//! always syntax that packs into a valid arena; [`ClassicalArena`] discards the
+//! packed result, while [`ClassicalKernel`] retains the sealed
+//! [`tagged::Theorem`] fact. One-based IDs are only external handles.
 
 use std::{collections::BTreeSet, num::NonZeroI32};
 

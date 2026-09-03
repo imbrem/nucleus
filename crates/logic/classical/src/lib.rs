@@ -1,10 +1,17 @@
 //! Tagged classical logic runtime and compatibility-facing matrix views.
 //!
-//! The selected runtime uses fixed 64-bit `LIT`/`AND`/`OR`/`SAT` references,
-//! checked ownership, and an intrusive allocator. The former `Cnf`/`Dnf` API
-//! remains as an untrusted builder and borrowed-view facade: every raw live
-//! slot is actually backed by [`tagged::Checked`], and universal theorem slots
-//! can only contain sealed [`tagged::Theorem`] values.
+//! The selected runtime is the [`tagged`] module: fixed 64-bit
+//! `LIT`/`AND`/`OR`/`SAT` references, checked ownership, an intrusive
+//! allocator, and a sealed [`tagged::Theorem`]. Validation, structural
+//! equality, hashing and decoding are one flat pass over the words; no
+//! recursive syntax tree is stored, so no operation is bounded by the depth of
+//! untrusted input.
+//!
+//! [`Matrix`] is the untrusted builder and projection the former `Cnf`/`Dnf`
+//! pair became: which of AND/OR sits outermost is a property of the turnstile
+//! [`Side`], not of the storage. [`ClassicalArena`] gates every slot through
+//! canonical packing and keeps the matrix; only [`ClassicalKernel`] retains the
+//! sealed theorem fact.
 //!
 //! External theorem IDs are stable handles with LIFO reuse. They are not part
 //! of the packed authority-bearing representation.

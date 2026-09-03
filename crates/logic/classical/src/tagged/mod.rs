@@ -5,6 +5,11 @@
 //! validation, canonical packing, structural equality/hashing, and a sealed
 //! LCF theorem wrapper. The matrix API is a compatibility facade over this
 //! implementation; its wire representation is defined separately.
+//!
+//! Validation is one flat pass with an explicit worklist, and ownership and
+//! coverage are decided by marking a bitmap rather than by scanning the blocks
+//! already claimed. That pass also serves hashing, structural equality and
+//! decoding, so a [`Checked`] value stores words and nothing else.
 
 mod kernel;
 mod runtime;
