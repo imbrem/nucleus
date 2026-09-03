@@ -102,6 +102,8 @@ pub struct ParameterizedDocument {
     pub schema: HolSchema,
     /// Explicit primitive/constructor interpretation parameters.
     pub interpretation: Vec<InterpretationSymbol>,
+    /// Every supplied or generated value-level operation actually used.
+    pub operations: Vec<InterpretationSymbol>,
     /// Exact declaration constraints and their complete conjunction.
     pub semantics: RelationalDocumentDefinition,
 }
@@ -116,6 +118,12 @@ impl ParameterizedDocument {
     #[must_use]
     pub fn grounding_obligations(&self) -> impl ExactSizeIterator<Item = &InterpretationSymbol> {
         self.interpretation.iter()
+    }
+
+    /// Returns every supplied or generated value-level operation actually used.
+    #[must_use]
+    pub fn operations(&self) -> impl ExactSizeIterator<Item = &InterpretationSymbol> {
+        self.operations.iter()
     }
 
     /// Returns whether the lowering generated no missing value-level
@@ -195,6 +203,7 @@ pub enum ParameterizedError {
 struct SharedInterpretation {
     next_name: u64,
     symbols: BTreeMap<InterpretationSignature, InterpretationSymbol>,
+    operations: BTreeMap<InterpretationSignature, InterpretationSymbol>,
     canonical_types: BTreeMap<(Ref, Ref), Ref>,
     canonical_type_refs: BTreeMap<Ref, Ref>,
 }
@@ -275,6 +284,7 @@ pub fn parameterized_document_with(
     let interpretation = SharedInterpretation {
         next_name,
         symbols: BTreeMap::new(),
+        operations: BTreeMap::new(),
         canonical_types: BTreeMap::new(),
         canonical_type_refs: BTreeMap::new(),
     };
@@ -299,10 +309,17 @@ pub fn parameterized_document_with(
     }
     let semantics = relational_document(&mut staged, &mut resolver, source, &schema, &[])?;
     let interpretation = resolver.interpretation.symbols.values().cloned().collect();
+    let operations = resolver
+        .interpretation
+        .operations
+        .values()
+        .cloned()
+        .collect();
     *kernel = staged;
     Ok(ParameterizedDocument {
         schema,
         interpretation,
+        operations,
         semantics,
     })
 }
@@ -415,19 +432,28 @@ impl ParameterizedResolver<'_> {
                     ),
                 });
             }
+            self.interpretation.operations.insert(
+                signature.clone(),
+                InterpretationSymbol {
+                    signature,
+                    reference,
+                    classifier,
+                },
+            );
             return Ok(reference);
         }
         let reference = kernel
             .tm_fv(self.take_name()?, classifier)
             .map_err(|source| ParameterizedError::Kernel { source })?;
-        self.interpretation.symbols.insert(
-            signature.clone(),
-            InterpretationSymbol {
-                signature,
-                reference,
-                classifier,
-            },
-        );
+        let symbol = InterpretationSymbol {
+            signature: signature.clone(),
+            reference,
+            classifier,
+        };
+        self.interpretation
+            .symbols
+            .insert(signature.clone(), symbol.clone());
+        self.interpretation.operations.insert(signature, symbol);
         Ok(reference)
     }
 

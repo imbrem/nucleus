@@ -23,6 +23,7 @@ mod selected;
 mod theory;
 mod type_definition;
 mod types;
+mod wasm_logic;
 
 pub use add_slice::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSliceError, AddSlicePlan,
@@ -65,6 +66,7 @@ pub use theory::{
 };
 pub use type_definition::{RelationalTypeDefinition, relational_type_declaration};
 pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
+pub use wasm_logic::{SpecTecExecution, WasmLogicError, spectec_execution};
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{

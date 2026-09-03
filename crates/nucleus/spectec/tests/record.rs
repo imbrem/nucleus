@@ -20,6 +20,7 @@ use covalence_nucleus_spectec::{
     relational_definition_declaration, relational_definition_schema, relational_document,
     relational_grammar_declaration, relational_hol_case, relational_hol_rule,
     relational_relation_declaration, relational_relations, relational_type_declaration,
+    spectec_execution,
 };
 
 #[derive(Clone)]
@@ -1535,6 +1536,11 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             "missing {required:?} in {kinds:?}"
         );
     }
+    let execution = spectec_execution(&mut kernel, &document).unwrap();
+    assert_eq!(execution.state_ty, value);
+    assert_eq!(execution.bool_ty, bool_ty);
+    let steps_classifier = kernel.classifier(execution.steps).unwrap();
+    assert_eq!(steps_classifier, execution.steps_ty);
     assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
 }
 
@@ -1586,6 +1592,7 @@ fn immutable_interpretations_discharge_checked_grounding_obligations() {
         .next()
         .unwrap()
         .clone();
+    assert!(parameterized.operations().len() >= parameterized.grounding_obligations().len());
     let provided =
         std::collections::BTreeMap::from([(supplied.signature.clone(), supplied.reference)]);
 
@@ -1597,6 +1604,9 @@ fn immutable_interpretations_discharge_checked_grounding_obligations() {
             .grounding_obligations()
             .all(|obligation| obligation.signature != supplied.signature)
     );
+    assert!(interpreted.operations().any(|operation| {
+        operation.signature == supplied.signature && operation.reference == supplied.reference
+    }));
 
     let wrong = kernel.bool(bool_ty, true).unwrap();
     let incompatible = std::collections::BTreeMap::from([(supplied.signature, wrong)]);
