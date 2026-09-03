@@ -4,7 +4,9 @@ use covalence_data_basic::Symbol;
 use covalence_data_spectec::IlKind;
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref, SynRel, builtin::Op2};
-use covalence_logic_hol_derived::{ModelError, SyntaxError, join_alpha_equivalent, substitute};
+use covalence_logic_hol_derived::{
+    ExistsError, ModelError, SyntaxError, introduce_exists, join_alpha_equivalent, substitute,
+};
 
 use crate::{AssertionReachability, Evidence, ParameterizedDocument};
 
@@ -174,6 +176,44 @@ pub struct SpecTecExecution {
     pub moduleinst: Ref,
 }
 
+/// Concrete witnesses for one admissible exported-function invocation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AdmissibleStartWitness {
+    /// Module supplied to `$instantiate`.
+    pub program: Ref,
+    /// Configuration produced by `$invoke` and exposed as the initial state.
+    pub initial: Ref,
+    /// Store supplied to `$instantiate`.
+    pub store: Ref,
+    /// Imported external values supplied to `$instantiate`.
+    pub externs: Ref,
+    /// Initial instantiation configuration.
+    pub instantiation_start: Ref,
+    /// Completed instantiation configuration.
+    pub initialized: Ref,
+    /// Exported function address selected for invocation.
+    pub function: Ref,
+    /// Arguments supplied to the function.
+    pub arguments: Ref,
+    /// Store projected from the initialized configuration.
+    pub initialized_store: Ref,
+}
+
+/// Checked semantic facts supporting an [`AdmissibleStartWitness`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AdmissibleStartFacts {
+    /// `$instantiate store program externs instantiation_start`.
+    pub instantiated: covalence_logic_hol::ThmId,
+    /// `Steps instantiation_start initialized`.
+    pub initialized: covalence_logic_hol::ThmId,
+    /// The selected function is exported by `initialized`.
+    pub exported: covalence_logic_hol::ThmId,
+    /// `initialized` contains `initialized_store`.
+    pub store: covalence_logic_hol::ThmId,
+    /// `$invoke initialized_store function arguments initial`.
+    pub invoked: covalence_logic_hol::ThmId,
+}
+
 /// Structural views needed to recognize an exported function address.
 ///
 /// Keeping list membership explicit is essential for negative proofs: a raw
@@ -317,57 +357,7 @@ impl SpecTecExecution {
         after: Ref,
         relation_fact: Evidence,
     ) -> Result<Evidence, WasmLogicError> {
-        if !relation_fact.holds {
-            return Err(WasmLogicError::StepFact);
-        }
-        let mut staged = kernel.fork();
-        let mut outer_lambda = staged
-            .arena()
-            .children(self.steps)
-            .ok_or(WasmLogicError::StepFact)?;
-        let before_binder = outer_lambda.next().ok_or(WasmLogicError::StepFact)?;
-        let outer_body = outer_lambda.next().ok_or(WasmLogicError::StepFact)?;
-        drop(outer_lambda);
-        let outer_application = staged.app(self.steps, before)?;
-        let outer_reduced = substitute(&mut staged, before_binder, before, outer_body)
-            .map_err(|source| WasmLogicError::Substitute { source })?;
-        let outer_beta = staged.tm_beta_fact(None, outer_application, outer_reduced.fact)?;
-        staged.union_syn_fact(outer_beta)?;
-
-        let curried = staged.app(outer_application, after)?;
-        let reduced_application = staged.app(outer_reduced.output, after)?;
-        let after_refl = staged.syn_refl(None, SynRel::Syn, after)?;
-        let lifted_outer_beta = staged.syn_congr(
-            None,
-            SynRel::Conv,
-            None,
-            None,
-            curried,
-            reduced_application,
-            &[outer_beta, after_refl],
-        )?;
-        staged.union_syn_fact(lifted_outer_beta)?;
-        let mut inner_lambda = staged
-            .arena()
-            .children(outer_reduced.output)
-            .ok_or(WasmLogicError::StepFact)?;
-        let after_binder = inner_lambda.next().ok_or(WasmLogicError::StepFact)?;
-        let inner_body = inner_lambda.next().ok_or(WasmLogicError::StepFact)?;
-        drop(inner_lambda);
-        let inner_reduced = substitute(&mut staged, after_binder, after, inner_body)
-            .map_err(|source| WasmLogicError::Substitute { source })?;
-        let inner_beta = staged.tm_beta_fact(None, reduced_application, inner_reduced.fact)?;
-        staged.union_syn_fact(inner_beta)?;
-        join_alpha_equivalent(&mut staged, relation_fact.proposition, inner_reduced.output)
-            .map_err(|source| WasmLogicError::Syntax { source })?;
-        let theorem = staged.copy_theorem(relation_fact.theorem)?;
-        staged.convert_conclusions(theorem, relation_fact.proposition, curried)?;
-        *kernel = staged;
-        Ok(Evidence {
-            proposition: curried,
-            theorem,
-            holds: true,
-        })
+        curry_binary_fact(kernel, self.steps, before, after, relation_fact)
     }
 
     /// Builds the generic assertion-reachability schema from this exact
@@ -415,6 +405,15 @@ impl SpecTecExecution {
         kernel: &mut Kernel,
         exported: Ref,
     ) -> Result<Ref, WasmLogicError> {
+        self.admissible_starts_avoiding(kernel, exported, &[])
+    }
+
+    fn admissible_starts_avoiding(
+        self,
+        kernel: &mut Kernel,
+        exported: Ref,
+        avoid: &[Ref],
+    ) -> Result<Ref, WasmLogicError> {
         let mut staged = kernel.fork();
         let roots = [
             self.state_ty,
@@ -424,7 +423,10 @@ impl SpecTecExecution {
             self.store,
             self.moduleinst,
             exported,
-        ];
+        ]
+        .into_iter()
+        .chain(avoid.iter().copied())
+        .collect::<Vec<_>>();
         let first = staged
             .fresh_name(&roots)
             .map_err(|source| WasmLogicError::Kernel { source })?;
@@ -507,6 +509,286 @@ impl SpecTecExecution {
         *kernel = staged;
         Ok(starts)
     }
+
+    /// Proves an admissible start from five checked semantic facts.
+    ///
+    /// The method constructs the same seven existential witnesses as
+    /// [`Self::admissible_starts`], conjoins the supplied facts, introduces the
+    /// witnesses, and beta-aligns the result with `starts program initial`.
+    /// Every premise of the input facts remains visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a fact has the wrong positive conclusion, a witness
+    /// has an incompatible classifier, existential introduction fails, or a
+    /// checked syntax/proof step is rejected. `kernel` is unchanged on failure.
+    pub fn prove_admissible_start(
+        self,
+        kernel: &mut Kernel,
+        exported: Ref,
+        witness: AdmissibleStartWitness,
+        facts: AdmissibleStartFacts,
+    ) -> Result<Evidence, WasmLogicError> {
+        let mut staged = kernel.fork();
+        let witness_roots = [
+            witness.program,
+            witness.initial,
+            witness.store,
+            witness.externs,
+            witness.instantiation_start,
+            witness.initialized,
+            witness.function,
+            witness.arguments,
+            witness.initialized_store,
+        ];
+        let starts = self.admissible_starts_avoiding(&mut staged, exported, &witness_roots)?;
+        let concrete = start_body(&mut staged, self, exported, witness)?;
+        let propositions = start_propositions(&mut staged, self, exported, witness)?;
+        let theorems = [
+            facts.instantiated,
+            facts.initialized,
+            facts.exported,
+            facts.store,
+            facts.invoked,
+        ];
+        let mut aligned = Vec::with_capacity(theorems.len());
+        for (&theorem, &proposition) in theorems.iter().zip(&propositions) {
+            aligned.push(align_positive_fact(&mut staged, theorem, proposition)?);
+        }
+        let mut conjunction = aligned[0];
+        let mut proposition = propositions[0];
+        for (&right_theorem, &right) in aligned.iter().zip(&propositions).skip(1) {
+            proposition = staged.op2(Op2::And, proposition, right)?;
+            conjunction = staged.and_right(conjunction, right_theorem, positive(proposition))?;
+        }
+        join_alpha_equivalent(&mut staged, proposition, concrete)
+            .map_err(|source| WasmLogicError::Syntax { source })?;
+        staged.convert_conclusions(conjunction, proposition, concrete)?;
+
+        let actual = start_existentials(witness);
+        let first = staged.fresh_name(&[
+            self.state_ty,
+            self.bool_ty,
+            self.instantiate,
+            self.steps,
+            self.store,
+            self.invoke,
+            exported,
+            witness.program,
+            witness.initial,
+            starts,
+        ])?;
+        let mut binders = Vec::with_capacity(actual.len());
+        for offset in 0..actual.len() {
+            let name = first
+                .checked_add(u64::try_from(offset).map_err(|_| KernelError::TooManyNames)?)
+                .ok_or(KernelError::TooManyNames)?;
+            binders.push(staged.tm_fv(name, self.state_ty)?);
+        }
+        let mut current_values = actual;
+        let mut theorem = conjunction;
+        let mut existential = concrete;
+        for index in (0..binders.len()).rev() {
+            current_values[index] = binders[index];
+            let opened_witness = start_with_existentials(witness, current_values);
+            let mut opened = start_body(&mut staged, self, exported, opened_witness)?;
+            for &inner in binders[index + 1..].iter().rev() {
+                opened = staged.exists_tm(inner, opened)?;
+            }
+            let introduced =
+                introduce_exists(&mut staged, theorem, binders[index], opened, actual[index])
+                    .map_err(|source| WasmLogicError::Exists { source })?;
+            theorem = introduced.theorem;
+            existential = introduced.proposition;
+        }
+        let result = curry_binary_fact(
+            &mut staged,
+            starts,
+            witness.program,
+            witness.initial,
+            Evidence {
+                proposition: existential,
+                theorem,
+                holds: true,
+            },
+        )?;
+        *kernel = staged;
+        Ok(result)
+    }
+}
+
+fn start_existentials(witness: AdmissibleStartWitness) -> [Ref; 7] {
+    [
+        witness.store,
+        witness.externs,
+        witness.instantiation_start,
+        witness.initialized,
+        witness.function,
+        witness.arguments,
+        witness.initialized_store,
+    ]
+}
+
+fn start_with_existentials(
+    witness: AdmissibleStartWitness,
+    values: [Ref; 7],
+) -> AdmissibleStartWitness {
+    AdmissibleStartWitness {
+        program: witness.program,
+        initial: witness.initial,
+        store: values[0],
+        externs: values[1],
+        instantiation_start: values[2],
+        initialized: values[3],
+        function: values[4],
+        arguments: values[5],
+        initialized_store: values[6],
+    }
+}
+
+fn start_propositions(
+    kernel: &mut Kernel,
+    execution: SpecTecExecution,
+    exported: Ref,
+    witness: AdmissibleStartWitness,
+) -> Result<[Ref; 5], WasmLogicError> {
+    Ok([
+        apply(
+            kernel,
+            execution.instantiate,
+            &[
+                witness.store,
+                witness.program,
+                witness.externs,
+                witness.instantiation_start,
+            ],
+        )?,
+        apply(
+            kernel,
+            execution.steps,
+            &[witness.instantiation_start, witness.initialized],
+        )?,
+        apply(kernel, exported, &[witness.initialized, witness.function])?,
+        apply(
+            kernel,
+            execution.store,
+            &[witness.initialized, witness.initialized_store],
+        )?,
+        apply(
+            kernel,
+            execution.invoke,
+            &[
+                witness.initialized_store,
+                witness.function,
+                witness.arguments,
+                witness.initial,
+            ],
+        )?,
+    ])
+}
+
+fn start_body(
+    kernel: &mut Kernel,
+    execution: SpecTecExecution,
+    exported: Ref,
+    witness: AdmissibleStartWitness,
+) -> Result<Ref, WasmLogicError> {
+    let propositions = start_propositions(kernel, execution, exported, witness)?;
+    propositions[1..]
+        .iter()
+        .try_fold(propositions[0], |left, &right| {
+            kernel.op2(Op2::And, left, right).map_err(Into::into)
+        })
+}
+
+fn curry_binary_fact(
+    kernel: &mut Kernel,
+    predicate: Ref,
+    left: Ref,
+    right: Ref,
+    fact: Evidence,
+) -> Result<Evidence, WasmLogicError> {
+    if !fact.holds {
+        return Err(WasmLogicError::StepFact);
+    }
+    let mut staged = kernel.fork();
+    let mut outer_lambda = staged
+        .arena()
+        .children(predicate)
+        .ok_or(WasmLogicError::StepFact)?;
+    let left_binder = outer_lambda.next().ok_or(WasmLogicError::StepFact)?;
+    let outer_body = outer_lambda.next().ok_or(WasmLogicError::StepFact)?;
+    drop(outer_lambda);
+    let outer_application = staged.app(predicate, left)?;
+    let outer_reduced = substitute(&mut staged, left_binder, left, outer_body)
+        .map_err(|source| WasmLogicError::Substitute { source })?;
+    let outer_beta = staged.tm_beta_fact(None, outer_application, outer_reduced.fact)?;
+    staged.union_syn_fact(outer_beta)?;
+
+    let curried = staged.app(outer_application, right)?;
+    let reduced_application = staged.app(outer_reduced.output, right)?;
+    let right_refl = staged.syn_refl(None, SynRel::Syn, right)?;
+    let lifted_outer_beta = staged.syn_congr(
+        None,
+        SynRel::Conv,
+        None,
+        None,
+        curried,
+        reduced_application,
+        &[outer_beta, right_refl],
+    )?;
+    staged.union_syn_fact(lifted_outer_beta)?;
+    let mut inner_lambda = staged
+        .arena()
+        .children(outer_reduced.output)
+        .ok_or(WasmLogicError::StepFact)?;
+    let right_binder = inner_lambda.next().ok_or(WasmLogicError::StepFact)?;
+    let inner_body = inner_lambda.next().ok_or(WasmLogicError::StepFact)?;
+    drop(inner_lambda);
+    let inner_reduced = substitute(&mut staged, right_binder, right, inner_body)
+        .map_err(|source| WasmLogicError::Substitute { source })?;
+    let inner_beta = staged.tm_beta_fact(None, reduced_application, inner_reduced.fact)?;
+    staged.union_syn_fact(inner_beta)?;
+    join_alpha_equivalent(&mut staged, fact.proposition, inner_reduced.output)
+        .map_err(|source| WasmLogicError::Syntax { source })?;
+    let theorem = staged.copy_theorem(fact.theorem)?;
+    staged.convert_conclusions(theorem, fact.proposition, curried)?;
+    *kernel = staged;
+    Ok(Evidence {
+        proposition: curried,
+        theorem,
+        holds: true,
+    })
+}
+
+fn align_positive_fact(
+    kernel: &mut Kernel,
+    theorem: covalence_logic_hol::ThmId,
+    target: Ref,
+) -> Result<covalence_logic_hol::ThmId, WasmLogicError> {
+    let source = {
+        let theorem = kernel
+            .thm()
+            .get(theorem)
+            .ok_or(KernelError::MissingTheorem { id: theorem })?;
+        let mut conclusions = theorem.rhs.rows();
+        let Some([literal]) = conclusions.next() else {
+            return Err(WasmLogicError::StartFact);
+        };
+        if conclusions.next().is_some() || !literal.is_positive() {
+            return Err(WasmLogicError::StartFact);
+        }
+        Ref::new(literal.magnitude().cast_signed()).ok_or(WasmLogicError::StartFact)?
+    };
+    join_alpha_equivalent(kernel, source, target)
+        .map_err(|source| WasmLogicError::Syntax { source })?;
+    let aligned = kernel.copy_theorem(theorem)?;
+    kernel.convert_conclusions(aligned, source, target)?;
+    Ok(aligned)
+}
+
+fn positive(reference: Ref) -> covalence_logic_hol::Lit {
+    covalence_logic_hol::Lit::positive(reference.get())
 }
 
 fn apply(kernel: &mut Kernel, function: Ref, arguments: &[Ref]) -> Result<Ref, WasmLogicError> {
@@ -541,6 +823,9 @@ pub enum WasmLogicError {
     /// A supplied fact is not a positive lowered `Steps` relation fact.
     #[snafu(display("supplied SpecTec Steps fact has the wrong shape"))]
     StepFact,
+    /// A supplied admissible-start theorem is not one positive fact.
+    #[snafu(display("supplied SpecTec admissible-start fact has the wrong shape"))]
+    StartFact,
     /// A checked HOL construction failed.
     #[snafu(display("could not construct SpecTec program-logic adapter: {source}"))]
     Kernel {
@@ -558,6 +843,12 @@ pub enum WasmLogicError {
     Syntax {
         /// Underlying derived syntax failure.
         source: SyntaxError,
+    },
+    /// Checked existential introduction failed.
+    #[snafu(display("could not introduce a SpecTec admissible-start witness: {source}"))]
+    Exists {
+        /// Underlying derived existential failure.
+        source: ExistsError,
     },
 }
 
@@ -901,5 +1192,62 @@ mod tests {
             .unwrap();
 
         assert_eq!(kernel.classifier(proposition).unwrap(), bool_ty);
+    }
+
+    #[test]
+    fn checked_graph_facts_prove_an_admissible_start() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let value = kernel.ty_fv(0, star).unwrap();
+        let steps_ty = (0..2)
+            .try_fold(bool_ty, |tail, _| kernel.ty_arr(value, tail))
+            .unwrap();
+        let pair_tail = kernel.ty_arr(value, value).unwrap();
+        let pair_ty = kernel.ty_arr(value, pair_tail).unwrap();
+        let execution = SpecTecExecution {
+            state_ty: value,
+            bool_ty,
+            steps: predicate(&mut kernel, value, bool_ty, 2, 10),
+            pair: kernel.tm_fv(11, pair_ty).unwrap(),
+            steps_ty,
+            instantiate: predicate(&mut kernel, value, bool_ty, 4, 12),
+            invoke: predicate(&mut kernel, value, bool_ty, 4, 13),
+            store: predicate(&mut kernel, value, bool_ty, 2, 14),
+            moduleinst: predicate(&mut kernel, value, bool_ty, 2, 15),
+        };
+        let exported = predicate(&mut kernel, value, bool_ty, 2, 16);
+        let values = (20..29)
+            .map(|name| kernel.tm_fv(name, value).unwrap())
+            .collect::<Vec<_>>();
+        let witness = AdmissibleStartWitness {
+            program: values[0],
+            initial: values[1],
+            store: values[2],
+            externs: values[3],
+            instantiation_start: values[4],
+            initialized: values[5],
+            function: values[6],
+            arguments: values[7],
+            initialized_store: values[8],
+        };
+        let propositions = start_propositions(&mut kernel, execution, exported, witness).unwrap();
+        let fact =
+            |kernel: &mut Kernel, proposition: Ref| kernel.identity(positive(proposition)).unwrap();
+        let facts = AdmissibleStartFacts {
+            instantiated: fact(&mut kernel, propositions[0]),
+            initialized: fact(&mut kernel, propositions[1]),
+            exported: fact(&mut kernel, propositions[2]),
+            store: fact(&mut kernel, propositions[3]),
+            invoked: fact(&mut kernel, propositions[4]),
+        };
+
+        let proved = execution
+            .prove_admissible_start(&mut kernel, exported, witness, facts)
+            .unwrap();
+
+        crate::EvidenceScope::positive(&propositions)
+            .check(&kernel, proved)
+            .unwrap();
     }
 }
