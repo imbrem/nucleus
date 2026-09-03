@@ -160,6 +160,16 @@ could still map the structural `TRUE` and `FALSE` module terms to the same HOL
 value. Distinguishing them therefore necessarily depends on checked
 representation laws or a concrete faithful interpretation.
 
+`StructuralValueAlgebra` is the generic syntax boundary for those laws. Given
+an erased value classifier, Boolean classifier, and checked curried
+constructors, it constructs arbitrary-arity injectivity and pairwise
+disjointness propositions. `SpecTecValueBuilder::structural_constructor`
+resolves the exact recorded lowering operation into that schema. Neither API
+creates evidence: until a concrete interpretation proves the propositions,
+they remain explicit premises suitable for `ParameterizedDocument`'s evidence
+scope. The record tests exercise this path for the pinned empty-list and module
+constructors.
+
 Grounding therefore requires all of the following:
 
 1. A faithful HOL representation of the SpecTec value algebra, including the

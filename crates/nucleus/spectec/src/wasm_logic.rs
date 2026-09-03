@@ -11,7 +11,7 @@ use covalence_logic_hol_derived::{
 
 use crate::{
     AssertionReachability, ContextualObservation, Evidence, FunctionObservation,
-    ParameterizedDocument,
+    ParameterizedDocument, StructuralConstructor, StructuralValueAlgebra,
 };
 
 /// Immutable view for composing structural `SpecTec` values in HOL.
@@ -35,6 +35,40 @@ impl<'a> SpecTecValueBuilder<'a> {
     #[must_use]
     pub const fn value_ty(self) -> Ref {
         self.document.schema.value()
+    }
+
+    /// Returns the generic faithfulness-law schema for this erased value carrier.
+    #[must_use]
+    pub const fn algebra(self) -> StructuralValueAlgebra {
+        StructuralValueAlgebra {
+            value_ty: self.document.schema.value(),
+            bool_ty: self.document.schema.bool_ty(),
+        }
+    }
+
+    /// Resolves and validates one exact recorded structural constructor.
+    ///
+    /// `label` is the lowering's full operation label, such as
+    /// `expression:Tuple` or `expression:Case("MODULE%%%%%%%%%%%")`.
+    /// The returned shape can be passed to
+    /// [`StructuralValueAlgebra::injective`] or
+    /// [`StructuralValueAlgebra::disjoint`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the operation was not recorded at this arity or its
+    /// classifier is incompatible. `kernel` is unchanged on failure.
+    pub fn structural_constructor(
+        self,
+        kernel: &mut Kernel,
+        label: &str,
+        arity: usize,
+    ) -> Result<StructuralConstructor, WasmLogicError> {
+        let domains = vec![self.value_ty(); arity];
+        let operation = operation(self.document, label, &domains, self.value_ty())?;
+        self.algebra()
+            .constructor(kernel, operation, arity)
+            .map_err(|source| WasmLogicError::Kernel { source })
     }
 
     /// Constructs a list with the supplied elements.

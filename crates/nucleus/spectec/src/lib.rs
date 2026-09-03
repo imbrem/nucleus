@@ -24,6 +24,7 @@ mod selected;
 mod theory;
 mod type_definition;
 mod types;
+mod value_algebra;
 mod wasm_logic;
 
 pub use add_slice::{
@@ -78,6 +79,7 @@ pub use theory::{
 };
 pub use type_definition::{RelationalTypeDefinition, relational_type_declaration};
 pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
+pub use value_algebra::{StructuralConstructor, StructuralValueAlgebra};
 pub use wasm_logic::{
     AdmissibleStartFacts, AdmissibleStartWitness, ExportedFunctionView, SpecTecExecution,
     SpecTecValueBuilder, WasmLogicError, empty_wasm_module, forwarding_wasm_module,

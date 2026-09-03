@@ -2380,6 +2380,23 @@ fn empty_module_uses_exact_expression_constructor_vocabulary() {
 
     let module = empty_wasm_module(&mut kernel, &document).unwrap();
 
+    let empty_list_constructor = builder
+        .structural_constructor(&mut kernel, "expression:List", 0)
+        .unwrap();
+    let module_constructor = builder
+        .structural_constructor(&mut kernel, "expression:Case(\"MODULE%%%%%%%%%%%\")", 1)
+        .unwrap();
+    let module_injective = builder
+        .algebra()
+        .injective(&mut kernel, module_constructor)
+        .unwrap();
+    let list_module_disjoint = builder
+        .algebra()
+        .disjoint(&mut kernel, empty_list_constructor, module_constructor)
+        .unwrap();
+    assert_eq!(kernel.classifier(module_injective).unwrap(), bool_ty);
+    assert_eq!(kernel.classifier(list_module_disjoint).unwrap(), bool_ty);
+
     assert_eq!(kernel.classifier(module).unwrap(), value);
     let module_fields = builder
         .match_case_fields(&kernel, "MODULE%%%%%%%%%%%", 11, module)
