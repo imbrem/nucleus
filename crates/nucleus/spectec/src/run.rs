@@ -2791,7 +2791,10 @@ impl RunObservation {
         avoiding: &[Ref],
     ) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
-        let property = self.property_avoiding(&mut staged, quantifier, avoiding)?;
+        let mut roots = Vec::with_capacity(avoiding.len() + 2);
+        roots.extend_from_slice(avoiding);
+        roots.extend([profile, module]);
+        let property = self.property_avoiding(&mut staged, quantifier, &roots)?;
         let proposition = property.proposition(&mut staged, profile, module)?;
         *kernel = staged;
         Ok(proposition)
@@ -2921,6 +2924,226 @@ impl RunObservation {
             property.prove_same_runs_preserves(&mut staged, same_runs, profile, left, right)?;
         *kernel = staged;
         Ok(preserved)
+    }
+
+    /// Transports an existential behavior from an implementation to a
+    /// specification it refines.
+    ///
+    /// The concrete execution witnesses are opened from `implementation_may`,
+    /// transported through refinement's run inclusion, and reintroduced for
+    /// the specification. Premises from both evidence values remain visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `refinement` proves the displayed directional
+    /// refinement, `implementation_may` proves this observation's existential
+    /// behavior for the implementation, and every checked specialization,
+    /// existential, propositional, or alignment step succeeds. `kernel` is
+    /// unchanged on failure.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    pub fn prove_refinement_preserves_may(
+        self,
+        kernel: &mut Kernel,
+        refinement: Evidence,
+        implementation_may: Evidence,
+        profile: Ref,
+        implementation: Ref,
+        specification: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let types = self.domain.relation.types;
+        let expected_refinement =
+            self.domain
+                .refines_runs(&mut staged, profile, implementation, specification)?;
+        let refinement_theorem = align_evidence(&mut staged, refinement, expected_refinement)?;
+        let refinement_behavior = staged
+            .expand_conclusion(
+                refinement_theorem,
+                positive(expected_refinement),
+                Some(true),
+            )
+            .map_err(|_| KernelError::InvalidTheoremRule {
+                rule: "refinement may behavior projection",
+            })?;
+        let [_, behavior_formula] = binary_children(&staged, expected_refinement)?;
+        binary_children(&staged, behavior_formula)?;
+        let inclusion = staged
+            .expand_conclusion(refinement_behavior, positive(behavior_formula), Some(false))
+            .map_err(|_| KernelError::InvalidTheoremRule {
+                rule: "refinement may inclusion projection",
+            })?;
+
+        let implementation_proposition = self.may(&mut staged, profile, implementation)?;
+        let implementation_theorem =
+            align_evidence(&mut staged, implementation_may, implementation_proposition)?;
+        let implementation_graphs = self
+            .domain
+            .run_graphs(&mut staged, profile, implementation)?;
+        let implementation_direct = self.graph_proposition(
+            &mut staged,
+            BehaviorQuantifier::May,
+            implementation_graphs.domain,
+            implementation_graphs.runs,
+            &[],
+        )?;
+        let implementation_reduced =
+            certify_curried_beta2(&mut staged, implementation_proposition)?;
+        join_alpha_equivalent(&mut staged, implementation_reduced, implementation_direct).map_err(
+            |_| KernelError::InvalidTheoremRule {
+                rule: "refinement may property reduction",
+            },
+        )?;
+        staged.convert_conclusions(
+            implementation_theorem,
+            implementation_proposition,
+            implementation_direct,
+        )?;
+        let mut opened_formula = implementation_direct;
+        let mut witnesses = Vec::with_capacity(5);
+        for _ in 0..5 {
+            let opened = open_exists(&mut staged, opened_formula)?;
+            staged.convert_conclusions(implementation_theorem, opened_formula, opened.body)?;
+            witnesses.push(opened.witness);
+            opened_formula = opened.body;
+        }
+        let implementation_run = staged
+            .arena()
+            .children(opened_formula)
+            .and_then(|children| children.collect::<Vec<_>>().first().copied())
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "refinement may witness conjunction",
+            })?;
+        let implementation_run_fact = staged
+            .expand_conclusion(
+                implementation_theorem,
+                positive(opened_formula),
+                Some(false),
+            )
+            .map_err(|_| KernelError::InvalidTheoremRule {
+                rule: "refinement may run projection",
+            })?;
+        let observation_fact = staged
+            .expand_conclusion(implementation_theorem, positive(opened_formula), Some(true))
+            .map_err(|_| KernelError::InvalidTheoremRule {
+                rule: "refinement may observation projection",
+            })?;
+
+        let specification_graphs = self
+            .domain
+            .run_graphs(&mut staged, profile, specification)?;
+        let implementation_run_expected =
+            apply(&mut staged, implementation_graphs.runs, &witnesses)?;
+        align_theorem_conclusion(
+            &mut staged,
+            implementation_run_fact,
+            implementation_run,
+            implementation_run_expected,
+            "refinement may implementation-run alignment",
+        )?;
+        let specification_run = apply(&mut staged, specification_graphs.runs, &witnesses)?;
+        let inclusion_at_witness =
+            staged.op2(Op2::Imp, implementation_run_expected, specification_run)?;
+        let inclusion = specialize_universal_to(
+            &mut staged,
+            inclusion,
+            &witnesses,
+            inclusion_at_witness,
+            "refinement may inclusion specialization",
+        )?;
+        let inclusion = staged
+            .expand_conclusion(inclusion, positive(inclusion_at_witness), None)
+            .map_err(|_| KernelError::InvalidTheoremRule {
+                rule: "refinement may implication expansion",
+            })?;
+        let specification_run_fact = staged.resolve(
+            implementation_run_fact,
+            inclusion,
+            positive(implementation_run_expected),
+        )?;
+        let observed = apply(&mut staged, self.observe, &[witnesses[3], witnesses[4]])?;
+        let source_observed = binary_children(&staged, opened_formula)?[1];
+        align_theorem_conclusion(
+            &mut staged,
+            observation_fact,
+            source_observed,
+            observed,
+            "refinement may observation alignment",
+        )?;
+        let specification_body = staged.op2(Op2::And, specification_run, observed)?;
+        let mut proof = staged.and_right(
+            specification_run_fact,
+            observation_fact,
+            positive(specification_body),
+        )?;
+        let mut proved_proposition = specification_body;
+
+        let mut binder_roots = vec![
+            expected_refinement,
+            implementation_proposition,
+            specification_body,
+            implementation_graphs.runs,
+            specification_graphs.runs,
+            self.observe,
+            types.entry,
+            types.inputs,
+            types.host,
+            types.trace,
+            types.outcome,
+        ];
+        binder_roots.extend_from_slice(&witnesses);
+        let binder_name = staged.fresh_name(&binder_roots)?;
+        let binders = [
+            staged.tm_fv(binder_name, types.entry)?,
+            staged.tm_fv(checked_name(binder_name, 1)?, types.inputs)?,
+            staged.tm_fv(checked_name(binder_name, 2)?, types.host)?,
+            staged.tm_fv(checked_name(binder_name, 3)?, types.trace)?,
+            staged.tm_fv(checked_name(binder_name, 4)?, types.outcome)?,
+        ];
+        for index in (0..5).rev() {
+            let arguments: [Ref; 5] = std::array::from_fn(|candidate| {
+                if candidate < index {
+                    witnesses[candidate]
+                } else {
+                    binders[candidate]
+                }
+            });
+            let run = apply(&mut staged, specification_graphs.runs, &arguments)?;
+            let observed = apply(&mut staged, self.observe, &[arguments[3], arguments[4]])?;
+            let mut body = staged.op2(Op2::And, run, observed)?;
+            for &later in binders[index + 1..].iter().rev() {
+                body = staged.exists_tm(later, body)?;
+            }
+            let introduced =
+                introduce_exists(&mut staged, proof, binders[index], body, witnesses[index])
+                    .map_err(|_| KernelError::InvalidTheoremRule {
+                        rule: [
+                            "refinement may introduce entry",
+                            "refinement may introduce inputs",
+                            "refinement may introduce host",
+                            "refinement may introduce trace",
+                            "refinement may introduce outcome",
+                        ][index],
+                    })?;
+            proof = introduced.theorem;
+            proved_proposition = introduced.proposition;
+        }
+        let specification_proposition = self.may(&mut staged, profile, specification)?;
+        let specification_reduced = certify_curried_beta2(&mut staged, specification_proposition)?;
+        align_theorem_conclusion(
+            &mut staged,
+            proof,
+            proved_proposition,
+            specification_reduced,
+            "refinement may final alignment",
+        )?;
+        staged.convert_conclusions(proof, specification_reduced, specification_proposition)?;
+        staged.contract_theorem(proof)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: specification_proposition,
+            theorem: proof,
+            holds: true,
+        })
     }
 
     /// Constructs `module -> bool` for one profile and quantification mode.
@@ -3265,6 +3488,38 @@ fn certify_beta_application(
     Ok((substitution.output, fact))
 }
 
+fn certify_curried_beta2(kernel: &mut Kernel, application: Ref) -> Result<Ref, RunProofError> {
+    let children = kernel
+        .arena()
+        .children(application)
+        .ok_or(KernelError::InvalidTheoremRule {
+            rule: "curried run property application",
+        })?
+        .collect::<Vec<_>>();
+    let [function, argument] = children.as_slice() else {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "curried run property application operands",
+        }
+        .into());
+    };
+    let (reduced_function, function_fact) = certify_beta_application(kernel, *function)?;
+    let reduced_application = kernel.app(reduced_function, *argument)?;
+    let argument_fact = kernel.syn_refl(None, SynRel::Conv, *argument)?;
+    let application_fact = kernel.syn_congr(
+        None,
+        SynRel::Conv,
+        None,
+        None,
+        application,
+        reduced_application,
+        &[function_fact, argument_fact],
+    )?;
+    let (reduced, beta_fact) = certify_beta_application(kernel, reduced_application)?;
+    let conversion = kernel.syn_trans(None, application_fact, beta_fact)?;
+    kernel.union_syn_fact(conversion)?;
+    Ok(reduced)
+}
+
 fn quantify_exists(
     kernel: &mut Kernel,
     bool_ty: Ref,
@@ -3453,7 +3708,8 @@ mod tests {
         let may_from_property = may_property
             .proposition(&mut kernel, profile, module)
             .unwrap();
-        covalence_logic_hol_derived::join_same_syntax(&mut kernel, may_from_property, may).unwrap();
+        covalence_logic_hol_derived::join_alpha_equivalent(&mut kernel, may_from_property, may)
+            .unwrap();
         assert_eq!(kernel.classifier(may).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(every).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(never).unwrap(), bool_ty);
@@ -3522,13 +3778,7 @@ mod tests {
             .check(&kernel, equality_refines)
             .unwrap();
         let equality_reverse_refines = domain
-            .prove_same_runs_refines(
-                &mut kernel,
-                symmetric,
-                profile,
-                other_module,
-                module,
-            )
+            .prove_same_runs_refines(&mut kernel, symmetric, profile, other_module, module)
             .unwrap();
         EvidenceScope::positive(&[left_middle])
             .check(&kernel, equality_reverse_refines)
@@ -3679,6 +3929,43 @@ mod tests {
                 .unwrap(),
             holds: true,
         };
+        let implementation_may = observation.may(&mut kernel, profile, module).unwrap();
+        let implementation_may_evidence = Evidence {
+            proposition: implementation_may,
+            theorem: kernel
+                .identity(super::positive(implementation_may))
+                .unwrap(),
+            holds: true,
+        };
+        let specification_may = observation
+            .prove_refinement_preserves_may(
+                &mut kernel,
+                left_middle_refinement_evidence,
+                implementation_may_evidence,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[left_middle_refinement, implementation_may])
+            .check(&kernel, specification_may)
+            .unwrap();
+        let before = kernel.arena().clone();
+        let theorem_count = kernel.thm().live_theorems().count();
+        assert!(
+            observation
+                .prove_refinement_preserves_may(
+                    &mut kernel,
+                    equivalence_reflexive,
+                    implementation_may_evidence,
+                    profile,
+                    module,
+                    other_module,
+                )
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
         let refinement_transitive = domain
             .prove_run_refinement_transitive(
                 &mut kernel,

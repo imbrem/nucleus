@@ -55,6 +55,9 @@ result. Its checked reflexivity and transitivity derivations make this
 progress-sensitive relation a preorder without assuming anything about the
 underlying execution relation. Complete run equality checkedly induces
 refinement in both directions, preserving the original equality premises.
+Existential behavior transports forward from an implementation to its
+specification by opening, transporting, and reintroducing the concrete run
+witness; this makes counterexamples compositional across refinement.
 The domain also derives explicit determinism and totality propositions.
 Totality here means that every admissible invocation has a modeled trace and
 outcome; the profile and outcome representation determine whether traps or
