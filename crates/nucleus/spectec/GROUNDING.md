@@ -27,15 +27,15 @@ preservation axiom.
 context admissibility predicate. The resulting `RunContext` owns that domain,
 so mixing observations or equivalence evidence from another execution policy
 is rejected at the construction boundary rather than threaded through every
-method call. Its `equivalent_runs` proposition quantifies complete
-run equality over every admissible closing context, independently of any one
-observer. A checked elimination theorem maps that stronger contextual relation
+method call. Its `equivalent` proposition defines observational equivalence as
+complete run equality in every admissible closing context, independently of
+any one observer. A checked elimination theorem maps that contextual relation
 to ordinary contextual equivalence for any selected behavior observation.
 Premise-free reflexivity and premise-preserving symmetry and transitivity are
 themselves checked derivations, rather than frontend declarations that the
 relation is an equivalence.
 Conversely, checked negative evidence for any one contextual observation
-refutes `equivalent_runs`. Thus, once `callsAssert` is supplied as a trace
+refutes `equivalent`. Thus, once `callsAssert` is supplied as a trace
 observation, its distinction between `TRUE` and `FALSE` is sufficient to prove
 that they are not contextually run-equivalent; the API does not require
 comparing their complete graphs by inspection.

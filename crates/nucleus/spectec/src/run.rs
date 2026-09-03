@@ -280,7 +280,7 @@ impl RunContext {
         Ok(contextual)
     }
 
-    /// Constructs contextual equality of complete allowed run graphs.
+    /// Constructs contextual observational equivalence.
     ///
     /// The proposition quantifies over every context, requires both subjects
     /// to agree on context admissibility, and requires `same_runs` whenever
@@ -289,9 +289,9 @@ impl RunContext {
     ///
     /// # Errors
     ///
-    /// Returns an error for incompatible modules/profile/domain or a rejected
+    /// Returns an error for incompatible modules/profile or a rejected
     /// checked HOL construction. `kernel` is unchanged on failure.
-    pub fn equivalent_runs(
+    pub fn equivalent(
         self,
         kernel: &mut Kernel,
         profile: Ref,
@@ -329,10 +329,10 @@ impl RunContext {
     ///
     /// # Errors
     ///
-    /// Returns an error for an incompatible domain/profile/module or a rejected
+    /// Returns an error for an incompatible profile/module or a rejected
     /// checked equality, implication, universal, or alignment step. `kernel`
     /// is unchanged on failure.
-    pub fn prove_equivalent_runs_reflexive(
+    pub fn prove_reflexive(
         self,
         kernel: &mut Kernel,
         profile: Ref,
@@ -389,7 +389,7 @@ impl RunContext {
         )?;
         let universal = staged.forall_tm(types.bool_ty, context, at_context)?;
         let theorem = staged.forall_intro_at(body, context, universal)?;
-        let canonical = self.equivalent_runs(&mut staged, profile, module, module)?;
+        let canonical = self.equivalent(&mut staged, profile, module, module)?;
         align_theorem_conclusion(
             &mut staged,
             theorem,
@@ -417,7 +417,7 @@ impl RunContext {
     /// propositional, universal, or alignment step fails. `kernel` is unchanged
     /// on failure.
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    pub fn prove_equivalent_runs_symmetric(
+    pub fn prove_symmetric(
         self,
         kernel: &mut Kernel,
         equivalence: Evidence,
@@ -426,7 +426,7 @@ impl RunContext {
         right: Ref,
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
-        let expected = self.equivalent_runs(&mut staged, profile, left, right)?;
+        let expected = self.equivalent(&mut staged, profile, left, right)?;
         let theorem = align_evidence(&mut staged, equivalence, expected)?;
         let context_name = staged.fresh_name(&[
             expected,
@@ -529,7 +529,7 @@ impl RunContext {
         staged.contract_theorem(body)?;
         let universal = staged.forall_tm(self.domain.relation.types.bool_ty, context, target)?;
         let theorem = staged.forall_intro_at(body, context, universal)?;
-        let canonical = self.equivalent_runs(&mut staged, profile, right, left)?;
+        let canonical = self.equivalent(&mut staged, profile, right, left)?;
         align_theorem_conclusion(
             &mut staged,
             theorem,
@@ -559,7 +559,7 @@ impl RunContext {
     /// specialization, equality, propositional, universal, or alignment step
     /// fails. `kernel` is unchanged on failure.
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    pub fn prove_equivalent_runs_transitive(
+    pub fn prove_transitive(
         self,
         kernel: &mut Kernel,
         left_middle: Evidence,
@@ -570,9 +570,9 @@ impl RunContext {
         right: Ref,
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
-        let expected_left_middle = self.equivalent_runs(&mut staged, profile, left, middle)?;
+        let expected_left_middle = self.equivalent(&mut staged, profile, left, middle)?;
         let left_middle_theorem = align_evidence(&mut staged, left_middle, expected_left_middle)?;
-        let expected_middle_right = self.equivalent_runs(&mut staged, profile, middle, right)?;
+        let expected_middle_right = self.equivalent(&mut staged, profile, middle, right)?;
         let middle_right_theorem =
             align_evidence(&mut staged, middle_right, expected_middle_right)?;
         let context_name = staged.fresh_name(&[
@@ -759,7 +759,7 @@ impl RunContext {
         staged.contract_theorem(body)?;
         let universal = staged.forall_tm(self.domain.relation.types.bool_ty, context, target)?;
         let theorem = staged.forall_intro_at(body, context, universal)?;
-        let canonical = self.equivalent_runs(&mut staged, profile, left, right)?;
+        let canonical = self.equivalent(&mut staged, profile, left, right)?;
         align_theorem_conclusion(
             &mut staged,
             theorem,
@@ -789,7 +789,7 @@ impl RunContext {
     /// contextual run equivalence, or a checked specialization, propositional,
     /// congruence, or alignment step fails. `kernel` is unchanged on failure.
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    pub fn prove_equivalent_runs_preserves(
+    pub fn prove_preserves(
         self,
         kernel: &mut Kernel,
         equivalence: Evidence,
@@ -801,7 +801,7 @@ impl RunContext {
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
         self.require_observation(observation)?;
-        let expected = self.equivalent_runs(&mut staged, profile, left, right)?;
+        let expected = self.equivalent(&mut staged, profile, left, right)?;
         let theorem = align_evidence(&mut staged, equivalence, expected)?;
         let contextual = self.observe_avoiding(
             &mut staged,
@@ -992,7 +992,7 @@ impl RunContext {
     /// cut, negation, or alignment step fails. `kernel` is unchanged on
     /// failure.
     #[allow(clippy::too_many_arguments)]
-    pub fn prove_not_equivalent_runs_from_observation(
+    pub fn prove_distinct(
         self,
         kernel: &mut Kernel,
         distinction: Evidence,
@@ -1014,9 +1014,9 @@ impl RunContext {
         let observed_equivalence = contextual.equivalent(&mut staged, left, right)?;
         let distinction_theorem =
             align_signed_evidence(&mut staged, distinction, observed_equivalence, false)?;
-        let run_equivalence = self.equivalent_runs(&mut staged, profile, left, right)?;
+        let run_equivalence = self.equivalent(&mut staged, profile, left, right)?;
         let assumed = staged.identity(positive(run_equivalence))?;
-        let preservation = self.prove_equivalent_runs_preserves(
+        let preservation = self.prove_preserves(
             &mut staged,
             Evidence {
                 proposition: run_equivalence,
@@ -2869,11 +2869,11 @@ mod tests {
         )
         .unwrap();
         let contextual_same_runs = context
-            .equivalent_runs(&mut kernel, profile, module, other_module)
+            .equivalent(&mut kernel, profile, module, other_module)
             .unwrap();
         assert_eq!(kernel.classifier(contextual_same_runs).unwrap(), bool_ty);
         let contextual_reflexive = context
-            .prove_equivalent_runs_reflexive(&mut kernel, profile, module)
+            .prove_reflexive(&mut kernel, profile, module)
             .unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, contextual_reflexive)
@@ -2886,7 +2886,7 @@ mod tests {
             holds: true,
         };
         let contextual_symmetric = context
-            .prove_equivalent_runs_symmetric(
+            .prove_symmetric(
                 &mut kernel,
                 contextual_same_runs_evidence,
                 profile,
@@ -2898,7 +2898,7 @@ mod tests {
             .check(&kernel, contextual_symmetric)
             .unwrap();
         let contextual_middle_right = context
-            .equivalent_runs(&mut kernel, profile, other_module, third_module)
+            .equivalent(&mut kernel, profile, other_module, third_module)
             .unwrap();
         let contextual_middle_right_evidence = Evidence {
             proposition: contextual_middle_right,
@@ -2908,7 +2908,7 @@ mod tests {
             holds: true,
         };
         let contextual_transitive = context
-            .prove_equivalent_runs_transitive(
+            .prove_transitive(
                 &mut kernel,
                 contextual_same_runs_evidence,
                 contextual_middle_right_evidence,
@@ -2925,7 +2925,7 @@ mod tests {
         let theorem_count = kernel.thm().live_theorems().count();
         assert!(
             context
-                .prove_equivalent_runs_transitive(
+                .prove_transitive(
                     &mut kernel,
                     contextual_same_runs_evidence,
                     contextual_same_runs_evidence,
@@ -2945,7 +2945,7 @@ mod tests {
             BehaviorQuantifier::Never,
         ] {
             let contextual_preservation = context
-                .prove_equivalent_runs_preserves(
+                .prove_preserves(
                     &mut kernel,
                     contextual_same_runs_evidence,
                     observation,
@@ -2970,7 +2970,7 @@ mod tests {
             holds: false,
         };
         let run_distinction = context
-            .prove_not_equivalent_runs_from_observation(
+            .prove_distinct(
                 &mut kernel,
                 observed_distinction,
                 observation,
@@ -2995,7 +2995,7 @@ mod tests {
         let theorem_count = kernel.thm().live_theorems().count();
         assert!(
             context
-                .prove_equivalent_runs_preserves(
+                .prove_preserves(
                     &mut kernel,
                     denied_contextual_runs,
                     observation,
