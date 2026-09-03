@@ -183,7 +183,7 @@ struct SharedInterpretation {
 }
 
 #[derive(Debug)]
-struct ParameterizedResolver {
+struct ParameterizedResolver<'a> {
     embedding: HolEmbedding,
     schema: Arc<HolSchema>,
     bindings: BTreeMap<Symbol, Ref>,
@@ -194,6 +194,7 @@ struct ParameterizedResolver {
     expression_scopes: Vec<Vec<(Symbol, Option<Ref>, Ref)>>,
     implicit_binders: Vec<Ref>,
     interpretation: SharedInterpretation,
+    provided: &'a BTreeMap<Symbol, Ref>,
 }
 
 /// Transactionally declares generic slots and lowers an entire exact document
@@ -212,6 +213,30 @@ pub fn parameterized_document(
     kernel: &mut Kernel,
     value: Ref,
     bool_ty: Ref,
+) -> Result<ParameterizedDocument, ParameterizedError> {
+    parameterized_document_with(source, kernel, value, bool_ty, &BTreeMap::new())
+}
+
+/// Transactionally lowers a document using immutable concrete implementations
+/// for any named value-level interpretation operations supplied by the caller.
+///
+/// Each map key is the stable [`InterpretationSymbol::label`] that an ordinary
+/// parameterized pass would emit. A supplied term is used only after its
+/// classifier is checked against the requested operation signature. Missing
+/// entries remain explicit in [`ParameterizedDocument::grounding_obligations`].
+/// This function constructs syntax and constraints; it does not assume the
+/// resulting theory or mint theorem facts.
+///
+/// # Errors
+///
+/// Returns the first schema, name-resolution, interpretation-classifier,
+/// declaration, or checked theory failure. `kernel` is unchanged on failure.
+pub fn parameterized_document_with(
+    source: &Source,
+    kernel: &mut Kernel,
+    value: Ref,
+    bool_ty: Ref,
+    provided: &BTreeMap<Symbol, Ref>,
 ) -> Result<ParameterizedDocument, ParameterizedError> {
     let mut staged = kernel.fork();
     let schema = declare_hol_schema(source, &mut staged, value, bool_ty)
@@ -247,6 +272,7 @@ pub fn parameterized_document(
         expression_scopes: Vec::new(),
         implicit_binders: Vec::new(),
         interpretation,
+        provided,
     };
     for (_, declaration) in schema.declarations() {
         let classifier = staged
@@ -286,7 +312,7 @@ fn arrow_children(
     Ok(Some((*domain, *codomain)))
 }
 
-impl ParameterizedResolver {
+impl ParameterizedResolver<'_> {
     fn canonical_type(
         &mut self,
         kernel: &Kernel,
@@ -353,6 +379,22 @@ impl ParameterizedResolver {
                 .map_err(|source| ParameterizedError::Kernel { source })?;
             self.canonical_type(kernel, arrow)
         })?;
+        if let Some(&reference) = self.provided.get(label.as_str()) {
+            let actual = kernel
+                .classifier(reference)
+                .map_err(|source| ParameterizedError::Kernel { source })?;
+            let compatible = kernel
+                .equivalent(actual, classifier)
+                .map_err(|source| ParameterizedError::Kernel { source })?;
+            if !compatible {
+                return Err(ParameterizedError::Resolve {
+                    message: format!(
+                        "provided interpretation {label:?} has classifier {actual:?}, expected {classifier:?}"
+                    ),
+                });
+            }
+            return Ok(reference);
+        }
         let reference = kernel
             .tm_fv(self.take_name()?, classifier)
             .map_err(|source| ParameterizedError::Kernel { source })?;
@@ -472,7 +514,7 @@ impl ParameterizedResolver {
     }
 }
 
-impl RelationalResolver for ParameterizedResolver {
+impl RelationalResolver for ParameterizedResolver<'_> {
     type Error = ParameterizedError;
 
     fn declaration_error(&mut self, id: DeclarationId, source: Self::Error) -> Self::Error {
@@ -494,6 +536,7 @@ impl RelationalResolver for ParameterizedResolver {
             expression_scopes: Vec::new(),
             implicit_binders: Vec::new(),
             interpretation: std::mem::take(&mut self.interpretation),
+            provided: self.provided,
         }
     }
 

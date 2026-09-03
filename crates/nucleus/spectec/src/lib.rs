@@ -40,7 +40,7 @@ pub use grammar::{GrammarAlgebra, GrammarArgument, GrammarChildren, fold_grammar
 pub use grammar_definition::{RelationalGrammarDefinition, relational_grammar_declaration};
 pub use parameterized::{
     InterpretationKind, InterpretationSymbol, ParameterizedDocument, ParameterizedError,
-    parameterized_document,
+    parameterized_document, parameterized_document_with,
 };
 pub use premise::{PremiseAlgebra, PremiseChildren, fold_premise};
 pub use program_logic::{AssertCombinator, CallsAssert, Established, Proposition};

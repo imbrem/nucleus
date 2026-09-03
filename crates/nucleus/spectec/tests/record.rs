@@ -1,3 +1,4 @@
+use covalence_data_basic::Symbol;
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
 use covalence_data_spectec::{
     ClauseId, DeclarationId, IlClauseSchema, IlDocument, IlExpression, IlExpressionKind,
@@ -16,7 +17,7 @@ use covalence_nucleus_spectec::{
     TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family, close_family_definition,
     close_graph_equation, close_hol_rule, close_hol_rules, close_hol_theory, declare_hol_schema,
     fold_expression, fold_grammar, fold_type, least_closed_family, least_closed_predicate,
-    ordered_cases, parameterized_document, relational_definition,
+    ordered_cases, parameterized_document, parameterized_document_with, relational_definition,
     relational_definition_declaration, relational_definition_schema, relational_document,
     relational_grammar_declaration, relational_hol_case, relational_hol_rule,
     relational_relation_declaration, relational_relations, relational_type_declaration,
@@ -1562,6 +1563,51 @@ fn parameterized_relations_encode_consecutive_otherwise_fallback() {
 
     assert_eq!(document.semantics.constraints().len(), 1);
     assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+}
+
+#[test]
+fn immutable_interpretations_discharge_checked_grounding_obligations() {
+    let bytes = b"(def \"zero\" nat (clause (num (nat 0))))";
+    let il = IlDocument::parse(bytes, Limits::default()).unwrap();
+    let source = Source::new(
+        drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle"),
+        drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        "test",
+        "revision",
+        &il,
+    )
+    .unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let parameterized = parameterized_document(&source, &mut kernel, value, bool_ty).unwrap();
+    let supplied = parameterized
+        .grounding_obligations()
+        .next()
+        .unwrap()
+        .clone();
+    let provided = std::collections::BTreeMap::from([(
+        Symbol::from(supplied.label.as_str()),
+        supplied.reference,
+    )]);
+
+    let interpreted =
+        parameterized_document_with(&source, &mut kernel, value, bool_ty, &provided).unwrap();
+
+    assert!(
+        interpreted
+            .grounding_obligations()
+            .all(|obligation| obligation.label != supplied.label)
+    );
+
+    let wrong = kernel.bool(bool_ty, true).unwrap();
+    let incompatible = std::collections::BTreeMap::from([(supplied.label, wrong)]);
+    let before = kernel.arena().clone();
+    assert!(
+        parameterized_document_with(&source, &mut kernel, value, bool_ty, &incompatible).is_err()
+    );
+    assert_eq!(kernel.arena(), &before);
 }
 
 #[test]
