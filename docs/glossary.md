@@ -1,7 +1,18 @@
 # Glossary
 
+**Atom**
+: A term the normalizer does not look inside. Variables are atoms, and so is any
+subterm it cannot decompose, such as a subtraction it cannot cancel. Normal
+forms are built from atoms.
+
 **Checked**
 : Validated by the kernel rather than accepted from a caller.
+
+**Compact row**
+: An arena row that stands for a larger opcode-free term. Compact rows are
+macros: a literal (`tm.nat`, `tm.int`, `tm.bytes`) or a builtin opcode
+(`tm.op1.v1`, `tm.op2.v1`, `tm.num1.v1`, `tm.num2.v1`). They carry no meaning
+of their own.
 
 **Content address**
 : A digest that identifies exact bytes. It does not by itself say that the
@@ -21,9 +32,23 @@ BLAKE3 family:
 : The small ambient logic implemented by the kernel. Nucleus can define and
 reason about other logics inside it.
 
+**Init slice**
+: The checked, opcode-free prefix of definitions and theorems every kernel
+starts from. Compact rows name constants in it.
+
 **LCF style**
 : An API in which theorem values cannot be forged by callers; they are produced
 only by a small kernel from existing theorem values and checked inputs.
+
+**Lowering**
+: Expanding a compact row into the opcode-free init definitions it stands for.
+A compact row only has a meaning once it lowers, so the kernel rejects one
+whose definition the init slice does not yet contain.
+
+**Normal form**
+: The canonical shape an expression rewrites to. Nucleus normalizes `nat`
+arithmetic to a sum of monomials, so two expressions are equal in every
+commutative semiring exactly when their normal forms match.
 
 **Provenance**
 : Information about where an artifact came from, such as a signer, tool,
@@ -50,18 +75,3 @@ call exposed kernel operations but cannot create theorems on its own.
 **WIT (WebAssembly Interface Type)**
 : The interface language used to describe capabilities available across a Wasm
 component boundary.
-
-**Compact row**
-: An arena row that stands for a larger opcode-free term. Compact rows are
-macros: a literal (`tm.nat`, `tm.int`, `tm.bytes`) or a builtin opcode
-(`tm.op1.v1`, `tm.op2.v1`, `tm.num1.v1`, `tm.num2.v1`). They carry no meaning
-of their own.
-
-**Init slice**
-: The checked, opcode-free prefix of definitions and theorems every kernel
-starts from. Compact rows name constants in it.
-
-**Lowering**
-: Expanding a compact row into the opcode-free init definitions it stands for.
-A compact row only has a meaning once it lowers, so the kernel rejects one
-whose definition the init slice does not yet contain.

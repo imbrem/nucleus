@@ -43,24 +43,37 @@ constructible: a code whose init definition does not exist yet is well formed
 on the wire and rejected by row validation, like an unlowered literal, until
 that definition lands.
 
-## Meaning, equality, and limits
+## Meaning
 
-Compact rows are macros. Their only meaning is canonical recursive expansion to
-the opcode-free definitions in the init slice. Lowering keeps operand order and
-uses the init identity the kernel selects; it never consults names or a mutable
-rewrite set. `not p`, `p and q`, `p or q`, and `p imp q` expand to the matching
-init definitions applied to their lowered operands.
+Compact rows are macros. A row means exactly what it lowers to, and nothing
+else:
 
-Wire equality compares tag, opcode, and child references. HOL syntactic
-equality compares lowered terms. So a compact row and its expansion are
-syntactically equal after lowering, without having identical wire rows.
+- Lowering expands a row to the opcode-free init definitions, recursively.
+- It keeps operand order and uses the init identity the kernel selects.
+- It never consults names or a mutable rewrite set.
 
-Decoding one row is constant space apart from its operands and does no
-expansion. Implementations reject an over-long `ixs` array before allocating.
-Recursive lowering is fuel-bounded by the caller and memoized per arena
-reference; exhaustion is an ordinary checked failure and produces no kernel
-term. This keeps nested input from turning into unbounded work inside the
-kernel.
+So `not p`, `p and q`, `p or q`, and `p imp q` become the matching init
+definitions applied to their lowered operands.
+
+## Equality
+
+Two notions, and they do not coincide:
+
+- **Wire equality** compares tag, opcode, and child references.
+- **HOL syntactic equality** compares lowered terms.
+
+A compact row and its expansion are therefore equal as terms but different on
+the wire.
+
+## Cost
+
+- Decoding one row does no expansion and takes constant space beyond its
+  operands.
+- An over-long `ixs` array is rejected before anything is allocated.
+- Lowering is fuel-bounded by the caller and memoized per arena reference.
+  Running out of fuel is an ordinary checked failure and builds no kernel term.
+
+Nested input therefore cannot turn into unbounded work inside the kernel.
 
 ## Totality
 
