@@ -207,8 +207,10 @@ impl RunDomain {
     /// `implementation refines specification` means the modules have the same
     /// admissible entry/input/host domain and every allowed implementation run
     /// is a specification run with the identical trace and outcome. The
-    /// implementation may therefore remove nondeterministic behaviors but may
-    /// not silently reject an invocation. This constructs checked syntax only.
+    /// implementation may therefore remove nondeterministic alternatives. If
+    /// the specification has any run for an allowed invocation, the
+    /// implementation must retain at least one run, so refinement cannot hide
+    /// partiality by erasing all behavior. This constructs checked syntax only.
     ///
     /// # Errors
     ///
@@ -227,6 +229,152 @@ impl RunDomain {
             specification,
             RunComparison::Refines,
         )
+    }
+
+    /// Constructs totality under this domain and one selected profile.
+    ///
+    /// The result says that every admissible entry/input/host choice has at
+    /// least one trace and outcome related by `Runs`. Whether traps or
+    /// divergence count as outcomes is determined by the supplied relation and
+    /// profile; this proposition does not silently equate totality with
+    /// successful return. This constructs checked syntax only.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for incompatible profile/module terms, fresh-name
+    /// exhaustion, or a rejected checked HOL construction. `kernel` is
+    /// unchanged on failure.
+    pub fn total(self, kernel: &mut Kernel, profile: Ref, module: Ref) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.relation.types;
+        require_classifier(&mut staged, profile, types.profile)?;
+        require_classifier(&mut staged, module, types.module)?;
+        let first = staged.fresh_name(&[
+            self.relation.runs,
+            self.admissible,
+            profile,
+            module,
+            types.entry,
+            types.inputs,
+            types.host,
+            types.trace,
+            types.outcome,
+        ])?;
+        let entry = staged.tm_fv(first, types.entry)?;
+        let inputs = staged.tm_fv(checked_name(first, 1)?, types.inputs)?;
+        let host = staged.tm_fv(checked_name(first, 2)?, types.host)?;
+        let trace = staged.tm_fv(checked_name(first, 3)?, types.trace)?;
+        let outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
+        let allowed = apply(
+            &mut staged,
+            self.admissible,
+            &[profile, module, entry, inputs, host],
+        )?;
+        let run = apply(
+            &mut staged,
+            self.relation.runs,
+            &[profile, module, entry, inputs, host, trace, outcome],
+        )?;
+        let exists_run = quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], run)?;
+        let total = staged.op2(Op2::Imp, allowed, exists_run)?;
+        let total = quantify_forall(&mut staged, types.bool_ty, &[entry, inputs, host], total)?;
+        *kernel = staged;
+        Ok(total)
+    }
+
+    /// Constructs determinism under this domain and one selected profile.
+    ///
+    /// For each admissible entry/input/host choice, any two related runs must
+    /// have equal traces and equal outcomes. Host behavior is held fixed, so a
+    /// nondeterministic host policy remains explicit rather than being blamed
+    /// on the module. Determinism does not imply totality.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as [`Self::total`].
+    #[allow(clippy::too_many_lines)]
+    pub fn deterministic(
+        self,
+        kernel: &mut Kernel,
+        profile: Ref,
+        module: Ref,
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.relation.types;
+        require_classifier(&mut staged, profile, types.profile)?;
+        require_classifier(&mut staged, module, types.module)?;
+        let first = staged.fresh_name(&[
+            self.relation.runs,
+            self.admissible,
+            profile,
+            module,
+            types.entry,
+            types.inputs,
+            types.host,
+            types.trace,
+            types.outcome,
+            types.bool_ty,
+        ])?;
+        let entry = staged.tm_fv(first, types.entry)?;
+        let inputs = staged.tm_fv(checked_name(first, 1)?, types.inputs)?;
+        let host = staged.tm_fv(checked_name(first, 2)?, types.host)?;
+        let left_trace = staged.tm_fv(checked_name(first, 3)?, types.trace)?;
+        let left_outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
+        let right_trace = staged.tm_fv(checked_name(first, 5)?, types.trace)?;
+        let right_outcome = staged.tm_fv(checked_name(first, 6)?, types.outcome)?;
+        let allowed = apply(
+            &mut staged,
+            self.admissible,
+            &[profile, module, entry, inputs, host],
+        )?;
+        let left_run = apply(
+            &mut staged,
+            self.relation.runs,
+            &[
+                profile,
+                module,
+                entry,
+                inputs,
+                host,
+                left_trace,
+                left_outcome,
+            ],
+        )?;
+        let right_run = apply(
+            &mut staged,
+            self.relation.runs,
+            &[
+                profile,
+                module,
+                entry,
+                inputs,
+                host,
+                right_trace,
+                right_outcome,
+            ],
+        )?;
+        let runs = staged.op2(Op2::And, left_run, right_run)?;
+        let eligible_runs = staged.op2(Op2::And, allowed, runs)?;
+        let same_trace = staged.eq(types.bool_ty, left_trace, right_trace)?;
+        let same_outcome = staged.eq(types.bool_ty, left_outcome, right_outcome)?;
+        let same_result = staged.op2(Op2::And, same_trace, same_outcome)?;
+        let deterministic = staged.op2(Op2::Imp, eligible_runs, same_result)?;
+        let deterministic = quantify_forall(
+            &mut staged,
+            types.bool_ty,
+            &[
+                entry,
+                inputs,
+                host,
+                left_trace,
+                left_outcome,
+                right_trace,
+                right_outcome,
+            ],
+            deterministic,
+        )?;
+        *kernel = staged;
+        Ok(deterministic)
     }
 
     /// Proves that every module has the same allowed run graph as itself.
@@ -359,6 +507,29 @@ impl RunDomain {
             guarded_behavior,
             guarded_theorem,
         )?;
+        let (behavior, behavior_theorem) = if comparison == RunComparison::Refines {
+            let exists_run = quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], run)?;
+            let progress = staged.op2(Op2::Imp, exists_run, exists_run)?;
+            let assumed = staged.identity(positive(exists_run))?;
+            let progress_theorem = staged.imp_right(assumed, positive(progress))?;
+            staged.weaken(progress_theorem, &[positive(both_allowed)], &[])?;
+            let guarded_progress = staged.op2(Op2::Imp, both_allowed, progress)?;
+            let guarded_progress_theorem =
+                staged.imp_right(progress_theorem, positive(guarded_progress))?;
+            let (progress, progress_theorem) = introduce_forall(
+                &mut staged,
+                types.bool_ty,
+                &domain_variables,
+                guarded_progress,
+                guarded_progress_theorem,
+            )?;
+            let combined = staged.op2(Op2::And, behavior, progress)?;
+            let theorem =
+                staged.and_right(behavior_theorem, progress_theorem, positive(combined))?;
+            (combined, theorem)
+        } else {
+            (behavior, behavior_theorem)
+        };
         let proposition = staged.op2(Op2::And, same_domain, behavior)?;
         let theorem =
             staged.and_right(same_domain_theorem, behavior_theorem, positive(proposition))?;
@@ -442,13 +613,26 @@ impl RunDomain {
         };
         let behavior = staged.op2(Op2::Imp, both_allowed, behavior)?;
         let behavior = quantify_forall(&mut staged, types.bool_ty, &run_variables, behavior)?;
+        let behavior = if comparison == RunComparison::Refines {
+            let implementation_runs =
+                quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], left_run)?;
+            let specification_runs =
+                quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], right_run)?;
+            let progress = staged.op2(Op2::Imp, specification_runs, implementation_runs)?;
+            let progress = staged.op2(Op2::Imp, both_allowed, progress)?;
+            let progress =
+                quantify_forall(&mut staged, types.bool_ty, &domain_variables, progress)?;
+            staged.op2(Op2::And, behavior, progress)?
+        } else {
+            behavior
+        };
         let proposition = staged.op2(Op2::And, same_domain, behavior)?;
         *kernel = staged;
         Ok(proposition)
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum RunComparison {
     Equivalent,
     Refines,
@@ -826,8 +1010,12 @@ mod tests {
         let refinement = domain
             .refines(&mut kernel, profile, module, other_module)
             .unwrap();
+        let total = domain.total(&mut kernel, profile, module).unwrap();
+        let deterministic = domain.deterministic(&mut kernel, profile, module).unwrap();
         assert_eq!(kernel.classifier(equivalent).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(refinement).unwrap(), bool_ty);
+        assert_eq!(kernel.classifier(total).unwrap(), bool_ty);
+        assert_eq!(kernel.classifier(deterministic).unwrap(), bool_ty);
         assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
         let equivalence_reflexive = domain
             .prove_equivalence_reflexive(&mut kernel, profile, module)

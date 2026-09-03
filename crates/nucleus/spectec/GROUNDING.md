@@ -10,9 +10,14 @@ traps, returns, and compound trace properties are observation adapters rather
 than separate execution semantics. A domain also defines equality of complete
 allowed run graphs and directional refinement: an implementation has the same
 admissible invocation domain and may remove, but not add, behaviors of its
-specification. Premise-free checked reflexivity theorems establish the first
-laws of both relations without assuming determinism or totality. The resulting
-module predicates compose with contextual
+specification, but must retain some behavior whenever the specification has a
+run. Thus refinement cannot encode partiality merely by deleting every result.
+The domain also derives explicit determinism and totality propositions.
+Totality here means that every admissible invocation has a modeled trace and
+outcome; the profile and outcome representation determine whether traps or
+divergence count. Premise-free checked reflexivity theorems establish the first
+laws of equivalence and refinement without assuming either property. The
+resulting module predicates compose with contextual
 equivalence through a checked adapter, so the existing individual-function
 replacement theorems apply to any selected may, must, or never behavior. This
 layer constructs checked syntax only and neither executes Wasm nor creates
