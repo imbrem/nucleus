@@ -200,6 +200,57 @@ impl HolTheory {
             holds: true,
         })
     }
+
+    /// Unfolds one proved specialized graph application to its definition body.
+    ///
+    /// This is the elimination direction of
+    /// [`prove_specialized_from_body`](Self::prove_specialized_from_body). It
+    /// specializes the declaration equation at `arguments`, checks that
+    /// `graph_fact` proves its exact left-hand side, and transports that fact
+    /// to the right-hand definition body. The complete theory premise and all
+    /// premises of `graph_fact` remain visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if specialization does not end in a Boolean equality,
+    /// `graph_fact` has the wrong conclusion, or checked alignment or equality
+    /// transport fails. `kernel` is unchanged on failure.
+    pub fn prove_body_from_specialized(
+        &self,
+        kernel: &mut Kernel,
+        id: DeclarationId,
+        arguments: &[Ref],
+        graph_fact: covalence_logic_hol::ThmId,
+    ) -> Result<Evidence, HolTheoryProofError> {
+        let mut staged = kernel.fork();
+        let equation = self.specialize_constraint(&mut staged, id, arguments)?;
+        let operands = staged
+            .arena()
+            .children(equation.proposition)
+            .ok_or(HolTheoryProofError::GraphEquation)?
+            .collect::<Vec<_>>();
+        let [_bool_ty, graph, body] = operands.as_slice() else {
+            return Err(HolTheoryProofError::GraphEquation);
+        };
+        let source = sole_positive_conclusion(&staged, graph_fact)?;
+        join_alpha_equivalent(&mut staged, source, *graph)
+            .map_err(|source| HolTheoryProofError::Syntax { source })?;
+        let graph_fact = staged
+            .copy_theorem(graph_fact)
+            .map_err(|source| HolTheoryProofError::Kernel { source })?;
+        staged
+            .convert_conclusions(graph_fact, source, *graph)
+            .map_err(|source| HolTheoryProofError::Kernel { source })?;
+        let theorem = staged
+            .eq_mp(equation.theorem, graph_fact)
+            .map_err(|source| HolTheoryProofError::Kernel { source })?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: *body,
+            theorem,
+            holds: true,
+        })
+    }
 }
 
 fn sole_positive_conclusion(

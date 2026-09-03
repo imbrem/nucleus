@@ -2229,6 +2229,24 @@ fn empty_module_uses_exact_expression_constructor_vocabulary() {
         .evidence_scope(&[body])
         .check(&kernel, graph)
         .unwrap();
+    let unfolded = document
+        .semantics
+        .theory()
+        .prove_body_from_specialized(&mut kernel, declaration, &[module], graph.theorem)
+        .unwrap();
+    document
+        .evidence_scope(&[body])
+        .check(&kernel, unfolded)
+        .unwrap();
+    let before = kernel.arena().clone();
+    assert!(
+        document
+            .semantics
+            .theory()
+            .prove_body_from_specialized(&mut kernel, declaration, &[module], body_fact)
+            .is_err()
+    );
+    assert_eq!(kernel.arena(), &before);
 }
 
 #[test]
