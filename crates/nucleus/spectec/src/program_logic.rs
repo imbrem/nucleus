@@ -125,6 +125,94 @@ pub struct CallsAssert<Program> {
     pub import: Symbol,
 }
 
+/// Generic HOL predicates defining existential assertion reachability.
+///
+/// `starts program state` includes the existential choices of exported
+/// function, arguments, and behavior of imports other than `assert`. `steps`
+/// is the reflexive-transitive execution relation. `calls state function`
+/// observes a configuration immediately before a host call. A `SpecTec`
+/// adapter supplies these predicates; this schema only composes them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AssertionReachability {
+    /// Classifier shared by execution configurations.
+    pub state_ty: Ref,
+    /// HOL Boolean classifier.
+    pub bool_ty: Ref,
+    /// Curried predicate `program -> state -> bool`.
+    pub starts: Ref,
+    /// Curried predicate `state -> state -> bool`.
+    pub steps: Ref,
+    /// Curried predicate `state -> function -> bool`.
+    pub calls: Ref,
+}
+
+impl AssertionReachability {
+    /// Constructs `callsAssert(program, assert_function)` as an existential
+    /// reachability proposition.
+    ///
+    /// The result is
+    /// `exists initial final. starts program initial /\ steps initial final /\
+    /// calls final assert_function`. This creates checked syntax only.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for incompatible predicate arguments, non-Boolean
+    /// results, fresh-name exhaustion, or a rejected checked constructor.
+    pub fn calls_assert(
+        self,
+        kernel: &mut Kernel,
+        program: Ref,
+        assert_function: Ref,
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let roots = [
+            self.state_ty,
+            self.bool_ty,
+            self.starts,
+            self.steps,
+            self.calls,
+            program,
+            assert_function,
+        ];
+        let initial_name = staged.fresh_name(&roots)?;
+        let final_name = initial_name
+            .checked_add(1)
+            .ok_or(KernelError::TooManyNames)?;
+        let initial = staged.tm_fv(initial_name, self.state_ty)?;
+        let final_state = staged.tm_fv(final_name, self.state_ty)?;
+
+        let starts = apply2(&mut staged, self.starts, program, initial)?;
+        let steps = apply2(&mut staged, self.steps, initial, final_state)?;
+        let calls = apply2(&mut staged, self.calls, final_state, assert_function)?;
+        require_bool(&mut staged, self.bool_ty, starts)?;
+        require_bool(&mut staged, self.bool_ty, steps)?;
+        require_bool(&mut staged, self.bool_ty, calls)?;
+        let reached = staged.op2(Op2::And, steps, calls)?;
+        let body = staged.op2(Op2::And, starts, reached)?;
+        let body = staged.exists_tm(final_state, body)?;
+        let proposition = staged.exists_tm(initial, body)?;
+        *kernel = staged;
+        Ok(proposition)
+    }
+}
+
+fn apply2(kernel: &mut Kernel, function: Ref, left: Ref, right: Ref) -> Result<Ref, KernelError> {
+    let applied = kernel.app(function, left)?;
+    kernel.app(applied, right)
+}
+
+fn require_bool(kernel: &mut Kernel, bool_ty: Ref, proposition: Ref) -> Result<(), KernelError> {
+    let classifier = kernel.classifier(proposition)?;
+    if kernel.equivalent(classifier, bool_ty)? {
+        Ok(())
+    } else {
+        Err(KernelError::ClassifierMismatch {
+            expected: bool_ty,
+            actual: classifier,
+        })
+    }
+}
+
 /// Immutable Boolean scaffolding for composing assertion propositions.
 ///
 /// This is not a WebAssembly syntax or semantics. `Leaf` leaves room for a
@@ -515,5 +603,50 @@ mod tests {
         let theorem = kernel.arena().theorems().get(result.theorem).unwrap();
         assert!(theorem.lhs.rows().next().is_some());
         assert!(result.holds);
+    }
+
+    #[test]
+    fn calls_assert_is_checked_existential_reachability() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let program_ty = kernel.ty_fv(1, star).unwrap();
+        let state_ty = kernel.ty_fv(2, star).unwrap();
+        let function_ty = kernel.ty_fv(3, star).unwrap();
+        let state_predicate = kernel.ty_arr(state_ty, bool_ty).unwrap();
+        let starts_ty = kernel.ty_arr(program_ty, state_predicate).unwrap();
+        let steps_ty = kernel.ty_arr(state_ty, state_predicate).unwrap();
+        let function_predicate = kernel.ty_arr(function_ty, bool_ty).unwrap();
+        let calls_ty = kernel.ty_arr(state_ty, function_predicate).unwrap();
+        let starts = kernel.tm_fv(10, starts_ty).unwrap();
+        let steps = kernel.tm_fv(11, steps_ty).unwrap();
+        let calls = kernel.tm_fv(12, calls_ty).unwrap();
+        let program = kernel.tm_fv(13, program_ty).unwrap();
+        let assert_function = kernel.tm_fv(14, function_ty).unwrap();
+        let schema = AssertionReachability {
+            state_ty,
+            bool_ty,
+            starts,
+            steps,
+            calls,
+        };
+
+        let proposition = schema
+            .calls_assert(&mut kernel, program, assert_function)
+            .unwrap();
+
+        assert!(
+            kernel
+                .equivalent(kernel.classifier(proposition).unwrap(), bool_ty)
+                .unwrap()
+        );
+
+        let before = kernel.arena().clone();
+        assert!(
+            schema
+                .calls_assert(&mut kernel, assert_function, program)
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
     }
 }

@@ -53,3 +53,9 @@ without treating an interpreter as theorem authority. A future semantic
 interpretation must relate open leaves and exact program bytes to the complete
 `SpecTec` theory before these examples establish WebAssembly behavior. See
 [`GROUNDING.md`](GROUNDING.md) for that acceptance boundary.
+
+`Evidence` composes checked positive or negative conclusions while retaining
+all theorem premises, which is the expected shape for early semantic results
+conditional on the complete `SpecTec` theory and explicit representation laws.
+`Established` is reserved for the stronger premise-free case; conversion to it
+rechecks that no assumptions remain.
