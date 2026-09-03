@@ -225,6 +225,7 @@ impl ClassicalKernel {
         let theorem = self
             .0
             .get(id)
+            .or_else(|| self.0.refutation(id))
             .ok_or_else(|| JsError::new("theorem is absent"))?;
         let lhs = theorem
             .lhs
