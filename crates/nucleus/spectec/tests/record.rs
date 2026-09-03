@@ -9,20 +9,21 @@ use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan,
     AdmissibleStartFacts, AdmissibleStartWitness, ArtifactError, CompilationRecord, CompileError,
     Compiler, Coverage, CoverageArtifact, CoverageDisposition, CoveragePlan, Disposition,
-    ExportedFunctionView, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase,
-    HolEmbedding, HolFamilyBranch, HolRule, HolTheoryError, IndexErasure, InterpretationKind,
-    KernelRoot, RelationalCall, RelationalClause, RelationalCondition, RelationalDefinitionSchema,
-    RelationalDefinitionSource, RelationalExpressionAlgebra, RelationalRelation,
-    RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler, Source,
-    SpecTecValueBuilder, TYPE_NAME, TranslationCase, TypeAlgebra, TypeChildren,
-    begin_least_closed_family, close_family_definition, close_graph_equation, close_hol_rule,
-    close_hol_rules, close_hol_theory, declare_hol_schema, empty_wasm_module, fold_expression,
-    fold_grammar, fold_type, forwarding_wasm_module, least_closed_family, least_closed_predicate,
-    ordered_cases, parameterized_document, parameterized_document_with,
-    prove_reflexive_binary_application, relational_definition, relational_definition_declaration,
-    relational_definition_schema, relational_document, relational_grammar_declaration,
-    relational_hol_case, relational_hol_rule, relational_relation_declaration,
-    relational_relations, relational_type_declaration, spectec_execution,
+    ExportedFunctionFacts, ExportedFunctionView, ExportedFunctionWitness, ExpressionAlgebra,
+    GrammarAlgebra, GrammarChildren, HolCase, HolEmbedding, HolFamilyBranch, HolRule,
+    HolTheoryError, IndexErasure, InterpretationKind, KernelRoot, RelationalCall, RelationalClause,
+    RelationalCondition, RelationalDefinitionSchema, RelationalDefinitionSource,
+    RelationalExpressionAlgebra, RelationalRelation, RelationalResolver, RelationalTerm,
+    SelectedCompileError, SelectedCompiler, Source, SpecTecValueBuilder, TYPE_NAME,
+    TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family, close_family_definition,
+    close_graph_equation, close_hol_rule, close_hol_rules, close_hol_theory, declare_hol_schema,
+    empty_wasm_module, fold_expression, fold_grammar, fold_type, forwarding_wasm_module,
+    least_closed_family, least_closed_predicate, ordered_cases, parameterized_document,
+    parameterized_document_with, prove_reflexive_binary_application, relational_definition,
+    relational_definition_declaration, relational_definition_schema, relational_document,
+    relational_grammar_declaration, relational_hol_case, relational_hol_rule,
+    relational_relation_declaration, relational_relations, relational_type_declaration,
+    spectec_execution,
 };
 
 #[derive(Clone)]
@@ -1936,6 +1937,44 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             .identity(covalence_logic_hol::Lit::positive(proposition.get()))
             .unwrap()
     });
+    let export_witness = ExportedFunctionWitness {
+        configuration: start.instantiation_start,
+        function: start.function,
+        module_instance: witnesses[4],
+        exports: forwarding_exports,
+        export_instance: export_elements[0],
+    };
+    let module_graph = kernel
+        .app(export_view.module_instance, start.instantiation_start)
+        .and_then(|partial| kernel.app(partial, witnesses[4]))
+        .unwrap();
+    let exports_graph = kernel
+        .app(export_view.exports, witnesses[4])
+        .and_then(|partial| kernel.app(partial, forwarding_exports))
+        .unwrap();
+    let function_graph = kernel
+        .app(export_view.function_address, export_elements[0])
+        .and_then(|partial| kernel.app(partial, start.function))
+        .unwrap();
+    let export_graphs = [module_graph, exports_graph, function_graph];
+    let export_graph_facts = export_graphs.map(|proposition| {
+        kernel
+            .identity(covalence_logic_hol::Lit::positive(proposition.get()))
+            .unwrap()
+    });
+    obligation_facts[2] = export_view
+        .prove_exported_function(
+            &mut kernel,
+            export_witness,
+            ExportedFunctionFacts {
+                module_instance: export_graph_facts[0],
+                exports: export_graph_facts[1],
+                member: contains_export.theorem,
+                function_address: export_graph_facts[2],
+            },
+        )
+        .unwrap()
+        .theorem;
     let instantiate_instance = instantiate_definition
         .specialize(
             &mut kernel,
@@ -2259,7 +2298,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             false_does_not_call.theorem,
         )
         .unwrap();
-    let mut grounding = obligations[2..3].to_vec();
+    let mut grounding = export_graphs.to_vec();
     grounding.extend(reflexive_remaining);
     grounding.extend(instantiate_remaining);
     grounding.extend(store_remaining);
@@ -2270,6 +2309,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         final_before_equality,
         final_after_equality,
         false_export_lists,
+        export_membership.proposition(),
         empty_membership.proposition(),
     ]);
     document

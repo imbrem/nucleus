@@ -638,6 +638,34 @@ pub struct ExportedFunctionView {
     pub function_address: Ref,
 }
 
+/// Concrete structural witnesses for one exported function.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExportedFunctionWitness {
+    /// Configuration whose module instance is inspected.
+    pub configuration: Ref,
+    /// Function address selected from the export instance.
+    pub function: Ref,
+    /// Module instance projected from `configuration`.
+    pub module_instance: Ref,
+    /// Export list projected from `module_instance`.
+    pub exports: Ref,
+    /// Export instance containing `function`.
+    pub export_instance: Ref,
+}
+
+/// Checked structural facts supporting an [`ExportedFunctionWitness`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExportedFunctionFacts {
+    /// `module_instance configuration module_instance`.
+    pub module_instance: covalence_logic_hol::ThmId,
+    /// `exports module_instance exports`.
+    pub exports: covalence_logic_hol::ThmId,
+    /// `member export_instance exports`.
+    pub member: covalence_logic_hol::ThmId,
+    /// `function_address export_instance function`.
+    pub function_address: covalence_logic_hol::ThmId,
+}
+
 impl ExportedFunctionView {
     /// Constructs `configuration -> function-address -> bool` by existentially
     /// joining the four structural views.
@@ -718,6 +746,165 @@ impl ExportedFunctionView {
             .map_err(|source| WasmLogicError::Kernel { source })?;
         *kernel = staged;
         Ok(predicate)
+    }
+
+    /// Derives the exported-function predicate from its four structural views.
+    ///
+    /// All supplied theorem premises remain visible in the result. This is
+    /// userspace composition of conjunction and existential introduction; it
+    /// adds no trusted rule or interpretation of the structural predicates.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a theorem does not prove its corresponding view, a
+    /// witness has the wrong classifier, fresh names are exhausted, or a
+    /// checked HOL construction is rejected. `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_lines)]
+    pub fn prove_exported_function(
+        self,
+        kernel: &mut Kernel,
+        witness: ExportedFunctionWitness,
+        facts: ExportedFunctionFacts,
+    ) -> Result<Evidence, WasmLogicError> {
+        let mut staged = kernel.fork();
+        let has_module = apply(
+            &mut staged,
+            self.module_instance,
+            &[witness.configuration, witness.module_instance],
+        )?;
+        let has_exports = apply(
+            &mut staged,
+            self.exports,
+            &[witness.module_instance, witness.exports],
+        )?;
+        let contains = apply(
+            &mut staged,
+            self.member,
+            &[witness.export_instance, witness.exports],
+        )?;
+        let has_function = apply(
+            &mut staged,
+            self.function_address,
+            &[witness.export_instance, witness.function],
+        )?;
+        let has_module_fact = align_positive_fact(&mut staged, facts.module_instance, has_module)?;
+        let has_exports_fact = align_positive_fact(&mut staged, facts.exports, has_exports)?;
+        let contains_fact = align_positive_fact(&mut staged, facts.member, contains)?;
+        let has_function_fact =
+            align_positive_fact(&mut staged, facts.function_address, has_function)?;
+        let module_and_exports = staged.op2(Op2::And, has_module, has_exports)?;
+        let module_and_exports_fact = staged.and_right(
+            has_module_fact,
+            has_exports_fact,
+            covalence_logic_hol::Lit::positive(module_and_exports.get()),
+        )?;
+        let with_member = staged.op2(Op2::And, module_and_exports, contains)?;
+        let with_member_fact = staged.and_right(
+            module_and_exports_fact,
+            contains_fact,
+            covalence_logic_hol::Lit::positive(with_member.get()),
+        )?;
+        let concrete_body = staged.op2(Op2::And, with_member, has_function)?;
+        let concrete_fact = staged.and_right(
+            with_member_fact,
+            has_function_fact,
+            covalence_logic_hol::Lit::positive(concrete_body.get()),
+        )?;
+
+        let first = staged.fresh_name(&[
+            has_module,
+            has_exports,
+            contains,
+            has_function,
+            witness.configuration,
+            witness.function,
+            witness.module_instance,
+            witness.exports,
+            witness.export_instance,
+        ])?;
+        let module_binder = staged.tm_fv(first, self.value_ty)?;
+        let exports_binder = staged.tm_fv(
+            first.checked_add(1).ok_or(KernelError::TooManyNames)?,
+            self.value_ty,
+        )?;
+        let instance_binder = staged.tm_fv(
+            first.checked_add(2).ok_or(KernelError::TooManyNames)?,
+            self.value_ty,
+        )?;
+        let body = |kernel: &mut Kernel, module, exports, instance| {
+            let has_module = apply(
+                kernel,
+                self.module_instance,
+                &[witness.configuration, module],
+            )?;
+            let has_exports = apply(kernel, self.exports, &[module, exports])?;
+            let contains = apply(kernel, self.member, &[instance, exports])?;
+            let has_function = apply(kernel, self.function_address, &[instance, witness.function])?;
+            let prefix = kernel.op2(Op2::And, has_module, has_exports)?;
+            let prefix = kernel.op2(Op2::And, prefix, contains)?;
+            kernel
+                .op2(Op2::And, prefix, has_function)
+                .map_err(WasmLogicError::from)
+        };
+        let instance_body = body(
+            &mut staged,
+            witness.module_instance,
+            witness.exports,
+            instance_binder,
+        )?;
+        let instance_exists = introduce_exists(
+            &mut staged,
+            concrete_fact,
+            instance_binder,
+            instance_body,
+            witness.export_instance,
+        )
+        .map_err(|source| WasmLogicError::Exists { source })?;
+        let exports_core = body(
+            &mut staged,
+            witness.module_instance,
+            exports_binder,
+            instance_binder,
+        )?;
+        let exports_body = staged.exists_tm(instance_binder, exports_core)?;
+        let exports_exists = introduce_exists(
+            &mut staged,
+            instance_exists.theorem,
+            exports_binder,
+            exports_body,
+            witness.exports,
+        )
+        .map_err(|source| WasmLogicError::Exists { source })?;
+        let module_core = body(&mut staged, module_binder, exports_binder, instance_binder)?;
+        let module_body = staged.exists_tm(instance_binder, module_core)?;
+        let module_body = staged.exists_tm(exports_binder, module_body)?;
+        let module_exists = introduce_exists(
+            &mut staged,
+            exports_exists.theorem,
+            module_binder,
+            module_body,
+            witness.module_instance,
+        )
+        .map_err(|source| WasmLogicError::Exists { source })?;
+
+        let predicate = self.predicate(&mut staged)?;
+        let (application, reduced) = reduce_binary_application(
+            &mut staged,
+            predicate,
+            witness.configuration,
+            witness.function,
+        )?;
+        join_alpha_equivalent(&mut staged, module_exists.proposition, reduced)
+            .map_err(|source| WasmLogicError::Syntax { source })?;
+        let theorem = staged.copy_theorem(module_exists.theorem)?;
+        staged.convert_conclusions(theorem, module_exists.proposition, reduced)?;
+        staged.convert_conclusions(theorem, reduced, application)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: application,
+            theorem,
+            holds: true,
+        })
     }
 
     /// Constructs the claim that no freshly instantiated export list has an entry.
@@ -2589,6 +2776,92 @@ mod tests {
             .unwrap();
 
         assert_eq!(kernel.classifier(proposition).unwrap(), bool_ty);
+    }
+
+    #[test]
+    fn structural_export_facts_prove_the_existential_view_transactionally() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let value = kernel.ty_fv(0, star).unwrap();
+        let view = ExportedFunctionView {
+            value_ty: value,
+            bool_ty,
+            module_instance: predicate(&mut kernel, value, bool_ty, 2, 10),
+            exports: predicate(&mut kernel, value, bool_ty, 2, 11),
+            member: predicate(&mut kernel, value, bool_ty, 2, 12),
+            function_address: predicate(&mut kernel, value, bool_ty, 2, 13),
+        };
+        let values = (20..25)
+            .map(|name| kernel.tm_fv(name, value).unwrap())
+            .collect::<Vec<_>>();
+        let witness = ExportedFunctionWitness {
+            configuration: values[0],
+            function: values[1],
+            module_instance: values[2],
+            exports: values[3],
+            export_instance: values[4],
+        };
+        let propositions = [
+            apply(
+                &mut kernel,
+                view.module_instance,
+                &[witness.configuration, witness.module_instance],
+            )
+            .unwrap(),
+            apply(
+                &mut kernel,
+                view.exports,
+                &[witness.module_instance, witness.exports],
+            )
+            .unwrap(),
+            apply(
+                &mut kernel,
+                view.member,
+                &[witness.export_instance, witness.exports],
+            )
+            .unwrap(),
+            apply(
+                &mut kernel,
+                view.function_address,
+                &[witness.export_instance, witness.function],
+            )
+            .unwrap(),
+        ];
+        let facts = propositions.map(|proposition| kernel.identity(positive(proposition)).unwrap());
+        let proved = view
+            .prove_exported_function(
+                &mut kernel,
+                witness,
+                ExportedFunctionFacts {
+                    module_instance: facts[0],
+                    exports: facts[1],
+                    member: facts[2],
+                    function_address: facts[3],
+                },
+            )
+            .unwrap();
+        crate::EvidenceScope::positive(&propositions)
+            .check(&kernel, proved)
+            .unwrap();
+
+        let before = kernel.arena().clone();
+        let theorem_count = kernel.thm().live_theorems().count();
+        assert!(
+            view.prove_exported_function(
+                &mut kernel,
+                witness,
+                ExportedFunctionFacts {
+                    module_instance: facts[1],
+                    exports: facts[1],
+                    member: facts[2],
+                    function_address: facts[3],
+                },
+            )
+            .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
     }
 
     #[test]

@@ -182,9 +182,13 @@ premise. The full pinned Wasm audit uses that derivation in the `FALSE`
 non-reachability proof instead of assuming the no-members result directly.
 The dual checked elimination proves membership of any selected listed element
 from equality reflexivity and disjunction introduction. The same audit applies
-it to the forwarding module's actual singleton export list; syntax matching is
-only used to select the witness, while the membership conclusion comes from
-kernel-checked rules and retains the finite-list law as its premise.
+it to the forwarding module's actual singleton export list. It then derives
+the existential exported-function predicate by checked conjunction and
+existential introduction from that membership theorem and three explicit graph
+premises: configuration to module instance, module instance to export list,
+and export instance to function address. Syntax matching is only used to select
+the list witness, while the membership and existential conclusions come from
+kernel-checked rules and retain their input premises.
 
 Grounding therefore requires all of the following:
 
@@ -254,12 +258,13 @@ initialization `Steps` fact is derived from the retained SpecTec reflexivity
 rule and checked equality transport; the exact equalities relating its
 structural source and target to the instantiation configurations remain
 grounding premises. The final reflexive `Steps` fact is derived the same way,
-leaving only its two structural equalities as premises. Export selection
-remains an explicit grounding premise. The host-call observer is an immutable
-structural predicate equating its configuration with the exact retained
-`$invoke` production result; its concrete fact is discharged by checked beta
-reduction and equality reflexivity. Interpreter traces cannot be passed in
-place of theorem handles.
+leaving only its two structural equalities as premises. Export selection is
+derived from the finite-list membership law and three explicit structural
+graph premises rather than retained as one opaque premise. The host-call
+observer is an immutable structural predicate equating its configuration with
+the exact retained `$invoke` production result; its concrete fact is discharged
+by checked beta reduction and equality reflexivity. Interpreter traces cannot
+be passed in place of theorem handles.
 
 For `FALSE`, the negative proof opens the concrete exported-function predicate
 and reduces non-reachability to two independent laws: every export list exposed

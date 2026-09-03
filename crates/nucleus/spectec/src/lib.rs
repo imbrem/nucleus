@@ -84,9 +84,10 @@ pub use value_algebra::{
     StructuralValueAlgebra, StructuralValueProofError,
 };
 pub use wasm_logic::{
-    AdmissibleStartFacts, AdmissibleStartWitness, ExportedFunctionView, SpecTecExecution,
-    SpecTecValueBuilder, WasmLogicError, empty_wasm_module, forwarding_wasm_module,
-    prove_reflexive_binary_application, spectec_execution,
+    AdmissibleStartFacts, AdmissibleStartWitness, ExportedFunctionFacts, ExportedFunctionView,
+    ExportedFunctionWitness, SpecTecExecution, SpecTecValueBuilder, WasmLogicError,
+    empty_wasm_module, forwarding_wasm_module, prove_reflexive_binary_application,
+    spectec_execution,
 };
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};
