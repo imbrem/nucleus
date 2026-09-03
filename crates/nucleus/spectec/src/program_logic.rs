@@ -17,6 +17,7 @@ use covalence_logic_hol::{
 };
 use covalence_logic_hol_derived::{
     ExistsError, ForallError, SyntaxError, forall_elim, introduce_exists, join_alpha_equivalent,
+    open_exists,
 };
 
 /// A small, immutable, generic proposition schema.
@@ -254,6 +255,96 @@ impl AssertionReachability {
         let negative = staged.op1(Op1::Not, positive)?;
         *kernel = staged;
         Ok(negative)
+    }
+
+    /// Constructs the claim that a program has no admissible initial state.
+    ///
+    /// The result is `forall initial. not (starts program initial)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an incompatible program, fresh-name exhaustion, or
+    /// a rejected checked constructor. `kernel` is unchanged on failure.
+    pub fn no_admissible_start(
+        self,
+        kernel: &mut Kernel,
+        program: Ref,
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        require_classifier(&mut staged, program, self.program_ty)?;
+        let name = staged.fresh_name(&[
+            self.program_ty,
+            self.state_ty,
+            self.bool_ty,
+            self.starts,
+            program,
+        ])?;
+        let initial = staged.tm_fv(name, self.state_ty)?;
+        let starts = apply2(&mut staged, self.starts, program, initial)?;
+        let does_not_start = staged.op1(Op1::Not, starts)?;
+        let proposition = staged.forall_tm(self.bool_ty, initial, does_not_start)?;
+        *kernel = staged;
+        Ok(proposition)
+    }
+
+    /// Proves negative assertion reachability from absence of admissible starts.
+    ///
+    /// `no_start_fact` must prove the exact proposition returned by
+    /// [`Self::no_admissible_start`]. The proof assumes `callsAssert`, opens its
+    /// two existential execution witnesses, extracts its `starts` conjunct,
+    /// specializes `no_start_fact` at that initial state, and derives a checked
+    /// contradiction. All premises of `no_start_fact` remain visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the theorem has the wrong conclusion, existential
+    /// opening or universal specialization fails, or a checked propositional
+    /// step is rejected. `kernel` is unchanged on failure.
+    pub fn prove_never_calls_assert_from_no_start(
+        self,
+        kernel: &mut Kernel,
+        program: Ref,
+        assert_function: Ref,
+        no_start_fact: ThmId,
+    ) -> Result<Evidence, ReachabilityProofError> {
+        let mut staged = kernel.fork();
+        let no_start = self.no_admissible_start(&mut staged, program)?;
+        let no_start_fact = align_positive_fact(&mut staged, no_start_fact, no_start)?;
+        let calls = self.calls_assert(&mut staged, program, assert_function)?;
+        let assumed_calls = staged.identity(positive(calls))?;
+
+        let outer = open_exists(&mut staged, calls)?;
+        let opened_outer = staged.copy_theorem(assumed_calls)?;
+        staged.convert_conclusions(opened_outer, calls, outer.body)?;
+        let inner = open_exists(&mut staged, outer.body)?;
+        staged.convert_conclusions(opened_outer, outer.body, inner.body)?;
+        let starts_fact =
+            staged.expand_conclusion(opened_outer, positive(inner.body), Some(false))?;
+
+        let denied = forall_elim(&mut staged, no_start_fact, outer.witness)
+            .map_err(|source| ReachabilityProofError::Forall { source })?;
+        let denied_fact =
+            staged.flatten_conclusion(denied.theorem, positive(denied.proposition))?;
+        let starts = apply2(&mut staged, self.starts, program, outer.witness)?;
+        let denied_starts = staged
+            .arena()
+            .children(denied.proposition)
+            .and_then(|mut children| children.next())
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "absence of admissible starts negation",
+            })?;
+        join_alpha_equivalent(&mut staged, denied_starts, starts)?;
+        staged.convert_conclusions(denied_fact, denied_starts, starts)?;
+        let starts_fact = align_positive_fact(&mut staged, starts_fact, starts)?;
+        staged.not_left(starts_fact, positive(starts))?;
+        let contradiction = staged.cut(denied_fact, starts_fact, positive(starts).negated())?;
+        staged.not_right(contradiction, positive(calls))?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: calls,
+            theorem: contradiction,
+            holds: false,
+        })
     }
 
     /// Proves `callsAssert` from one concrete checked execution witness.
@@ -818,6 +909,12 @@ pub enum ReachabilityProofError {
     Exists {
         /// Underlying checked derived-rule failure.
         source: ExistsError,
+    },
+    /// Equality-encoded universal specialization failed.
+    #[snafu(display("could not specialize absence of admissible starts: {source}"))]
+    Forall {
+        /// Underlying checked derived-rule failure.
+        source: ForallError,
     },
     /// The proved existential could not be related to canonical syntax.
     #[snafu(display("could not canonicalize an assertion-reachability proof: {source}"))]
@@ -1617,6 +1714,42 @@ mod tests {
                 .is_err()
         );
         assert_eq!(kernel.arena(), &before);
+    }
+
+    #[test]
+    fn no_admissible_start_proves_negative_assertion_reachability() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let value = kernel.ty_fv(0, star).unwrap();
+        let binary_tail = kernel.ty_arr(value, bool_ty).unwrap();
+        let binary_predicate = kernel.ty_arr(value, binary_tail).unwrap();
+        let schema = AssertionReachability {
+            program_ty: value,
+            state_ty: value,
+            bool_ty,
+            starts: kernel.tm_fv(10, binary_predicate).unwrap(),
+            steps: kernel.tm_fv(11, binary_predicate).unwrap(),
+            calls: kernel.tm_fv(12, binary_predicate).unwrap(),
+        };
+        let program = kernel.tm_fv(13, value).unwrap();
+        let assert_function = kernel.tm_fv(14, value).unwrap();
+        let no_start = schema.no_admissible_start(&mut kernel, program).unwrap();
+        let no_start_fact = kernel.identity(positive(no_start)).unwrap();
+
+        let evidence = schema
+            .prove_never_calls_assert_from_no_start(
+                &mut kernel,
+                program,
+                assert_function,
+                no_start_fact,
+            )
+            .unwrap();
+
+        assert!(!evidence.holds);
+        EvidenceScope::positive(&[no_start])
+            .check(&kernel, evidence)
+            .unwrap();
     }
 
     #[test]
