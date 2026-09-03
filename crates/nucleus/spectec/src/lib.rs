@@ -62,8 +62,8 @@ pub use relational::{
     relational_relations, relational_relations_avoiding,
 };
 pub use run::{
-    BehaviorQuantifier, RefinementDirection, RunCompositionError, RunContext, RunDomain,
-    RunObservation, RunObservationError, RunProofError, RunProperty, RunRelation,
+    BehaviorQuantifier, ClosedRunContext, RefinementDirection, RunCompositionError, RunContext,
+    RunDomain, RunObservation, RunObservationError, RunProofError, RunProperty, RunRelation,
     RunTransformation, RunTransformationError, RunTypes, SoundRunTransformation,
     SoundRunTransformationError,
 };

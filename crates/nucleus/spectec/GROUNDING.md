@@ -64,6 +64,10 @@ the program and its transformed image. Given positive admissibility evidence
 for a selected linking context, a further checked elimination yields the
 actual observation equality on the two resulting closed modules; the bare
 program equation therefore requires an admissible identity context.
+`RunDomain::closed_context` supplies that canonical context generically: its
+linker is definitionally the identity, its admissibility predicate is
+definitionally true, and `ClosedRunContext::prove_admissible` derives the
+required fact without premises.
 That equality checkedly transports either positive or negative observation
 evidence from the original closed program to the transformed one. Negative
 transport is derived by equality symmetry and contradiction rather than by an

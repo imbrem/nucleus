@@ -185,6 +185,17 @@ pub struct RunContext {
     admissible: Ref,
 }
 
+/// A reusable identity linking context for closed-program observations.
+///
+/// Plugging ignores the context token and returns the module unchanged; every
+/// module is admissible. Both facts are definitions with checked beta proofs,
+/// not semantic assumptions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClosedRunContext {
+    context: RunContext,
+    identity_context: Ref,
+}
+
 /// An immutable module transformation interpreted under one semantic profile.
 ///
 /// Soundness means that every input module is contextually observationally
@@ -1314,6 +1325,66 @@ impl RunContext {
     }
 }
 
+impl ClosedRunContext {
+    /// Returns the underlying reusable identity context schema.
+    #[must_use]
+    pub const fn context(self) -> RunContext {
+        self.context
+    }
+
+    /// Returns the distinguished context token.
+    #[must_use]
+    pub const fn identity_context(self) -> Ref {
+        self.identity_context
+    }
+
+    /// Derives premise-free admissibility of one module in the identity
+    /// context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `module` has the configured module classifier
+    /// and checked beta conversion or truth introduction succeeds. `kernel` is
+    /// unchanged on failure.
+    pub fn prove_admissible(
+        self,
+        kernel: &mut Kernel,
+        module: Ref,
+    ) -> Result<Evidence, KernelError> {
+        let mut staged = kernel.fork();
+        require_classifier(
+            &mut staged,
+            module,
+            self.context.domain.relation.types.module,
+        )?;
+        let admissible = apply(
+            &mut staged,
+            self.context.admissible,
+            &[self.identity_context, module],
+        )?;
+        let truth = staged.bool(self.context.domain.relation.types.bool_ty, true)?;
+        let theorem = staged.true_right(positive(truth))?;
+        let reduced = certify_curried_beta2(&mut staged, admissible).map_err(|_| {
+            KernelError::InvalidTheoremRule {
+                rule: "closed run context admissibility beta reduction",
+            }
+        })?;
+        join_alpha_equivalent(&mut staged, truth, reduced).map_err(|_| {
+            KernelError::InvalidTheoremRule {
+                rule: "closed run context admissibility alignment",
+            }
+        })?;
+        staged.convert_conclusions(theorem, truth, reduced)?;
+        staged.convert_conclusions(theorem, reduced, admissible)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: admissible,
+            theorem,
+            holds: true,
+        })
+    }
+}
+
 impl RunTransformation {
     /// Returns the contextual semantics used to judge this transformation.
     #[must_use]
@@ -2120,6 +2191,42 @@ impl RunDomain {
         admissible: Ref,
     ) -> Result<RunContext, KernelError> {
         RunContext::new(kernel, self, context_ty, plug, admissible)
+    }
+
+    /// Constructs the canonical always-admissible identity context for closed
+    /// program observations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if fresh-name allocation or checked Boolean,
+    /// abstraction, or context construction fails. `kernel` is unchanged on
+    /// failure.
+    pub fn closed_context(self, kernel: &mut Kernel) -> Result<ClosedRunContext, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.relation.types;
+        let first = staged.fresh_name(&[
+            types.module,
+            types.bool_ty,
+            self.relation.runs,
+            self.admissible,
+        ])?;
+        let context_token = staged.tm_fv(first, types.bool_ty)?;
+        let module = staged.tm_fv(checked_name(first, 1)?, types.module)?;
+        let truth = staged.bool(types.bool_ty, true)?;
+        let module_map_ty = staged.ty_arr(types.module, types.module)?;
+        let identity_module = staged.lam_at(module_map_ty, module, module)?;
+        let plug_ty = staged.ty_arr(types.bool_ty, module_map_ty)?;
+        let plug = staged.lam_at(plug_ty, context_token, identity_module)?;
+        let module_predicate_ty = staged.ty_arr(types.module, types.bool_ty)?;
+        let accepts_module = staged.lam_at(module_predicate_ty, module, truth)?;
+        let admissible_ty = staged.ty_arr(types.bool_ty, module_predicate_ty)?;
+        let admissible = staged.lam_at(admissible_ty, context_token, accepts_module)?;
+        let context = self.in_context(&mut staged, types.bool_ty, plug, admissible)?;
+        *kernel = staged;
+        Ok(ClosedRunContext {
+            context,
+            identity_context: truth,
+        })
     }
 
     /// Validates and attaches a predicate over traces and outcomes.
@@ -6426,6 +6533,27 @@ mod tests {
         assert_eq!(context.context_type(), context_ty);
         assert_eq!(context.plug(), plug);
         assert_eq!(context.admissible(), contextual_admissible);
+        let closed_context = domain.closed_context(&mut kernel).unwrap();
+        assert_eq!(closed_context.context().domain(), domain);
+        assert_eq!(
+            kernel
+                .classifier(closed_context.identity_context())
+                .unwrap(),
+            bool_ty
+        );
+        let closed_admissible = closed_context
+            .prove_admissible(&mut kernel, module)
+            .unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, closed_admissible)
+            .unwrap();
+        let closed_sound_identity = closed_context
+            .context()
+            .prove_identity_transformation_sound(&mut kernel, profile)
+            .unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, closed_sound_identity.soundness())
+            .unwrap();
         let identity_transformation = context
             .identity_transformation(&mut kernel, profile)
             .unwrap();
