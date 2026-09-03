@@ -807,13 +807,13 @@ impl RunContext {
         })
     }
 
-    /// Proves that contextual run equivalence preserves one observation.
+    /// Proves that contextual run equivalence preserves an arbitrary run property.
     ///
     /// The result is the ordinary [`ContextualObservation::equivalent`]
-    /// proposition for the selected behavior quantifier. Thus complete run
-    /// equivalence is observation-independent, while callers can recover
-    /// indistinguishability for `callsAssert`, traps, returns, or any composed
-    /// trace/outcome predicate without another semantic assumption.
+    /// proposition for `property`. Thus complete run equivalence is
+    /// observation-independent, while callers can recover indistinguishability
+    /// for any HOL predicate over the complete run graph without another
+    /// semantic assumption.
     ///
     /// # Errors
     ///
@@ -821,27 +821,21 @@ impl RunContext {
     /// contextual run equivalence, or a checked specialization, propositional,
     /// congruence, or alignment step fails. `kernel` is unchanged on failure.
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    pub fn prove_preserves(
+    pub fn prove_property_preserves(
         self,
         kernel: &mut Kernel,
         equivalence: Evidence,
-        observation: RunObservation,
-        quantifier: BehaviorQuantifier,
+        property: RunProperty,
         profile: Ref,
         left: Ref,
         right: Ref,
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
-        self.require_observation(observation)?;
+        self.require_property(property)?;
         let expected = self.equivalent(&mut staged, profile, left, right)?;
         let theorem = align_evidence(&mut staged, equivalence, expected)?;
-        let contextual = self.observe_avoiding(
-            &mut staged,
-            observation,
-            quantifier,
-            profile,
-            &[left, right],
-        )?;
+        let contextual =
+            self.observe_property_avoiding(&mut staged, property, profile, &[left, right])?;
         let context_name = staged.fresh_name(&[
             expected,
             self.context_ty,
@@ -902,14 +896,13 @@ impl RunContext {
         )?;
         let left_closed = apply(&mut staged, self.plug, &[context, left])?;
         let right_closed = apply(&mut staged, self.plug, &[context, right])?;
-        let observed = observation.prove_same_runs_preserves(
+        let observed = property.prove_same_runs_preserves(
             &mut staged,
             Evidence {
                 proposition: source_same_runs,
                 theorem: same_runs_theorem,
                 holds: true,
             },
-            quantifier,
             profile,
             left_closed,
             right_closed,
@@ -1009,7 +1002,43 @@ impl RunContext {
         })
     }
 
-    /// Refutes contextual run equivalence using one distinguishing observation.
+    /// Proves that contextual run equivalence preserves one behavior observation.
+    ///
+    /// This is convenience syntax for converting `observation` and `quantifier`
+    /// into a [`RunProperty`] and applying [`Self::prove_property_preserves`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the observation belongs to this run domain and
+    /// the generic checked property-preservation derivation succeeds. `kernel`
+    /// is unchanged on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_preserves(
+        self,
+        kernel: &mut Kernel,
+        equivalence: Evidence,
+        observation: RunObservation,
+        quantifier: BehaviorQuantifier,
+        profile: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        self.require_observation(observation)?;
+        let property = observation.property_avoiding(&mut staged, quantifier, &[left, right])?;
+        let evidence = self.prove_property_preserves(
+            &mut staged,
+            equivalence,
+            property,
+            profile,
+            left,
+            right,
+        )?;
+        *kernel = staged;
+        Ok(evidence)
+    }
+
+    /// Refutes contextual run equivalence using one distinguishing run property.
     ///
     /// This is the checked contrapositive of observational preservation. If
     /// `distinction` proves that the selected contextual observation differs,
@@ -1024,39 +1053,32 @@ impl RunContext {
     /// cut, negation, or alignment step fails. `kernel` is unchanged on
     /// failure.
     #[allow(clippy::too_many_arguments)]
-    pub fn prove_distinct(
+    pub fn prove_property_distinct(
         self,
         kernel: &mut Kernel,
         distinction: Evidence,
-        observation: RunObservation,
-        quantifier: BehaviorQuantifier,
+        property: RunProperty,
         profile: Ref,
         left: Ref,
         right: Ref,
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
-        self.require_observation(observation)?;
-        let contextual = self.observe_avoiding(
-            &mut staged,
-            observation,
-            quantifier,
-            profile,
-            &[left, right],
-        )?;
+        self.require_property(property)?;
+        let contextual =
+            self.observe_property_avoiding(&mut staged, property, profile, &[left, right])?;
         let observed_equivalence = contextual.equivalent(&mut staged, left, right)?;
         let distinction_theorem =
             align_signed_evidence(&mut staged, distinction, observed_equivalence, false)?;
         let run_equivalence = self.equivalent(&mut staged, profile, left, right)?;
         let assumed = staged.identity(positive(run_equivalence))?;
-        let preservation = self.prove_preserves(
+        let preservation = self.prove_property_preserves(
             &mut staged,
             Evidence {
                 proposition: run_equivalence,
                 theorem: assumed,
                 holds: true,
             },
-            observation,
-            quantifier,
+            property,
             profile,
             left,
             right,
@@ -1081,6 +1103,36 @@ impl RunContext {
             theorem: contradiction,
             holds: false,
         })
+    }
+
+    /// Refutes contextual run equivalence using one behavior observation.
+    ///
+    /// This is convenience syntax for converting `observation` and `quantifier`
+    /// into a [`RunProperty`] and applying [`Self::prove_property_distinct`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the observation belongs to this run domain and
+    /// the generic checked distinction derivation succeeds. `kernel` is
+    /// unchanged on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_distinct(
+        self,
+        kernel: &mut Kernel,
+        distinction: Evidence,
+        observation: RunObservation,
+        quantifier: BehaviorQuantifier,
+        profile: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        self.require_observation(observation)?;
+        let property = observation.property_avoiding(&mut staged, quantifier, &[left, right])?;
+        let evidence =
+            self.prove_property_distinct(&mut staged, distinction, property, profile, left, right)?;
+        *kernel = staged;
+        Ok(evidence)
     }
 
     fn same_runs_at(
@@ -3085,6 +3137,9 @@ mod tests {
         let contextual_from_property = context
             .observe_property(&mut kernel, may_property, profile)
             .unwrap();
+        let contextual_from_custom_property = context
+            .observe_property(&mut kernel, custom_property, profile)
+            .unwrap();
         assert_eq!(contextual_from_schema.plug, contextual.plug);
         assert_eq!(contextual_from_schema.admissible, contextual.admissible);
         covalence_logic_hol_derived::join_same_syntax(
@@ -3190,6 +3245,43 @@ mod tests {
                 .check(&kernel, contextual_preservation)
                 .unwrap();
         }
+        let custom_contextual_preservation = context
+            .prove_property_preserves(
+                &mut kernel,
+                contextual_same_runs_evidence,
+                custom_property,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[contextual_same_runs])
+            .check(&kernel, custom_contextual_preservation)
+            .unwrap();
+        let custom_observed_equivalence = contextual_from_custom_property
+            .equivalent(&mut kernel, module, other_module)
+            .unwrap();
+        let custom_observed_distinction = Evidence {
+            proposition: custom_observed_equivalence,
+            theorem: kernel
+                .identity(super::positive(custom_observed_equivalence).negated())
+                .unwrap(),
+            holds: false,
+        };
+        let custom_run_distinction = context
+            .prove_property_distinct(
+                &mut kernel,
+                custom_observed_distinction,
+                custom_property,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        assert!(!custom_run_distinction.holds);
+        EvidenceScope::signed(&[super::positive(custom_observed_equivalence).negated()])
+            .check(&kernel, custom_run_distinction)
+            .unwrap();
         let observed_equivalence = contextual_from_schema
             .equivalent(&mut kernel, module, other_module)
             .unwrap();

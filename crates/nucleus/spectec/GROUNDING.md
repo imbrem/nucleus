@@ -26,8 +26,10 @@ preservation axiom.
 The same mechanism is exposed as `RunProperty`: any checked
 `admissibility-function -> run-function -> bool` term becomes a reusable module
 predicate with generic `same_runs` preservation and contextual-observation
-adapters. The four behavior quantifiers lower through this API rather than
-forming a privileged property family.
+adapters. Contextual run equivalence generically preserves every such property,
+and checked negative evidence for one refutes contextual run equivalence. The
+four behavior quantifiers lower through this API rather than forming a
+privileged property family.
 `RunDomain::in_context` attaches and validates a reusable linking operation and
 context admissibility predicate. The resulting `RunContext` owns that domain,
 so mixing observations or equivalence evidence from another execution policy
@@ -35,7 +37,7 @@ is rejected at the construction boundary rather than threaded through every
 method call. Its `equivalent` proposition defines observational equivalence as
 complete run equality in every admissible closing context, independently of
 any one observer. A checked elimination theorem maps that contextual relation
-to ordinary contextual equivalence for any selected behavior observation.
+to ordinary contextual equivalence for any selected run property.
 Premise-free reflexivity and premise-preserving symmetry and transitivity are
 themselves checked derivations, rather than frontend declarations that the
 relation is an equivalence.
