@@ -2914,6 +2914,23 @@ impl RunProperty {
         self.combine(kernel, other, Op2::Or)
     }
 
+    /// Constructs pointwise implication to another run property.
+    ///
+    /// This is useful for reusable semantic contracts: the resulting property
+    /// says that whenever the antecedent holds of a complete run graph, the
+    /// consequent does too.
+    ///
+    /// # Errors
+    ///
+    /// Returns under the same conditions as [`Self::and`].
+    pub fn implies(
+        self,
+        kernel: &mut Kernel,
+        consequent: Self,
+    ) -> Result<Self, RunCompositionError> {
+        self.combine(kernel, consequent, Op2::Imp)
+    }
+
     fn combine(
         self,
         kernel: &mut Kernel,
@@ -5043,6 +5060,7 @@ mod tests {
         let custom_property = domain.property(&mut kernel, custom_property_term).unwrap();
         let combined_property = may_property.and(&mut kernel, custom_property).unwrap();
         let alternative_property = may_property.or(&mut kernel, custom_property).unwrap();
+        let contract_property = may_property.implies(&mut kernel, custom_property).unwrap();
         let negated_property = custom_property.negate(&mut kernel).unwrap();
         let custom_proposition = custom_property
             .proposition(&mut kernel, profile, module)
@@ -5065,7 +5083,12 @@ mod tests {
             let proposition = composed.may(&mut kernel, profile, module).unwrap();
             assert_eq!(kernel.classifier(proposition).unwrap(), bool_ty);
         }
-        for composed in [combined_property, alternative_property, negated_property] {
+        for composed in [
+            combined_property,
+            alternative_property,
+            contract_property,
+            negated_property,
+        ] {
             let proposition = composed.proposition(&mut kernel, profile, module).unwrap();
             assert_eq!(kernel.classifier(proposition).unwrap(), bool_ty);
         }
