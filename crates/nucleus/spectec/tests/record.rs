@@ -1806,6 +1806,14 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     };
     let exported = export_view.predicate(&mut kernel).unwrap();
     let host_call = kernel.tm_fv(name_base + 4, binary_ty).unwrap();
+    let [instantiate_id] = document.schema.named(IlKind::Definition, "instantiate") else {
+        panic!("expected one $instantiate definition")
+    };
+    let instantiate_definition = document
+        .semantics
+        .definitions()
+        .get(instantiate_id)
+        .unwrap();
     let [store_id] = document.schema.named(IlKind::Definition, "store") else {
         panic!("expected one $store definition")
     };
@@ -1817,6 +1825,32 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let witnesses = (name_base + 5..name_base + 14)
         .map(|name| kernel.tm_fv(name, value).unwrap())
         .collect::<Vec<_>>();
+    let instantiate_binders = &instantiate_definition.case_artifacts[0].production_binders;
+    let instantiate_name = kernel
+        .fresh_name(&[
+            forwarding,
+            witnesses[1],
+            witnesses[2],
+            instantiate_definition.equation,
+        ])
+        .unwrap();
+    let instantiate_witnesses = instantiate_binders
+        .iter()
+        .enumerate()
+        .map(|(offset, &binder)| {
+            let name = instantiate_name + u64::try_from(offset).unwrap();
+            let classifier = kernel.classifier(binder).unwrap();
+            kernel.tm_fv(name, classifier).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let instantiation_start = instantiate_definition
+        .production_result(
+            &mut kernel,
+            0,
+            &[witnesses[1], forwarding, witnesses[2]],
+            &instantiate_witnesses,
+        )
+        .unwrap();
     let initialized = builder
         .case_fields(&mut kernel, "%;%", &[witnesses[7], witnesses[4]])
         .unwrap();
@@ -1852,7 +1886,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         initial,
         store: witnesses[1],
         externs: witnesses[2],
-        instantiation_start: witnesses[3],
+        instantiation_start,
         initialized,
         function: witnesses[5],
         arguments: witnesses[6],
@@ -1866,6 +1900,49 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             .identity(covalence_logic_hol::Lit::positive(proposition.get()))
             .unwrap()
     });
+    let instantiate_instance = instantiate_definition
+        .specialize(
+            &mut kernel,
+            bool_ty,
+            &[start.store, start.program, start.externs],
+            start.instantiation_start,
+        )
+        .unwrap();
+    assert_eq!(instantiate_instance.cases.len(), 1);
+    let instantiate_conditions = instantiate_instance
+        .production_obligations(&mut kernel, 0, &instantiate_witnesses)
+        .unwrap();
+    let (instantiate_condition_facts, instantiate_remaining) =
+        elementary_condition_facts(&mut kernel, &instantiate_conditions);
+    assert!(instantiate_remaining.len() < instantiate_conditions.len());
+    let instantiate_branch = instantiate_instance
+        .prove_production(
+            &mut kernel,
+            bool_ty,
+            0,
+            &instantiate_witnesses,
+            &instantiate_condition_facts,
+        )
+        .unwrap();
+    let instantiate_body = instantiate_instance
+        .prove_body_case(&mut kernel, bool_ty, 0, instantiate_branch.theorem)
+        .unwrap();
+    obligation_facts[0] = document
+        .semantics
+        .theory()
+        .prove_specialized_from_body(
+            &mut kernel,
+            *instantiate_id,
+            &[
+                start.store,
+                start.program,
+                start.externs,
+                start.instantiation_start,
+            ],
+            instantiate_body.theorem,
+        )
+        .unwrap()
+        .theorem;
     let store_instance = store_definition
         .specialize(
             &mut kernel,
@@ -2053,7 +2130,8 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             false_does_not_call.theorem,
         )
         .unwrap();
-    let mut grounding = obligations[..3].to_vec();
+    let mut grounding = obligations[1..3].to_vec();
+    grounding.extend(instantiate_remaining);
     grounding.extend(store_remaining);
     grounding.extend(invoke_remaining);
     grounding.extend([
