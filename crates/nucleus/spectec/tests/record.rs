@@ -1570,10 +1570,19 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         .evidence_scope(&[])
         .check(&kernel, steps_constraint)
         .unwrap();
-    let step_pair_name = kernel
+    let execution = spectec_execution(&mut kernel, &document).unwrap();
+    let state_name = kernel
         .fresh_name(&[value, bool_ty, steps_constraint.proposition])
         .unwrap();
-    let step_pair = kernel.tm_fv(step_pair_name, value).unwrap();
+    let state = kernel.tm_fv(state_name, value).unwrap();
+    let builder = SpecTecValueBuilder::new(&document);
+    let instructions = builder.list(&mut kernel, &[]).unwrap();
+    let configuration = builder
+        .case_fields(&mut kernel, "%;%", &[state, instructions])
+        .unwrap();
+    let step_pair = execution
+        .step_pair(&mut kernel, configuration, configuration)
+        .unwrap();
     let specialized_steps = document
         .semantics
         .theory()
@@ -1598,7 +1607,6 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     );
     assert_eq!(kernel.arena(), &before);
     assert!(kernel.thm().live_theorems().count() > theorem_count);
-    let execution = spectec_execution(&mut kernel, &document).unwrap();
     let empty_module = empty_wasm_module(&mut kernel, &document).unwrap();
     assert_eq!(kernel.classifier(empty_module).unwrap(), value);
     let name_base = kernel

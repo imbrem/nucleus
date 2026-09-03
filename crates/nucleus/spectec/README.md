@@ -91,6 +91,11 @@ tuple-argument `Steps` relation to the curried predicate consumed by
 `AssertionReachability`; construction is classifier-checked and creates no
 theorem fact.
 
+The adapter also retains the exact erased pair constructor through
+`SpecTecExecution::step_pair`. The full audit constructs a structural
+configuration `state ; []`, pairs it with itself, and specializes the checked
+`Steps` equation at that concrete reflexive target.
+
 `AssertionReachability::prove_calls_assert` is the positive trace-proof
 boundary. Given checked start, step, and pre-host-call facts for concrete
 witness states, it derives the nested existential `callsAssert` proposition,

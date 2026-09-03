@@ -159,6 +159,8 @@ pub struct SpecTecExecution {
     pub bool_ty: Ref,
     /// Curried `state -> state -> bool` view of `Steps`.
     pub steps: Ref,
+    /// Exact erased pair constructor used by the `Steps` relation.
+    pub pair: Ref,
     /// Exact checked classifier of `steps`.
     pub steps_ty: Ref,
     /// Exact lowered graph predicate for `$instantiate`.
@@ -276,6 +278,24 @@ impl ExportedFunctionView {
 }
 
 impl SpecTecExecution {
+    /// Constructs the exact erased pair consumed by the `Steps` relation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either value has an incompatible classifier or a
+    /// checked application fails. `kernel` is unchanged on failure.
+    pub fn step_pair(
+        self,
+        kernel: &mut Kernel,
+        before: Ref,
+        after: Ref,
+    ) -> Result<Ref, WasmLogicError> {
+        let mut staged = kernel.fork();
+        let pair = apply(&mut staged, self.pair, &[before, after])?;
+        *kernel = staged;
+        Ok(pair)
+    }
+
     /// Builds the generic assertion-reachability schema from this exact
     /// `SpecTec` execution adapter and the two remaining structural views.
     ///
@@ -662,6 +682,7 @@ pub fn spectec_execution(
         state_ty: document.schema.value(),
         bool_ty: document.schema.bool_ty(),
         steps,
+        pair: tuple,
         steps_ty: curried_ty,
         instantiate,
         invoke,
@@ -713,16 +734,24 @@ mod tests {
         let steps_ty = (0..2)
             .try_fold(bool_ty, |tail, _| kernel.ty_arr(value, tail))
             .unwrap();
+        let pair_tail = kernel.ty_arr(value, value).unwrap();
+        let pair_ty = kernel.ty_arr(value, pair_tail).unwrap();
+        let pair = kernel.tm_fv(22, pair_ty).unwrap();
         let execution = SpecTecExecution {
             state_ty: value,
             bool_ty,
             steps: predicate(&mut kernel, value, bool_ty, 2, 10),
+            pair,
             steps_ty,
             instantiate: predicate(&mut kernel, value, bool_ty, 4, 11),
             invoke: predicate(&mut kernel, value, bool_ty, 4, 12),
             store: predicate(&mut kernel, value, bool_ty, 2, 13),
             moduleinst: predicate(&mut kernel, value, bool_ty, 2, 18),
         };
+        let before = kernel.tm_fv(23, value).unwrap();
+        let after = kernel.tm_fv(24, value).unwrap();
+        let paired = execution.step_pair(&mut kernel, before, after).unwrap();
+        assert_eq!(kernel.classifier(paired).unwrap(), value);
         let exported = ExportedFunctionView {
             value_ty: value,
             bool_ty,
