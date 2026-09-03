@@ -15,10 +15,10 @@ use covalence_nucleus_spectec::{
     RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler, Source, TYPE_NAME,
     TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family, close_family_definition,
     close_graph_equation, close_hol_rule, close_hol_rules, close_hol_theory, declare_hol_schema,
-    fold_expression, fold_grammar, fold_type, least_closed_family, least_closed_predicate,
-    ordered_cases, parameterized_document, parameterized_document_with, relational_definition,
-    relational_definition_declaration, relational_definition_schema, relational_document,
-    relational_grammar_declaration, relational_hol_case, relational_hol_rule,
+    empty_wasm_module, fold_expression, fold_grammar, fold_type, least_closed_family,
+    least_closed_predicate, ordered_cases, parameterized_document, parameterized_document_with,
+    relational_definition, relational_definition_declaration, relational_definition_schema,
+    relational_document, relational_grammar_declaration, relational_hol_case, relational_hol_rule,
     relational_relation_declaration, relational_relations, relational_type_declaration,
     spectec_execution,
 };
@@ -1537,6 +1537,8 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         );
     }
     let execution = spectec_execution(&mut kernel, &document).unwrap();
+    let empty_module = empty_wasm_module(&mut kernel, &document).unwrap();
+    assert_eq!(kernel.classifier(empty_module).unwrap(), value);
     assert_eq!(execution.state_ty, value);
     assert_eq!(execution.bool_ty, bool_ty);
     let steps_classifier = kernel.classifier(execution.steps).unwrap();
@@ -1615,6 +1617,32 @@ fn immutable_interpretations_discharge_checked_grounding_obligations() {
         parameterized_document_with(&source, &mut kernel, value, bool_ty, &incompatible).is_err()
     );
     assert_eq!(kernel.arena(), &before);
+}
+
+#[test]
+fn empty_module_uses_exact_expression_constructor_vocabulary() {
+    let bytes = br#"(def "empty" nat
+        (clause (case "MODULE%%%%%%%%%%%" (tup
+            (list) (list) (list) (list) (list) (list)
+            (list) (list) (list) (opt) (list)))))"#;
+    let il = IlDocument::parse(bytes, Limits::default()).unwrap();
+    let source = Source::new(
+        drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle"),
+        drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        "test",
+        "revision",
+        &il,
+    )
+    .unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let document = parameterized_document(&source, &mut kernel, value, bool_ty).unwrap();
+
+    let module = empty_wasm_module(&mut kernel, &document).unwrap();
+
+    assert_eq!(kernel.classifier(module).unwrap(), value);
 }
 
 #[test]

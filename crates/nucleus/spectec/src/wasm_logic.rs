@@ -308,6 +308,63 @@ pub enum WasmLogicError {
     },
 }
 
+/// Constructs the structural HOL term for the empty WebAssembly module.
+///
+/// The term uses the exact empty-list, absent-optional, 11-field tuple, and
+/// `MODULE%%%%%%%%%%%` constructor operations recorded by the complete
+/// lowering. It is therefore a module-syntax term under that lowering's value
+/// interpretation; proving its behavior still requires the corresponding
+/// representation laws and complete `SpecTec` theory.
+///
+/// # Errors
+///
+/// Returns an error if a required operation is absent or a checked application
+/// fails. `kernel` is unchanged on failure.
+pub fn empty_wasm_module(
+    kernel: &mut Kernel,
+    document: &ParameterizedDocument,
+) -> Result<Ref, WasmLogicError> {
+    let value = document.schema.value();
+    let empty_list = operation(document, "expression:List", &[], value)?;
+    let absent = operation(document, "expression:Optional", &[], value)?;
+    let tuple = operation(document, "expression:Tuple", &[value; 11], value)?;
+    let module = operation(
+        document,
+        "expression:Case(\"MODULE%%%%%%%%%%%\")",
+        &[value],
+        value,
+    )?;
+    let mut staged = kernel.fork();
+    let payload = apply(
+        &mut staged,
+        tuple,
+        &[
+            empty_list, empty_list, empty_list, empty_list, empty_list, empty_list, empty_list,
+            empty_list, empty_list, absent, empty_list,
+        ],
+    )?;
+    let result = apply(&mut staged, module, &[payload])?;
+    *kernel = staged;
+    Ok(result)
+}
+
+fn operation(
+    document: &ParameterizedDocument,
+    label: &'static str,
+    domains: &[Ref],
+    codomain: Ref,
+) -> Result<Ref, WasmLogicError> {
+    document
+        .operations()
+        .find(|operation| {
+            operation.signature.label == label
+                && operation.signature.domains.as_ref() == domains
+                && operation.signature.codomain == codomain
+        })
+        .map(|operation| operation.reference)
+        .ok_or(WasmLogicError::Operation { label })
+}
+
 /// Extracts a checked curried view of the WebAssembly `Steps` relation.
 ///
 /// The `SpecTec` IL represents a multi-argument relation as a predicate over one
