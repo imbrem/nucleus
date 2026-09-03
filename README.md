@@ -5,8 +5,9 @@ Other logics and computation systems can be represented and reasoned about
 inside HOL. Proving a claim made in another logic need not construct or decide
 a derivation in that logic.
 
-WebAssembly is Nucleus's first-class executable grounding. Exact Wasm bytes,
-the Wasm 3.0 semantics, and derived program propositions give tactics and
+WebAssembly is Nucleus's first-class executable grounding. The complete pinned
+Wasm 3.0 SpecTec semantics—not a handwritten instruction subset—provides the
+meaning of exact Wasm bytes. Derived program propositions give tactics and
 programmers a shared workface: prove that a module never reaches a failure
 event, is deterministic or total under explicit assumptions, or refines
 another module. The same interface can ground proof checkers, abstract
