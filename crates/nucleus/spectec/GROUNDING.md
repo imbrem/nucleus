@@ -23,6 +23,11 @@ two functions. Checked congruence therefore proves that `same_runs` preserves
 every `may`, `every`, `must`, and `never` observation, including a trace
 predicate for `callsAssert`, without trusting an evaluator or a special-purpose
 preservation axiom.
+The same mechanism is exposed as `RunProperty`: any checked
+`admissibility-function -> run-function -> bool` term becomes a reusable module
+predicate with generic `same_runs` preservation and contextual-observation
+adapters. The four behavior quantifiers lower through this API rather than
+forming a privileged property family.
 `RunDomain::in_context` attaches and validates a reusable linking operation and
 context admissibility predicate. The resulting `RunContext` owns that domain,
 so mixing observations or equivalence evidence from another execution policy

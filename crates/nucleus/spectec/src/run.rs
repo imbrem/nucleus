@@ -265,7 +265,39 @@ impl RunContext {
     ) -> Result<ContextualObservation, KernelError> {
         let mut staged = kernel.fork();
         self.require_observation(observation)?;
-        let observe = observation.predicate_avoiding(&mut staged, quantifier, profile, avoiding)?;
+        let property = observation.property_avoiding(&mut staged, quantifier, avoiding)?;
+        let contextual =
+            self.observe_property_avoiding(&mut staged, property, profile, avoiding)?;
+        *kernel = staged;
+        Ok(contextual)
+    }
+
+    /// Selects an arbitrary run property for this reusable context schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `property` belongs to another run domain, the
+    /// profile is incompatible, or checked predicate construction fails.
+    /// `kernel` is unchanged on failure.
+    pub fn observe_property(
+        self,
+        kernel: &mut Kernel,
+        property: RunProperty,
+        profile: Ref,
+    ) -> Result<ContextualObservation, KernelError> {
+        self.observe_property_avoiding(kernel, property, profile, &[])
+    }
+
+    fn observe_property_avoiding(
+        self,
+        kernel: &mut Kernel,
+        property: RunProperty,
+        profile: Ref,
+        avoiding: &[Ref],
+    ) -> Result<ContextualObservation, KernelError> {
+        let mut staged = kernel.fork();
+        self.require_property(property)?;
+        let observe = property.predicate_avoiding(&mut staged, profile, avoiding)?;
         let contextual = ContextualObservation {
             subject_ty: self.domain.relation.types.module,
             context_ty: self.context_ty,
@@ -1086,6 +1118,16 @@ impl RunContext {
             })
         }
     }
+
+    fn require_property(self, property: RunProperty) -> Result<(), KernelError> {
+        if property.domain == self.domain {
+            Ok(())
+        } else {
+            Err(KernelError::InvalidTheoremRule {
+                rule: "run context/property domain mismatch",
+            })
+        }
+    }
 }
 
 /// Failure to derive a checked law about run relations.
@@ -1164,6 +1206,29 @@ impl RunDomain {
         Ok(RunObservation {
             domain: self,
             observe,
+        })
+    }
+
+    /// Validates and attaches an arbitrary property of this run domain.
+    ///
+    /// The property receives the immutable admissible-invocation and allowed-
+    /// run characteristic functions. This is the generic extension point for
+    /// safety, progress, resource, and temporal propositions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `property` has classifier
+    /// `domain-characteristic -> run-characteristic -> bool`. `kernel` is
+    /// unchanged on failure.
+    pub fn property(self, kernel: &mut Kernel, property: Ref) -> Result<RunProperty, KernelError> {
+        let mut staged = kernel.fork();
+        let by_runs_ty = staged.ty_arr(self.run_graph_ty, self.relation.types.bool_ty)?;
+        let property_ty = staged.ty_arr(self.domain_ty, by_runs_ty)?;
+        require_classifier(&mut staged, property, property_ty)?;
+        *kernel = staged;
+        Ok(RunProperty {
+            domain: self,
+            property,
         })
     }
 
@@ -1914,6 +1979,149 @@ pub enum BehaviorQuantifier {
     Never,
 }
 
+/// An immutable proposition schema over one complete run graph.
+///
+/// The checked property has shape
+/// `admissible-characteristic -> run-characteristic -> bool`. Consequently
+/// equality of both characteristics preserves every `RunProperty` by ordinary
+/// HOL congruence, without teaching the API about each property family.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RunProperty {
+    domain: RunDomain,
+    property: Ref,
+}
+
+impl RunProperty {
+    /// Returns the execution domain consumed by this property.
+    #[must_use]
+    pub const fn domain(self) -> RunDomain {
+        self.domain
+    }
+
+    /// Returns the checked characteristic-function observer.
+    #[must_use]
+    pub const fn property(self) -> Ref {
+        self.property
+    }
+
+    /// Constructs this property for one profile and module.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for incompatible profile/module terms or a rejected
+    /// checked application. `kernel` is unchanged on failure.
+    pub fn proposition(
+        self,
+        kernel: &mut Kernel,
+        profile: Ref,
+        module: Ref,
+    ) -> Result<Ref, KernelError> {
+        self.proposition_avoiding(kernel, profile, module, &[])
+    }
+
+    fn proposition_avoiding(
+        self,
+        kernel: &mut Kernel,
+        profile: Ref,
+        module: Ref,
+        _avoiding: &[Ref],
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let graphs = self.domain.run_graphs(&mut staged, profile, module)?;
+        let proposition = apply(&mut staged, self.property, &[graphs.domain, graphs.runs])?;
+        *kernel = staged;
+        Ok(proposition)
+    }
+
+    /// Constructs `module -> bool` for one profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as [`Self::proposition`] or
+    /// if checked abstraction fails. `kernel` is unchanged on failure.
+    pub fn predicate(self, kernel: &mut Kernel, profile: Ref) -> Result<Ref, KernelError> {
+        self.predicate_avoiding(kernel, profile, &[])
+    }
+
+    fn predicate_avoiding(
+        self,
+        kernel: &mut Kernel,
+        profile: Ref,
+        avoiding: &[Ref],
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.domain.relation.types;
+        require_classifier(&mut staged, profile, types.profile)?;
+        let mut roots = vec![types.module, types.bool_ty, self.property, profile];
+        roots.extend_from_slice(avoiding);
+        let module = staged.tm_fv(staged.fresh_name(&roots)?, types.module)?;
+        let body = self.proposition_avoiding(&mut staged, profile, module, avoiding)?;
+        let predicate_ty = staged.ty_arr(types.module, types.bool_ty)?;
+        let predicate = staged.lam_at(predicate_ty, module, body)?;
+        *kernel = staged;
+        Ok(predicate)
+    }
+
+    /// Proves that `same_runs` preserves this property.
+    ///
+    /// Every premise in `same_runs` evidence remains visible. The derivation
+    /// uses checked congruence for each characteristic argument followed by
+    /// equality transitivity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `same_runs` positively proves equality for the
+    /// supplied modules, or a checked equality/congruence operation fails.
+    /// `kernel` is unchanged on failure.
+    pub fn prove_same_runs_preserves(
+        self,
+        kernel: &mut Kernel,
+        same_runs: Evidence,
+        profile: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let expected = self.domain.same_runs(&mut staged, profile, left, right)?;
+        let theorem = align_evidence(&mut staged, same_runs, expected)?;
+        let domain_fact = staged.expand_conclusion(theorem, positive(expected), Some(false))?;
+        let runs_fact = staged.expand_conclusion(theorem, positive(expected), Some(true))?;
+        let left_graphs = self.domain.run_graphs(&mut staged, profile, left)?;
+        let right_graphs = self.domain.run_graphs(&mut staged, profile, right)?;
+        let by_domain_function = staged.ap_term(domain_fact, self.property)?;
+        let by_domain = staged.ap_thm(by_domain_function.theorem, left_graphs.runs)?;
+        let right_domain_property = staged.app(self.property, right_graphs.domain)?;
+        let by_runs = staged.ap_term(runs_fact, right_domain_property)?;
+        let preserved = equality_transitivity(
+            &mut staged,
+            self.domain.relation.types.bool_ty,
+            by_domain.theorem,
+            by_runs.theorem,
+        )?;
+        let left_property = self.proposition(&mut staged, profile, left)?;
+        let right_property = self.proposition(&mut staged, profile, right)?;
+        let target = staged.eq(
+            self.domain.relation.types.bool_ty,
+            left_property,
+            right_property,
+        )?;
+        align_theorem_conclusion(
+            &mut staged,
+            preserved.theorem,
+            preserved.equality,
+            target,
+            "same-runs property preservation alignment",
+        )?;
+        staged.contract_theorem(preserved.theorem)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: target,
+            theorem: preserved.theorem,
+            holds: true,
+        })
+    }
+}
+
 /// An observation over one eventful execution relation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RunObservation {
@@ -1959,6 +2167,33 @@ impl RunObservation {
     #[must_use]
     pub const fn observation(self) -> Ref {
         self.observe
+    }
+
+    /// Constructs the generic run property for one behavior quantifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if checked characteristic-function abstraction or
+    /// property validation fails. `kernel` is unchanged on failure.
+    pub fn property(
+        self,
+        kernel: &mut Kernel,
+        quantifier: BehaviorQuantifier,
+    ) -> Result<RunProperty, KernelError> {
+        self.property_avoiding(kernel, quantifier, &[])
+    }
+
+    fn property_avoiding(
+        self,
+        kernel: &mut Kernel,
+        quantifier: BehaviorQuantifier,
+        avoiding: &[Ref],
+    ) -> Result<RunProperty, KernelError> {
+        let mut staged = kernel.fork();
+        let property = self.graph_observer(&mut staged, quantifier, avoiding)?;
+        let property = self.domain.property(&mut staged, property)?;
+        *kernel = staged;
+        Ok(property)
     }
 
     /// Constructs the pointwise negation of this observation.
@@ -2056,12 +2291,8 @@ impl RunObservation {
         avoiding: &[Ref],
     ) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
-        let types = self.domain.relation.types;
-        require_classifier(&mut staged, profile, types.profile)?;
-        require_classifier(&mut staged, module, types.module)?;
-        let graphs = self.domain.run_graphs(&mut staged, profile, module)?;
-        let observer = self.graph_observer(&mut staged, quantifier, avoiding)?;
-        let proposition = apply(&mut staged, observer, &[graphs.domain, graphs.runs])?;
+        let property = self.property_avoiding(&mut staged, quantifier, avoiding)?;
+        let proposition = property.proposition(&mut staged, profile, module)?;
         *kernel = staged;
         Ok(proposition)
     }
@@ -2185,45 +2416,11 @@ impl RunObservation {
         right: Ref,
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
-        let expected = self.domain.same_runs(&mut staged, profile, left, right)?;
-        let theorem = align_evidence(&mut staged, same_runs, expected)?;
-        let domain_fact = staged.expand_conclusion(theorem, positive(expected), Some(false))?;
-        let runs_fact = staged.expand_conclusion(theorem, positive(expected), Some(true))?;
-        let left_graphs = self.domain.run_graphs(&mut staged, profile, left)?;
-        let right_graphs = self.domain.run_graphs(&mut staged, profile, right)?;
-
-        let observer = self.graph_observer(&mut staged, quantifier, &[])?;
-        let by_domain_function = staged.ap_term(domain_fact, observer)?;
-        let by_domain = staged.ap_thm(by_domain_function.theorem, left_graphs.runs)?;
-        let right_domain_observer = staged.app(observer, right_graphs.domain)?;
-        let by_runs = staged.ap_term(runs_fact, right_domain_observer)?;
-        let preserved = equality_transitivity(
-            &mut staged,
-            self.domain.relation.types.bool_ty,
-            by_domain.theorem,
-            by_runs.theorem,
-        )?;
-        let left_observation = self.proposition(&mut staged, quantifier, profile, left)?;
-        let right_observation = self.proposition(&mut staged, quantifier, profile, right)?;
-        let target = staged.eq(
-            self.domain.relation.types.bool_ty,
-            left_observation,
-            right_observation,
-        )?;
-        align_theorem_conclusion(
-            &mut staged,
-            preserved.theorem,
-            preserved.equality,
-            target,
-            "same-runs observation preservation alignment",
-        )?;
-        staged.contract_theorem(preserved.theorem)?;
+        let property = self.property(&mut staged, quantifier)?;
+        let preserved =
+            property.prove_same_runs_preserves(&mut staged, same_runs, profile, left, right)?;
         *kernel = staged;
-        Ok(Evidence {
-            proposition: target,
-            theorem: preserved.theorem,
-            holds: true,
-        })
+        Ok(preserved)
     }
 
     /// Constructs `module -> bool` for one profile and quantification mode.
@@ -2251,26 +2448,8 @@ impl RunObservation {
         avoiding: &[Ref],
     ) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
-        let types = self.domain.relation.types;
-        require_classifier(&mut staged, profile, types.profile)?;
-        let mut roots = vec![
-            types.module,
-            types.bool_ty,
-            self.domain.relation.runs,
-            self.domain.admissible,
-            self.observe,
-            profile,
-        ];
-        roots.extend_from_slice(avoiding);
-        let name = staged.fresh_name(&roots)?;
-        let module = staged.tm_fv(name, types.module)?;
-        let mut body_avoiding = Vec::with_capacity(avoiding.len() + 1);
-        body_avoiding.push(module);
-        body_avoiding.extend_from_slice(avoiding);
-        let body =
-            self.proposition_avoiding(&mut staged, quantifier, profile, module, &body_avoiding)?;
-        let predicate_ty = staged.ty_arr(types.module, types.bool_ty)?;
-        let predicate = staged.lam_at(predicate_ty, module, body)?;
+        let property = self.property_avoiding(&mut staged, quantifier, avoiding)?;
+        let predicate = property.predicate_avoiding(&mut staged, profile, avoiding)?;
         *kernel = staged;
         Ok(predicate)
     }
@@ -2702,6 +2881,25 @@ mod tests {
         let every = observation.every(&mut kernel, profile, module).unwrap();
         let never = observation.never(&mut kernel, profile, module).unwrap();
         let must = observation.must(&mut kernel, profile, module).unwrap();
+        let may_property = observation
+            .property(&mut kernel, BehaviorQuantifier::May)
+            .unwrap();
+        assert_eq!(may_property.domain(), domain);
+        let property_tail = kernel.ty_arr(domain.run_graph_ty, bool_ty).unwrap();
+        let property_ty = kernel.ty_arr(domain.domain_ty, property_tail).unwrap();
+        let actual_property_ty = kernel.classifier(may_property.property()).unwrap();
+        covalence_logic_hol_derived::join_same_syntax(&mut kernel, actual_property_ty, property_ty)
+            .unwrap();
+        let custom_property_term = kernel.tm_fv(33, property_ty).unwrap();
+        let custom_property = domain.property(&mut kernel, custom_property_term).unwrap();
+        let custom_proposition = custom_property
+            .proposition(&mut kernel, profile, module)
+            .unwrap();
+        assert_eq!(kernel.classifier(custom_proposition).unwrap(), bool_ty);
+        let may_from_property = may_property
+            .proposition(&mut kernel, profile, module)
+            .unwrap();
+        covalence_logic_hol_derived::join_same_syntax(&mut kernel, may_from_property, may).unwrap();
         assert_eq!(kernel.classifier(may).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(every).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(never).unwrap(), bool_ty);
@@ -2752,6 +2950,30 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[left_middle])
             .check(&kernel, symmetric)
+            .unwrap();
+        let property_preserved = may_property
+            .prove_same_runs_preserves(
+                &mut kernel,
+                left_middle_evidence,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[left_middle])
+            .check(&kernel, property_preserved)
+            .unwrap();
+        let custom_property_preserved = custom_property
+            .prove_same_runs_preserves(
+                &mut kernel,
+                left_middle_evidence,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[left_middle])
+            .check(&kernel, custom_property_preserved)
             .unwrap();
         for quantifier in [
             BehaviorQuantifier::May,
@@ -2860,11 +3082,20 @@ mod tests {
         let contextual_from_schema = context
             .observe(&mut kernel, observation, BehaviorQuantifier::May, profile)
             .unwrap();
+        let contextual_from_property = context
+            .observe_property(&mut kernel, may_property, profile)
+            .unwrap();
         assert_eq!(contextual_from_schema.plug, contextual.plug);
         assert_eq!(contextual_from_schema.admissible, contextual.admissible);
         covalence_logic_hol_derived::join_same_syntax(
             &mut kernel,
             contextual_from_schema.observe,
+            contextual.observe,
+        )
+        .unwrap();
+        covalence_logic_hol_derived::join_same_syntax(
+            &mut kernel,
+            contextual_from_property.observe,
             contextual.observe,
         )
         .unwrap();
