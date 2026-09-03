@@ -51,7 +51,9 @@ The domain additionally defines directional `refines_runs`: an implementation
 has the same admissible invocation domain and may remove, but not add, behaviors
 of its specification, but must retain some behavior whenever the specification
 has a run. Thus refinement cannot encode partiality merely by deleting every
-result.
+result. Its checked reflexivity and transitivity derivations make this
+progress-sensitive relation a preorder without assuming anything about the
+underlying execution relation.
 The domain also derives explicit determinism and totality propositions.
 Totality here means that every admissible invocation has a modeled trace and
 outcome; the profile and outcome representation determine whether traps or

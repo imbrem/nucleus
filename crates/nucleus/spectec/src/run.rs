@@ -1822,6 +1822,235 @@ impl RunDomain {
         self.prove_refinement_reflexive(kernel, profile, module)
     }
 
+    /// Composes two checked run refinements.
+    ///
+    /// Every premise of both input proofs remains visible. Behavior inclusion
+    /// composes forward, while progress composes from the final specification
+    /// back through the intermediate implementation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the evidence proves the two adjacent
+    /// refinements, or a checked specialization, equality, propositional, or
+    /// alignment operation fails. `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    pub fn prove_run_refinement_transitive(
+        self,
+        kernel: &mut Kernel,
+        left_middle: Evidence,
+        middle_right: Evidence,
+        profile: Ref,
+        left: Ref,
+        middle: Ref,
+        right: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let types = self.relation.types;
+        let left_middle_refinement = self.refinement(&mut staged, profile, left, middle)?;
+        let left_middle_theorem = align_evidence(&mut staged, left_middle, left_middle_refinement)?;
+        let middle_right_refinement = self.refinement(&mut staged, profile, middle, right)?;
+        let middle_right_theorem =
+            align_evidence(&mut staged, middle_right, middle_right_refinement)?;
+        let left_middle_domain = staged.expand_conclusion(
+            left_middle_theorem,
+            positive(left_middle_refinement),
+            Some(false),
+        )?;
+        let left_middle_behavior = staged.expand_conclusion(
+            left_middle_theorem,
+            positive(left_middle_refinement),
+            Some(true),
+        )?;
+        let middle_right_domain = staged.expand_conclusion(
+            middle_right_theorem,
+            positive(middle_right_refinement),
+            Some(false),
+        )?;
+        let middle_right_behavior = staged.expand_conclusion(
+            middle_right_theorem,
+            positive(middle_right_refinement),
+            Some(true),
+        )?;
+        let [_, left_middle_behavior_formula] = binary_children(&staged, left_middle_refinement)?;
+        binary_children(&staged, left_middle_behavior_formula)?;
+        let [_, middle_right_behavior_formula] = binary_children(&staged, middle_right_refinement)?;
+        binary_children(&staged, middle_right_behavior_formula)?;
+        let left_middle_subset = staged.expand_conclusion(
+            left_middle_behavior,
+            positive(left_middle_behavior_formula),
+            Some(false),
+        )?;
+        let left_middle_progress = staged.expand_conclusion(
+            left_middle_behavior,
+            positive(left_middle_behavior_formula),
+            Some(true),
+        )?;
+        let middle_right_subset = staged.expand_conclusion(
+            middle_right_behavior,
+            positive(middle_right_behavior_formula),
+            Some(false),
+        )?;
+        let middle_right_progress = staged.expand_conclusion(
+            middle_right_behavior,
+            positive(middle_right_behavior_formula),
+            Some(true),
+        )?;
+
+        let left_graphs = self.run_graphs(&mut staged, profile, left)?;
+        let middle_graphs = self.run_graphs(&mut staged, profile, middle)?;
+        let right_graphs = self.run_graphs(&mut staged, profile, right)?;
+        let domain = equality_transitivity(
+            &mut staged,
+            types.bool_ty,
+            left_middle_domain,
+            middle_right_domain,
+        )?;
+
+        let first = staged.fresh_name(&[
+            left_middle_refinement,
+            middle_right_refinement,
+            left_graphs.runs,
+            middle_graphs.runs,
+            right_graphs.runs,
+        ])?;
+        let entry = staged.tm_fv(first, types.entry)?;
+        let inputs = staged.tm_fv(checked_name(first, 1)?, types.inputs)?;
+        let host = staged.tm_fv(checked_name(first, 2)?, types.host)?;
+        let trace = staged.tm_fv(checked_name(first, 3)?, types.trace)?;
+        let outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
+        let domain_variables = [entry, inputs, host];
+        let run_variables = [entry, inputs, host, trace, outcome];
+        let left_run = apply(&mut staged, left_graphs.runs, &run_variables)?;
+        let middle_run = apply(&mut staged, middle_graphs.runs, &run_variables)?;
+        let right_run = apply(&mut staged, right_graphs.runs, &run_variables)?;
+        let left_middle_subset_implication = staged.op2(Op2::Imp, left_run, middle_run)?;
+        let middle_right_subset_implication = staged.op2(Op2::Imp, middle_run, right_run)?;
+        let left_middle_subset = specialize_universal_to(
+            &mut staged,
+            left_middle_subset,
+            &run_variables,
+            left_middle_subset_implication,
+            "left-middle refinement inclusion",
+        )?;
+        let middle_right_subset = specialize_universal_to(
+            &mut staged,
+            middle_right_subset,
+            &run_variables,
+            middle_right_subset_implication,
+            "middle-right refinement inclusion",
+        )?;
+        let left_middle_subset = staged.expand_conclusion(
+            left_middle_subset,
+            positive(left_middle_subset_implication),
+            None,
+        )?;
+        let middle_right_subset = staged.expand_conclusion(
+            middle_right_subset,
+            positive(middle_right_subset_implication),
+            None,
+        )?;
+        let assumed_left_run = staged.identity(positive(left_run))?;
+        let left_to_middle = staged
+            .resolve(assumed_left_run, left_middle_subset, positive(left_run))
+            .map_err(|_| KernelError::InvalidTheoremRule {
+                rule: "run refinement inclusion application",
+            })?;
+        let subset_chain = staged
+            .resolve(left_to_middle, middle_right_subset, positive(middle_run))
+            .map_err(|_| KernelError::InvalidTheoremRule {
+                rule: "run refinement inclusion transitivity resolution",
+            })?;
+        let subset_implication = staged.op2(Op2::Imp, left_run, right_run)?;
+        let subset = staged.imp_right(subset_chain, positive(subset_implication))?;
+        let (subset_formula, subset) = introduce_forall(
+            &mut staged,
+            types.bool_ty,
+            &run_variables,
+            subset_implication,
+            subset,
+        )?;
+
+        let left_exists = quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], left_run)?;
+        let middle_exists =
+            quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], middle_run)?;
+        let right_exists =
+            quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], right_run)?;
+        let left_middle_progress_implication = staged.op2(Op2::Imp, middle_exists, left_exists)?;
+        let middle_right_progress_implication =
+            staged.op2(Op2::Imp, right_exists, middle_exists)?;
+        let left_middle_progress = specialize_universal_to(
+            &mut staged,
+            left_middle_progress,
+            &domain_variables,
+            left_middle_progress_implication,
+            "left-middle refinement progress",
+        )?;
+        let middle_right_progress = specialize_universal_to(
+            &mut staged,
+            middle_right_progress,
+            &domain_variables,
+            middle_right_progress_implication,
+            "middle-right refinement progress",
+        )?;
+        let left_middle_progress = staged.expand_conclusion(
+            left_middle_progress,
+            positive(left_middle_progress_implication),
+            None,
+        )?;
+        let middle_right_progress = staged.expand_conclusion(
+            middle_right_progress,
+            positive(middle_right_progress_implication),
+            None,
+        )?;
+        let assumed_right_exists = staged.identity(positive(right_exists))?;
+        let right_to_middle = staged
+            .resolve(
+                assumed_right_exists,
+                middle_right_progress,
+                positive(right_exists),
+            )
+            .map_err(|_| KernelError::InvalidTheoremRule {
+                rule: "run refinement progress application",
+            })?;
+        let progress_chain = staged
+            .resolve(
+                right_to_middle,
+                left_middle_progress,
+                positive(middle_exists),
+            )
+            .map_err(|_| KernelError::InvalidTheoremRule {
+                rule: "run refinement progress transitivity resolution",
+            })?;
+        let progress_implication = staged.op2(Op2::Imp, right_exists, left_exists)?;
+        let progress = staged.imp_right(progress_chain, positive(progress_implication))?;
+        let (progress_formula, progress) = introduce_forall(
+            &mut staged,
+            types.bool_ty,
+            &domain_variables,
+            progress_implication,
+            progress,
+        )?;
+        let behavior_formula = staged.op2(Op2::And, subset_formula, progress_formula)?;
+        let behavior = staged.and_right(subset, progress, positive(behavior_formula))?;
+        let proposition = staged.op2(Op2::And, domain.equality, behavior_formula)?;
+        let theorem = staged.and_right(domain.theorem, behavior, positive(proposition))?;
+        let canonical = self.refinement(&mut staged, profile, left, right)?;
+        align_theorem_conclusion(
+            &mut staged,
+            theorem,
+            proposition,
+            canonical,
+            "run refinement transitivity alignment",
+        )?;
+        staged.contract_theorem(theorem)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: canonical,
+            theorem,
+            holds: true,
+        })
+    }
+
     #[allow(clippy::too_many_lines)]
     fn prove_refinement_reflexive(
         self,
@@ -1833,6 +2062,7 @@ impl RunDomain {
         let types = self.relation.types;
         require_classifier(&mut staged, profile, types.profile)?;
         require_classifier(&mut staged, module, types.module)?;
+        let graph = self.run_graphs(&mut staged, profile, module)?;
         let first = staged.fresh_name(&[
             types.profile,
             types.module,
@@ -1854,13 +2084,8 @@ impl RunDomain {
         let outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
         let domain_variables = [entry, inputs, host];
         let run_variables = [entry, inputs, host, trace, outcome];
-        let allowed = apply(
-            &mut staged,
-            self.admissible,
-            &[profile, module, entry, inputs, host],
-        )?;
-        let same_domain = staged.eq(types.bool_ty, allowed, allowed)?;
-        let same_domain_fact = staged.refl(types.bool_ty, allowed)?;
+        let same_domain = staged.eq(types.bool_ty, graph.domain, graph.domain)?;
+        let same_domain_fact = staged.refl(types.bool_ty, graph.domain)?;
         join_same_syntax(&mut staged, same_domain_fact.equality, same_domain).map_err(|_| {
             KernelError::InvalidTheoremRule {
                 rule: "run domain reflexivity alignment",
@@ -1871,55 +2096,42 @@ impl RunDomain {
             same_domain_fact.equality,
             same_domain,
         )?;
-        let (same_domain, same_domain_theorem) = introduce_forall(
-            &mut staged,
-            types.bool_ty,
-            &domain_variables,
-            same_domain,
-            same_domain_fact.theorem,
-        )?;
-
         let run = apply(
             &mut staged,
-            self.relation.runs,
-            &[profile, module, entry, inputs, host, trace, outcome],
+            graph.runs,
+            &[entry, inputs, host, trace, outcome],
         )?;
         let behavior = staged.op2(Op2::Imp, run, run)?;
         let identity = staged.identity(positive(run))?;
         let behavior_theorem = staged.imp_right(identity, positive(behavior))?;
-        let both_allowed = staged.op2(Op2::And, allowed, allowed)?;
-        staged.weaken(behavior_theorem, &[positive(both_allowed)], &[])?;
-        let guarded_behavior = staged.op2(Op2::Imp, both_allowed, behavior)?;
-        let guarded_theorem = staged.imp_right(behavior_theorem, positive(guarded_behavior))?;
         let (behavior, behavior_theorem) = introduce_forall(
             &mut staged,
             types.bool_ty,
             &run_variables,
-            guarded_behavior,
-            guarded_theorem,
+            behavior,
+            behavior_theorem,
         )?;
         let exists_run = quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], run)?;
         let progress = staged.op2(Op2::Imp, exists_run, exists_run)?;
         let assumed = staged.identity(positive(exists_run))?;
         let progress_theorem = staged.imp_right(assumed, positive(progress))?;
-        staged.weaken(progress_theorem, &[positive(both_allowed)], &[])?;
-        let guarded_progress = staged.op2(Op2::Imp, both_allowed, progress)?;
-        let guarded_progress_theorem =
-            staged.imp_right(progress_theorem, positive(guarded_progress))?;
         let (progress, progress_theorem) = introduce_forall(
             &mut staged,
             types.bool_ty,
             &domain_variables,
-            guarded_progress,
-            guarded_progress_theorem,
+            progress,
+            progress_theorem,
         )?;
         let combined = staged.op2(Op2::And, behavior, progress)?;
         let behavior_theorem =
             staged.and_right(behavior_theorem, progress_theorem, positive(combined))?;
         let behavior = combined;
         let proposition = staged.op2(Op2::And, same_domain, behavior)?;
-        let theorem =
-            staged.and_right(same_domain_theorem, behavior_theorem, positive(proposition))?;
+        let theorem = staged.and_right(
+            same_domain_fact.theorem,
+            behavior_theorem,
+            positive(proposition),
+        )?;
         let canonical = self.refinement(&mut staged, profile, module, module)?;
         join_same_syntax(&mut staged, proposition, canonical).map_err(|_| {
             KernelError::InvalidTheoremRule {
@@ -1969,39 +2181,26 @@ impl RunDomain {
         let outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
         let domain_variables = [entry, inputs, host];
         let run_variables = [entry, inputs, host, trace, outcome];
-        let left_allowed = apply(
-            &mut staged,
-            self.admissible,
-            &[profile, left, entry, inputs, host],
-        )?;
-        let right_allowed = apply(
-            &mut staged,
-            self.admissible,
-            &[profile, right, entry, inputs, host],
-        )?;
-        let same_domain = staged.eq(types.bool_ty, left_allowed, right_allowed)?;
-        let same_domain =
-            quantify_forall(&mut staged, types.bool_ty, &domain_variables, same_domain)?;
+        let left_graphs = self.run_graphs(&mut staged, profile, left)?;
+        let right_graphs = self.run_graphs(&mut staged, profile, right)?;
+        let same_domain = staged.eq(types.bool_ty, left_graphs.domain, right_graphs.domain)?;
         let left_run = apply(
             &mut staged,
-            self.relation.runs,
-            &[profile, left, entry, inputs, host, trace, outcome],
+            left_graphs.runs,
+            &[entry, inputs, host, trace, outcome],
         )?;
         let right_run = apply(
             &mut staged,
-            self.relation.runs,
-            &[profile, right, entry, inputs, host, trace, outcome],
+            right_graphs.runs,
+            &[entry, inputs, host, trace, outcome],
         )?;
-        let both_allowed = staged.op2(Op2::And, left_allowed, right_allowed)?;
         let behavior = staged.op2(Op2::Imp, left_run, right_run)?;
-        let behavior = staged.op2(Op2::Imp, both_allowed, behavior)?;
         let behavior = quantify_forall(&mut staged, types.bool_ty, &run_variables, behavior)?;
         let implementation_runs =
             quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], left_run)?;
         let specification_runs =
             quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], right_run)?;
         let progress = staged.op2(Op2::Imp, specification_runs, implementation_runs)?;
-        let progress = staged.op2(Op2::Imp, both_allowed, progress)?;
         let progress = quantify_forall(&mut staged, types.bool_ty, &domain_variables, progress)?;
         let behavior = staged.op2(Op2::And, behavior, progress)?;
         let proposition = staged.op2(Op2::And, same_domain, behavior)?;
@@ -2922,6 +3121,25 @@ fn introduce_forall(
         })
 }
 
+fn specialize_universal_to(
+    kernel: &mut Kernel,
+    theorem: covalence_logic_hol::ThmId,
+    arguments: &[Ref],
+    target: Ref,
+    rule: &'static str,
+) -> Result<covalence_logic_hol::ThmId, RunProofError> {
+    let mut current_theorem = theorem;
+    let mut current_proposition = None;
+    for &argument in arguments {
+        let specialized = forall_elim(kernel, current_theorem, argument)?;
+        current_theorem = specialized.theorem;
+        current_proposition = Some(specialized.proposition);
+    }
+    let proposition = current_proposition.ok_or(KernelError::InvalidTheoremRule { rule })?;
+    align_theorem_conclusion(kernel, current_theorem, proposition, target, rule)?;
+    Ok(current_theorem)
+}
+
 fn positive(proposition: Ref) -> Lit {
     Lit::positive(proposition.get())
 }
@@ -3214,6 +3432,57 @@ mod tests {
         EvidenceScope::positive(&[])
             .check(&kernel, refinement_reflexive)
             .unwrap();
+        let left_middle_refinement = domain
+            .refines_runs(&mut kernel, profile, module, other_module)
+            .unwrap();
+        let middle_right_refinement = domain
+            .refines_runs(&mut kernel, profile, other_module, third_module)
+            .unwrap();
+        let left_middle_refinement_evidence = Evidence {
+            proposition: left_middle_refinement,
+            theorem: kernel
+                .identity(super::positive(left_middle_refinement))
+                .unwrap(),
+            holds: true,
+        };
+        let middle_right_refinement_evidence = Evidence {
+            proposition: middle_right_refinement,
+            theorem: kernel
+                .identity(super::positive(middle_right_refinement))
+                .unwrap(),
+            holds: true,
+        };
+        let refinement_transitive = domain
+            .prove_run_refinement_transitive(
+                &mut kernel,
+                left_middle_refinement_evidence,
+                middle_right_refinement_evidence,
+                profile,
+                module,
+                other_module,
+                third_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[left_middle_refinement, middle_right_refinement])
+            .check(&kernel, refinement_transitive)
+            .unwrap();
+        let before = kernel.arena().clone();
+        let theorem_count = kernel.thm().live_theorems().count();
+        assert!(
+            domain
+                .prove_run_refinement_transitive(
+                    &mut kernel,
+                    left_middle_refinement_evidence,
+                    left_middle_refinement_evidence,
+                    profile,
+                    module,
+                    other_module,
+                    third_module,
+                )
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
         let contextual = observation
             .contextual(
                 &mut kernel,
