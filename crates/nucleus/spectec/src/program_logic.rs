@@ -137,6 +137,8 @@ pub struct CallsAssert<Program> {
 /// adapter supplies these predicates; this schema only composes them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AssertionReachability {
+    /// Classifier shared by module terms.
+    pub program_ty: Ref,
     /// Classifier shared by execution configurations.
     pub state_ty: Ref,
     /// HOL Boolean classifier.
@@ -169,6 +171,7 @@ impl AssertionReachability {
     ) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
         let roots = [
+            self.program_ty,
             self.state_ty,
             self.bool_ty,
             self.starts,
@@ -198,6 +201,32 @@ impl AssertionReachability {
         Ok(proposition)
     }
 
+    /// Abstracts `callsAssert` into a checked `program -> bool` predicate for
+    /// one distinguished host function.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if existential reachability or checked abstraction
+    /// construction fails. `kernel` is unchanged on failure.
+    pub fn predicate(self, kernel: &mut Kernel, assert_function: Ref) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let name = staged.fresh_name(&[
+            self.program_ty,
+            self.state_ty,
+            self.bool_ty,
+            self.starts,
+            self.steps,
+            self.calls,
+            assert_function,
+        ])?;
+        let program = staged.tm_fv(name, self.program_ty)?;
+        let body = self.calls_assert(&mut staged, program, assert_function)?;
+        let predicate_ty = staged.ty_arr(self.program_ty, self.bool_ty)?;
+        let predicate = staged.lam_at(predicate_ty, program, body)?;
+        *kernel = staged;
+        Ok(predicate)
+    }
+
     /// Constructs the universal negative claim that no admissible execution
     /// reaches the distinguished assertion call.
     ///
@@ -222,6 +251,118 @@ impl AssertionReachability {
         *kernel = staged;
         Ok(negative)
     }
+}
+
+/// Concrete program and linker terms used to state the Boolean laws.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProgramConnectives {
+    /// Classifier shared by program terms.
+    pub program_ty: Ref,
+    /// HOL Boolean classifier.
+    pub bool_ty: Ref,
+    /// Predicate `program -> bool`.
+    pub calls_assert: Ref,
+    /// Concrete `TRUE` module term.
+    pub true_program: Ref,
+    /// Concrete `FALSE` module term.
+    pub false_program: Ref,
+    /// Concrete linker `program -> program -> program`.
+    pub and_program: Ref,
+    /// Concrete linker `program -> program -> program`.
+    pub or_program: Ref,
+}
+
+/// Exact HOL propositions that a concrete Wasm program logic must prove.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProgramLogicObligations {
+    /// `callsAssert(TRUE)`.
+    pub true_calls: Ref,
+    /// `not callsAssert(FALSE)`.
+    pub false_never_calls: Ref,
+    /// Universally closed OR linker equation.
+    pub or_calls_iff: Ref,
+    /// Universally closed AND linker equation.
+    pub and_calls_iff: Ref,
+}
+
+impl ProgramConnectives {
+    /// Constructs the four checked HOL goal terms for assertion program logic.
+    ///
+    /// This method only states the obligations. It neither assumes nor proves
+    /// them, and therefore adds no theorem facts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for incompatible module, linker, or predicate terms,
+    /// name exhaustion, or a rejected checked HOL constructor. `kernel` is
+    /// unchanged on failure.
+    pub fn obligations(self, kernel: &mut Kernel) -> Result<ProgramLogicObligations, KernelError> {
+        let mut staged = kernel.fork();
+        let true_calls = staged.app(self.calls_assert, self.true_program)?;
+        let false_calls = staged.app(self.calls_assert, self.false_program)?;
+        let false_never_calls = staged.op1(Op1::Not, false_calls)?;
+        let first = staged.fresh_name(&[
+            self.program_ty,
+            self.bool_ty,
+            self.calls_assert,
+            self.true_program,
+            self.false_program,
+            self.and_program,
+            self.or_program,
+        ])?;
+        let second = first.checked_add(1).ok_or(KernelError::TooManyNames)?;
+        let left = staged.tm_fv(first, self.program_ty)?;
+        let right = staged.tm_fv(second, self.program_ty)?;
+        let left_calls = staged.app(self.calls_assert, left)?;
+        let right_calls = staged.app(self.calls_assert, right)?;
+        let or_calls_iff = connective_law(
+            &mut staged,
+            self.bool_ty,
+            self.calls_assert,
+            self.or_program,
+            Op2::Or,
+            left,
+            right,
+        )?;
+        let and_calls_iff = connective_law(
+            &mut staged,
+            self.bool_ty,
+            self.calls_assert,
+            self.and_program,
+            Op2::And,
+            left,
+            right,
+        )?;
+        // Ensure both reused leaves are independently checked Boolean terms.
+        require_bool(&mut staged, self.bool_ty, left_calls)?;
+        require_bool(&mut staged, self.bool_ty, right_calls)?;
+        *kernel = staged;
+        Ok(ProgramLogicObligations {
+            true_calls,
+            false_never_calls,
+            or_calls_iff,
+            and_calls_iff,
+        })
+    }
+}
+
+fn connective_law(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    calls_assert: Ref,
+    connective: Ref,
+    operation: Op2,
+    left: Ref,
+    right: Ref,
+) -> Result<Ref, KernelError> {
+    let combined = apply2(kernel, connective, left, right)?;
+    let combined_calls = kernel.app(calls_assert, combined)?;
+    let left_calls = kernel.app(calls_assert, left)?;
+    let right_calls = kernel.app(calls_assert, right)?;
+    let expected = kernel.op2(operation, left_calls, right_calls)?;
+    let equation = kernel.eq(bool_ty, combined_calls, expected)?;
+    let equation = kernel.forall_tm(bool_ty, right, equation)?;
+    kernel.forall_tm(bool_ty, left, equation)
 }
 
 fn apply2(kernel: &mut Kernel, function: Ref, left: Ref, right: Ref) -> Result<Ref, KernelError> {
@@ -652,6 +793,7 @@ mod tests {
         let program = kernel.tm_fv(13, program_ty).unwrap();
         let assert_function = kernel.tm_fv(14, function_ty).unwrap();
         let schema = AssertionReachability {
+            program_ty,
             state_ty,
             bool_ty,
             starts,
@@ -681,5 +823,44 @@ mod tests {
                 .is_err()
         );
         assert_eq!(kernel.arena(), &before);
+    }
+
+    #[test]
+    fn concrete_program_terms_generate_the_four_exact_proof_goals() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let program_ty = kernel.ty_fv(1, star).unwrap();
+        let calls_ty = kernel.ty_arr(program_ty, bool_ty).unwrap();
+        let linker_result_ty = kernel.ty_arr(program_ty, program_ty).unwrap();
+        let linker_ty = kernel.ty_arr(program_ty, linker_result_ty).unwrap();
+        let calls_assert = kernel.tm_fv(2, calls_ty).unwrap();
+        let true_program = kernel.tm_fv(3, program_ty).unwrap();
+        let false_program = kernel.tm_fv(4, program_ty).unwrap();
+        let and_program = kernel.tm_fv(5, linker_ty).unwrap();
+        let or_program = kernel.tm_fv(6, linker_ty).unwrap();
+        let theorem_count = kernel.thm().live_theorems().count();
+
+        let goals = ProgramConnectives {
+            program_ty,
+            bool_ty,
+            calls_assert,
+            true_program,
+            false_program,
+            and_program,
+            or_program,
+        }
+        .obligations(&mut kernel)
+        .unwrap();
+
+        for proposition in [
+            goals.true_calls,
+            goals.false_never_calls,
+            goals.or_calls_iff,
+            goals.and_calls_iff,
+        ] {
+            assert_eq!(kernel.classifier(proposition).unwrap(), bool_ty);
+        }
+        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
     }
 }

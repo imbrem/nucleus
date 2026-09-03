@@ -151,6 +151,7 @@ impl SpecTecExecution {
     ) -> Result<AssertionReachability, WasmLogicError> {
         let starts = self.admissible_starts(kernel, exported)?;
         Ok(AssertionReachability {
+            program_ty: self.state_ty,
             state_ty: self.state_ty,
             bool_ty: self.bool_ty,
             starts,
