@@ -59,3 +59,9 @@ all theorem premises, which is the expected shape for early semantic results
 conditional on the complete `SpecTec` theory and explicit representation laws.
 `Established` is reserved for the stronger premise-free case; conversion to it
 rechecks that no assumptions remain.
+
+`spectec_execution` extracts the exact lowered `instantiate`, `invoke`, and
+`Steps` declarations from the pinned source vocabulary. It adapts SpecTec's
+tuple-argument `Steps` relation to the curried predicate consumed by
+`AssertionReachability`; construction is classifier-checked and creates no
+theorem fact.

@@ -17,6 +17,10 @@ pub struct SpecTecExecution {
     pub steps: Ref,
     /// Exact checked classifier of `steps`.
     pub steps_ty: Ref,
+    /// Exact lowered graph predicate for `$instantiate`.
+    pub instantiate: Ref,
+    /// Exact lowered graph predicate for `$invoke`.
+    pub invoke: Ref,
 }
 
 /// Why the WebAssembly program-logic adapter could not be constructed.
@@ -81,6 +85,8 @@ pub fn spectec_execution(
             count: 0,
         })?
         .reference();
+    let instantiate = unique_definition(document, "instantiate")?;
+    let invoke = unique_definition(document, "invoke")?;
     let tuple = document
         .operations()
         .find(|operation| {
@@ -96,6 +102,8 @@ pub fn spectec_execution(
     let mut staged = kernel.fork();
     let roots = [
         relation,
+        instantiate,
+        invoke,
         tuple,
         document.schema.value(),
         document.schema.bool_ty(),
@@ -137,5 +145,30 @@ pub fn spectec_execution(
         bool_ty: document.schema.bool_ty(),
         steps,
         steps_ty: curried_ty,
+        instantiate,
+        invoke,
     })
+}
+
+fn unique_definition(
+    document: &ParameterizedDocument,
+    name: &'static str,
+) -> Result<Ref, WasmLogicError> {
+    let ids = document.schema.named(IlKind::Definition, name);
+    let [id] = ids else {
+        return Err(WasmLogicError::Declaration {
+            kind: IlKind::Definition,
+            name,
+            count: ids.len(),
+        });
+    };
+    document
+        .schema
+        .declaration(*id)
+        .map(crate::HolDeclaration::reference)
+        .ok_or(WasmLogicError::Declaration {
+            kind: IlKind::Definition,
+            name,
+            count: 0,
+        })
 }
