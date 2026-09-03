@@ -3146,6 +3146,195 @@ impl RunObservation {
         })
     }
 
+    /// Transports universal absence from a specification to an implementation.
+    ///
+    /// This is the checked contrapositive of
+    /// [`Self::prove_refinement_preserves_may`]: an implementation witness
+    /// would transport to a forbidden specification witness. Premises from
+    /// both refinement and the specification's `never` proof remain visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `refinement` proves the displayed directional
+    /// refinement, `specification_never` positively proves this observation's
+    /// `never` proposition for the specification, and every checked transport,
+    /// negation, resolution, or alignment step succeeds. `kernel` is unchanged
+    /// on failure.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    pub fn prove_refinement_preserves_never(
+        self,
+        kernel: &mut Kernel,
+        refinement: Evidence,
+        specification_never: Evidence,
+        profile: Ref,
+        implementation: Ref,
+        specification: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let implementation_graphs = self
+            .domain
+            .run_graphs(&mut staged, profile, implementation)?;
+        let specification_graphs = self
+            .domain
+            .run_graphs(&mut staged, profile, specification)?;
+        let implementation_may = self.may(&mut staged, profile, implementation)?;
+        let implementation_may_direct = self.graph_proposition(
+            &mut staged,
+            BehaviorQuantifier::May,
+            implementation_graphs.domain,
+            implementation_graphs.runs,
+            &[],
+        )?;
+        let implementation_may_reduced = certify_curried_beta2(&mut staged, implementation_may)?;
+        join_alpha_equivalent(
+            &mut staged,
+            implementation_may_reduced,
+            implementation_may_direct,
+        )
+        .map_err(|_| KernelError::InvalidTheoremRule {
+            rule: "refinement never implementation-may reduction",
+        })?;
+        let assumed_direct = staged.identity(positive(implementation_may_direct))?;
+        staged.convert_conclusions(
+            assumed_direct,
+            implementation_may_direct,
+            implementation_may,
+        )?;
+        let transported = self.prove_refinement_preserves_may(
+            &mut staged,
+            refinement,
+            Evidence {
+                proposition: implementation_may,
+                theorem: assumed_direct,
+                holds: true,
+            },
+            profile,
+            implementation,
+            specification,
+        )?;
+
+        let specification_may_direct = self.graph_proposition(
+            &mut staged,
+            BehaviorQuantifier::May,
+            specification_graphs.domain,
+            specification_graphs.runs,
+            &[],
+        )?;
+        let specification_may_reduced =
+            certify_curried_beta2(&mut staged, transported.proposition)?;
+        join_alpha_equivalent(
+            &mut staged,
+            specification_may_reduced,
+            specification_may_direct,
+        )
+        .map_err(|_| KernelError::InvalidTheoremRule {
+            rule: "refinement never specification-may reduction",
+        })?;
+        staged.convert_conclusions(
+            transported.theorem,
+            transported.proposition,
+            specification_may_direct,
+        )?;
+
+        let specification_never_proposition = self.never(&mut staged, profile, specification)?;
+        let denied = align_evidence(
+            &mut staged,
+            specification_never,
+            specification_never_proposition,
+        )?;
+        let specification_never_direct = self.graph_proposition(
+            &mut staged,
+            BehaviorQuantifier::Never,
+            specification_graphs.domain,
+            specification_graphs.runs,
+            &[],
+        )?;
+        let specification_never_reduced =
+            certify_curried_beta2(&mut staged, specification_never_proposition)?;
+        join_alpha_equivalent(
+            &mut staged,
+            specification_never_reduced,
+            specification_never_direct,
+        )
+        .map_err(|_| KernelError::InvalidTheoremRule {
+            rule: "refinement never specification reduction",
+        })?;
+        staged.convert_conclusions(
+            denied,
+            specification_never_proposition,
+            specification_never_direct,
+        )?;
+        let denied_may = staged.flatten_conclusion(denied, positive(specification_never_direct))?;
+        let denied_may_formula = staged
+            .arena()
+            .children(specification_never_direct)
+            .and_then(|mut children| children.next())
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "refinement never negation body",
+            })?;
+        align_theorem_conclusion(
+            &mut staged,
+            denied_may,
+            denied_may_formula,
+            specification_may_direct,
+            "refinement never denied-may alignment",
+        )?;
+        let contradiction = staged.resolve(
+            transported.theorem,
+            denied_may,
+            positive(specification_may_direct),
+        )?;
+        staged.not_right(contradiction, positive(implementation_may_direct))?;
+
+        let implementation_never_direct = self.graph_proposition(
+            &mut staged,
+            BehaviorQuantifier::Never,
+            implementation_graphs.domain,
+            implementation_graphs.runs,
+            &[],
+        )?;
+        let implementation_never_body = staged
+            .arena()
+            .children(implementation_never_direct)
+            .and_then(|mut children| children.next())
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "refinement never implementation negation body",
+            })?;
+        join_alpha_equivalent(
+            &mut staged,
+            implementation_never_body,
+            implementation_may_direct,
+        )
+        .map_err(|_| KernelError::InvalidTheoremRule {
+            rule: "refinement never implementation-may alignment",
+        })?;
+        staged.convert_conclusions(
+            contradiction,
+            implementation_may_direct,
+            implementation_never_body,
+        )?;
+        let proof = staged.fold_conclusion(contradiction, positive(implementation_never_direct))?;
+        let implementation_never = self.never(&mut staged, profile, implementation)?;
+        let implementation_never_reduced =
+            certify_curried_beta2(&mut staged, implementation_never)?;
+        join_alpha_equivalent(
+            &mut staged,
+            implementation_never_reduced,
+            implementation_never_direct,
+        )
+        .map_err(|_| KernelError::InvalidTheoremRule {
+            rule: "refinement never result reduction",
+        })?;
+        staged.convert_conclusions(proof, implementation_never_direct, implementation_never)?;
+        staged.contract_theorem(proof)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: implementation_never,
+            theorem: proof,
+            holds: true,
+        })
+    }
+
     /// Constructs `module -> bool` for one profile and quantification mode.
     ///
     /// The result plugs directly into a generic contextual observation.
@@ -3950,6 +4139,45 @@ mod tests {
         EvidenceScope::positive(&[left_middle_refinement, implementation_may])
             .check(&kernel, specification_may)
             .unwrap();
+        let specification_never = observation
+            .never(&mut kernel, profile, other_module)
+            .unwrap();
+        let specification_never_evidence = Evidence {
+            proposition: specification_never,
+            theorem: kernel
+                .identity(super::positive(specification_never))
+                .unwrap(),
+            holds: true,
+        };
+        let implementation_never = observation
+            .prove_refinement_preserves_never(
+                &mut kernel,
+                left_middle_refinement_evidence,
+                specification_never_evidence,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[left_middle_refinement, specification_never])
+            .check(&kernel, implementation_never)
+            .unwrap();
+        let before = kernel.arena().clone();
+        let theorem_count = kernel.thm().live_theorems().count();
+        assert!(
+            observation
+                .prove_refinement_preserves_never(
+                    &mut kernel,
+                    left_middle_refinement_evidence,
+                    implementation_may_evidence,
+                    profile,
+                    module,
+                    other_module,
+                )
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
         let before = kernel.arena().clone();
         let theorem_count = kernel.thm().live_theorems().count();
         assert!(
