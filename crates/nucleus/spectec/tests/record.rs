@@ -2290,8 +2290,10 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         .forwarding_module(&mut kernel, import_module, assert_name, export_name)
         .unwrap();
     let false_module = wasm.empty_module(&mut kernel).unwrap();
-    assert_eq!(true_module.term(), forwarding);
-    assert_eq!(false_module.term(), empty_module);
+    covalence_logic_hol_derived::join_same_syntax(&mut kernel, true_module.term(), forwarding)
+        .unwrap();
+    covalence_logic_hol_derived::join_same_syntax(&mut kernel, false_module.term(), empty_module)
+        .unwrap();
     let true_initial = wasm.configuration(start.initial);
     let final_state = start.initial;
     let true_final = wasm.configuration(final_state);

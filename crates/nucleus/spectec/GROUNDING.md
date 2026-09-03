@@ -246,6 +246,13 @@ The companion `forwarding_module_calls_assert_in_wasmtime` test supplies an
 observes the call. It is the positive runtime oracle for `TRUE`, under the same
 strict separation from theorem evidence.
 
+Both runtime comparisons are reproducibly scoped to the `wg-3.0` SpecTec
+bundle at WebAssembly/spec revision
+`9d36019973201a19f9c9ebb0f10828b2fe2374aa`, Wasmtime `48.0.1`, its default
+engine configuration, a single store/thread, and the explicit host imports in
+the tests. `Cargo.lock` pins the runtime artifact. This profile record is audit
+metadata only and is never admitted by `EvidenceScope`.
+
 `forwarding_wasm_module` now constructs the corresponding structural HOL term
 from the exact pinned Wasm AST constructors: one nullary function type, one
 function import at type index zero, and one export of function index zero. Its
