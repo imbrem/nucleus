@@ -10,8 +10,8 @@ traps, returns, and compound trace properties are observation adapters rather
 than separate execution semantics. Unary trace and outcome predicates have
 checked adapters that explicitly ignore the other component, covering the
 common call/safety and return/trap cases without hand-built lambdas. A domain
-also defines equality of complete
-allowed run graphs and directional refinement: an implementation has the same
+also defines `same_runs`, equality of complete allowed run graphs, and
+directional `refines_runs`: an implementation has the same
 admissible invocation domain and may remove, but not add, behaviors of its
 specification, but must retain some behavior whenever the specification has a
 run. Thus refinement cannot encode partiality merely by deleting every result.
@@ -20,8 +20,10 @@ Totality here means that every admissible invocation has a modeled trace and
 outcome; the profile and outcome representation determine whether traps or
 divergence count. Premise-free checked reflexivity theorems establish the first
 laws of equivalence and refinement without assuming either property. The
-resulting module predicates compose with contextual
-equivalence through a checked adapter, so the existing individual-function
+resulting module predicates compose with context-quantified observational
+equivalence through a checked adapter. Keeping `same_runs` distinct from
+contextual equivalence prevents a closed run-graph claim from silently standing
+in for linking-context indistinguishability, while the existing individual-function
 replacement theorems apply to any selected may, must, or never behavior. This
 layer constructs checked syntax only and neither executes Wasm nor creates
 theorem facts.

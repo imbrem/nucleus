@@ -257,7 +257,7 @@ impl RunDomain {
     /// Returns an error for incompatible profile/module terms, fresh-name
     /// exhaustion, or a rejected checked HOL construction. `kernel` is
     /// unchanged on failure.
-    pub fn equivalent(
+    pub fn same_runs(
         self,
         kernel: &mut Kernel,
         profile: Ref,
@@ -267,7 +267,7 @@ impl RunDomain {
         self.compare_runs(kernel, profile, left, right, RunComparison::Equivalent)
     }
 
-    /// Constructs behavioral refinement of an implementation by a specification.
+    /// Constructs run refinement of an implementation by a specification.
     ///
     /// `implementation refines specification` means the modules have the same
     /// admissible entry/input/host domain and every allowed implementation run
@@ -279,8 +279,8 @@ impl RunDomain {
     ///
     /// # Errors
     ///
-    /// Returns an error under the same conditions as [`Self::equivalent`].
-    pub fn refines(
+    /// Returns an error under the same conditions as [`Self::same_runs`].
+    pub fn refines_runs(
         self,
         kernel: &mut Kernel,
         profile: Ref,
@@ -452,7 +452,7 @@ impl RunDomain {
     ///
     /// Returns an error for incompatible profile/module terms or a rejected
     /// checked construction or theorem rule. `kernel` is unchanged on failure.
-    pub fn prove_equivalence_reflexive(
+    pub fn prove_same_runs_reflexive(
         self,
         kernel: &mut Kernel,
         profile: Ref,
@@ -469,8 +469,8 @@ impl RunDomain {
     /// # Errors
     ///
     /// Returns an error under the same conditions as
-    /// [`Self::prove_equivalence_reflexive`].
-    pub fn prove_refinement_reflexive(
+    /// [`Self::prove_same_runs_reflexive`].
+    pub fn prove_run_refinement_reflexive(
         self,
         kernel: &mut Kernel,
         profile: Ref,
@@ -1079,27 +1079,27 @@ mod tests {
         assert_eq!(kernel.classifier(must).unwrap(), bool_ty);
         assert_eq!(kernel.arena().tag(never), Some(Tag::Tm(TmTag::Op1)));
         assert_eq!(kernel.arena().tag(must), Some(Tag::Tm(TmTag::Op2)));
-        let equivalent = domain
-            .equivalent(&mut kernel, profile, module, other_module)
+        let same_runs = domain
+            .same_runs(&mut kernel, profile, module, other_module)
             .unwrap();
         let refinement = domain
-            .refines(&mut kernel, profile, module, other_module)
+            .refines_runs(&mut kernel, profile, module, other_module)
             .unwrap();
         let total = domain.total(&mut kernel, profile, module).unwrap();
         let deterministic = domain.deterministic(&mut kernel, profile, module).unwrap();
-        assert_eq!(kernel.classifier(equivalent).unwrap(), bool_ty);
+        assert_eq!(kernel.classifier(same_runs).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(refinement).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(total).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(deterministic).unwrap(), bool_ty);
         assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
         let equivalence_reflexive = domain
-            .prove_equivalence_reflexive(&mut kernel, profile, module)
+            .prove_same_runs_reflexive(&mut kernel, profile, module)
             .unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, equivalence_reflexive)
             .unwrap();
         let refinement_reflexive = domain
-            .prove_refinement_reflexive(&mut kernel, profile, module)
+            .prove_run_refinement_reflexive(&mut kernel, profile, module)
             .unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, refinement_reflexive)
@@ -1161,7 +1161,7 @@ mod tests {
         let before = kernel.arena().clone();
         assert!(
             domain
-                .refines(&mut kernel, profile, profile, other_module)
+                .refines_runs(&mut kernel, profile, profile, other_module)
                 .is_err()
         );
         assert_eq!(kernel.arena(), &before);
@@ -1170,7 +1170,7 @@ mod tests {
         let theorem_count = kernel.thm().live_theorems().count();
         assert!(
             domain
-                .prove_equivalence_reflexive(&mut kernel, module, module)
+                .prove_same_runs_reflexive(&mut kernel, module, module)
                 .is_err()
         );
         assert_eq!(kernel.arena(), &before);
