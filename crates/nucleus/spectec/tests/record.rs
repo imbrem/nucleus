@@ -1673,7 +1673,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let step_pair = execution
         .step_pair(&mut kernel, configuration, configuration)
         .unwrap();
-    let reflexive_witnesses = [state, state, instructions, instructions];
+    let reflexive_witnesses = [state, instructions, configuration, configuration];
     let reflexive_rule = steps_definition
         .specialize_rule(&mut kernel, 0, &reflexive_witnesses)
         .unwrap();
