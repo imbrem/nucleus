@@ -1780,6 +1780,204 @@ impl RunDomain {
         })
     }
 
+    /// Transports determinism from a specification to an implementation that
+    /// refines it.
+    ///
+    /// Each implementation run is also a specification run, so any two
+    /// implementation results are covered by the specification's determinism
+    /// premise. Both input premises remain visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `refinement` proves the displayed directional
+    /// refinement, `specification_deterministic` positively proves determinism
+    /// of the specification, and every checked specialization, propositional,
+    /// or alignment step succeeds. `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    pub fn prove_refinement_preserves_deterministic(
+        self,
+        kernel: &mut Kernel,
+        refinement: Evidence,
+        specification_deterministic: Evidence,
+        profile: Ref,
+        implementation: Ref,
+        specification: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let types = self.relation.types;
+        let expected_refinement =
+            self.refines_runs(&mut staged, profile, implementation, specification)?;
+        let refinement_theorem = align_evidence(&mut staged, refinement, expected_refinement)?;
+        let behavior = staged.expand_conclusion(
+            refinement_theorem,
+            positive(expected_refinement),
+            Some(true),
+        )?;
+        let [_, behavior_formula] = binary_children(&staged, expected_refinement)?;
+        binary_children(&staged, behavior_formula)?;
+        let inclusion =
+            staged.expand_conclusion(behavior, positive(behavior_formula), Some(false))?;
+
+        let implementation_graphs = self.run_graphs(&mut staged, profile, implementation)?;
+        let specification_graphs = self.run_graphs(&mut staged, profile, specification)?;
+        let specification_deterministic_proposition =
+            self.deterministic(&mut staged, profile, specification)?;
+        let deterministic = align_evidence(
+            &mut staged,
+            specification_deterministic,
+            specification_deterministic_proposition,
+        )?;
+        let first = staged.fresh_name(&[
+            expected_refinement,
+            specification_deterministic_proposition,
+            implementation_graphs.runs,
+            specification_graphs.runs,
+            types.entry,
+            types.inputs,
+            types.host,
+            types.trace,
+            types.outcome,
+        ])?;
+        let variables = [
+            staged.tm_fv(first, types.entry)?,
+            staged.tm_fv(checked_name(first, 1)?, types.inputs)?,
+            staged.tm_fv(checked_name(first, 2)?, types.host)?,
+            staged.tm_fv(checked_name(first, 3)?, types.trace)?,
+            staged.tm_fv(checked_name(first, 4)?, types.outcome)?,
+            staged.tm_fv(checked_name(first, 5)?, types.trace)?,
+            staged.tm_fv(checked_name(first, 6)?, types.outcome)?,
+        ];
+        let left_arguments = [
+            variables[0],
+            variables[1],
+            variables[2],
+            variables[3],
+            variables[4],
+        ];
+        let right_arguments = [
+            variables[0],
+            variables[1],
+            variables[2],
+            variables[5],
+            variables[6],
+        ];
+        let implementation_left = apply(&mut staged, implementation_graphs.runs, &left_arguments)?;
+        let implementation_right =
+            apply(&mut staged, implementation_graphs.runs, &right_arguments)?;
+        let specification_left = apply(&mut staged, specification_graphs.runs, &left_arguments)?;
+        let specification_right = apply(&mut staged, specification_graphs.runs, &right_arguments)?;
+        let implementation_both =
+            staged.op2(Op2::And, implementation_left, implementation_right)?;
+        let specification_both = staged.op2(Op2::And, specification_left, specification_right)?;
+        let same_trace = staged.eq(types.bool_ty, variables[3], variables[5])?;
+        let same_outcome = staged.eq(types.bool_ty, variables[4], variables[6])?;
+        let same_result = staged.op2(Op2::And, same_trace, same_outcome)?;
+        let specification_implication = staged.op2(Op2::Imp, specification_both, same_result)?;
+        let specification_direct = quantify_forall(
+            &mut staged,
+            types.bool_ty,
+            &variables,
+            specification_implication,
+        )?;
+        let specification_reduced =
+            certify_curried_beta2(&mut staged, specification_deterministic_proposition)?;
+        join_alpha_equivalent(&mut staged, specification_reduced, specification_direct).map_err(
+            |_| KernelError::InvalidTheoremRule {
+                rule: "refinement deterministic specification reduction",
+            },
+        )?;
+        staged.convert_conclusions(
+            deterministic,
+            specification_deterministic_proposition,
+            specification_direct,
+        )?;
+        let deterministic = specialize_universal_to(
+            &mut staged,
+            deterministic,
+            &variables,
+            specification_implication,
+            "refinement deterministic specification specialization",
+        )?;
+        let deterministic =
+            staged.expand_conclusion(deterministic, positive(specification_implication), None)?;
+
+        let assumed = staged.identity(positive(implementation_both))?;
+        let implementation_left_fact =
+            staged.expand_conclusion(assumed, positive(implementation_both), Some(false))?;
+        let implementation_right_fact =
+            staged.expand_conclusion(assumed, positive(implementation_both), Some(true))?;
+        let left_implication = staged.op2(Op2::Imp, implementation_left, specification_left)?;
+        let left_inclusion = specialize_universal_to(
+            &mut staged,
+            inclusion,
+            &left_arguments,
+            left_implication,
+            "refinement deterministic left inclusion specialization",
+        )?;
+        let left_inclusion =
+            staged.expand_conclusion(left_inclusion, positive(left_implication), None)?;
+        let specification_left_fact = staged.resolve(
+            implementation_left_fact,
+            left_inclusion,
+            positive(implementation_left),
+        )?;
+        let right_implication = staged.op2(Op2::Imp, implementation_right, specification_right)?;
+        let right_inclusion = specialize_universal_to(
+            &mut staged,
+            inclusion,
+            &right_arguments,
+            right_implication,
+            "refinement deterministic right inclusion specialization",
+        )?;
+        let right_inclusion =
+            staged.expand_conclusion(right_inclusion, positive(right_implication), None)?;
+        let specification_right_fact = staged.resolve(
+            implementation_right_fact,
+            right_inclusion,
+            positive(implementation_right),
+        )?;
+        let specification_both_fact = staged.and_right(
+            specification_left_fact,
+            specification_right_fact,
+            positive(specification_both),
+        )?;
+        let same_result_fact = staged.resolve(
+            specification_both_fact,
+            deterministic,
+            positive(specification_both),
+        )?;
+        staged.contract_theorem(same_result_fact)?;
+        let implementation_implication = staged.op2(Op2::Imp, implementation_both, same_result)?;
+        let proof = staged.imp_right(same_result_fact, positive(implementation_implication))?;
+        staged.contract_theorem(proof)?;
+        let (direct, proof) = introduce_forall(
+            &mut staged,
+            types.bool_ty,
+            &variables,
+            implementation_implication,
+            proof,
+        )?;
+        let implementation_deterministic =
+            self.deterministic(&mut staged, profile, implementation)?;
+        let implementation_reduced =
+            certify_curried_beta2(&mut staged, implementation_deterministic)?;
+        align_theorem_conclusion(
+            &mut staged,
+            proof,
+            direct,
+            implementation_reduced,
+            "refinement deterministic result alignment",
+        )?;
+        staged.convert_conclusions(proof, implementation_reduced, implementation_deterministic)?;
+        staged.contract_theorem(proof)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: implementation_deterministic,
+            theorem: proof,
+            holds: true,
+        })
+    }
+
     /// Proves that every module has the same allowed run graph as itself.
     ///
     /// The proof uses only checked equality reflexivity, propositional rules,
@@ -5112,6 +5310,29 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[left_middle_refinement, specification_total])
             .check(&kernel, implementation_total)
+            .unwrap();
+        let specification_deterministic = domain
+            .deterministic(&mut kernel, profile, other_module)
+            .unwrap();
+        let specification_deterministic_evidence = Evidence {
+            proposition: specification_deterministic,
+            theorem: kernel
+                .identity(super::positive(specification_deterministic))
+                .unwrap(),
+            holds: true,
+        };
+        let implementation_deterministic = domain
+            .prove_refinement_preserves_deterministic(
+                &mut kernel,
+                left_middle_refinement_evidence,
+                specification_deterministic_evidence,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[left_middle_refinement, specification_deterministic])
+            .check(&kernel, implementation_deterministic)
             .unwrap();
         let implementation_may = observation.may(&mut kernel, profile, module).unwrap();
         let implementation_may_evidence = Evidence {
