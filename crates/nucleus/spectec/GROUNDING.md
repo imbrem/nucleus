@@ -28,8 +28,9 @@ The same mechanism is exposed as `RunProperty`: any checked
 predicate with generic `same_runs` preservation and contextual-observation
 adapters. Contextual run equivalence generically preserves every such property,
 and checked negative evidence for one refutes contextual run equivalence. The
-four behavior quantifiers lower through this API rather than forming a
-privileged property family.
+properties compose pointwise through immutable conjunction, disjunction, and
+negation. The four behavior quantifiers lower through this API rather than
+forming a privileged property family.
 `RunDomain::in_context` attaches and validates a reusable linking operation and
 context admissibility predicate. The resulting `RunContext` owns that domain,
 so mixing observations or equivalence evidence from another execution policy

@@ -2056,6 +2056,64 @@ impl RunProperty {
         self.property
     }
 
+    /// Constructs the pointwise negation of this run property.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if checked application, negation, or abstraction
+    /// fails. `kernel` is unchanged on failure.
+    pub fn negate(self, kernel: &mut Kernel) -> Result<Self, KernelError> {
+        let mut staged = kernel.fork();
+        let (domain, runs) = property_variables(&mut staged, self.domain, &[self.property])?;
+        let value = apply(&mut staged, self.property, &[domain, runs])?;
+        let body = staged.op1(Op1::Not, value)?;
+        let property = abstract_property(&mut staged, self.domain, domain, runs, body)?;
+        let property = self.domain.property(&mut staged, property)?;
+        *kernel = staged;
+        Ok(property)
+    }
+
+    /// Constructs pointwise conjunction with another run property.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RunCompositionError::DomainMismatch`] unless both properties
+    /// belong to the same run domain, or if checked HOL construction fails.
+    /// `kernel` is unchanged on failure.
+    pub fn and(self, kernel: &mut Kernel, other: Self) -> Result<Self, RunCompositionError> {
+        self.combine(kernel, other, Op2::And)
+    }
+
+    /// Constructs pointwise disjunction with another run property.
+    ///
+    /// # Errors
+    ///
+    /// Returns under the same conditions as [`Self::and`].
+    pub fn or(self, kernel: &mut Kernel, other: Self) -> Result<Self, RunCompositionError> {
+        self.combine(kernel, other, Op2::Or)
+    }
+
+    fn combine(
+        self,
+        kernel: &mut Kernel,
+        other: Self,
+        operation: Op2,
+    ) -> Result<Self, RunCompositionError> {
+        if self.domain != other.domain {
+            return Err(RunCompositionError::DomainMismatch);
+        }
+        let mut staged = kernel.fork();
+        let (domain, runs) =
+            property_variables(&mut staged, self.domain, &[self.property, other.property])?;
+        let left = apply(&mut staged, self.property, &[domain, runs])?;
+        let right = apply(&mut staged, other.property, &[domain, runs])?;
+        let body = staged.op2(operation, left, right)?;
+        let property = abstract_property(&mut staged, self.domain, domain, runs, body)?;
+        let property = self.domain.property(&mut staged, property)?;
+        *kernel = staged;
+        Ok(property)
+    }
+
     /// Constructs this property for one profile and module.
     ///
     /// # Errors
@@ -2181,20 +2239,23 @@ pub struct RunObservation {
     observe: Ref,
 }
 
-/// Failure to compose behavior observations.
+/// Failure to compose run observations or properties.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
-pub enum RunObservationError {
+pub enum RunCompositionError {
     /// A checked HOL construction failed.
     #[snafu(transparent)]
     Kernel {
         /// Underlying checked failure.
         source: KernelError,
     },
-    /// Binary observations came from different execution domains.
-    #[snafu(display("cannot combine observations from different run domains"))]
+    /// Binary schemas came from different execution domains.
+    #[snafu(display("cannot combine schemas from different run domains"))]
     DomainMismatch,
 }
+
+/// Backwards-compatible name for behavior-observation composition failures.
+pub type RunObservationError = RunCompositionError;
 
 impl RunObservation {
     /// Returns the underlying versioned execution relation.
@@ -2579,6 +2640,38 @@ fn checked_name(first: u64, offset: u64) -> Result<u64, KernelError> {
     first.checked_add(offset).ok_or(KernelError::TooManyNames)
 }
 
+fn property_variables(
+    kernel: &mut Kernel,
+    domain: RunDomain,
+    properties: &[Ref],
+) -> Result<(Ref, Ref), KernelError> {
+    let mut roots = vec![
+        domain.domain_ty,
+        domain.run_graph_ty,
+        domain.relation.types.bool_ty,
+        domain.relation.runs,
+        domain.admissible,
+    ];
+    roots.extend_from_slice(properties);
+    let first = kernel.fresh_name(&roots)?;
+    let admissible = kernel.tm_fv(first, domain.domain_ty)?;
+    let runs = kernel.tm_fv(checked_name(first, 1)?, domain.run_graph_ty)?;
+    Ok((admissible, runs))
+}
+
+fn abstract_property(
+    kernel: &mut Kernel,
+    domain: RunDomain,
+    admissible: Ref,
+    runs: Ref,
+    body: Ref,
+) -> Result<Ref, KernelError> {
+    let by_runs_ty = kernel.ty_arr(domain.run_graph_ty, domain.relation.types.bool_ty)?;
+    let by_runs = kernel.lam_at(by_runs_ty, runs, body)?;
+    let property_ty = kernel.ty_arr(domain.domain_ty, by_runs_ty)?;
+    kernel.lam_at(property_ty, admissible, by_runs)
+}
+
 fn observation_variables(
     kernel: &mut Kernel,
     domain: RunDomain,
@@ -2944,6 +3037,9 @@ mod tests {
             .unwrap();
         let custom_property_term = kernel.tm_fv(33, property_ty).unwrap();
         let custom_property = domain.property(&mut kernel, custom_property_term).unwrap();
+        let combined_property = may_property.and(&mut kernel, custom_property).unwrap();
+        let alternative_property = may_property.or(&mut kernel, custom_property).unwrap();
+        let negated_property = custom_property.negate(&mut kernel).unwrap();
         let custom_proposition = custom_property
             .proposition(&mut kernel, profile, module)
             .unwrap();
@@ -2962,6 +3058,10 @@ mod tests {
             negated_observation,
         ] {
             let proposition = composed.may(&mut kernel, profile, module).unwrap();
+            assert_eq!(kernel.classifier(proposition).unwrap(), bool_ty);
+        }
+        for composed in [combined_property, alternative_property, negated_property] {
+            let proposition = composed.proposition(&mut kernel, profile, module).unwrap();
             assert_eq!(kernel.classifier(proposition).unwrap(), bool_ty);
         }
         let same_runs = domain
@@ -3378,10 +3478,19 @@ mod tests {
 
         let other_domain = relation.under(&mut kernel, other_admissible).unwrap();
         let other_observation = other_domain.observe(&mut kernel, observe).unwrap();
+        let other_property = other_domain
+            .property(&mut kernel, custom_property_term)
+            .unwrap();
         let before = kernel.arena().clone();
         assert!(matches!(
             observation.and(&mut kernel, other_observation),
             Err(super::RunObservationError::DomainMismatch)
+        ));
+        assert_eq!(kernel.arena(), &before);
+        let before = kernel.arena().clone();
+        assert!(matches!(
+            custom_property.and(&mut kernel, other_property),
+            Err(super::RunCompositionError::DomainMismatch)
         ));
         assert_eq!(kernel.arena(), &before);
         let before = kernel.arena().clone();

@@ -62,8 +62,8 @@ pub use relational::{
     relational_relations, relational_relations_avoiding,
 };
 pub use run::{
-    BehaviorQuantifier, RunContext, RunDomain, RunObservation, RunObservationError, RunProofError,
-    RunProperty, RunRelation, RunTypes,
+    BehaviorQuantifier, RunCompositionError, RunContext, RunDomain, RunObservation,
+    RunObservationError, RunProofError, RunProperty, RunRelation, RunTypes,
 };
 pub use schema::{
     HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,
