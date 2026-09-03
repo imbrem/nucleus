@@ -1,9 +1,11 @@
 //! Adapters from the complete `SpecTec` document to program-logic predicates.
 
+use std::sync::Arc;
+
 use covalence_data_basic::Symbol;
 use covalence_data_spectec::IlKind;
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref, SynRel, builtin::Op2};
+use covalence_logic_hol::{Kernel, KernelError, Ref, SynRel, Tag, TmTag, builtin::Op2};
 use covalence_logic_hol_derived::{
     ExistsError, ForallError, ModelError, SyntaxError, forall_elim, introduce_exists,
     join_alpha_equivalent, join_same_syntax, open_exists, substitute,
@@ -11,8 +13,26 @@ use covalence_logic_hol_derived::{
 
 use crate::{
     AssertionReachability, ContextualObservation, Evidence, FunctionObservation,
-    ParameterizedDocument, StructuralConstructor, StructuralValueAlgebra,
+    ParameterizedDocument, StructuralConstructor, StructuralConstructorLaws,
+    StructuralValueAlgebra,
 };
+
+fn application_spine(kernel: &Kernel, mut value: Ref) -> (Ref, Vec<Ref>) {
+    let mut arguments = Vec::new();
+    while kernel.arena().tag(value) == Some(Tag::Tm(TmTag::App)) {
+        let Some(children) = kernel.arena().children(value) else {
+            break;
+        };
+        let children = children.collect::<Vec<_>>();
+        let [function, argument] = children.as_slice() else {
+            break;
+        };
+        arguments.push(*argument);
+        value = *function;
+    }
+    arguments.reverse();
+    (value, arguments)
+}
 
 /// Immutable view for composing structural `SpecTec` values in HOL.
 ///
@@ -69,6 +89,99 @@ impl<'a> SpecTecValueBuilder<'a> {
         self.algebra()
             .constructor(kernel, operation, arity)
             .map_err(|source| WasmLogicError::Kernel { source })
+    }
+
+    /// Finds the minimal recorded structural-constructor vocabulary used by
+    /// the supplied value roots.
+    ///
+    /// Constructors are returned in deterministic first-use order. Only full
+    /// application spines whose recorded domains and codomain are this erased
+    /// value carrier are selected; relation predicates and partial
+    /// applications are excluded.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a root has another classifier or a selected
+    /// operation cannot be validated. `kernel` is unchanged on failure.
+    pub fn constructors_in(
+        self,
+        kernel: &mut Kernel,
+        roots: &[Ref],
+    ) -> Result<Arc<[StructuralConstructor]>, WasmLogicError> {
+        let mut staged = kernel.fork();
+        for &root in roots {
+            let actual = staged
+                .classifier(root)
+                .map_err(|source| WasmLogicError::Kernel { source })?;
+            if actual != self.value_ty() {
+                return Err(WasmLogicError::Kernel {
+                    source: KernelError::ClassifierMismatch {
+                        expected: self.value_ty(),
+                        actual,
+                    },
+                });
+            }
+        }
+        let mut pending = roots.iter().rev().copied().collect::<Vec<_>>();
+        let mut visited = Vec::new();
+        let mut constructors = Vec::new();
+        while let Some(value) = pending.pop() {
+            if visited.contains(&value) {
+                continue;
+            }
+            visited.push(value);
+            let (head, arguments) = application_spine(&staged, value);
+            if let Some(operation) = self.document.operations().find(|operation| {
+                operation.reference == head
+                    && operation.signature.codomain == self.value_ty()
+                    && operation
+                        .signature
+                        .domains
+                        .iter()
+                        .all(|&domain| domain == self.value_ty())
+                    && operation.signature.domains.len() == arguments.len()
+            }) {
+                let constructor = self
+                    .algebra()
+                    .constructor(
+                        &mut staged,
+                        operation.reference,
+                        operation.signature.domains.len(),
+                    )
+                    .map_err(|source| WasmLogicError::Kernel { source })?;
+                if !constructors.contains(&constructor) {
+                    constructors.push(constructor);
+                }
+            }
+            if let Some(children) = staged.arena().children(value) {
+                let children = children.collect::<Vec<_>>();
+                pending.extend(children.into_iter().rev());
+            }
+        }
+        *kernel = staged;
+        Ok(Arc::from(constructors))
+    }
+
+    /// Constructs the complete constructor-separation obligations required by
+    /// the supplied structural roots.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as [`Self::constructors_in`]
+    /// or if checked law construction fails. `kernel` is unchanged on failure.
+    pub fn constructor_laws_for(
+        self,
+        kernel: &mut Kernel,
+        roots: &[Ref],
+    ) -> Result<StructuralConstructorLaws, WasmLogicError> {
+        let mut staged = kernel.fork();
+        let constructors = self.constructors_in(&mut staged, roots)?;
+        let laws = self
+            .algebra()
+            .constructor_laws(&mut staged, &constructors)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        *kernel = staged;
+        Ok(laws)
     }
 
     /// Constructs a list with the supplied elements.

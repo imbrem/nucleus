@@ -167,8 +167,11 @@ disjointness propositions. `SpecTecValueBuilder::structural_constructor`
 resolves the exact recorded lowering operation into that schema. Neither API
 creates evidence: until a concrete interpretation proves the propositions,
 they remain explicit premises suitable for `ParameterizedDocument`'s evidence
-scope. The record tests exercise this path for the pinned empty-list and module
-constructors.
+scope. `SpecTecValueBuilder::constructor_laws_for` traverses structural value
+roots, selects complete recorded constructor applications, and produces the
+minimal finite law bundle without requiring callers to duplicate the lowering
+vocabulary. The record tests exercise this path over the complete structural
+empty-module term.
 
 Grounding therefore requires all of the following:
 

@@ -2387,16 +2387,38 @@ fn empty_module_uses_exact_expression_constructor_vocabulary() {
         .structural_constructor(&mut kernel, "expression:Case(\"MODULE%%%%%%%%%%%\")", 1)
         .unwrap();
     let constructor_laws = builder
-        .algebra()
-        .constructor_laws(&mut kernel, &[empty_list_constructor, module_constructor])
+        .constructor_laws_for(&mut kernel, &[module])
         .unwrap();
-    assert_eq!(constructor_laws.propositions().len(), 3);
+    assert!(
+        constructor_laws
+            .constructors()
+            .contains(&empty_list_constructor)
+    );
+    assert!(
+        constructor_laws
+            .constructors()
+            .contains(&module_constructor)
+    );
+    let constructor_count = constructor_laws.constructors().len();
+    assert_eq!(constructor_count, 4);
+    assert_eq!(
+        constructor_laws.propositions().len(),
+        constructor_count * (constructor_count + 1) / 2
+    );
     assert!(
         constructor_laws
             .propositions()
             .iter()
             .all(|&law| kernel.classifier(law).unwrap() == bool_ty)
     );
+    let non_value = kernel.bool(bool_ty, true).unwrap();
+    let before = kernel.arena().clone();
+    assert!(
+        builder
+            .constructor_laws_for(&mut kernel, &[non_value])
+            .is_err()
+    );
+    assert_eq!(kernel.arena(), &before);
 
     assert_eq!(kernel.classifier(module).unwrap(), value);
     let module_fields = builder
