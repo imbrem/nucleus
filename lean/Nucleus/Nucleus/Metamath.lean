@@ -5,6 +5,7 @@ import Nucleus.Metamath.Verify
 import Nucleus.Metamath.VerifyTest
 import Nucleus.Metamath.Embedding
 import Nucleus.Metamath.HolMM
+import Nucleus.Metamath.Metatheory
 
 /-!
 # Metamath
@@ -43,4 +44,8 @@ logic, into `Nucleus.Hol`'s pointed-set semantics, proves 29 of its 71 `$a`
 statements sound, and exhibits a countermodel for `ax-hbl1`. Its module
 documentation states precisely what is proved, what is assumed, and what is
 left open.
+
+`Nucleus.Metamath.Metatheory` makes axiom-set monotonicity explicit, proves
+soundness of the classical propositional axiom set, and proves conservativity
+for explicit nonrecursive propositional definitions.
 -/

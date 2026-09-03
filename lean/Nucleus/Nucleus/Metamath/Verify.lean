@@ -540,9 +540,16 @@ The obstacle is not the cut rule but the `$d` gap between `Assertion.frame` and
 `Assertion.scopeDisjoints`. An application discharges only `frame.disjoints`,
 the mandatory subset, while the cited theorem's own derivation lives in a
 context carrying `scopeDisjoints`, which may constrain dummy variables that
-occur nowhere in its statement. Bridging the two requires renaming those dummies
-apart from the caller's variables — a genuine argument, not bookkeeping, and the
-natural next piece of this development.
+occur nowhere in its statement.
+
+This cannot be bridged by renaming alone in the present fixed-context relation:
+the renamed dummy's floating hypothesis is still absent from the caller's
+frame. `VerifyTest.dummyDisjoint` is a checked counterexample to the claim that
+every theorem is axiom-derivable in its mandatory frame. The right next
+abstraction is derivability with *locally bound* dummy floats and disjoints,
+fresh for the public conclusion. Conservativity can then rename local binders
+apart when splicing proofs, while its public statement still exposes only the
+mandatory frame.
 -/
 
 end Nucleus.Metamath

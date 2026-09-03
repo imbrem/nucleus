@@ -1,5 +1,14 @@
 # Metamath
 
+The public `trace` API reports exact transitive dependencies and `$a` leaves,
+and classifies leaves as logical axioms, conventional definitions, syntax
+constructors, or unclassified assertions. `AxiomIndex` computes deterministic
+whole-database answers in one forward pass. This is untrusted provenance
+metadata: verify the database separately before treating the report as evidence
+of a valid proof. See
+[`docs/metamath-axiom-audit.md`](../../../docs/metamath-axiom-audit.md) for the
+formal axiom-set, soundness, and conservativity results and their scope.
+
 This crate parses and validates Metamath databases. It supports comments,
 scopes, every declaration form, recursive `$[ file $]` inclusion, normal
 proofs, and compressed proofs (including `Z` saves and heap references).

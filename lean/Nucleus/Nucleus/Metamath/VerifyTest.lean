@@ -191,6 +191,97 @@ def dummyFloat : Database where
 
 example : verifyDatabase dummyFloat = .ok () := by decide
 
+/-!
+The tempting statement that every checked theorem is derivable from `$a`
+assertions in its *mandatory* frame is false.  A scope-local dummy can be
+required to satisfy an axiom's `$d` condition even though that condition quite
+correctly disappears from the theorem's public frame.
+
+`dummyDisjoint` is the smallest witness.  Its theorem checks in the active
+context containing `wps` and `$d ph ps`.  In the mandatory frame, however, the
+only derivable `wff` is `ph`; instantiating both inputs of `apart` with it
+violates the axiom's distinct-variable condition.  Fresh-name renaming cannot
+fix the missing floating hypothesis: a fresh variable is not derivable in the
+mandatory frame.
+-/
+def dummyDisjoint : Database where
+  symbols := wffPhPs
+  statements :=
+    [ .constant ["wff", "|-"]
+    , .var ["ph", "ps"]
+    , .float wphFloat
+    , .float wpsFloat
+    , axiom' "apart" ⟨"|-", ["ph"]⟩
+        { floats := [wphFloat, wpsFloat], essentials := [], disjoints := [("ph", "ps")] }
+    , .assert
+        { label := "th", conclusion := ⟨"|-", ["ph"]⟩
+          frame := frameOf [wphFloat] []
+          proof := some (.normal ["wph", "wps", "apart"])
+          scopeFloats := [wphFloat, wpsFloat]
+          scopeDisjoints := [("ph", "ps")] } ]
+
+example : verifyDatabase dummyDisjoint = .ok () := by decide
+
+/-- In the mandatory frame of `dummyDisjoint.th`, every axiom-only derivable
+`wff` is the sole active floating hypothesis `wff ph`. -/
+private theorem dummyDisjoint_wff {e : Expr}
+    (d : Provable dummyDisjoint (fun i => i = 4) (frameOf [wphFloat] []) e)
+    (ht : e.typecode = "wff") : e = wphFloat.expr := by
+  induction d with
+  | float mem =>
+      simp only [frameOf, List.mem_singleton] at mem
+      subst mem
+      rfl
+  | essential mem => simp [frameOf] at mem
+  | apply found allowed floats essentials disjoints ihf ihe =>
+      rename_i target σ
+      subst allowed
+      have found' : axiom' "apart" ⟨"|-", ["ph"]⟩
+          { floats := [wphFloat, wpsFloat], essentials := [],
+            disjoints := [("ph", "ps")] } = .assert target := by
+        simpa [dummyDisjoint, Database.statementAt] using found
+      cases found'
+      simp [applySubst] at ht
+
+private theorem dummyDisjoint_no_turnstile {e : Expr}
+    (d : Provable dummyDisjoint (fun i => i = 4) (frameOf [wphFloat] []) e)
+    (ht : e.typecode = "|-") : False := by
+  induction d with
+  | float mem =>
+      simp only [frameOf, List.mem_singleton] at mem
+      subst mem
+      simp [wphFloat, FloatHyp.expr] at ht
+  | essential mem => simp [frameOf] at mem
+  | apply found allowed floats essentials disjoints ihf ihe =>
+      rename_i target σ
+      subst allowed
+      have found' : axiom' "apart" ⟨"|-", ["ph"]⟩
+          { floats := [wphFloat, wpsFloat], essentials := [],
+            disjoints := [("ph", "ps")] } = .assert target := by
+        simpa [dummyDisjoint, Database.statementAt] using found
+      cases found'
+      have hph := dummyDisjoint_wff (floats wphFloat (by simp)) rfl
+      have hps := dummyDisjoint_wff (floats wpsFloat (by simp)) rfl
+      have hph' : σ.image "ph" = ["ph"] := by
+        simpa [FloatHyp.expr, applySubst, wphFloat] using hph
+      have hps' : σ.image "ps" = ["ph"] := by
+        simpa [FloatHyp.expr, applySubst, wpsFloat, wphFloat] using hps
+      change disjointsOk dummyDisjoint.isVariable [] σ [("ph", "ps")] = true at disjoints
+      simp only [disjointsOk, List.all_cons, List.all_nil, Bool.and_true] at disjoints
+      unfold disjointOk at disjoints
+      rw [hph', hps'] at disjoints
+      have hvar : dummyDisjoint.isVariable "ph" = true := by decide
+      simp [bodyVars, hvar] at disjoints
+
+/-- Consequently the checked theorem is not derivable from the database's sole
+`$a` assertion in its mandatory frame.  The conservativity statement needs a
+derivability notion with locally bound dummy variables, rather than a renaming
+lemma for the current fixed-context `Provable`. -/
+example :
+    ¬ Provable dummyDisjoint (fun i => i = 4) (frameOf [wphFloat] []) ⟨"|-", ["ph"]⟩ := by
+  intro d
+  exact dummyDisjoint_no_turnstile d rfl
+
 /-- The same proof, with `wps` **not** active where `th` is stated, is
 rejected. Active membership is what the checker tests, and it is a real test. -/
 def inactiveFloat : Database where
