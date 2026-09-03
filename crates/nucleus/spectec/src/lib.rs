@@ -45,11 +45,12 @@ pub use parameterized::{
 };
 pub use premise::{PremiseAlgebra, PremiseChildren, fold_premise};
 pub use program_logic::{
-    AssertCombinator, AssertionReachability, CallsAssert, Established, Evidence, EvidenceScope,
-    ProgramConnectives, ProgramLogicObligations, Proposition, ReachabilityProofError,
+    AssertCombinator, AssertionReachability, CallsAssert, ContextualObservation, Established,
+    Evidence, EvidenceScope, ObservationProofError, ProgramConnectives, ProgramLogicObligations,
+    Proposition, ReachabilityProofError,
 };
 pub use relational::{
-    RelationalCall, RelationalCaseError, RelationalClause, RelationalCondition,
+    RelationProofError, RelationalCall, RelationalCaseError, RelationalClause, RelationalCondition,
     RelationalDefinition, RelationalDefinitionSchema, RelationalDefinitionSource,
     RelationalExpressionAlgebra, RelationalRelation, RelationalRelationDefinition,
     RelationalResolver, RelationalTerm, relational_definition, relational_definition_declaration,

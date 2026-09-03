@@ -16,7 +16,7 @@ use covalence_logic_hol::{
     builtin::{Op1, Op2},
 };
 use covalence_logic_hol_derived::{
-    ExistsError, SyntaxError, introduce_exists, join_alpha_equivalent,
+    ExistsError, ForallError, SyntaxError, forall_elim, introduce_exists, join_alpha_equivalent,
 };
 
 /// A small, immutable, generic proposition schema.
@@ -351,9 +351,349 @@ impl AssertionReachability {
     }
 }
 
+/// Generic contextual observational equivalence.
+///
+/// A subject can be a complete Wasm module or one function definition. A
+/// context is respectively a module environment or a well-formed module with
+/// one function hole. `plug context subject` produces the closed object seen
+/// by `observe`; `admissible` keeps ill-formed linking contexts out of the
+/// quantification.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ContextualObservation {
+    /// Classifier of modules or function definitions being compared.
+    pub subject_ty: Ref,
+    /// Classifier of enclosing contexts.
+    pub context_ty: Ref,
+    /// Classifier of closed objects accepted by the observation.
+    pub observed_ty: Ref,
+    /// HOL Boolean classifier.
+    pub bool_ty: Ref,
+    /// Curried operation `context -> subject -> observed`.
+    pub plug: Ref,
+    /// Curried predicate `context -> subject -> bool`.
+    pub admissible: Ref,
+    /// Observation `observed -> bool`.
+    pub observe: Ref,
+}
+
+impl ContextualObservation {
+    /// Constructs contextual observational equivalence of two subjects.
+    ///
+    /// The result is
+    /// `forall context. admissible context left /\ admissible context right ->
+    /// observe (plug context left) = observe (plug context right)`.
+    /// This is useful unchanged for whole programs and individual functions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any supplied operation has an incompatible type,
+    /// quantification cannot allocate a fresh binder, or a checked constructor
+    /// fails. `kernel` is unchanged on failure.
+    pub fn equivalent(
+        self,
+        kernel: &mut Kernel,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        require_classifier(&mut staged, left, self.subject_ty)?;
+        require_classifier(&mut staged, right, self.subject_ty)?;
+        let context_name = staged.fresh_name(&[
+            self.subject_ty,
+            self.context_ty,
+            self.observed_ty,
+            self.bool_ty,
+            self.plug,
+            self.admissible,
+            self.observe,
+            left,
+            right,
+        ])?;
+        let context = staged.tm_fv(context_name, self.context_ty)?;
+        let proposition = self.at_context(&mut staged, context, left, right)?;
+        let equivalent = staged.forall_tm(self.bool_ty, context, proposition)?;
+        *kernel = staged;
+        Ok(equivalent)
+    }
+
+    /// Constructs the observation-preservation obligation at one context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for incompatible operands or a rejected checked HOL
+    /// constructor.
+    pub fn at_context(
+        self,
+        kernel: &mut Kernel,
+        context: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Ref, KernelError> {
+        require_classifier(kernel, context, self.context_ty)?;
+        require_classifier(kernel, left, self.subject_ty)?;
+        require_classifier(kernel, right, self.subject_ty)?;
+        let left_admissible = apply2(kernel, self.admissible, context, left)?;
+        let right_admissible = apply2(kernel, self.admissible, context, right)?;
+        let admissible = kernel.op2(Op2::And, left_admissible, right_admissible)?;
+        let left_closed = apply2(kernel, self.plug, context, left)?;
+        let right_closed = apply2(kernel, self.plug, context, right)?;
+        require_classifier(kernel, left_closed, self.observed_ty)?;
+        require_classifier(kernel, right_closed, self.observed_ty)?;
+        let left_observation = kernel.app(self.observe, left_closed)?;
+        let right_observation = kernel.app(self.observe, right_closed)?;
+        require_bool(kernel, self.bool_ty, left_observation)?;
+        require_bool(kernel, self.bool_ty, right_observation)?;
+        let same = kernel.eq(self.bool_ty, left_observation, right_observation)?;
+        kernel.op2(Op2::Imp, admissible, same)
+    }
+
+    /// Specializes checked contextual equivalence to one admissible context.
+    ///
+    /// This is the function-replacement theorem: instantiate `subject_ty`
+    /// with function definitions and `context_ty` with well-formed modules
+    /// containing one function hole.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless all three input theorems have the exact required
+    /// positive conclusions, or a checked specialization/propositional step
+    /// fails. `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_preservation(
+        self,
+        kernel: &mut Kernel,
+        equivalence: ThmId,
+        context: Ref,
+        left: Ref,
+        right: Ref,
+        left_admissible: ThmId,
+        right_admissible: ThmId,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        let specialized = forall_elim(&mut staged, equivalence, context)?;
+        let expected = self.at_context(&mut staged, context, left, right)?;
+        join_alpha_equivalent(&mut staged, specialized.proposition, expected)?;
+        let specialized_theorem = staged.copy_theorem(specialized.theorem)?;
+        staged.convert_conclusions(specialized_theorem, specialized.proposition, expected)?;
+        let implication_operands = staged
+            .arena()
+            .children(expected)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "contextual observation implication",
+            })?
+            .collect::<Vec<_>>();
+        let [antecedent, same] = implication_operands.as_slice() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "contextual observation implication operands",
+            }
+            .into());
+        };
+        let admissibility_operands = staged
+            .arena()
+            .children(*antecedent)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "contextual observation admissibility conjunction",
+            })?
+            .collect::<Vec<_>>();
+        let [left_ok, right_ok] = admissibility_operands.as_slice() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "contextual observation admissibility operands",
+            }
+            .into());
+        };
+        let left_fact = align_positive_fact(&mut staged, left_admissible, *left_ok)?;
+        let right_fact = align_positive_fact(&mut staged, right_admissible, *right_ok)?;
+        let antecedent_fact = staged.and_right(left_fact, right_fact, positive(*antecedent))?;
+        let same_identity = staged.identity(positive(*same))?;
+        let use_implication =
+            staged.imp_left(antecedent_fact, same_identity, positive(expected))?;
+        let theorem = staged.cut(specialized_theorem, use_implication, positive(expected))?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: *same,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Proves that one context distinguishes two subjects.
+    ///
+    /// The left observation must hold and the right observation must not hold;
+    /// both subjects must be admissible in `context`. The result is checked
+    /// negative evidence for contextual observational equivalence. Thus the
+    /// method directly proves `TRUE` and `FALSE` distinct once their `SpecTec`
+    /// reachability facts and an admissible identity context are available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any input theorem has the wrong signed conclusion,
+    /// or specialization, equality transport, or classical refutation fails.
+    /// `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_distinct(
+        self,
+        kernel: &mut Kernel,
+        context: Ref,
+        left: Ref,
+        right: Ref,
+        left_admissible: ThmId,
+        right_admissible: ThmId,
+        left_observed: ThmId,
+        right_not_observed: ThmId,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        let equivalence = self.equivalent(&mut staged, left, right)?;
+        let assumed_equivalence = staged.identity(positive(equivalence))?;
+        let preservation = self.prove_preservation(
+            &mut staged,
+            assumed_equivalence,
+            context,
+            left,
+            right,
+            left_admissible,
+            right_admissible,
+        )?;
+        let equality_children = staged
+            .arena()
+            .children(preservation.proposition)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "contextual observation equality",
+            })?
+            .collect::<Vec<_>>();
+        let [_, left_observation, right_observation] = equality_children.as_slice() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "contextual observation equality operands",
+            }
+            .into());
+        };
+        let left_fact =
+            align_observation_fact(&mut staged, left_observed, *left_observation, true)?;
+        let right_negative =
+            align_observation_fact(&mut staged, right_not_observed, *right_observation, false)?;
+        let right_positive = staged.eq_mp(preservation.theorem, left_fact)?;
+        staged.not_left(right_positive, positive(*right_observation))?;
+        let contradiction = staged.cut(
+            right_negative,
+            right_positive,
+            positive(*right_observation).negated(),
+        )?;
+        staged.not_right(contradiction, positive(equivalence))?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: equivalence,
+            theorem: contradiction,
+            holds: false,
+        })
+    }
+}
+
+fn align_observation_fact(
+    kernel: &mut Kernel,
+    theorem: ThmId,
+    target: Ref,
+    holds: bool,
+) -> Result<ThmId, ObservationProofError> {
+    let evidence = Evidence {
+        proposition: target,
+        theorem,
+        holds,
+    };
+    if require_conclusion(kernel, evidence).is_ok() {
+        return Ok(theorem);
+    }
+    let source = sole_evidence_proposition(kernel, theorem, holds)?;
+    join_alpha_equivalent(kernel, source, target)?;
+    let aligned = kernel.copy_theorem(theorem)?;
+    kernel.convert_conclusions(aligned, source, target)?;
+    require_conclusion(
+        kernel,
+        Evidence {
+            proposition: target,
+            theorem: aligned,
+            holds,
+        },
+    )?;
+    Ok(aligned)
+}
+
+fn sole_evidence_proposition(
+    kernel: &Kernel,
+    theorem: ThmId,
+    holds: bool,
+) -> Result<Ref, KernelError> {
+    let theorem = kernel
+        .thm()
+        .get(theorem)
+        .ok_or(KernelError::MissingTheorem { id: theorem })?;
+    let mut conclusions = theorem.rhs.rows();
+    let Some([literal]) = conclusions.next() else {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "contextual observation unit conclusion",
+        });
+    };
+    if conclusions.next().is_some() || literal.is_positive() != holds {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "contextual observation signed conclusion",
+        });
+    }
+    Ref::new(literal.magnitude().cast_signed()).ok_or(KernelError::InvalidTheoremRule {
+        rule: "contextual observation conclusion reference",
+    })
+}
+
+/// Why contextual observation preservation could not be proved.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+#[snafu(module)]
+pub enum ObservationProofError {
+    /// A checked HOL construction or theorem rule failed.
+    #[snafu(transparent)]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+    /// Equality-encoded universal specialization failed.
+    #[snafu(display("could not specialize contextual equivalence: {source}"))]
+    Forall {
+        /// Underlying checked derived-rule failure.
+        source: ForallError,
+    },
+    /// Checked formulas could not be aligned.
+    #[snafu(display("could not align contextual observation formulas: {source}"))]
+    Syntax {
+        /// Underlying checked alpha-equivalence failure.
+        source: SyntaxError,
+    },
+    /// An admissibility theorem did not prove the required positive fact.
+    #[snafu(display("could not align an admissibility theorem: {source}"))]
+    Reachability {
+        /// Underlying checked fact-alignment failure.
+        source: ReachabilityProofError,
+    },
+}
+
+impl From<ForallError> for ObservationProofError {
+    fn from(source: ForallError) -> Self {
+        Self::Forall { source }
+    }
+}
+
+impl From<SyntaxError> for ObservationProofError {
+    fn from(source: SyntaxError) -> Self {
+        Self::Syntax { source }
+    }
+}
+
+impl From<ReachabilityProofError> for ObservationProofError {
+    fn from(source: ReachabilityProofError) -> Self {
+        Self::Reachability { source }
+    }
+}
+
 /// Why a concrete assertion-reachability witness could not be proved.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
+#[snafu(module)]
 pub enum ReachabilityProofError {
     /// A checked HOL construction or theorem rule failed.
     #[snafu(transparent)]
@@ -545,6 +885,17 @@ fn require_bool(kernel: &mut Kernel, bool_ty: Ref, proposition: Ref) -> Result<(
         Err(KernelError::ClassifierMismatch {
             expected: bool_ty,
             actual: classifier,
+        })
+    }
+}
+
+fn require_classifier(kernel: &mut Kernel, term: Ref, expected: Ref) -> Result<(), KernelError> {
+    let actual = kernel.classifier(term)?;
+    if kernel.equivalent(actual, expected)? {
+        Ok(())
+    } else {
+        Err(KernelError::InvalidTheoremRule {
+            rule: "contextual observation classifier",
         })
     }
 }
@@ -1193,5 +1544,84 @@ mod tests {
             assert_eq!(kernel.classifier(proposition).unwrap(), bool_ty);
         }
         assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+    }
+
+    #[test]
+    fn contextual_function_equivalence_proves_replacement_observation() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let function_ty = kernel.ty_fv(1, star).unwrap();
+        let context_ty = kernel.ty_fv(2, star).unwrap();
+        let module_ty = kernel.ty_fv(3, star).unwrap();
+        let context_to_module = kernel.ty_arr(function_ty, module_ty).unwrap();
+        let plug_ty = kernel.ty_arr(context_ty, context_to_module).unwrap();
+        let context_to_bool = kernel.ty_arr(function_ty, bool_ty).unwrap();
+        let admissible_ty = kernel.ty_arr(context_ty, context_to_bool).unwrap();
+        let observe_ty = kernel.ty_arr(module_ty, bool_ty).unwrap();
+        let plug = kernel.tm_fv(10, plug_ty).unwrap();
+        let admissible = kernel.tm_fv(11, admissible_ty).unwrap();
+        let observe = kernel.tm_fv(12, observe_ty).unwrap();
+        let context = kernel.tm_fv(13, context_ty).unwrap();
+        let left = kernel.tm_fv(14, function_ty).unwrap();
+        let right = kernel.tm_fv(15, function_ty).unwrap();
+        let schema = ContextualObservation {
+            subject_ty: function_ty,
+            context_ty,
+            observed_ty: module_ty,
+            bool_ty,
+            plug,
+            admissible,
+            observe,
+        };
+        let equivalence = schema.equivalent(&mut kernel, left, right).unwrap();
+        let equivalence_fact = kernel.identity(positive(equivalence)).unwrap();
+        let left_ok = apply2(&mut kernel, admissible, context, left).unwrap();
+        let right_ok = apply2(&mut kernel, admissible, context, right).unwrap();
+        let left_ok_fact = kernel.identity(positive(left_ok)).unwrap();
+        let right_ok_fact = kernel.identity(positive(right_ok)).unwrap();
+
+        let preservation = schema
+            .prove_preservation(
+                &mut kernel,
+                equivalence_fact,
+                context,
+                left,
+                right,
+                left_ok_fact,
+                right_ok_fact,
+            )
+            .unwrap();
+
+        EvidenceScope::positive(&[equivalence, left_ok, right_ok])
+            .check(&kernel, preservation)
+            .unwrap();
+        assert_eq!(
+            kernel.classifier(preservation.proposition).unwrap(),
+            bool_ty
+        );
+
+        let left_module = apply2(&mut kernel, plug, context, left).unwrap();
+        let right_module = apply2(&mut kernel, plug, context, right).unwrap();
+        let left_observation = kernel.app(observe, left_module).unwrap();
+        let right_observation = kernel.app(observe, right_module).unwrap();
+        let left_observed = kernel.identity(positive(left_observation)).unwrap();
+        let right_not_observed = kernel
+            .identity(positive(right_observation).negated())
+            .unwrap();
+        let distinct = schema
+            .prove_distinct(
+                &mut kernel,
+                context,
+                left,
+                right,
+                left_ok_fact,
+                right_ok_fact,
+                left_observed,
+                right_not_observed,
+            )
+            .unwrap();
+        assert!(!distinct.holds);
+        require_conclusion(&kernel, distinct).unwrap();
     }
 }

@@ -1551,6 +1551,10 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         panic!("expected one Steps relation")
     };
     let steps_definition = document.semantics.relations().get(steps_id).unwrap();
+    assert_eq!(steps_definition.rules.len(), 2);
+    for &rule in steps_definition.rules.iter() {
+        assert_eq!(kernel.classifier(rule).unwrap(), bool_ty);
+    }
     assert_eq!(
         kernel.classifier(steps_definition.least.closure).unwrap(),
         bool_ty
@@ -1583,6 +1587,13 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let step_pair = execution
         .step_pair(&mut kernel, configuration, configuration)
         .unwrap();
+    let reflexive_rule = steps_definition
+        .specialize_rule(&mut kernel, 0, &[state, instructions])
+        .unwrap();
+    assert_eq!(
+        kernel.classifier(reflexive_rule.proposition).unwrap(),
+        bool_ty
+    );
     let specialized_steps = document
         .semantics
         .theory()

@@ -71,14 +71,6 @@ impl LeastFamilyBuilder<'_> {
     /// exhausted, or checked quantification, implication, or abstraction
     /// fails. The target kernel remains unchanged on failure.
     pub fn finish(mut self, closure: Ref) -> Result<Vec<LeastPredicate>, LeastPredicateError> {
-        let bool_tail = self
-            .staged
-            .ty_arr(self.bool_ty, self.bool_ty)
-            .map_err(|source| LeastPredicateError::Kernel { source })?;
-        let bool_binary = self
-            .staged
-            .ty_arr(self.bool_ty, bool_tail)
-            .map_err(|source| LeastPredicateError::Kernel { source })?;
         let mut predicates = Vec::with_capacity(self.predicate_tys.len());
         for ((&predicate_ty, &candidate), predicate_arrows) in self
             .predicate_tys
@@ -100,14 +92,9 @@ impl LeastFamilyBuilder<'_> {
                     .map_err(|source| LeastPredicateError::Kernel { source })?;
                 arguments.push(argument);
             }
-            let logic_name = next_name(self.base, &mut self.offset)?;
-            let logic = self
-                .staged
-                .tm_fv(logic_name, bool_binary)
-                .map_err(|source| LeastPredicateError::Kernel { source })?;
             let implication = self
                 .staged
-                .imp_tm(self.bool_ty, logic, closure, applied)
+                .op2(Op2::Imp, closure, applied)
                 .map_err(|source| LeastPredicateError::Kernel { source })?;
             let mut characterization = implication;
             for &family_candidate in self.candidates.iter().rev() {
@@ -306,12 +293,6 @@ where
     }
     let closure = build_closure(&mut staged, &candidates)
         .map_err(|source| LeastPredicateError::Kernel { source })?;
-    let bool_tail = staged
-        .ty_arr(bool_ty, bool_ty)
-        .map_err(|source| LeastPredicateError::Kernel { source })?;
-    let bool_binary = staged
-        .ty_arr(bool_ty, bool_tail)
-        .map_err(|source| LeastPredicateError::Kernel { source })?;
     let mut predicates = Vec::with_capacity(predicate_tys.len());
     for ((&predicate_ty, &candidate), predicate_arrows) in
         predicate_tys.iter().zip(&candidates).zip(&arrows)
@@ -328,12 +309,8 @@ where
                 .map_err(|source| LeastPredicateError::Kernel { source })?;
             arguments.push(argument);
         }
-        let logic_name = next_name(base, &mut offset)?;
-        let logic = staged
-            .tm_fv(logic_name, bool_binary)
-            .map_err(|source| LeastPredicateError::Kernel { source })?;
         let implication = staged
-            .imp_tm(bool_ty, logic, closure, applied)
+            .op2(Op2::Imp, closure, applied)
             .map_err(|source| LeastPredicateError::Kernel { source })?;
         let mut characterization = implication;
         for &family_candidate in candidates.iter().rev() {
@@ -392,18 +369,7 @@ pub fn close_hol_rule(
             kernel.app(function, argument)
         })?;
     let premises = conjoin(kernel, bool_ty, &rule.premises)?;
-    let bool_tail = kernel.ty_arr(bool_ty, bool_ty)?;
-    let bool_binary = kernel.ty_arr(bool_ty, bool_tail)?;
-    let roots = rule
-        .binders
-        .iter()
-        .chain(rule.premises.iter())
-        .copied()
-        .chain([candidate, conclusion, bool_ty, bool_binary])
-        .collect::<Vec<_>>();
-    let name = kernel.fresh_name(&roots)?;
-    let logic = kernel.tm_fv(name, bool_binary)?;
-    let mut proposition = kernel.imp_tm(bool_ty, logic, premises, conclusion)?;
+    let mut proposition = kernel.op2(Op2::Imp, premises, conclusion)?;
     for &binder in rule.binders.iter().rev() {
         proposition = kernel.forall_tm(bool_ty, binder, proposition)?;
     }

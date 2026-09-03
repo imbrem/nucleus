@@ -113,8 +113,9 @@ where
                 }
                 for (member, definition) in relation_ids.into_iter().zip(definitions) {
                     lowered_relations.insert(member);
+                    let equation = definition.equation;
                     relations.insert(member, definition);
-                    constraints.insert(member, definition.equation);
+                    constraints.insert(member, equation);
                 }
                 None
             }

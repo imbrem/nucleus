@@ -1,18 +1,19 @@
 //! Relational HOL expression lowering over the generic expression fold.
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::Arc};
 
 use covalence_data_spectec::{
     DeclarationId, IlArgument, IlBinding, IlClauseSchema, IlDeclarationBody, IlDomain,
     IlExpression, IlExpressionView, IlIteration, IlKind, IlPremise, IlRuleSchema, IlSchemaError,
 };
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref, Tag, TyTag, builtin::Op1, builtin::Op2};
+use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, Tag, TyTag, builtin::Op1, builtin::Op2};
+use covalence_logic_hol_derived::{ForallError, forall_elim};
 
 use crate::{
-    ExpressionAlgebra, HolCase, HolFamilyError, HolRule, HolSchema, HolTheoryError, LeastPredicate,
-    LeastPredicateError, Source, begin_least_closed_family_avoiding, close_hol_rule,
-    close_hol_rules, existential_case, fold_expression,
+    Evidence, ExpressionAlgebra, HolCase, HolFamilyError, HolRule, HolSchema, HolTheoryError,
+    LeastPredicate, LeastPredicateError, Source, begin_least_closed_family_avoiding,
+    close_hol_rule, close_hol_rules, existential_case, fold_expression,
 };
 
 /// Relational meaning of one expression.
@@ -167,14 +168,124 @@ pub struct RelationalRelation<'a> {
 }
 
 /// Exact definition of one schema relation slot by a least-family member.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelationalRelationDefinition {
     /// Free semantic slot supplied by the checked schema.
     pub predicate: Ref,
     /// Direct impredicative least predicate generated from the relation rules.
     pub least: LeastPredicate,
+    /// Source-ordered universally closed rule propositions for this member.
+    pub rules: Arc<[Ref]>,
+    /// Source-ordered rules for the complete mutually recursive family.
+    pub family_rules: Arc<[Ref]>,
     /// Checked proposition `predicate = least.predicate`.
     pub equation: Ref,
+}
+
+impl RelationalRelationDefinition {
+    /// Derives one member rule from the complete family closure.
+    ///
+    /// The resulting theorem has `least.closure` as its single visible premise
+    /// and the selected universally closed rule as its conclusion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `index` is absent, the retained rule is inconsistent
+    /// with the family closure, or a checked theorem step fails. `kernel` is
+    /// unchanged on failure.
+    pub fn derive_rule(
+        &self,
+        kernel: &mut Kernel,
+        index: usize,
+    ) -> Result<Evidence, RelationProofError> {
+        let target = *self
+            .rules
+            .get(index)
+            .ok_or(RelationProofError::Missing { index })?;
+        let family_index = self
+            .family_rules
+            .iter()
+            .position(|&rule| rule == target)
+            .ok_or(RelationProofError::Inconsistent)?;
+        let mut staged = kernel.fork();
+        let mut theorem = staged.identity(positive(target))?;
+        for (candidate_index, &rule) in self.family_rules.iter().enumerate() {
+            if candidate_index != family_index {
+                staged.weaken(theorem, &[positive(rule)], &[])?;
+            }
+        }
+        if self.family_rules.len() > 1 {
+            theorem = staged.fold_premise(theorem, positive(self.least.closure))?;
+        } else if self.family_rules.first().copied() != Some(self.least.closure) {
+            return Err(RelationProofError::Inconsistent);
+        }
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: target,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Derives and specializes one member rule at checked arguments.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`derive_rule`](Self::derive_rule), or if an argument does not match the
+    /// next universal binder. `kernel` is unchanged on failure.
+    pub fn specialize_rule(
+        &self,
+        kernel: &mut Kernel,
+        index: usize,
+        arguments: &[Ref],
+    ) -> Result<Evidence, RelationProofError> {
+        let mut staged = kernel.fork();
+        let mut evidence = self.derive_rule(&mut staged, index)?;
+        for &argument in arguments {
+            let specialized = forall_elim(&mut staged, evidence.theorem, argument)
+                .map_err(|source| RelationProofError::Specialize { source })?;
+            evidence = Evidence {
+                proposition: specialized.proposition,
+                theorem: specialized.theorem,
+                holds: true,
+            };
+        }
+        *kernel = staged;
+        Ok(evidence)
+    }
+}
+
+fn positive(reference: Ref) -> Lit {
+    Lit::positive(reference.get())
+}
+
+/// Why a checked relation rule could not be derived or specialized.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+#[snafu(module)]
+pub enum RelationProofError {
+    /// The member has no rule at the requested source index.
+    #[snafu(display("SpecTec relation rule index {index} is absent"))]
+    Missing {
+        /// Requested member-local rule index.
+        index: usize,
+    },
+    /// Retained member and family rule metadata disagree.
+    #[snafu(display("retained SpecTec relation rules are inconsistent with their closure"))]
+    Inconsistent,
+    /// A checked theorem step failed.
+    #[snafu(transparent)]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+    /// Universal specialization failed.
+    #[snafu(display("could not specialize a SpecTec relation rule: {source}"))]
+    Specialize {
+        /// Underlying checked derived-rule failure.
+        source: ForallError,
+    },
 }
 
 impl RelationalCondition {
@@ -917,7 +1028,8 @@ where
     let mut builder =
         begin_least_closed_family_avoiding(&mut staged, bool_ty, &predicate_types, &predicates)
             .map_err(|source| resolver.least_error(source))?;
-    let closure = {
+    let mut relation_rules = Vec::with_capacity(relations.len());
+    let (closure, family_rules) = {
         let (staged, candidates) = builder.parts();
         let candidate_names = relations
             .iter()
@@ -931,6 +1043,7 @@ where
             .map_err(|source| resolver.kernel_error(source))?;
         let mut closures = Vec::new();
         for (relation, &candidate) in relations.iter().zip(candidates) {
+            let first_rule = closures.len();
             let mut preceding = None;
             for schema in relation.rules {
                 let rule_resolver = scoped.clause_scope();
@@ -957,11 +1070,13 @@ where
                         .map_err(|source| resolver.kernel_error(source))?,
                 );
             }
+            relation_rules.push(Arc::from(&closures[first_rule..]));
         }
         let closure = close_hol_rules(staged, bool_ty, &closures)
             .map_err(|source| resolver.kernel_error(source))?;
+        let family_rules = Arc::from(closures);
         resolver.restore_scope(scoped);
-        closure
+        (closure, family_rules)
     };
     let family = builder
         .finish(closure)
@@ -969,12 +1084,15 @@ where
     let definitions = relations
         .iter()
         .zip(family)
-        .map(|(relation, least)| {
+        .zip(relation_rules)
+        .map(|((relation, least), rules)| {
             staged
                 .eq(bool_ty, relation.predicate, least.predicate)
                 .map(|equation| RelationalRelationDefinition {
                     predicate: relation.predicate,
                     least,
+                    rules,
+                    family_rules: Arc::clone(&family_rules),
                     equation,
                 })
                 .map_err(|source| resolver.kernel_error(source))
