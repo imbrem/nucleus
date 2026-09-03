@@ -3485,6 +3485,494 @@ impl RunObservation {
         })
     }
 
+    /// Transports a non-vacuous universal behavior property from a
+    /// specification to an implementation that refines it.
+    ///
+    /// Refinement transports the specification's progress witness back to an
+    /// implementation run and transports that run forward again to establish
+    /// the observation. Run inclusion also preserves the universal part.
+    /// Consequently both existence and safety are retained for every
+    /// admissible invocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `refinement` proves the displayed directional
+    /// refinement, `specification_must` positively proves this observation's
+    /// `must` proposition for the specification, and every checked equality,
+    /// existential, universal, propositional, or alignment step succeeds.
+    /// `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    pub fn prove_refinement_preserves_must(
+        self,
+        kernel: &mut Kernel,
+        refinement: Evidence,
+        specification_must: Evidence,
+        profile: Ref,
+        implementation: Ref,
+        specification: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let types = self.domain.relation.types;
+        let expected_refinement =
+            self.domain
+                .refines_runs(&mut staged, profile, implementation, specification)?;
+        let refinement_theorem = align_evidence(&mut staged, refinement, expected_refinement)?;
+        let domain_equality = staged.expand_conclusion(
+            refinement_theorem,
+            positive(expected_refinement),
+            Some(false),
+        )?;
+        let refinement_behavior = staged.expand_conclusion(
+            refinement_theorem,
+            positive(expected_refinement),
+            Some(true),
+        )?;
+        let [_, behavior_formula] = binary_children(&staged, expected_refinement)?;
+        binary_children(&staged, behavior_formula)?;
+        let inclusion = staged.expand_conclusion(
+            refinement_behavior,
+            positive(behavior_formula),
+            Some(false),
+        )?;
+        let progress = staged.expand_conclusion(
+            refinement_behavior,
+            positive(behavior_formula),
+            Some(true),
+        )?;
+
+        let implementation_graphs = self
+            .domain
+            .run_graphs(&mut staged, profile, implementation)?;
+        let specification_graphs = self
+            .domain
+            .run_graphs(&mut staged, profile, specification)?;
+        let specification_must_proposition = self.must(&mut staged, profile, specification)?;
+        let must = align_evidence(
+            &mut staged,
+            specification_must,
+            specification_must_proposition,
+        )?;
+        let specification_must_direct = self.graph_proposition(
+            &mut staged,
+            BehaviorQuantifier::Must,
+            specification_graphs.domain,
+            specification_graphs.runs,
+            &[],
+        )?;
+        let specification_must_reduced =
+            certify_curried_beta2(&mut staged, specification_must_proposition)?;
+        join_alpha_equivalent(
+            &mut staged,
+            specification_must_reduced,
+            specification_must_direct,
+        )
+        .map_err(|_| KernelError::InvalidTheoremRule {
+            rule: "refinement must specification reduction",
+        })?;
+        staged.convert_conclusions(
+            must,
+            specification_must_proposition,
+            specification_must_direct,
+        )?;
+
+        let first = staged.fresh_name(&[
+            expected_refinement,
+            specification_must_direct,
+            implementation_graphs.domain,
+            implementation_graphs.runs,
+            specification_graphs.domain,
+            specification_graphs.runs,
+            self.observe,
+            types.entry,
+            types.inputs,
+            types.host,
+            types.trace,
+            types.outcome,
+        ])?;
+        let invocation = [
+            staged.tm_fv(first, types.entry)?,
+            staged.tm_fv(checked_name(first, 1)?, types.inputs)?,
+            staged.tm_fv(checked_name(first, 2)?, types.host)?,
+        ];
+        let trace = staged.tm_fv(checked_name(first, 3)?, types.trace)?;
+        let outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
+        let run_variables = [invocation[0], invocation[1], invocation[2], trace, outcome];
+        let implementation_allowed = apply(&mut staged, implementation_graphs.domain, &invocation)?;
+        let specification_allowed = apply(&mut staged, specification_graphs.domain, &invocation)?;
+        let mut allowed_equality = staged.ap_thm(domain_equality, invocation[0])?;
+        for &argument in &invocation[1..] {
+            allowed_equality = staged.ap_thm(allowed_equality.theorem, argument)?;
+        }
+        let allowed_target =
+            staged.eq(types.bool_ty, implementation_allowed, specification_allowed)?;
+        align_theorem_conclusion(
+            &mut staged,
+            allowed_equality.theorem,
+            allowed_equality.equality,
+            allowed_target,
+            "refinement must admissibility alignment",
+        )?;
+        let assumed_allowed = staged.identity(positive(implementation_allowed))?;
+        let specification_allowed_fact = staged.eq_mp(allowed_equality.theorem, assumed_allowed)?;
+
+        let specification_run = apply(&mut staged, specification_graphs.runs, &run_variables)?;
+        let implementation_run = apply(&mut staged, implementation_graphs.runs, &run_variables)?;
+        let observed = apply(&mut staged, self.observe, &[trace, outcome])?;
+        let specification_matching = staged.op2(Op2::And, specification_run, observed)?;
+        let specification_exists_matching = quantify_exists(
+            &mut staged,
+            types.bool_ty,
+            &[trace, outcome],
+            specification_matching,
+        )?;
+        let specification_run_implies_observed =
+            staged.op2(Op2::Imp, specification_run, observed)?;
+        let specification_every = quantify_forall(
+            &mut staged,
+            types.bool_ty,
+            &[trace, outcome],
+            specification_run_implies_observed,
+        )?;
+        let specification_required =
+            staged.op2(Op2::And, specification_exists_matching, specification_every)?;
+        let specification_requirement =
+            staged.op2(Op2::Imp, specification_allowed, specification_required)?;
+        let must = specialize_universal_to(
+            &mut staged,
+            must,
+            &invocation,
+            specification_requirement,
+            "refinement must specification specialization",
+        )?;
+        let must = staged.expand_conclusion(must, positive(specification_requirement), None)?;
+        let required = staged.resolve(
+            specification_allowed_fact,
+            must,
+            positive(specification_allowed),
+        )?;
+        let specification_matching_fact =
+            staged.expand_conclusion(required, positive(specification_required), Some(false))?;
+        let specification_every_fact =
+            staged.expand_conclusion(required, positive(specification_required), Some(true))?;
+
+        let outer_specification = open_exists(&mut staged, specification_exists_matching)?;
+        staged.convert_conclusions(
+            specification_matching_fact,
+            specification_exists_matching,
+            outer_specification.body,
+        )?;
+        let inner_specification = open_exists(&mut staged, outer_specification.body)?;
+        staged.convert_conclusions(
+            specification_matching_fact,
+            outer_specification.body,
+            inner_specification.body,
+        )?;
+        let specification_witness_run = apply(
+            &mut staged,
+            specification_graphs.runs,
+            &[
+                invocation[0],
+                invocation[1],
+                invocation[2],
+                outer_specification.witness,
+                inner_specification.witness,
+            ],
+        )?;
+        let specification_witness_run_fact = staged.expand_conclusion(
+            specification_matching_fact,
+            positive(inner_specification.body),
+            Some(false),
+        )?;
+        let source_specification_witness_run =
+            binary_children(&staged, inner_specification.body)?[0];
+        align_theorem_conclusion(
+            &mut staged,
+            specification_witness_run_fact,
+            source_specification_witness_run,
+            specification_witness_run,
+            "refinement must specification witness alignment",
+        )?;
+        let specification_exists_run = quantify_exists(
+            &mut staged,
+            types.bool_ty,
+            &[trace, outcome],
+            specification_run,
+        )?;
+        let specification_at_trace = apply(
+            &mut staged,
+            specification_graphs.runs,
+            &[
+                invocation[0],
+                invocation[1],
+                invocation[2],
+                outer_specification.witness,
+                outcome,
+            ],
+        )?;
+        let inner_exists = introduce_exists(
+            &mut staged,
+            specification_witness_run_fact,
+            outcome,
+            specification_at_trace,
+            inner_specification.witness,
+        )?;
+        let specification_outcomes = staged.exists_tm(outcome, specification_run)?;
+        let specification_exists = introduce_exists(
+            &mut staged,
+            inner_exists.theorem,
+            trace,
+            specification_outcomes,
+            outer_specification.witness,
+        )?;
+        align_theorem_conclusion(
+            &mut staged,
+            specification_exists.theorem,
+            specification_exists.proposition,
+            specification_exists_run,
+            "refinement must specification progress alignment",
+        )?;
+
+        let implementation_exists_run = quantify_exists(
+            &mut staged,
+            types.bool_ty,
+            &[trace, outcome],
+            implementation_run,
+        )?;
+        let progress_implication = staged.op2(
+            Op2::Imp,
+            specification_exists_run,
+            implementation_exists_run,
+        )?;
+        let progress = specialize_universal_to(
+            &mut staged,
+            progress,
+            &invocation,
+            progress_implication,
+            "refinement must progress specialization",
+        )?;
+        let progress = staged.expand_conclusion(progress, positive(progress_implication), None)?;
+        let implementation_exists = staged.resolve(
+            specification_exists.theorem,
+            progress,
+            positive(specification_exists_run),
+        )?;
+        let outer_implementation = open_exists(&mut staged, implementation_exists_run)?;
+        staged.convert_conclusions(
+            implementation_exists,
+            implementation_exists_run,
+            outer_implementation.body,
+        )?;
+        let inner_implementation = open_exists(&mut staged, outer_implementation.body)?;
+        staged.convert_conclusions(
+            implementation_exists,
+            outer_implementation.body,
+            inner_implementation.body,
+        )?;
+        let implementation_witness_run = apply(
+            &mut staged,
+            implementation_graphs.runs,
+            &[
+                invocation[0],
+                invocation[1],
+                invocation[2],
+                outer_implementation.witness,
+                inner_implementation.witness,
+            ],
+        )?;
+        align_theorem_conclusion(
+            &mut staged,
+            implementation_exists,
+            inner_implementation.body,
+            implementation_witness_run,
+            "refinement must implementation witness alignment",
+        )?;
+        let witness_variables = [
+            invocation[0],
+            invocation[1],
+            invocation[2],
+            outer_implementation.witness,
+            inner_implementation.witness,
+        ];
+        let specification_witness_run =
+            apply(&mut staged, specification_graphs.runs, &witness_variables)?;
+        let inclusion_at_witness_formula = staged.op2(
+            Op2::Imp,
+            implementation_witness_run,
+            specification_witness_run,
+        )?;
+        let inclusion_at_witness = specialize_universal_to(
+            &mut staged,
+            inclusion,
+            &witness_variables,
+            inclusion_at_witness_formula,
+            "refinement must inclusion specialization",
+        )?;
+        let inclusion_at_witness = staged.expand_conclusion(
+            inclusion_at_witness,
+            positive(inclusion_at_witness_formula),
+            None,
+        )?;
+        let specification_witness = staged.resolve(
+            implementation_exists,
+            inclusion_at_witness,
+            positive(implementation_witness_run),
+        )?;
+        let witness_observed = apply(
+            &mut staged,
+            self.observe,
+            &[outer_implementation.witness, inner_implementation.witness],
+        )?;
+        let every_at_witness_implication =
+            staged.op2(Op2::Imp, specification_witness_run, witness_observed)?;
+        let every_at_witness = specialize_universal_to(
+            &mut staged,
+            specification_every_fact,
+            &[outer_implementation.witness, inner_implementation.witness],
+            every_at_witness_implication,
+            "refinement must observation specialization",
+        )?;
+        let every_at_witness = staged.expand_conclusion(
+            every_at_witness,
+            positive(every_at_witness_implication),
+            None,
+        )?;
+        let witness_observed_fact = staged.resolve(
+            specification_witness,
+            every_at_witness,
+            positive(specification_witness_run),
+        )?;
+        let implementation_matching =
+            staged.op2(Op2::And, implementation_witness_run, witness_observed)?;
+        let implementation_matching_fact = staged.and_right(
+            implementation_exists,
+            witness_observed_fact,
+            positive(implementation_matching),
+        )?;
+        let implementation_at_trace = apply(
+            &mut staged,
+            implementation_graphs.runs,
+            &[
+                invocation[0],
+                invocation[1],
+                invocation[2],
+                outer_implementation.witness,
+                outcome,
+            ],
+        )?;
+        let observed_at_trace = apply(
+            &mut staged,
+            self.observe,
+            &[outer_implementation.witness, outcome],
+        )?;
+        let matching_at_trace = staged.op2(Op2::And, implementation_at_trace, observed_at_trace)?;
+        let inner_matching = introduce_exists(
+            &mut staged,
+            implementation_matching_fact,
+            outcome,
+            matching_at_trace,
+            inner_implementation.witness,
+        )?;
+        let implementation_matching_body = staged.op2(Op2::And, implementation_run, observed)?;
+        let implementation_outcomes = staged.exists_tm(outcome, implementation_matching_body)?;
+        let implementation_matching_exists = introduce_exists(
+            &mut staged,
+            inner_matching.theorem,
+            trace,
+            implementation_outcomes,
+            outer_implementation.witness,
+        )?;
+
+        let inclusion_generic_implication =
+            staged.op2(Op2::Imp, implementation_run, specification_run)?;
+        let inclusion_generic = specialize_universal_to(
+            &mut staged,
+            inclusion,
+            &run_variables,
+            inclusion_generic_implication,
+            "refinement must universal inclusion",
+        )?;
+        let inclusion_generic = staged.expand_conclusion(
+            inclusion_generic,
+            positive(inclusion_generic_implication),
+            None,
+        )?;
+        let every_generic = specialize_universal_to(
+            &mut staged,
+            specification_every_fact,
+            &[trace, outcome],
+            specification_run_implies_observed,
+            "refinement must universal observation",
+        )?;
+        let every_generic = staged.expand_conclusion(
+            every_generic,
+            positive(specification_run_implies_observed),
+            None,
+        )?;
+        let assumed_run = staged.identity(positive(implementation_run))?;
+        let specification_run_fact =
+            staged.resolve(assumed_run, inclusion_generic, positive(implementation_run))?;
+        let observed_fact = staged.resolve(
+            specification_run_fact,
+            every_generic,
+            positive(specification_run),
+        )?;
+        let implementation_run_implies_observed =
+            staged.op2(Op2::Imp, implementation_run, observed)?;
+        let implementation_every =
+            staged.imp_right(observed_fact, positive(implementation_run_implies_observed))?;
+        let (implementation_every_formula, implementation_every) = introduce_forall(
+            &mut staged,
+            types.bool_ty,
+            &[trace, outcome],
+            implementation_run_implies_observed,
+            implementation_every,
+        )
+        .map_err(|_| KernelError::InvalidTheoremRule {
+            rule: "refinement must universal behavior introduction",
+        })?;
+        let implementation_required = staged.op2(
+            Op2::And,
+            implementation_matching_exists.proposition,
+            implementation_every_formula,
+        )?;
+        let required = staged.and_right(
+            implementation_matching_exists.theorem,
+            implementation_every,
+            positive(implementation_required),
+        )?;
+        staged.contract_theorem(required)?;
+        let implementation_requirement =
+            staged.op2(Op2::Imp, implementation_allowed, implementation_required)?;
+        let requirement = staged.imp_right(required, positive(implementation_requirement))?;
+        let (direct, proof) = introduce_forall(
+            &mut staged,
+            types.bool_ty,
+            &invocation,
+            implementation_requirement,
+            requirement,
+        )
+        .map_err(|_| KernelError::InvalidTheoremRule {
+            rule: "refinement must invocation introduction",
+        })?;
+        let implementation_must = self.must(&mut staged, profile, implementation)?;
+        let implementation_must_reduced = certify_curried_beta2(&mut staged, implementation_must)?;
+        align_theorem_conclusion(
+            &mut staged,
+            proof,
+            direct,
+            implementation_must_reduced,
+            "refinement must result alignment",
+        )?;
+        staged.convert_conclusions(proof, implementation_must_reduced, implementation_must)?;
+        staged.contract_theorem(proof)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: implementation_must,
+            theorem: proof,
+            holds: true,
+        })
+    }
+
     /// Constructs `module -> bool` for one profile and quantification mode.
     ///
     /// The result plugs directly into a generic contextual observation.
@@ -4334,6 +4822,29 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[left_middle_refinement, specification_every])
             .check(&kernel, implementation_every)
+            .unwrap();
+        let specification_must = observation
+            .must(&mut kernel, profile, other_module)
+            .unwrap();
+        let specification_must_evidence = Evidence {
+            proposition: specification_must,
+            theorem: kernel
+                .identity(super::positive(specification_must))
+                .unwrap(),
+            holds: true,
+        };
+        let implementation_must = observation
+            .prove_refinement_preserves_must(
+                &mut kernel,
+                left_middle_refinement_evidence,
+                specification_must_evidence,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[left_middle_refinement, specification_must])
+            .check(&kernel, implementation_must)
             .unwrap();
         let before = kernel.arena().clone();
         let theorem_count = kernel.thm().live_theorems().count();

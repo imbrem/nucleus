@@ -62,7 +62,10 @@ checked contrapositive transports `never` properties from a specification to
 every refining implementation, including eventual `never callsAssert` safety.
 Positive universal invariants (`every`) transport in the same
 specification-to-implementation direction, while existential counterexamples
-(`may`) transport from implementation to specification.
+(`may`) transport from implementation to specification. Non-vacuous universal
+properties (`must`) also transport to the implementation: refinement's reverse
+progress clause supplies a retained execution and forward inclusion preserves
+the observation of every retained execution.
 The domain also derives explicit determinism and totality propositions.
 Totality here means that every admissible invocation has a modeled trace and
 outcome; the profile and outcome representation determine whether traps or
