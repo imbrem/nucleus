@@ -470,30 +470,52 @@ pub enum Error {
     },
 }
 
+/// One resident compatibility projection.
+///
+/// The projection is the whole slot. Canonical tagged packing still gates
+/// every insertion and replacement, so a resident slot is always syntax that
+/// packs into a valid arena, but the packed value itself is not retained: no
+/// consumer ever read it, and every mutation rebuilt it from the projection
+/// anyway. Dropping it makes copying a slot a flat matrix copy.
 #[derive(Clone, Debug)]
 struct SyntaxSlot {
-    checked: tagged::Checked,
     projection: Projection,
 }
 
 impl SyntaxSlot {
+    /// Validates untrusted syntax by canonical packing and stores the matrix.
     fn pack(projection: Projection) -> Result<Self, Error> {
-        let checked = tagged::pack(&[projection.sequent()])?;
-        Ok(Self {
-            checked,
-            projection,
-        })
+        // Gate only: the packed arena is discarded, never stored.
+        tagged::pack(&[projection.sequent()])?;
+        Ok(Self { projection })
     }
 
     fn view(&self) -> ThmRef<'_> {
-        debug_assert_eq!(self.checked.sequents(), &[self.projection.sequent()]);
         self.projection.view()
+    }
+}
+
+/// Compares live rows in order, ignoring tombstone positions.
+///
+/// This is exactly the relation the retained [`tagged::Checked`] value used to
+/// define: packing reads live rows only, so two projections packed equal
+/// exactly when their live rows agree.
+fn same_live_rows(left: &Matrix, right: &Matrix) -> bool {
+    let mut left = left.0.iter().flatten();
+    let mut right = right.0.iter().flatten();
+    loop {
+        match (left.next(), right.next()) {
+            (None, None) => return true,
+            (Some(left), Some(right)) if left == right => (),
+            _ => return false,
+        }
     }
 }
 
 impl PartialEq for SyntaxSlot {
     fn eq(&self, other: &Self) -> bool {
-        self.checked == other.checked
+        same_live_rows(&self.projection.0.0, &other.projection.0.0)
+            && same_live_rows(&self.projection.1.0, &other.projection.1.0)
     }
 }
 
@@ -501,9 +523,13 @@ impl Eq for SyntaxSlot {}
 
 /// Mutable checked-syntax storage with stable external handles and LIFO reuse.
 ///
-/// The projection cached beside each [`tagged::Checked`] value is untrusted and
-/// used only to preserve borrowed matrix views. Every insertion and mutation
-/// is repacked and checked before its slot changes.
+/// Slots hold untrusted matrix projections only. Every insertion and mutation
+/// is repacked and checked by [`tagged::pack`] before its slot changes, so a
+/// resident slot is always syntax that packs into a valid arena; the packed
+/// arena is the gate, not the storage. Storing checked syntax here would
+/// promote nothing — theorem facts live in [`ClassicalKernel`] as sealed
+/// [`tagged::Theorem`] values, and this store is deliberately outside that
+/// authority.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ClassicalArena {
     slots: Vec<Option<SyntaxSlot>>,
@@ -556,21 +582,10 @@ impl ClassicalArena {
         self.slots.iter().flatten().map(SyntaxSlot::view)
     }
 
-    /// Iterates over validated, non-theorem syntax in handle order.
-    pub fn live_checked(&self) -> impl Iterator<Item = &tagged::Checked> {
-        self.slots.iter().flatten().map(|slot| &slot.checked)
-    }
-
     /// Borrows a live compatibility projection.
     #[must_use]
     pub fn get(&self, id: ThmId) -> Option<ThmRef<'_>> {
         self.slot(id).ok().map(SyntaxSlot::view)
-    }
-
-    /// Borrows the selected-runtime syntax behind one live external handle.
-    #[must_use]
-    pub fn checked(&self, id: ThmId) -> Option<&tagged::Checked> {
-        self.slot(id).ok().map(|slot| &slot.checked)
     }
 
     fn slot(&self, id: ThmId) -> Result<&SyntaxSlot, Error> {
@@ -1511,7 +1526,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_slots_are_tagged_checked_and_reuse_lifo_handles() {
+    fn raw_slots_pack_canonically_and_reuse_lifo_handles() {
         let mut arena = ClassicalArena::new();
         let first = arena.insert(Cnf::new([row([-1])]), Dnf::default()).unwrap();
         let second = arena.insert(Cnf::default(), Dnf::new([row([-2])])).unwrap();
@@ -1520,8 +1535,12 @@ mod tests {
         let reused_second = arena.identity(Lit::positive(3)).unwrap();
         let reused_first = arena.identity(Lit::positive(4)).unwrap();
         assert_eq!((reused_second, reused_first), (second, first));
+        // Slots no longer retain a packed arena, but every resident projection
+        // is still exactly what canonical packing accepted.
         for slot in arena.slots.iter().flatten() {
-            assert_eq!(slot.checked.sequents(), &[slot.projection.sequent()]);
+            let sequent = slot.projection.sequent();
+            let packed = tagged::pack(std::slice::from_ref(&sequent)).unwrap();
+            assert_eq!(packed.sequents(), std::slice::from_ref(&sequent));
         }
     }
 
@@ -1629,13 +1648,9 @@ mod tests {
         covalence_lib_cbor::into_writer(&arena, &mut bytes).unwrap();
         let decoded: ClassicalArena = covalence_lib_cbor::from_reader(bytes.as_slice()).unwrap();
         assert_eq!(decoded, arena);
-        assert!(
-            decoded.slots[0]
-                .as_ref()
-                .unwrap()
-                .checked
-                .free_blocks()
-                .is_empty()
-        );
+        // Decoding re-gates every slot through canonical packing, which leaves
+        // no free blocks. The packed arena is checked here, not retained.
+        let sequent = decoded.slots[0].as_ref().unwrap().projection.sequent();
+        assert!(tagged::pack(&[sequent]).unwrap().free_blocks().is_empty());
     }
 }
