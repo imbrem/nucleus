@@ -518,11 +518,44 @@ pub struct ClosedProgramObservation {
     assert_function: Ref,
 }
 
+/// An immutable subject transformation judged by one observational semantics.
+///
+/// Soundness is not execution or validation by this crate: it is the HOL
+/// proposition `forall subject. subject ≈ transform subject` under the exact
+/// [`ContextualObservation`] stored here.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObservationTransformation {
+    observation: ContextualObservation,
+    transform: Ref,
+}
+
+/// An observation transformation paired with checked positive soundness evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SoundObservationTransformation {
+    transformation: ObservationTransformation,
+    soundness: Evidence,
+}
+
 impl ClosedProgramObservation {
     /// Returns the full contextual-equivalence schema.
     #[must_use]
     pub const fn contextual(self) -> ContextualObservation {
         self.contextual
+    }
+
+    /// Validates a program transformation against this exact `callsAssert`
+    /// observational semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `transform` has classifier `program -> program`.
+    /// `kernel` is unchanged on failure.
+    pub fn transformation(
+        self,
+        kernel: &mut Kernel,
+        transform: Ref,
+    ) -> Result<ObservationTransformation, KernelError> {
+        self.contextual.transformation(kernel, transform)
     }
 
     /// Proves that two closed programs are contextually distinct from positive
@@ -595,6 +628,27 @@ pub struct ContextualObservation {
 }
 
 impl ContextualObservation {
+    /// Validates and packages a transformation of this schema's subjects.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `transform` has classifier `subject -> subject`.
+    /// `kernel` is unchanged on failure.
+    pub fn transformation(
+        self,
+        kernel: &mut Kernel,
+        transform: Ref,
+    ) -> Result<ObservationTransformation, KernelError> {
+        let mut staged = kernel.fork();
+        let transform_ty = staged.ty_arr(self.subject_ty, self.subject_ty)?;
+        require_classifier(&mut staged, transform, transform_ty)?;
+        *kernel = staged;
+        Ok(ObservationTransformation {
+            observation: self,
+            transform,
+        })
+    }
+
     /// Validates this immutable contextual-observation schema.
     ///
     /// The required classifiers are `context -> subject -> observed` for
@@ -1333,6 +1387,147 @@ impl ContextualObservation {
             proposition: equivalence,
             theorem: contradiction,
             holds: false,
+        })
+    }
+}
+
+impl ObservationTransformation {
+    /// Returns the observational semantics used to judge this transformation.
+    #[must_use]
+    pub const fn observation(self) -> ContextualObservation {
+        self.observation
+    }
+
+    /// Returns the checked `subject -> subject` function.
+    #[must_use]
+    pub const fn transform(self) -> Ref {
+        self.transform
+    }
+
+    /// Applies the transformation to one subject, constructing syntax only.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `subject` has the configured classifier.
+    /// `kernel` is unchanged on failure.
+    pub fn apply(self, kernel: &mut Kernel, subject: Ref) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        require_classifier(&mut staged, subject, self.observation.subject_ty)?;
+        let transformed = staged.app(self.transform, subject)?;
+        *kernel = staged;
+        Ok(transformed)
+    }
+
+    /// Constructs `forall subject. subject ≈ transform subject`.
+    ///
+    /// This is the definition of soundness here: the transformation preserves
+    /// observational equivalence. It creates no theorem fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if checked application, equivalence construction, or
+    /// universal construction fails. `kernel` is unchanged on failure.
+    pub fn sound(self, kernel: &mut Kernel) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let subject = staged.tm_fv(
+            staged.fresh_name(&[
+                self.transform,
+                self.observation.subject_ty,
+                self.observation.bool_ty,
+                self.observation.plug,
+                self.observation.admissible,
+                self.observation.observe,
+            ])?,
+            self.observation.subject_ty,
+        )?;
+        let transformed = self.apply(&mut staged, subject)?;
+        let equivalent = self
+            .observation
+            .equivalent(&mut staged, subject, transformed)?;
+        let sound = staged.forall_tm(self.observation.bool_ty, subject, equivalent)?;
+        *kernel = staged;
+        Ok(sound)
+    }
+
+    /// Attaches checked positive evidence of this exact soundness proposition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `soundness` positively proves [`Self::sound`].
+    /// `kernel` is unchanged on failure.
+    pub fn with_soundness(
+        self,
+        kernel: &mut Kernel,
+        soundness: Evidence,
+    ) -> Result<SoundObservationTransformation, ObservationProofError> {
+        let mut staged = kernel.fork();
+        let expected = self.sound(&mut staged)?;
+        let theorem =
+            align_observation_fact(&mut staged, soundness.theorem, expected, soundness.holds)?;
+        if !soundness.holds {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "observation transformation positive soundness",
+            }
+            .into());
+        }
+        *kernel = staged;
+        Ok(SoundObservationTransformation {
+            transformation: self,
+            soundness: Evidence {
+                proposition: expected,
+                theorem,
+                holds: true,
+            },
+        })
+    }
+}
+
+impl SoundObservationTransformation {
+    /// Returns the underlying transformation.
+    #[must_use]
+    pub const fn transformation(self) -> ObservationTransformation {
+        self.transformation
+    }
+
+    /// Returns its checked soundness evidence, including every premise.
+    #[must_use]
+    pub const fn soundness(self) -> Evidence {
+        self.soundness
+    }
+
+    /// Specializes soundness to one subject, proving it observationally
+    /// equivalent to the transformed subject.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the soundness evidence has the wrong conclusion or
+    /// checked universal specialization fails. `kernel` is unchanged on failure.
+    pub fn prove_equivalent(
+        self,
+        kernel: &mut Kernel,
+        subject: Ref,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        let sound = self.transformation.sound(&mut staged)?;
+        let soundness = align_observation_fact(
+            &mut staged,
+            self.soundness.theorem,
+            sound,
+            self.soundness.holds,
+        )?;
+        let specialized = forall_elim(&mut staged, soundness, subject)?;
+        let transformed = self.transformation.apply(&mut staged, subject)?;
+        let equivalent =
+            self.transformation
+                .observation
+                .equivalent(&mut staged, subject, transformed)?;
+        join_alpha_equivalent(&mut staged, specialized.proposition, equivalent)?;
+        staged.convert_conclusions(specialized.theorem, specialized.proposition, equivalent)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: equivalent,
+            theorem: specialized.theorem,
+            holds: true,
         })
     }
 }
@@ -3084,6 +3279,56 @@ mod tests {
             .unwrap();
         let closed = distinct.close_premises(&mut kernel).unwrap();
         assert_exact(&kernel, closed, true);
+    }
+
+    #[test]
+    fn calls_assert_transformations_are_sound_exactly_when_observationally_equivalent() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let value = kernel.ty_fv(1, star).unwrap();
+        let binary_tail = kernel.ty_arr(value, bool_ty).unwrap();
+        let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
+        let starts = kernel.tm_fv(10, binary_ty).unwrap();
+        let steps = kernel.tm_fv(11, binary_ty).unwrap();
+        let calls = kernel.tm_fv(12, binary_ty).unwrap();
+        let assert_function = kernel.tm_fv(13, value).unwrap();
+        let program = kernel.tm_fv(14, value).unwrap();
+        let transform_ty = kernel.ty_arr(value, value).unwrap();
+        let transform = kernel.tm_fv(15, transform_ty).unwrap();
+        let reachability = AssertionReachability {
+            program_ty: value,
+            state_ty: value,
+            bool_ty,
+            starts,
+            steps,
+            calls,
+        };
+        let observation = reachability
+            .closed_program_observation(&mut kernel, assert_function)
+            .unwrap();
+        let transformation = observation.transformation(&mut kernel, transform).unwrap();
+
+        let sound = transformation.sound(&mut kernel).unwrap();
+        let assumed_sound = kernel.identity(positive(sound)).unwrap();
+        let checked = transformation
+            .with_soundness(
+                &mut kernel,
+                Evidence {
+                    proposition: sound,
+                    theorem: assumed_sound,
+                    holds: true,
+                },
+            )
+            .unwrap();
+        let equivalent = checked.prove_equivalent(&mut kernel, program).unwrap();
+
+        assert!(equivalent.holds);
+        EvidenceScope::signed(&[positive(sound)])
+            .check(&kernel, equivalent)
+            .unwrap();
+        assert_eq!(checked.transformation(), transformation);
+        assert!(checked.soundness().holds);
     }
 
     #[test]

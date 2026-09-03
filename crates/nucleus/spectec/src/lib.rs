@@ -48,8 +48,8 @@ pub use premise::{PremiseAlgebra, PremiseChildren, fold_premise};
 pub use program_logic::{
     AssertCombinator, AssertionReachability, CallsAssert, ClosedProgramObservation,
     ContextualObservation, Established, Evidence, EvidenceScope, FunctionObservation,
-    ObservationProofError, ProgramConnectives, ProgramLogicObligations, Proposition,
-    ReachabilityProofError,
+    ObservationProofError, ObservationTransformation, ProgramConnectives, ProgramLogicObligations,
+    Proposition, ReachabilityProofError, SoundObservationTransformation,
 };
 pub use relational::{
     DefinitionProofError, OpenedRelationalProduction, RelationProofError, RelationalCall,
