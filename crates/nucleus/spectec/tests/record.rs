@@ -1761,11 +1761,79 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let obligations = execution
         .admissible_start_obligations(&mut kernel, exported, start)
         .unwrap();
-    let obligation_facts = obligations.map(|proposition| {
+    let mut obligation_facts = obligations.map(|proposition| {
         kernel
             .identity(covalence_logic_hol::Lit::positive(proposition.get()))
             .unwrap()
     });
+    let [store_id] = document.schema.named(IlKind::Definition, "store") else {
+        panic!("expected one $store definition")
+    };
+    let store_definition = document.semantics.definitions().get(store_id).unwrap();
+    let store_instance = store_definition
+        .specialize(
+            &mut kernel,
+            bool_ty,
+            &[start.initialized],
+            start.initialized_store,
+        )
+        .unwrap();
+    assert_eq!(store_instance.cases.len(), 1);
+    let store_branch = store_instance.cases[0].produces;
+    let store_branch_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(store_branch.get()))
+        .unwrap();
+    let store_body = store_instance
+        .prove_body_case(&mut kernel, bool_ty, 0, store_branch_fact)
+        .unwrap();
+    obligation_facts[3] = document
+        .semantics
+        .theory()
+        .prove_specialized_from_body(
+            &mut kernel,
+            *store_id,
+            &[start.initialized, start.initialized_store],
+            store_body.theorem,
+        )
+        .unwrap()
+        .theorem;
+
+    let [invoke_id] = document.schema.named(IlKind::Definition, "invoke") else {
+        panic!("expected one $invoke definition")
+    };
+    let invoke_definition = document.semantics.definitions().get(invoke_id).unwrap();
+    let invoke_instance = invoke_definition
+        .specialize(
+            &mut kernel,
+            bool_ty,
+            &[start.initialized_store, start.function, start.arguments],
+            start.initial,
+        )
+        .unwrap();
+    assert_eq!(invoke_instance.cases.len(), 1);
+    let invoke_branch = invoke_instance.cases[0].produces;
+    let invoke_branch_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(invoke_branch.get()))
+        .unwrap();
+    let invoke_body = invoke_instance
+        .prove_body_case(&mut kernel, bool_ty, 0, invoke_branch_fact)
+        .unwrap();
+    obligation_facts[4] = document
+        .semantics
+        .theory()
+        .prove_specialized_from_body(
+            &mut kernel,
+            *invoke_id,
+            &[
+                start.initialized_store,
+                start.function,
+                start.arguments,
+                start.initial,
+            ],
+            invoke_body.theorem,
+        )
+        .unwrap()
+        .theorem;
     let starts = execution
         .prove_admissible_start(
             &mut kernel,
@@ -1841,7 +1909,8 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             false_does_not_call.theorem,
         )
         .unwrap();
-    let mut grounding = obligations.to_vec();
+    let mut grounding = obligations[..3].to_vec();
+    grounding.extend([store_branch, invoke_branch]);
     grounding.extend([steps_at_final, calls_at_final, cannot_export]);
     document
         .evidence_scope(&grounding)
