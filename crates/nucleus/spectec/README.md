@@ -34,6 +34,14 @@ the exact required case set from a coverage plan, ignores only explicit
 rejections, applies each selected case transactionally once, and refuses to
 finish while any selected declaration, clause, or rule lacks resident roots.
 
+`parameterized_document_with` supports incremental semantic grounding through
+an immutable map from overload-safe `InterpretationSignature` values to HOL
+terms. Supplied implementations are classifier-checked; missing operations
+remain inspectable as categorized grounding obligations. Supplying every
+operation does not itself close a theory, because supplied terms may retain
+free variables and the resulting theory is still syntax until used by checked
+proof rules.
+
 `Proposition<Atom>` is an immutable, `Arc`-shared schema for small program-
 logic experiments. Its `CallsAssert<Program>` atom denotes the open claim that
 some permitted invocation and imported-I/O behavior reaches a named assertion

@@ -60,6 +60,8 @@ pub enum InterpretationKind {
     IteratedPremise,
     /// A non-expression grammar argument.
     GrammarArgument,
+    /// An operation introduced by a newer or external lowering vocabulary.
+    Other,
 }
 
 impl InterpretationSymbol {
@@ -86,9 +88,10 @@ fn interpretation_kind(label: &str) -> InterpretationKind {
         InterpretationKind::Grammar
     } else if label.starts_with("expression:") {
         InterpretationKind::Expression
-    } else {
-        debug_assert!(label.starts_with("iterated-premise:"));
+    } else if label.starts_with("iterated-premise:") {
         InterpretationKind::IteratedPremise
+    } else {
+        InterpretationKind::Other
     }
 }
 
@@ -1018,6 +1021,7 @@ mod tests {
                 "grammar-argument:Variable",
                 InterpretationKind::GrammarArgument,
             ),
+            ("future:operation", InterpretationKind::Other),
         ] {
             assert_eq!(interpretation_kind(label), expected);
         }
