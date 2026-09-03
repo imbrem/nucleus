@@ -55,9 +55,10 @@ pub use relational::{
     RelationalCaseError, RelationalClause, RelationalCondition, RelationalDefinition,
     RelationalDefinitionInstance, RelationalDefinitionSchema, RelationalDefinitionSource,
     RelationalExpressionAlgebra, RelationalRelation, RelationalRelationDefinition,
-    RelationalResolver, RelationalTerm, relational_definition, relational_definition_declaration,
-    relational_definition_schema, relational_hol_case, relational_hol_rule,
-    relational_relation_declaration, relational_relations, relational_relations_avoiding,
+    RelationalResolver, RelationalTerm, prove_reflexive_condition, relational_definition,
+    relational_definition_declaration, relational_definition_schema, relational_hol_case,
+    relational_hol_rule, relational_relation_declaration, relational_relations,
+    relational_relations_avoiding,
 };
 pub use schema::{
     HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,

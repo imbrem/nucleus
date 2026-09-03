@@ -35,6 +35,32 @@ struct TestRelationalResolver {
     relations: std::collections::BTreeMap<String, covalence_logic_hol::Ref>,
 }
 
+fn elementary_condition_facts(
+    kernel: &mut Kernel,
+    conditions: &[covalence_logic_hol::Ref],
+) -> (
+    Vec<covalence_logic_hol::ThmId>,
+    Vec<covalence_logic_hol::Ref>,
+) {
+    let mut remaining = Vec::new();
+    let facts = conditions
+        .iter()
+        .map(|&condition| {
+            if let Some(proved) =
+                covalence_nucleus_spectec::prove_reflexive_condition(kernel, condition).unwrap()
+            {
+                proved.theorem
+            } else {
+                remaining.push(condition);
+                kernel
+                    .identity(covalence_logic_hol::Lit::positive(condition.get()))
+                    .unwrap()
+            }
+        })
+        .collect();
+    (facts, remaining)
+}
+
 impl RelationalResolver for TestRelationalResolver {
     type Error = String;
 
@@ -618,14 +644,8 @@ fn exact_source_definition_lowers_from_selector_and_schema() {
     let production_obligations = instance
         .production_obligations(&mut kernel, 0, &production_witnesses)
         .unwrap();
-    let production_facts = production_obligations
-        .iter()
-        .map(|proposition| {
-            kernel
-                .identity(covalence_logic_hol::Lit::positive(proposition.get()))
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
+    let (production_facts, remaining) =
+        elementary_condition_facts(&mut kernel, &production_obligations);
     let selected = instance
         .prove_production(
             &mut kernel,
@@ -638,7 +658,8 @@ fn exact_source_definition_lowers_from_selector_and_schema() {
     let body = instance
         .prove_body_case(&mut kernel, bool_ty, 0, selected.theorem)
         .unwrap();
-    covalence_nucleus_spectec::EvidenceScope::positive(&production_obligations)
+    assert!(remaining.len() < production_obligations.len());
+    covalence_nucleus_spectec::EvidenceScope::positive(&remaining)
         .check(&kernel, body)
         .unwrap();
     let before = kernel.arena().len();
@@ -1800,14 +1821,8 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let store_conditions = store_instance
         .production_obligations(&mut kernel, 0, &store_witnesses)
         .unwrap();
-    let store_condition_facts = store_conditions
-        .iter()
-        .map(|condition| {
-            kernel
-                .identity(covalence_logic_hol::Lit::positive(condition.get()))
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
+    let (store_condition_facts, store_remaining) =
+        elementary_condition_facts(&mut kernel, &store_conditions);
     let store_branch = store_instance
         .prove_production(
             &mut kernel,
@@ -1849,14 +1864,8 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let invoke_conditions = invoke_instance
         .production_obligations(&mut kernel, 0, &invoke_witnesses)
         .unwrap();
-    let invoke_condition_facts = invoke_conditions
-        .iter()
-        .map(|condition| {
-            kernel
-                .identity(covalence_logic_hol::Lit::positive(condition.get()))
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
+    let (invoke_condition_facts, invoke_remaining) =
+        elementary_condition_facts(&mut kernel, &invoke_conditions);
     let invoke_branch = invoke_instance
         .prove_production(
             &mut kernel,
@@ -1961,8 +1970,8 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         )
         .unwrap();
     let mut grounding = obligations[..3].to_vec();
-    grounding.extend(store_conditions);
-    grounding.extend(invoke_conditions);
+    grounding.extend(store_remaining);
+    grounding.extend(invoke_remaining);
     grounding.extend([steps_at_final, calls_at_final, cannot_export]);
     document
         .evidence_scope(&grounding)

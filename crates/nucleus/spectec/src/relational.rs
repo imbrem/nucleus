@@ -500,6 +500,9 @@ pub enum DefinitionProofError {
         /// Supplied fact count.
         actual: usize,
     },
+    /// A row tagged as equality did not have its checked three-child shape.
+    #[snafu(display("malformed elementary definition equality"))]
+    ConditionShape,
     /// The supplied theorem is not one positive case-branch fact.
     #[snafu(display("theorem does not prove the selected definition branch"))]
     BranchFact,
@@ -533,6 +536,52 @@ impl From<SyntaxError> for DefinitionProofError {
     fn from(source: SyntaxError) -> Self {
         Self::Syntax { source }
     }
+}
+
+/// Proves an elementary definition condition when it is reflexive equality.
+///
+/// This recognizes only checked equality syntax whose two operands are
+/// structurally identical (up to already checked syntax sharing). It performs
+/// no evaluation. Non-equalities and genuinely different operands return
+/// `Ok(None)` and remain explicit semantic obligations.
+///
+/// # Errors
+///
+/// Returns an error if malformed equality syntax or a checked syntax/theorem
+/// operation fails. `kernel` is unchanged on both failure and `Ok(None)`.
+pub fn prove_reflexive_condition(
+    kernel: &mut Kernel,
+    condition: Ref,
+) -> Result<Option<Evidence>, DefinitionProofError> {
+    if kernel.arena().tag(condition) != Some(Tag::Tm(covalence_logic_hol::TmTag::Eq)) {
+        return Ok(None);
+    }
+    let children = kernel
+        .arena()
+        .children(condition)
+        .ok_or(DefinitionProofError::ConditionShape)?
+        .collect::<Vec<_>>();
+    let [_operand_ty, left, right] = children.as_slice() else {
+        return Err(DefinitionProofError::ConditionShape);
+    };
+    let mut staged = kernel.fork();
+    match covalence_logic_hol_derived::join_same_syntax(&mut staged, *left, *right) {
+        Ok(_) => {}
+        Err(SyntaxError::Different) => return Ok(None),
+        Err(SyntaxError::Kernel { source }) => {
+            return Err(DefinitionProofError::Kernel { source });
+        }
+    }
+    let bool_ty = staged.classifier(condition)?;
+    let reflexive = staged.refl(bool_ty, *left)?;
+    covalence_logic_hol_derived::join_same_syntax(&mut staged, reflexive.equality, condition)?;
+    staged.convert_conclusions(reflexive.theorem, reflexive.equality, condition)?;
+    *kernel = staged;
+    Ok(Some(Evidence {
+        proposition: condition,
+        theorem: reflexive.theorem,
+        holds: true,
+    }))
 }
 
 /// Minimal inputs for lowering one complete checked definition schema.
