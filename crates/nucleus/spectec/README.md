@@ -87,6 +87,14 @@ forming the theory equation. Rule-proof code can therefore address the exact
 candidate, closure, characterization, and predicate immutably. The full audit
 checks exact coverage and the `Steps` artifact's Boolean classifiers.
 
+`RelationalDefinition::match_application` is the immutable recursion boundary
+for definition-proof strategies. Given the exact checked graph predicate and
+one proposition, it returns source-ordered inputs and the result only when the
+application spine matches. It performs no evaluation and creates no fact. The
+full audit uses it to locate the unique nested `$allocmodule` call inside the
+concrete `$instantiate` production without depending on a volatile condition
+index.
+
 `spectec_execution` extracts the exact lowered `instantiate`, `invoke`, and
 `Steps` declarations from the pinned source vocabulary. It adapts SpecTec's
 tuple-argument `Steps` relation to the curried predicate consumed by

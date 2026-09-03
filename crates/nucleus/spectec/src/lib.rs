@@ -55,12 +55,12 @@ pub use program_logic::{
 pub use relational::{
     DefinitionProofError, OpenedRelationalProduction, RelationProofError, RelationalCall,
     RelationalCaseArtifact, RelationalCaseError, RelationalClause, RelationalCondition,
-    RelationalDefinition, RelationalDefinitionInstance, RelationalDefinitionSchema,
-    RelationalDefinitionSource, RelationalExpressionAlgebra, RelationalRelation,
-    RelationalRelationDefinition, RelationalResolver, RelationalTerm, prove_reflexive_condition,
-    relational_definition, relational_definition_declaration, relational_definition_schema,
-    relational_hol_case, relational_hol_rule, relational_relation_declaration,
-    relational_relations, relational_relations_avoiding,
+    RelationalDefinition, RelationalDefinitionApplication, RelationalDefinitionInstance,
+    RelationalDefinitionSchema, RelationalDefinitionSource, RelationalExpressionAlgebra,
+    RelationalRelation, RelationalRelationDefinition, RelationalResolver, RelationalTerm,
+    prove_reflexive_condition, relational_definition, relational_definition_declaration,
+    relational_definition_schema, relational_hol_case, relational_hol_rule,
+    relational_relation_declaration, relational_relations, relational_relations_avoiding,
 };
 pub use run::{
     BehaviorQuantifier, ClosedRunContext, RefinementDirection, RunCompositionError, RunContext,

@@ -286,6 +286,14 @@ its configuration with the exact retained `$invoke` production result; its
 concrete fact is discharged by checked beta reduction and equality reflexivity.
 Interpreter traces cannot be passed in place of theorem handles.
 
+Nested definition grounding is syntax-directed rather than position-directed.
+`RelationalDefinition::match_application` recognizes an exact checked graph
+application and returns its immutable input/result split without evaluating or
+proving it. The positive audit uses this to identify the unique six-input
+`$allocmodule` call retained inside `$instantiate`. This establishes the next
+recursive proof boundary while leaving the nested call as an explicit premise
+until its own SpecTec production is proved.
+
 For `FALSE`, the negative proof opens the concrete exported-function predicate
 and reduces non-reachability to two independent laws: every export list exposed
 by instantiating the empty module equals the structural empty list, and that

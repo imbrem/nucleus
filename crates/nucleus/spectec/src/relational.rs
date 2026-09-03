@@ -133,6 +133,27 @@ pub struct RelationalDefinition {
     pub next_name: u64,
 }
 
+/// One exact checked application of a relational definition graph.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelationalDefinitionApplication {
+    inputs: Arc<[Ref]>,
+    result: Ref,
+}
+
+impl RelationalDefinitionApplication {
+    /// Returns the definition inputs in declaration order.
+    #[must_use]
+    pub fn inputs(&self) -> &[Ref] {
+        &self.inputs
+    }
+
+    /// Returns the graph result argument.
+    #[must_use]
+    pub const fn result(&self) -> Ref {
+        self.result
+    }
+}
+
 /// One definition graph specialized at concrete inputs and a concrete result.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelationalDefinitionInstance {
@@ -175,6 +196,40 @@ pub struct OpenedRelationalProduction {
 }
 
 impl RelationalDefinition {
+    /// Matches one checked proposition as an application of `predicate`.
+    ///
+    /// A successful match returns exactly this definition's inputs followed by
+    /// its graph result. This is immutable syntax inspection only; it neither
+    /// evaluates the definition nor creates a theorem fact. A different head
+    /// or arity is the expected `None` outcome.
+    #[must_use]
+    pub fn match_application(
+        &self,
+        kernel: &Kernel,
+        predicate: Ref,
+        proposition: Ref,
+    ) -> Option<RelationalDefinitionApplication> {
+        let mut current = proposition;
+        let mut arguments = Vec::with_capacity(self.formal_inputs.len() + 1);
+        while kernel.arena().tag(current) == Some(Tag::Tm(covalence_logic_hol::TmTag::App)) {
+            let children = kernel.arena().children(current)?.collect::<Vec<_>>();
+            let [function, argument] = children.as_slice() else {
+                return None;
+            };
+            arguments.push(*argument);
+            current = *function;
+        }
+        arguments.reverse();
+        if current != predicate || arguments.len() != self.formal_inputs.len() + 1 {
+            return None;
+        }
+        let result = arguments.pop()?;
+        Some(RelationalDefinitionApplication {
+            inputs: Arc::from(arguments),
+            result,
+        })
+    }
+
     /// Chooses production witnesses by structurally matching clause patterns.
     ///
     /// Pattern binders are unified with corresponding subterms of `inputs`.

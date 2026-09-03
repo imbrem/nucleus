@@ -592,6 +592,7 @@ fn complete_clause_api_lowers_patterns_result_and_premises() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn exact_source_definition_lowers_from_selector_and_schema() {
     let bytes = b"(def \"id\" (exp \"x\" nat) nat (clause (exp (var \"x\")) (var \"x\"))) (typ \"T\" (inst (alias nat)))";
     let il = IlDocument::parse(bytes, Limits::default()).unwrap();
@@ -646,6 +647,24 @@ fn exact_source_definition_lowers_from_selector_and_schema() {
     let inferred_result = definition
         .production_result(&mut kernel, 0, &[x], &production_witnesses)
         .unwrap();
+    let definition_predicate = schema
+        .declaration(DeclarationId::new(1, None).unwrap())
+        .unwrap()
+        .reference();
+    let applied = kernel
+        .app(definition_predicate, x)
+        .and_then(|partial| kernel.app(partial, inferred_result))
+        .unwrap();
+    let matched = definition
+        .match_application(&kernel, definition_predicate, applied)
+        .unwrap();
+    assert_eq!(matched.inputs(), &[x]);
+    assert_eq!(matched.result(), inferred_result);
+    assert!(
+        definition
+            .match_application(&kernel, resolver.graph, applied)
+            .is_none()
+    );
     let instance = definition
         .specialize(&mut kernel, bool_ty, &[x], inferred_result)
         .unwrap();
@@ -1821,6 +1840,19 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         .definitions()
         .get(instantiate_id)
         .unwrap();
+    let [allocmodule_id] = document.schema.named(IlKind::Definition, "allocmodule") else {
+        panic!("expected one $allocmodule definition")
+    };
+    let allocmodule_definition = document
+        .semantics
+        .definitions()
+        .get(allocmodule_id)
+        .unwrap();
+    let allocmodule_predicate = document
+        .schema
+        .declaration(*allocmodule_id)
+        .unwrap()
+        .reference();
     let [store_id] = document.schema.named(IlKind::Definition, "store") else {
         panic!("expected one $store definition")
     };
@@ -2047,6 +2079,14 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let instantiate_conditions = instantiate_instance
         .production_obligations(&mut kernel, 0, &instantiate_witnesses)
         .unwrap();
+    let allocmodule_calls = instantiate_conditions
+        .iter()
+        .filter_map(|&condition| {
+            allocmodule_definition.match_application(&kernel, allocmodule_predicate, condition)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(allocmodule_calls.len(), 1);
+    assert_eq!(allocmodule_calls[0].inputs().len(), 6);
     let (instantiate_condition_facts, instantiate_remaining) =
         elementary_condition_facts(&mut kernel, &instantiate_conditions);
     assert!(instantiate_remaining.len() < instantiate_conditions.len());
