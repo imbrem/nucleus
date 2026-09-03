@@ -1673,39 +1673,44 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let step_pair = execution
         .step_pair(&mut kernel, configuration, configuration)
         .unwrap();
+    let reflexive_witnesses = [state, state, instructions, instructions];
     let reflexive_rule = steps_definition
-        .specialize_rule(&mut kernel, 0, &[state, instructions])
+        .specialize_rule(&mut kernel, 0, &reflexive_witnesses)
         .unwrap();
     assert_eq!(
         kernel.classifier(reflexive_rule.proposition).unwrap(),
         bool_ty
     );
-    let reflexive_instance = steps_definition
-        .specialize_rule(&mut kernel, 0, &steps_definition.rule_schemas[0].binders)
+    let reflexive_obligations = steps_definition
+        .rule_obligations(&mut kernel, 0, &reflexive_witnesses)
         .unwrap();
-    let reflexive_antecedent = kernel
-        .arena()
-        .children(reflexive_instance.proposition)
-        .unwrap()
-        .next()
-        .unwrap();
-    let reflexive_premises = kernel
-        .identity(covalence_logic_hol::Lit::positive(
-            reflexive_antecedent.get(),
-        ))
+    let (reflexive_condition_facts, reflexive_remaining) =
+        elementary_condition_facts(&mut kernel, &reflexive_obligations);
+    let reflexive_premises = steps_definition
+        .prove_rule_obligations(
+            &mut kernel,
+            bool_ty,
+            0,
+            &reflexive_witnesses,
+            &reflexive_condition_facts,
+        )
         .unwrap();
     let reflexive_candidate = steps_definition
-        .apply_specialized_rule(&mut kernel, reflexive_instance, reflexive_premises)
+        .apply_specialized_rule(&mut kernel, reflexive_rule, reflexive_premises.theorem)
         .unwrap();
     document
-        .evidence_scope(&[steps_definition.least.closure, reflexive_antecedent])
+        .evidence_scope(
+            &std::iter::once(steps_definition.least.closure)
+                .chain(reflexive_remaining.iter().copied())
+                .collect::<Vec<_>>(),
+        )
         .check(&kernel, reflexive_candidate)
         .unwrap();
     let reflexive_steps = steps_definition
         .close_rule_instance(&mut kernel, reflexive_candidate, steps_constraint.theorem)
         .unwrap();
     document
-        .evidence_scope(&[reflexive_antecedent])
+        .evidence_scope(&reflexive_remaining)
         .check(&kernel, reflexive_steps)
         .unwrap();
     let reflexive_pair = kernel
@@ -1733,7 +1738,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         )
         .unwrap();
     document
-        .evidence_scope(&[reflexive_antecedent])
+        .evidence_scope(&reflexive_remaining)
         .check(&kernel, curried_reflexive_steps)
         .unwrap();
     let specialized_steps = document
@@ -2285,6 +2290,20 @@ fn empty_module_uses_exact_expression_constructor_vocabulary() {
     let module = empty_wasm_module(&mut kernel, &document).unwrap();
 
     assert_eq!(kernel.classifier(module).unwrap(), value);
+    let module_fields = builder
+        .match_case_fields(&kernel, "MODULE%%%%%%%%%%%", 11, module)
+        .unwrap()
+        .unwrap();
+    assert_eq!(module_fields.len(), 11);
+    assert_eq!(module_fields[10], empty);
+    let before = kernel.arena().clone();
+    assert!(
+        builder
+            .match_case_fields(&kernel, "MODULE%%%%%%%%%%%", 11, empty)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(kernel.arena(), &before);
     let specialized = document
         .semantics
         .theory()

@@ -125,6 +125,62 @@ impl<'a> SpecTecValueBuilder<'a> {
         Ok(value)
     }
 
+    /// Matches a value constructed by [`Self::case_fields`] and returns its fields.
+    ///
+    /// This inspects only the exact recorded case and tuple application spine;
+    /// it creates no theorem or syntax fact. A different structural value is
+    /// the expected `Ok(None)` outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the required case or tuple operation was not
+    /// recorded. `kernel` is unchanged.
+    pub fn match_case_fields(
+        self,
+        kernel: &Kernel,
+        notation: &str,
+        arity: usize,
+        value: Ref,
+    ) -> Result<Option<Vec<Ref>>, WasmLogicError> {
+        let value_ty = self.value_ty();
+        let case_label = format!("expression:Case({notation:?})");
+        let case_constructor = operation(self.document, &case_label, &[value_ty], value_ty)?;
+        let Some(case_children) = kernel.arena().children(value) else {
+            return Ok(None);
+        };
+        let case_children = case_children.collect::<Vec<_>>();
+        let [actual_case, payload] = case_children.as_slice() else {
+            return Ok(None);
+        };
+        if *actual_case != case_constructor {
+            return Ok(None);
+        }
+        let tuple_constructor = operation(
+            self.document,
+            "expression:Tuple",
+            &vec![value_ty; arity],
+            value_ty,
+        )?;
+        let mut current = *payload;
+        let mut fields = Vec::with_capacity(arity);
+        for _ in 0..arity {
+            let Some(children) = kernel.arena().children(current) else {
+                return Ok(None);
+            };
+            let children = children.collect::<Vec<_>>();
+            let [function, argument] = children.as_slice() else {
+                return Ok(None);
+            };
+            fields.push(*argument);
+            current = *function;
+        }
+        if current != tuple_constructor {
+            return Ok(None);
+        }
+        fields.reverse();
+        Ok(Some(fields))
+    }
+
     /// Selects one named record field through the exact operation recorded by
     /// the lowering.
     ///

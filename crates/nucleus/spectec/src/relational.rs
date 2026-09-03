@@ -965,6 +965,114 @@ pub struct RelationalRelationDefinition {
 }
 
 impl RelationalRelationDefinition {
+    /// Constructs a rule's elementary premises at chosen binder values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an absent rule, wrong witness arity, or failed
+    /// checked substitution. `kernel` is unchanged on failure.
+    pub fn rule_obligations(
+        &self,
+        kernel: &mut Kernel,
+        index: usize,
+        witnesses: &[Ref],
+    ) -> Result<Vec<Ref>, RelationProofError> {
+        let rule = self
+            .rule_schemas
+            .get(index)
+            .ok_or(RelationProofError::Missing { index })?;
+        if witnesses.len() != rule.binders.len() {
+            return Err(RelationProofError::WitnessArity {
+                expected: rule.binders.len(),
+                actual: witnesses.len(),
+            });
+        }
+        let mut staged = kernel.fork();
+        let obligations = rule
+            .premises
+            .iter()
+            .map(|&premise| {
+                rule.binders
+                    .iter()
+                    .copied()
+                    .zip(witnesses.iter().copied())
+                    .try_fold(premise, |current, (binder, witness)| {
+                        substitute(&mut staged, binder, witness, current)
+                            .map(|result| result.output)
+                            .map_err(|source| RelationProofError::Substitute { source })
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        *kernel = staged;
+        Ok(obligations)
+    }
+
+    /// Proves a specialized rule's complete premise conjunction.
+    ///
+    /// Each theorem must prove the corresponding result of
+    /// [`Self::rule_obligations`]. All input premises remain visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an absent rule, wrong witness/fact arity,
+    /// mismatched conclusions, or a rejected checked conjunction step.
+    /// `kernel` is unchanged on failure.
+    pub fn prove_rule_obligations(
+        &self,
+        kernel: &mut Kernel,
+        bool_ty: Ref,
+        index: usize,
+        witnesses: &[Ref],
+        facts: &[ThmId],
+    ) -> Result<Evidence, RelationProofError> {
+        let mut staged = kernel.fork();
+        let obligations = self.rule_obligations(&mut staged, index, witnesses)?;
+        if facts.len() != obligations.len() {
+            return Err(RelationProofError::PremiseArity {
+                expected: obligations.len(),
+                actual: facts.len(),
+            });
+        }
+        let (mut proposition, theorem) = if let Some((&first, tail)) = obligations.split_first() {
+            let first_source = sole_positive_conclusion(&staged, facts[0])?;
+            join_alpha_equivalent(&mut staged, first_source, first)
+                .map_err(|source| RelationProofError::Syntax { source })?;
+            let first_fact = staged.copy_theorem(facts[0])?;
+            staged.convert_conclusions(first_fact, first_source, first)?;
+            let mut proposition = first;
+            let mut theorem = first_fact;
+            for (&right, &fact) in tail.iter().zip(&facts[1..]) {
+                let source = sole_positive_conclusion(&staged, fact)?;
+                join_alpha_equivalent(&mut staged, source, right)
+                    .map_err(|source| RelationProofError::Syntax { source })?;
+                let aligned = staged.copy_theorem(fact)?;
+                staged.convert_conclusions(aligned, source, right)?;
+                proposition = staged.op2(Op2::And, proposition, right)?;
+                theorem = staged.and_right(theorem, aligned, positive(proposition))?;
+            }
+            (proposition, theorem)
+        } else {
+            let truth = staged.bool(bool_ty, true)?;
+            (truth, staged.true_right(positive(truth))?)
+        };
+        let specialized = self.specialize_rule(&mut staged, index, witnesses)?;
+        let antecedent = staged
+            .arena()
+            .children(specialized.proposition)
+            .and_then(|mut children| children.next())
+            .ok_or(RelationProofError::NotImplication)?;
+        join_alpha_equivalent(&mut staged, proposition, antecedent)
+            .map_err(|source| RelationProofError::Syntax { source })?;
+        staged.convert_conclusions(theorem, proposition, antecedent)?;
+        proposition = antecedent;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition,
+            theorem,
+            holds: true,
+        })
+    }
+
     /// Derives one member rule from the complete family closure.
     ///
     /// The resulting theorem has `least.closure` as its single visible premise
@@ -1209,6 +1317,22 @@ pub enum RelationProofError {
     Missing {
         /// Requested member-local rule index.
         index: usize,
+    },
+    /// Chosen rule witnesses did not match the retained binder arity.
+    #[snafu(display("SpecTec relation rule has {expected} witnesses, found {actual}"))]
+    WitnessArity {
+        /// Required witness count.
+        expected: usize,
+        /// Supplied witness count.
+        actual: usize,
+    },
+    /// Supplied facts did not match the rule premise arity.
+    #[snafu(display("SpecTec relation rule has {expected} premises, found {actual} facts"))]
+    PremiseArity {
+        /// Required premise count.
+        expected: usize,
+        /// Supplied fact count.
+        actual: usize,
     },
     /// Retained member and family rule metadata disagree.
     #[snafu(display("retained SpecTec relation rules are inconsistent with their closure"))]
