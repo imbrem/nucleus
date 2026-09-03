@@ -1607,7 +1607,7 @@ impl RunDomain {
     /// propositional, or alignment step succeeds. `kernel` is unchanged on
     /// failure.
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    pub fn prove_refinement_preserves_total(
+    pub fn prove_refinement_preserves_totality(
         self,
         kernel: &mut Kernel,
         refinement: Evidence,
@@ -1794,7 +1794,7 @@ impl RunDomain {
     /// of the specification, and every checked specialization, propositional,
     /// or alignment step succeeds. `kernel` is unchanged on failure.
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    pub fn prove_refinement_preserves_deterministic(
+    pub fn prove_refinement_preserves_determinism(
         self,
         kernel: &mut Kernel,
         refinement: Evidence,
@@ -2410,13 +2410,13 @@ impl RunDomain {
     ///
     /// Returns an error under the same conditions as
     /// [`Self::prove_same_runs_reflexive`].
-    pub fn prove_run_refinement_reflexive(
+    pub fn prove_refinement_reflexive(
         self,
         kernel: &mut Kernel,
         profile: Ref,
         module: Ref,
     ) -> Result<Evidence, KernelError> {
-        self.prove_refinement_reflexive(kernel, profile, module)
+        self.prove_refinement_reflexive_direct(kernel, profile, module)
     }
 
     /// Composes two checked run refinements.
@@ -2431,7 +2431,7 @@ impl RunDomain {
     /// refinements, or a checked specialization, equality, propositional, or
     /// alignment operation fails. `kernel` is unchanged on failure.
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    pub fn prove_run_refinement_transitive(
+    pub fn prove_refinement_transitive(
         self,
         kernel: &mut Kernel,
         left_middle: Evidence,
@@ -2649,7 +2649,7 @@ impl RunDomain {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn prove_refinement_reflexive(
+    fn prove_refinement_reflexive_direct(
         self,
         kernel: &mut Kernel,
         profile: Ref,
@@ -5308,7 +5308,7 @@ mod tests {
         assert_eq!(kernel.arena(), &before);
         assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
         let refinement_reflexive = domain
-            .prove_run_refinement_reflexive(&mut kernel, profile, module)
+            .prove_refinement_reflexive(&mut kernel, profile, module)
             .unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, refinement_reflexive)
@@ -5342,7 +5342,7 @@ mod tests {
             holds: true,
         };
         let implementation_total = domain
-            .prove_refinement_preserves_total(
+            .prove_refinement_preserves_totality(
                 &mut kernel,
                 left_middle_refinement_evidence,
                 specification_total_evidence,
@@ -5365,7 +5365,7 @@ mod tests {
             holds: true,
         };
         let implementation_deterministic = domain
-            .prove_refinement_preserves_deterministic(
+            .prove_refinement_preserves_determinism(
                 &mut kernel,
                 left_middle_refinement_evidence,
                 specification_deterministic_evidence,
@@ -5506,7 +5506,7 @@ mod tests {
         assert_eq!(kernel.arena(), &before);
         assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
         let refinement_transitive = domain
-            .prove_run_refinement_transitive(
+            .prove_refinement_transitive(
                 &mut kernel,
                 left_middle_refinement_evidence,
                 middle_right_refinement_evidence,
@@ -5523,7 +5523,7 @@ mod tests {
         let theorem_count = kernel.thm().live_theorems().count();
         assert!(
             domain
-                .prove_run_refinement_transitive(
+                .prove_refinement_transitive(
                     &mut kernel,
                     left_middle_refinement_evidence,
                     left_middle_refinement_evidence,
