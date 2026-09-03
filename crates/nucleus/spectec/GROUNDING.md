@@ -19,14 +19,22 @@ host call. `neverCallsAssert(M)` is its HOL negation. This makes assertion calls
 Sigma-style witnesses while negative claims require excluding every permitted
 invocation and imported behavior.
 
-The current parameterized lowering does **not** yet establish these theorems.
-It represents SpecTec structural constructors, sequences, records, literals,
-and primitive operations as free HOL interpretation symbols. The complete
-theory constrains SpecTec declaration predicates, but does not constrain those
-free symbols to be a faithful algebraic representation. In particular, a
-permitted interpretation may map the `TRUE` and `FALSE` module structures to
-the same HOL value. No sound proof can distinguish their execution behavior
-from the current theory alone.
+The current parameterized lowering establishes checked versions of these
+claims conditional on the complete SpecTec theory and explicit grounding laws.
+In particular, the full pinned-document audit constructs structural `TRUE` and
+`FALSE` modules, derives `callsAssert(TRUE)` and
+`not callsAssert(FALSE)`, and derives their contextual inequivalence. Closing
+the theorem premises produces a premise-free HOL implication from those exact
+laws to the inequivalence; it does not silently turn them into axioms.
+
+The result is not yet an unconditional theorem of the parameterized theory.
+Structural constructors, sequences, records, literals, and primitive
+operations remain free HOL interpretation symbols. The complete theory
+constrains SpecTec declaration predicates, but does not by itself require those
+symbols to be a faithful algebraic representation. A permitted interpretation
+could still map the structural `TRUE` and `FALSE` module terms to the same HOL
+value. Distinguishing them therefore necessarily depends on checked
+representation laws or a concrete faithful interpretation.
 
 Grounding therefore requires all of the following:
 
@@ -77,9 +85,28 @@ derivation. Positive reachability, universal non-reachability, determinism, and
 output exclusion then become ordinary HOL properties of content-addressed
 program semantics rather than special kernel capabilities.
 
-Positive reachability now has an executable checked proof interface:
+Positive reachability has an executable checked proof interface:
 `AssertionReachability::prove_calls_assert` accepts the three concrete witness
 facts (`starts`, `Steps`, and the pre-host-call observation) and introduces the
-two existential states. This isolates the remaining TRUE task precisely: derive
-those three witness facts from specialized SpecTec equations and grounding
-laws. Interpreter traces cannot be passed in place of theorem handles.
+two existential states. The pinned audit now derives the `instantiate`,
+`store`, and `invoke` graph facts through retained SpecTec definition
+productions and checked equation transport. It also exposes each remaining
+production condition instead of assuming those graph facts wholesale. The
+initialization `Steps`, export-selection, final `Steps`, and pre-host-call facts
+remain explicit grounding premises. Interpreter traces cannot be passed in
+place of theorem handles.
+
+For `FALSE`, the negative proof opens the concrete exported-function predicate
+and reduces non-reachability to two independent laws: every export list exposed
+by instantiating the empty module equals the structural empty list, and that
+list has no members. Export projection is a relational view of the exact
+nine-field module-instance constructor, while membership is the exact
+`expression:Membership` operation recorded by the lowering. These laws are
+still premises; they are no longer aliases for `not callsAssert(FALSE)`.
+
+Individual-function equivalence is contextual observational equivalence: it
+quantifies every function-hole replacement context and then every admissible
+outer module-observation context. The checked replacement theorem proves that
+replacing a function by an equivalent function preserves module contextual
+equivalence. This theorem is structural and premise-free; it does not depend on
+an evaluator or on the pending concrete representation laws.

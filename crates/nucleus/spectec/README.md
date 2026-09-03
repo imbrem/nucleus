@@ -49,10 +49,12 @@ import. `AssertCombinator<Leaf>` is explicitly Boolean scaffolding, not
 WebAssembly syntax: it gives `TRUE`, `FALSE`, `AND`, and `OR` propositions a
 compositional mapping to that schema. Closed examples lower to HOL and produce
 positive or negative kernel-checked theorems. They exercise the composition API
-without treating an interpreter as theorem authority. A future semantic
-interpretation must relate open leaves and exact program bytes to the complete
-`SpecTec` theory before these examples establish WebAssembly behavior. See
-[`GROUNDING.md`](GROUNDING.md) for that acceptance boundary.
+without treating an interpreter as theorem authority. The pinned-document
+audit constructs structural Wasm modules and derives several execution facts
+through retained SpecTec productions. Its final behavioral conclusions remain
+conditional on explicit representation laws wherever the parameterized
+structural operations are otherwise free. See [`GROUNDING.md`](GROUNDING.md)
+for that exact acceptance boundary.
 
 `Evidence` composes checked positive or negative conclusions while retaining
 all theorem premises, which is the expected shape for early semantic results
