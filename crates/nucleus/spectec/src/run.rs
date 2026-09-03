@@ -11,6 +11,8 @@ use covalence_logic_hol::{
 };
 use covalence_logic_hol_derived::join_same_syntax;
 
+use crate::ContextualObservation;
+
 /// Classifiers used by an eventful execution relation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RunTypes {
@@ -454,6 +456,44 @@ impl RunObservation {
         Ok(predicate)
     }
 
+    /// Adapts this behavior into contextual equivalence of modules.
+    ///
+    /// The supplied operations describe closing/linking contexts. The chosen
+    /// may, must, or never predicate becomes the observation of each resulting
+    /// closed module, so the existing contextual and function-replacement
+    /// theorems apply without introducing another execution semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the profile or a context operation has an
+    /// incompatible classifier, or checked predicate construction fails.
+    /// `kernel` is unchanged on failure.
+    pub fn contextual(
+        self,
+        kernel: &mut Kernel,
+        quantifier: BehaviorQuantifier,
+        profile: Ref,
+        context_ty: Ref,
+        plug: Ref,
+        admissible: Ref,
+    ) -> Result<ContextualObservation, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.domain.relation.types;
+        let observe = self.predicate(&mut staged, quantifier, profile)?;
+        let contextual = ContextualObservation {
+            subject_ty: types.module,
+            context_ty,
+            observed_ty: types.module,
+            bool_ty: types.bool_ty,
+            plug,
+            admissible,
+            observe,
+        }
+        .checked(&mut staged)?;
+        *kernel = staged;
+        Ok(contextual)
+    }
+
     /// Constructs the existential behavior proposition.
     ///
     /// # Errors
@@ -588,6 +628,13 @@ mod tests {
         let profile = kernel.tm_fv(23, types.profile).unwrap();
         let module = kernel.tm_fv(24, types.module).unwrap();
         let other_module = kernel.tm_fv(26, types.module).unwrap();
+        let context_ty = kernel.ty_fv(8, star).unwrap();
+        let plug_ty =
+            super::curried_type(&mut kernel, &[context_ty, types.module], types.module).unwrap();
+        let contextual_admissible_ty =
+            super::curried_type(&mut kernel, &[context_ty, types.module], bool_ty).unwrap();
+        let plug = kernel.tm_fv(27, plug_ty).unwrap();
+        let contextual_admissible = kernel.tm_fv(28, contextual_admissible_ty).unwrap();
         let theorem_count = kernel.thm().live_theorems().count();
         let relation = RunRelation::new(&mut kernel, types, runs).unwrap();
         let domain = relation.under(&mut kernel, admissible).unwrap();
@@ -611,6 +658,20 @@ mod tests {
             .unwrap();
         assert_eq!(kernel.classifier(equivalent).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(refinement).unwrap(), bool_ty);
+        let contextual = observation
+            .contextual(
+                &mut kernel,
+                BehaviorQuantifier::May,
+                profile,
+                context_ty,
+                plug,
+                contextual_admissible,
+            )
+            .unwrap();
+        let contextual_equivalence = contextual
+            .equivalent(&mut kernel, module, other_module)
+            .unwrap();
+        assert_eq!(kernel.classifier(contextual_equivalence).unwrap(), bool_ty);
 
         for quantifier in [
             BehaviorQuantifier::May,
@@ -647,6 +708,21 @@ mod tests {
         assert!(
             domain
                 .refines(&mut kernel, profile, profile, other_module)
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+
+        let before = kernel.arena().clone();
+        assert!(
+            observation
+                .contextual(
+                    &mut kernel,
+                    BehaviorQuantifier::May,
+                    profile,
+                    context_ty,
+                    contextual_admissible,
+                    plug,
+                )
                 .is_err()
         );
         assert_eq!(kernel.arena(), &before);

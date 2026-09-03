@@ -17,8 +17,8 @@ use covalence_logic_hol::{
 };
 use covalence_logic_hol_derived::{
     EqualityError, ExistsError, ForallError, ModelError, SyntaxError, equality_symmetry,
-    equality_transitivity, forall_elim, introduce_exists, join_alpha_equivalent, open_exists,
-    substitute,
+    equality_transitivity, forall_elim, introduce_exists, join_alpha_equivalent, join_same_syntax,
+    open_exists, substitute,
 };
 
 /// A small, immutable, generic proposition schema.
@@ -595,6 +595,30 @@ pub struct ContextualObservation {
 }
 
 impl ContextualObservation {
+    /// Validates this immutable contextual-observation schema.
+    ///
+    /// The required classifiers are `context -> subject -> observed` for
+    /// `plug`, `context -> subject -> bool` for `admissible`, and
+    /// `observed -> bool` for `observe`. This creates no theorem fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless every operation has its required classifier.
+    /// `kernel` is unchanged on failure.
+    pub fn checked(self, kernel: &mut Kernel) -> Result<Self, KernelError> {
+        let mut staged = kernel.fork();
+        let plug_tail = staged.ty_arr(self.subject_ty, self.observed_ty)?;
+        let plug_ty = staged.ty_arr(self.context_ty, plug_tail)?;
+        require_classifier(&mut staged, self.plug, plug_ty)?;
+        let admissible_tail = staged.ty_arr(self.subject_ty, self.bool_ty)?;
+        let admissible_ty = staged.ty_arr(self.context_ty, admissible_tail)?;
+        require_classifier(&mut staged, self.admissible, admissible_ty)?;
+        let observe_ty = staged.ty_arr(self.observed_ty, self.bool_ty)?;
+        require_classifier(&mut staged, self.observe, observe_ty)?;
+        *kernel = staged;
+        Ok(self)
+    }
+
     /// Constructs contextual observational equivalence of two subjects.
     ///
     /// The result is
@@ -2133,13 +2157,11 @@ fn require_bool(kernel: &mut Kernel, bool_ty: Ref, proposition: Ref) -> Result<(
 
 fn require_classifier(kernel: &mut Kernel, term: Ref, expected: Ref) -> Result<(), KernelError> {
     let actual = kernel.classifier(term)?;
-    if kernel.equivalent(actual, expected)? {
-        Ok(())
-    } else {
-        Err(KernelError::InvalidTheoremRule {
+    join_same_syntax(kernel, actual, expected)
+        .map(|_| ())
+        .map_err(|_| KernelError::InvalidTheoremRule {
             rule: "contextual observation classifier",
         })
-    }
 }
 
 /// Immutable Boolean scaffolding for composing assertion propositions.

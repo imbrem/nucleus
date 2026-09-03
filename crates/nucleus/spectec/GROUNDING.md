@@ -11,8 +11,10 @@ than separate execution semantics. A domain also defines equality of complete
 allowed run graphs and directional refinement: an implementation has the same
 admissible invocation domain and may remove, but not add, behaviors of its
 specification. The resulting module predicates compose with contextual
-equivalence. This layer constructs checked syntax only and neither executes
-Wasm nor creates theorem facts.
+equivalence through a checked adapter, so the existing individual-function
+replacement theorems apply to any selected may, must, or never behavior. This
+layer constructs checked syntax only and neither executes Wasm nor creates
+theorem facts.
 
 The target program-logic interface is defined by four theorem families over
 actual WebAssembly modules:
