@@ -67,16 +67,6 @@ impl Block {
             && self.base.is_multiple_of(4)
             && self.stop().is_some_and(|stop| stop <= size)
     }
-
-    fn contains(self, address: usize) -> bool {
-        self.stop()
-            .is_some_and(|stop| self.base <= address && address < stop)
-    }
-
-    fn disjoint(self, other: Self) -> bool {
-        self.stop().is_some_and(|stop| stop <= other.base)
-            || other.stop().is_some_and(|stop| stop <= self.base)
-    }
 }
 
 /// Untrusted flat storage for the selected fixed-64-bit runtime.
@@ -178,20 +168,28 @@ impl Arena {
             .is_some_and(|capacity| self.zero_range(header.block.base + 4, capacity - 4))
     }
 
+    /// Walks one intrusive free ring, claiming every block it links.
+    ///
+    /// The claim replaces the former quadratic scan for a revisited base: a
+    /// ring that returns to a block it already linked claims an address twice.
     fn walk_ring(
         &self,
+        coverage: &mut Coverage,
         head: usize,
         expected_class: usize,
         special: Option<usize>,
     ) -> Option<Vec<Block>> {
         let mut current = head;
         let mut visited = Vec::new();
+        // A bound rather than a halting argument: every iteration claims at
+        // least four fresh words, so this can only fire on input the claim has
+        // already rejected.
         for _ in 0..=self.words.len() {
-            if visited.iter().any(|block: &Block| block.base == current) {
-                return None;
-            }
             let header = self.header(current)?;
             if header.block.size_class != expected_class {
+                return None;
+            }
+            if !coverage.claim(header.block) {
                 return None;
             }
             if special != Some(current) && !self.ordinary_node(header) {
@@ -226,7 +224,7 @@ impl Arena {
         })
     }
 
-    fn decode_free(&self) -> Option<Vec<Block>> {
+    fn decode_free(&self, coverage: &mut Coverage) -> Option<Vec<Block>> {
         let size = u64::try_from(self.words.len()).ok()?;
         if size > (1_u64 << PAYLOAD_WIDTH) {
             return None;
@@ -242,11 +240,16 @@ impl Arena {
         let mut blocks = Vec::new();
         for size_class in 0..root.block.size_class {
             if let NullablePointer::Address(head) = self.directory_head(root, size_class)? {
-                blocks.extend(self.walk_ring(head, size_class, None)?);
+                blocks.extend(self.walk_ring(coverage, head, size_class, None)?);
             }
         }
-        blocks.extend(self.walk_ring(root_base, root.block.size_class, Some(root_base))?);
-        pairwise_disjoint(&blocks).then_some(blocks)
+        blocks.extend(self.walk_ring(
+            coverage,
+            root_base,
+            root.block.size_class,
+            Some(root_base),
+        )?);
+        Some(blocks)
     }
 
     fn live_block(&self, base: u64) -> Option<Block> {
@@ -259,55 +262,85 @@ impl Arena {
         block.fits(self.words.len()).then_some(block)
     }
 
-    fn read_live(&self, block: Block) -> Option<Vec<Ref>> {
+    /// Borrows one live block's child references, without copying them.
+    ///
+    /// The payload is a nonzero prefix followed by a zero terminator and zero
+    /// padding to the end of the block.
+    fn child_words(&self, block: Block) -> Option<&[Word]> {
         if self.live_block(u64::try_from(block.base).ok()?)? != block {
             return None;
         }
         let capacity = block.capacity()?;
         let start = block.base.checked_add(1)?;
         let words = self.words.get(start..start.checked_add(capacity - 1)?)?;
-        decode_words(words)
-    }
-
-    fn decode_ref(
-        &self,
-        free: &[Block],
-        fuel: usize,
-        live: &mut Vec<Block>,
-        reference: Ref,
-    ) -> Option<Formula> {
-        let next_fuel = fuel.checked_sub(1)?;
-        let word = reference.word();
-        if word.tag() == 3 {
-            return Some(Formula::Literal {
-                atom: word.base() / 4,
-                negative: word.is_negative(),
-            });
-        }
-        let block = self.live_block(word.base())?;
-        if live.iter().chain(free).any(|owned| !block.disjoint(*owned)) {
+        let terminator = words.iter().position(|word| *word == Word::ZERO)?;
+        if !words[terminator..].iter().all(|word| *word == Word::ZERO) {
             return None;
         }
-        let children = self.read_live(block)?;
-        live.insert(0, block);
-        let mut decoded = Vec::with_capacity(children.len());
-        for child in children {
-            decoded.push(self.decode_ref(free, next_fuel, live, child)?);
-        }
-        match word.tag() {
-            0 => Some(Formula::And {
-                negative: word.is_negative(),
-                children: decoded,
-            }),
-            1 => Some(Formula::Or {
-                negative: word.is_negative(),
-                children: decoded,
-            }),
-            2 => Some(Formula::Sat {
-                negative: word.is_negative(),
-                children: decoded,
-            }),
-            _ => None,
+        words.get(..terminator)
+    }
+
+    /// Recovers one root's syntax with an explicit worklist.
+    ///
+    /// The traversal claims each live block as it reaches it, which decides
+    /// unique ownership against everything already claimed -- the free rings
+    /// and every live block of every earlier root included. Children are
+    /// pushed reversed so they pop left first, giving exactly the preorder a
+    /// recursive descent would visit.
+    ///
+    /// There is no fuel counter. Every step down claims at least four fresh
+    /// words inside `[4, len)`, so the depth this can reach is bounded by
+    /// storage, and an arena deep enough to exhaust the former counter is
+    /// rejected by a repeated claim first.
+    fn decode_root(
+        &self,
+        coverage: &mut Coverage,
+        live: &mut Vec<Block>,
+        root: Ref,
+    ) -> Option<Formula> {
+        let mut pending = vec![root];
+        let mut stack: Vec<Frame> = Vec::new();
+        loop {
+            let word = pending.pop()?.word();
+            let mut formula = if word.tag() == 3 {
+                Formula::Literal {
+                    atom: word.base() / 4,
+                    negative: word.is_negative(),
+                }
+            } else {
+                let block = self.live_block(word.base())?;
+                if !coverage.claim(block) {
+                    return None;
+                }
+                live.push(block);
+                let children = self.child_words(block)?;
+                if children.is_empty() {
+                    node(word.tag(), word.is_negative(), Vec::new())?
+                } else {
+                    stack.push(Frame {
+                        tag: word.tag(),
+                        negative: word.is_negative(),
+                        remaining: children.len(),
+                        children: Vec::with_capacity(children.len()),
+                    });
+                    for child in children.iter().rev() {
+                        pending.push(Ref::new(*child).ok()?);
+                    }
+                    continue;
+                }
+            };
+            loop {
+                let Some(frame) = stack.last_mut() else {
+                    return Some(formula);
+                };
+                frame.children.push(formula);
+                frame.remaining -= 1;
+                if frame.remaining > 0 {
+                    break;
+                }
+                let frame = stack.pop()?;
+                formula = node(frame.tag, frame.negative, frame.children)?;
+            }
         }
     }
 
@@ -315,26 +348,113 @@ impl Arena {
         if !self.zero_range(0, RESERVED_WORDS) {
             return None;
         }
-        let free = self.decode_free()?;
-        let fuel = self.words.len().checked_add(1)?;
+        let mut coverage = Coverage::new(self.words.len());
+        let free = self.decode_free(&mut coverage)?;
         let mut live = Vec::new();
         let mut sequents = Vec::with_capacity(self.roots.len());
         for (premise, conclusion) in &self.roots {
-            let premise = self.decode_ref(&free, fuel, &mut live, *premise)?;
-            let conclusion = self.decode_ref(&free, fuel, &mut live, *conclusion)?;
+            let premise = self.decode_root(&mut coverage, &mut live, *premise)?;
+            let conclusion = self.decode_root(&mut coverage, &mut live, *conclusion)?;
             sequents.push(Sequent {
                 premise,
                 conclusion,
             });
         }
-        if !covers_storage(&live, &free, self.words.len()) {
-            return None;
-        }
-        Some(Decoded {
+        coverage.complete().then_some(Decoded {
             sequents,
             live,
             free,
         })
+    }
+}
+
+/// Address ownership recovered so far by one validation pass.
+///
+/// One bit per word after the reserved prefix. Marking decides the two
+/// conjuncts that made the former validator quadratic at once: a block that
+/// claims an address twice is exactly a block that overlaps one claimed
+/// earlier, and a pass that claims every address covers storage exactly.
+///
+/// Lean: `Flat.SeparateInvariant` for the first and `Arena.coversStorage` for
+/// the second, with `Runtime.Partition.covers_iff_capacitySum` the same
+/// replacement of an address scan by a running total.
+#[derive(Debug)]
+struct Coverage {
+    bits: Vec<u64>,
+    claimed: usize,
+    words: usize,
+}
+
+impl Coverage {
+    fn new(size: usize) -> Self {
+        let words = size.saturating_sub(RESERVED_WORDS);
+        Self {
+            bits: vec![0; words.div_ceil(64)],
+            claimed: 0,
+            words,
+        }
+    }
+
+    /// Claims every address of `block`, rejecting any address claimed twice.
+    ///
+    /// Blocks are word-aligned runs, so this touches `capacity / 64` bitmap
+    /// words and at most two partial ones.
+    fn claim(&mut self, block: Block) -> bool {
+        let Some(stop) = block.stop() else {
+            return false;
+        };
+        if block.base < RESERVED_WORDS || stop > self.words + RESERVED_WORDS || stop <= block.base {
+            return false;
+        }
+        let start = block.base - RESERVED_WORDS;
+        let end = stop - RESERVED_WORDS;
+        let (first, last) = (start / 64, (end - 1) / 64);
+        let head = u64::MAX << (start % 64);
+        let tail = u64::MAX >> (63 - ((end - 1) % 64));
+        if first == last {
+            let mask = head & tail;
+            if self.bits[first] & mask != 0 {
+                return false;
+            }
+            self.bits[first] |= mask;
+        } else {
+            if self.bits[first] & head != 0 || self.bits[last] & tail != 0 {
+                return false;
+            }
+            if self.bits[first + 1..last].iter().any(|slot| *slot != 0) {
+                return false;
+            }
+            self.bits[first] |= head;
+            self.bits[last] |= tail;
+            self.bits[first + 1..last].fill(u64::MAX);
+        }
+        self.claimed += end - start;
+        true
+    }
+
+    /// Whether every address after the reserved prefix was claimed.
+    ///
+    /// Claims are disjoint by construction, so this total decides coverage.
+    const fn complete(&self) -> bool {
+        self.claimed == self.words
+    }
+}
+
+/// One partially rebuilt node awaiting the rest of its children.
+#[derive(Debug)]
+struct Frame {
+    tag: u8,
+    negative: bool,
+    remaining: usize,
+    children: Vec<Formula>,
+}
+
+fn node(tag: u8, negative: bool, children: Vec<Formula>) -> Option<Formula> {
+    match tag {
+        0 => Some(Formula::And { negative, children }),
+        1 => Some(Formula::Or { negative, children }),
+        2 => Some(Formula::Sat { negative, children }),
+        _ => None,
     }
 }
 
@@ -444,32 +564,6 @@ pub fn pack(sequents: &[Sequent]) -> Result<Checked, RuntimeError> {
     } else {
         Err(RuntimeError::PackerPostcheck)
     }
-}
-
-fn pairwise_disjoint(blocks: &[Block]) -> bool {
-    blocks.iter().enumerate().all(|(index, block)| {
-        blocks[index + 1..]
-            .iter()
-            .all(|other| block.disjoint(*other))
-    })
-}
-
-fn covers_storage(live: &[Block], free: &[Block], size: usize) -> bool {
-    (RESERVED_WORDS..size)
-        .all(|address| live.iter().chain(free).any(|block| block.contains(address)))
-}
-
-fn decode_words(words: &[Word]) -> Option<Vec<Ref>> {
-    let terminator = words.iter().position(|word| *word == Word::ZERO)?;
-    if !words[terminator..].iter().all(|word| *word == Word::ZERO) {
-        return None;
-    }
-    words[..terminator]
-        .iter()
-        .copied()
-        .map(Ref::new)
-        .collect::<Result<Vec<_>, _>>()
-        .ok()
 }
 
 #[derive(Debug)]

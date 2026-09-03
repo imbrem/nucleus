@@ -68,6 +68,38 @@ impl Formula {
     }
 }
 
+impl Drop for Formula {
+    /// Dismantles a formula with an explicit worklist.
+    ///
+    /// The derived destructor recurses once per level. Syntax decoded from an
+    /// untrusted arena is as deep as that arena, and a destructor cannot fail
+    /// or be skipped, so the depth has to leave the stack. Each node's child
+    /// vector is taken out and queued, which leaves behind a node whose own
+    /// drop reaches no further.
+    fn drop(&mut self) {
+        let (Self::And { children, .. } | Self::Or { children, .. } | Self::Sat { children, .. }) =
+            self
+        else {
+            return;
+        };
+        if children.is_empty() {
+            return;
+        }
+        let mut pending = vec![std::mem::take(children)];
+        while let Some(children) = pending.pop() {
+            for mut child in children {
+                if let Self::And { children, .. }
+                | Self::Or { children, .. }
+                | Self::Sat { children, .. } = &mut child
+                    && !children.is_empty()
+                {
+                    pending.push(std::mem::take(children));
+                }
+            }
+        }
+    }
+}
+
 impl Hash for Formula {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.tag().hash(state);
