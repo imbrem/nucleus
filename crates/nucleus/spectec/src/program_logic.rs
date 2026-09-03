@@ -16,8 +16,8 @@ use covalence_logic_hol::{
     builtin::{Op1, Op2},
 };
 use covalence_logic_hol_derived::{
-    ExistsError, ForallError, ModelError, SyntaxError, forall_elim, introduce_exists,
-    join_alpha_equivalent, open_exists, substitute,
+    EqualityError, ExistsError, ForallError, ModelError, SyntaxError, equality_symmetry,
+    forall_elim, introduce_exists, join_alpha_equivalent, open_exists, substitute,
 };
 
 /// A small, immutable, generic proposition schema.
@@ -707,6 +707,87 @@ impl ContextualObservation {
         })
     }
 
+    /// Reverses a checked contextual observational equivalence theorem.
+    ///
+    /// At an arbitrary context the proof reverses the two admissibility facts,
+    /// applies the supplied equivalence, and derives symmetry of the resulting
+    /// observation equality. Every premise of `equivalence` is preserved.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `equivalence` proves `left` equivalent to
+    /// `right`, or a checked specialization, propositional, equality, universal,
+    /// or formula-alignment step fails. `kernel` is unchanged on failure.
+    pub fn prove_symmetric(
+        self,
+        kernel: &mut Kernel,
+        equivalence: ThmId,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        let expected = self.equivalent(&mut staged, left, right)?;
+        let source = sole_evidence_proposition(&staged, equivalence, true)?;
+        join_alpha_equivalent(&mut staged, source, expected)?;
+        let aligned = staged.copy_theorem(equivalence)?;
+        staged.convert_conclusions(aligned, source, expected)?;
+
+        let mut roots = theorem_proposition_roots(&staged, aligned)?;
+        roots.extend([
+            self.subject_ty,
+            self.context_ty,
+            self.observed_ty,
+            self.bool_ty,
+            self.plug,
+            self.admissible,
+            self.observe,
+            left,
+            right,
+        ]);
+        let context = staged.tm_fv(staged.fresh_name(&roots)?, self.context_ty)?;
+        let specialized = forall_elim(&mut staged, aligned, context)?;
+        let forward = self.at_context(&mut staged, context, left, right)?;
+        join_alpha_equivalent(&mut staged, specialized.proposition, forward)?;
+        staged.convert_conclusions(specialized.theorem, specialized.proposition, forward)?;
+        let reverse = self.at_context(&mut staged, context, right, left)?;
+
+        let [forward_antecedent, forward_equality] = binary_children(&staged, forward)?;
+        let [reverse_antecedent, reverse_equality] = binary_children(&staged, reverse)?;
+        let [forward_left_ok, forward_right_ok] = binary_children(&staged, forward_antecedent)?;
+        let [reverse_right_ok, reverse_left_ok] = binary_children(&staged, reverse_antecedent)?;
+        join_alpha_equivalent(&mut staged, forward_left_ok, reverse_left_ok)?;
+        join_alpha_equivalent(&mut staged, forward_right_ok, reverse_right_ok)?;
+
+        let assumed_reverse = staged.identity(positive(reverse_antecedent))?;
+        let right_ok =
+            staged.expand_conclusion(assumed_reverse, positive(reverse_antecedent), Some(false))?;
+        let left_ok =
+            staged.expand_conclusion(assumed_reverse, positive(reverse_antecedent), Some(true))?;
+        staged.convert_conclusions(left_ok, reverse_left_ok, forward_left_ok)?;
+        staged.convert_conclusions(right_ok, reverse_right_ok, forward_right_ok)?;
+        let forward_ok = staged.and_right(left_ok, right_ok, positive(forward_antecedent))?;
+        let equality_identity = staged.identity(positive(forward_equality))?;
+        let use_forward = staged.imp_left(forward_ok, equality_identity, positive(forward))?;
+        let forward_equality_fact =
+            staged.cut(specialized.theorem, use_forward, positive(forward))?;
+        let reversed = equality_symmetry(&mut staged, self.bool_ty, forward_equality_fact)?;
+        join_alpha_equivalent(&mut staged, reversed.equality, reverse_equality)?;
+        staged.convert_conclusions(reversed.theorem, reversed.equality, reverse_equality)?;
+        staged.contract_theorem(reversed.theorem)?;
+        let implication = staged.imp_right(reversed.theorem, positive(reverse))?;
+        let universal = staged.forall_tm(self.bool_ty, context, reverse)?;
+        let theorem = staged.forall_intro_at(implication, context, universal)?;
+        let reverse_equivalence = self.equivalent(&mut staged, right, left)?;
+        join_alpha_equivalent(&mut staged, universal, reverse_equivalence)?;
+        staged.convert_conclusions(theorem, universal, reverse_equivalence)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: reverse_equivalence,
+            theorem,
+            holds: true,
+        })
+    }
+
     /// Constructs the observation-preservation obligation at one context.
     ///
     /// # Errors
@@ -996,6 +1077,62 @@ impl FunctionObservation {
         })
     }
 
+    /// Reverses checked contextual equivalence of two function definitions.
+    ///
+    /// The proof specializes the supplied theorem at an arbitrary replacement
+    /// context, uses module contextual-equivalence symmetry, and generalizes
+    /// over the replacement context again. Every input premise is preserved.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `equivalence` proves the expected function
+    /// equivalence, or checked specialization, symmetry, generalization, or
+    /// formula alignment fails. `kernel` is unchanged on failure.
+    pub fn prove_symmetric(
+        self,
+        kernel: &mut Kernel,
+        equivalence: ThmId,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        let expected = self.equivalent(&mut staged, left, right)?;
+        let source = sole_evidence_proposition(&staged, equivalence, true)?;
+        join_alpha_equivalent(&mut staged, source, expected)?;
+        let aligned = staged.copy_theorem(equivalence)?;
+        staged.convert_conclusions(aligned, source, expected)?;
+        let mut roots = theorem_proposition_roots(&staged, aligned)?;
+        roots.extend([
+            self.function_ty,
+            self.replacement_context_ty,
+            self.replace,
+            left,
+            right,
+        ]);
+        let replacement = staged.tm_fv(staged.fresh_name(&roots)?, self.replacement_context_ty)?;
+        let specialized = forall_elim(&mut staged, aligned, replacement)?;
+        let left_module = apply2(&mut staged, self.replace, replacement, left)?;
+        let right_module = apply2(&mut staged, self.replace, replacement, right)?;
+        let reversed = self.modules.prove_symmetric(
+            &mut staged,
+            specialized.theorem,
+            left_module,
+            right_module,
+        )?;
+        let universal =
+            staged.forall_tm(self.modules.bool_ty, replacement, reversed.proposition)?;
+        let theorem = staged.forall_intro_at(reversed.theorem, replacement, universal)?;
+        let reverse_equivalence = self.equivalent(&mut staged, right, left)?;
+        join_alpha_equivalent(&mut staged, universal, reverse_equivalence)?;
+        staged.convert_conclusions(theorem, universal, reverse_equivalence)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: reverse_equivalence,
+            theorem,
+            holds: true,
+        })
+    }
+
     /// Proves that replacing a function by an observationally equivalent one
     /// preserves module observational equivalence.
     ///
@@ -1241,6 +1378,12 @@ pub enum ObservationProofError {
         /// Underlying checked derived-rule failure.
         source: ForallError,
     },
+    /// Checked equality symmetry failed.
+    #[snafu(display("could not reverse contextual observation equality: {source}"))]
+    Equality {
+        /// Underlying checked derived-rule failure.
+        source: EqualityError,
+    },
     /// Checked formulas could not be aligned.
     #[snafu(display("could not align contextual observation formulas: {source}"))]
     Syntax {
@@ -1264,6 +1407,12 @@ pub enum ObservationProofError {
 impl From<ForallError> for ObservationProofError {
     fn from(source: ForallError) -> Self {
         Self::Forall { source }
+    }
+}
+
+impl From<EqualityError> for ObservationProofError {
+    fn from(source: EqualityError) -> Self {
+        Self::Equality { source }
     }
 }
 
@@ -1476,6 +1625,39 @@ fn connective_law(
 fn apply2(kernel: &mut Kernel, function: Ref, left: Ref, right: Ref) -> Result<Ref, KernelError> {
     let applied = kernel.app(function, left)?;
     kernel.app(applied, right)
+}
+
+fn binary_children(kernel: &Kernel, proposition: Ref) -> Result<[Ref; 2], KernelError> {
+    let children = kernel
+        .arena()
+        .children(proposition)
+        .ok_or(KernelError::InvalidTheoremRule {
+            rule: "contextual observation binary proposition",
+        })?
+        .collect::<Vec<_>>();
+    children
+        .try_into()
+        .map_err(|_| KernelError::InvalidTheoremRule {
+            rule: "contextual observation binary proposition operands",
+        })
+}
+
+fn theorem_proposition_roots(kernel: &Kernel, theorem: ThmId) -> Result<Vec<Ref>, KernelError> {
+    let theorem = kernel
+        .thm()
+        .get(theorem)
+        .ok_or(KernelError::MissingTheorem { id: theorem })?;
+    theorem
+        .lhs
+        .rows()
+        .chain(theorem.rhs.rows())
+        .flat_map(|row| row.iter())
+        .map(|literal| {
+            Ref::new(literal.magnitude().cast_signed()).ok_or(KernelError::InvalidTheoremRule {
+                rule: "contextual observation theorem proposition reference",
+            })
+        })
+        .collect()
 }
 
 fn require_bool(kernel: &mut Kernel, bool_ty: Ref, proposition: Ref) -> Result<(), KernelError> {
@@ -2446,6 +2628,23 @@ mod tests {
         let equivalence = functions.equivalent(&mut kernel, left, right).unwrap();
         let equivalence_fact = kernel.identity(positive(equivalence)).unwrap();
 
+        let symmetric = functions
+            .prove_symmetric(&mut kernel, equivalence_fact, left, right)
+            .unwrap();
+        EvidenceScope::positive(&[equivalence])
+            .check(&kernel, symmetric)
+            .unwrap();
+        let reverse_equivalence = functions.equivalent(&mut kernel, right, left).unwrap();
+        join_alpha_equivalent(&mut kernel, symmetric.proposition, reverse_equivalence).unwrap();
+
+        let before = kernel.arena().clone();
+        assert!(
+            functions
+                .prove_symmetric(&mut kernel, reflexive.theorem, left, right)
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+
         let sound = functions
             .prove_replacement_congruence(&mut kernel, equivalence_fact, replacement, left, right)
             .unwrap();
@@ -2454,5 +2653,12 @@ mod tests {
             .check(&kernel, sound)
             .unwrap();
         assert_eq!(kernel.classifier(sound.proposition).unwrap(), bool_ty);
+
+        let reverse_sound = functions
+            .prove_replacement_congruence(&mut kernel, symmetric.theorem, replacement, right, left)
+            .unwrap();
+        EvidenceScope::positive(&[equivalence])
+            .check(&kernel, reverse_sound)
+            .unwrap();
     }
 }
