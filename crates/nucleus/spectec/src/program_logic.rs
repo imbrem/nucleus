@@ -632,6 +632,81 @@ impl ContextualObservation {
         Ok(equivalent)
     }
 
+    /// Proves contextual observational equivalence is reflexive.
+    ///
+    /// The proof introduces an arbitrary admissible context and closes the
+    /// observation equality with checked equality reflexivity. It has no
+    /// premises, so no semantic property of `plug`, `admissible`, or `observe`
+    /// is assumed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `subject` has the wrong classifier or a checked
+    /// equality, implication, universal, or formula-alignment step fails.
+    /// `kernel` is unchanged on failure.
+    pub fn prove_reflexive(
+        self,
+        kernel: &mut Kernel,
+        subject: Ref,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        require_classifier(&mut staged, subject, self.subject_ty)?;
+        let context_name = staged.fresh_name(&[
+            self.subject_ty,
+            self.context_ty,
+            self.observed_ty,
+            self.bool_ty,
+            self.plug,
+            self.admissible,
+            self.observe,
+            subject,
+        ])?;
+        let context = staged.tm_fv(context_name, self.context_ty)?;
+        let obligation = self.at_context(&mut staged, context, subject, subject)?;
+        let operands = staged
+            .arena()
+            .children(obligation)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "contextual reflexivity implication",
+            })?
+            .collect::<Vec<_>>();
+        let [antecedent, equality] = operands.as_slice() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "contextual reflexivity implication operands",
+            }
+            .into());
+        };
+        let equality_operands = staged
+            .arena()
+            .children(*equality)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "contextual reflexivity equality",
+            })?
+            .collect::<Vec<_>>();
+        let [_, observed, _] = equality_operands.as_slice() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "contextual reflexivity equality operands",
+            }
+            .into());
+        };
+        let reflexive = staged.refl(self.bool_ty, *observed)?;
+        join_alpha_equivalent(&mut staged, reflexive.equality, *equality)?;
+        staged.convert_conclusions(reflexive.theorem, reflexive.equality, *equality)?;
+        staged.weaken(reflexive.theorem, &[positive(*antecedent)], &[])?;
+        let implication = staged.imp_right(reflexive.theorem, positive(obligation))?;
+        let universal = staged.forall_tm(self.bool_ty, context, obligation)?;
+        let theorem = staged.forall_intro_at(implication, context, universal)?;
+        let equivalent = self.equivalent(&mut staged, subject, subject)?;
+        join_alpha_equivalent(&mut staged, universal, equivalent)?;
+        staged.convert_conclusions(theorem, universal, equivalent)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: equivalent,
+            theorem,
+            holds: true,
+        })
+    }
+
     /// Constructs the observation-preservation obligation at one context.
     ///
     /// # Errors
@@ -867,6 +942,58 @@ impl FunctionObservation {
         let equivalent = staged.forall_tm(self.modules.bool_ty, replacement, module_equivalence)?;
         *kernel = staged;
         Ok(equivalent)
+    }
+
+    /// Proves contextual observational equivalence of a function with itself.
+    ///
+    /// This specializes no semantic assumption: for an arbitrary replacement
+    /// context, the two resulting module terms are identical and module
+    /// contextual equivalence is discharged by
+    /// [`ContextualObservation::prove_reflexive`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an incompatible function or replacement operation,
+    /// fresh-name exhaustion, or a rejected checked proof or alignment step.
+    /// `kernel` is unchanged on failure.
+    pub fn prove_reflexive(
+        self,
+        kernel: &mut Kernel,
+        function: Ref,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        require_classifier(&mut staged, function, self.function_ty)?;
+        let name = staged.fresh_name(&[
+            self.function_ty,
+            self.replacement_context_ty,
+            self.replace,
+            function,
+            self.modules.subject_ty,
+            self.modules.context_ty,
+            self.modules.observed_ty,
+            self.modules.bool_ty,
+            self.modules.plug,
+            self.modules.admissible,
+            self.modules.observe,
+        ])?;
+        let replacement = staged.tm_fv(name, self.replacement_context_ty)?;
+        let module = apply2(&mut staged, self.replace, replacement, function)?;
+        let module_reflexive = self.modules.prove_reflexive(&mut staged, module)?;
+        let universal = staged.forall_tm(
+            self.modules.bool_ty,
+            replacement,
+            module_reflexive.proposition,
+        )?;
+        let theorem = staged.forall_intro_at(module_reflexive.theorem, replacement, universal)?;
+        let equivalent = self.equivalent(&mut staged, function, function)?;
+        join_alpha_equivalent(&mut staged, universal, equivalent)?;
+        staged.convert_conclusions(theorem, universal, equivalent)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: equivalent,
+            theorem,
+            holds: true,
+        })
     }
 
     /// Proves that replacing a function by an observationally equivalent one
@@ -2305,6 +2432,17 @@ mod tests {
                 observe,
             },
         };
+        let reflexive = functions.prove_reflexive(&mut kernel, left).unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, reflexive)
+            .unwrap();
+        let closed_reflexive = reflexive.close_premises(&mut kernel).unwrap();
+        assert_exact(&kernel, closed_reflexive, true);
+
+        let before = kernel.arena().clone();
+        assert!(functions.prove_reflexive(&mut kernel, replacement).is_err());
+        assert_eq!(kernel.arena(), &before);
+
         let equivalence = functions.equivalent(&mut kernel, left, right).unwrap();
         let equivalence_fact = kernel.identity(positive(equivalence)).unwrap();
 
