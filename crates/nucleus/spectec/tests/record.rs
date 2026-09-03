@@ -1646,6 +1646,24 @@ fn empty_module_uses_exact_expression_constructor_vocabulary() {
 }
 
 #[test]
+fn empty_module_agrees_with_wasmtime_observation() {
+    use covalence_lib_wasm::wasmtime::{Engine, Linker, Module, Store};
+
+    // Canonical binary encoding of `(module)`. These bytes are deliberately
+    // only interpreter-test input: they do not become HOL evidence.
+    let bytes = b"\0asm\x01\0\0\0";
+    let engine = Engine::default();
+    let module = Module::new(&engine, bytes).unwrap();
+    assert_eq!(module.imports().count(), 0);
+    assert_eq!(module.exports().count(), 0);
+
+    let mut store = Store::new(&engine, ());
+    let linker = Linker::new(&engine);
+    let instance = linker.instantiate(&mut store, &module).unwrap();
+    assert_eq!(instance.exports(&mut store).count(), 0);
+}
+
+#[test]
 fn pinned_otherwise_chains_do_not_negate_recursive_candidates() {
     let source = Source::wasm3().unwrap();
     for root in source.il().roots() {

@@ -46,6 +46,13 @@ Grounding therefore requires all of the following:
 5. Interpreter comparisons kept as differential tests only. Interpreter output
    never creates a theorem or discharges a semantic premise.
 
+The empty-module experiment already keeps these two evidence classes separate:
+`empty_wasm_module` constructs the structural HOL term from the pinned SpecTec
+vocabulary, while `empty_module_agrees_with_wasmtime_observation` independently
+checks the canonical eight-byte module with Wasmtime. The matching shape is a
+useful regression signal, but it is not the still-missing checked theorem that
+relates those bytes to the structural term or proves non-reachability.
+
 This boundary adds no trusted component. The existing HOL kernel remains the
 only theorem authority; the SpecTec compiler, concrete interpretation, module
 builder, proof search, byte decoder, and interpreter are all checkable
