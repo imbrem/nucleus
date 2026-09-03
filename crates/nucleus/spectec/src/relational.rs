@@ -149,6 +149,10 @@ pub struct RelationalDefinitionInstance {
 pub struct RelationalCaseArtifact {
     /// Public ordered-case proposition.
     pub case: HolCase,
+    /// Lowered left-hand-side pattern values in declaration-input order.
+    pub pattern_values: Vec<Ref>,
+    /// Lowered right-hand-side result value before graph-result equality.
+    pub result_value: Ref,
     /// Existential binders of `case.applicable`.
     pub applicable_binders: Vec<Ref>,
     /// Conjuncts inside `case.applicable`.
@@ -160,6 +164,75 @@ pub struct RelationalCaseArtifact {
 }
 
 impl RelationalDefinition {
+    /// Chooses production witnesses by structurally matching clause patterns.
+    ///
+    /// Pattern binders are unified with corresponding subterms of `inputs`.
+    /// Repeated binders must match structurally identical subterms. Any
+    /// production binder not mentioned by a pattern is filled with a fresh term
+    /// of its exact retained classifier. This is syntax-directed witness
+    /// selection only; it does not decide a semantic premise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a missing case, wrong input arity, name exhaustion,
+    /// or a rejected checked classifier/syntax operation. A structural mismatch
+    /// returns `Ok(None)`. `kernel` is unchanged on failure or mismatch.
+    pub fn match_production_witnesses(
+        &self,
+        kernel: &mut Kernel,
+        index: usize,
+        inputs: &[Ref],
+    ) -> Result<Option<Vec<Ref>>, DefinitionProofError> {
+        if inputs.len() != self.formal_inputs.len() {
+            return Err(DefinitionProofError::Arity {
+                expected: self.formal_inputs.len(),
+                actual: inputs.len(),
+            });
+        }
+        let artifact = self
+            .case_artifacts
+            .get(index)
+            .ok_or(DefinitionProofError::MissingCase { index })?;
+        if artifact.pattern_values.len() != inputs.len() {
+            return Err(DefinitionProofError::ConditionShape);
+        }
+        let mut staged = kernel.fork();
+        let mut assignments = vec![None; artifact.production_binders.len()];
+        for (&pattern, &input) in artifact.pattern_values.iter().zip(inputs) {
+            if !match_pattern_term(
+                &mut staged,
+                pattern,
+                input,
+                &artifact.production_binders,
+                &mut assignments,
+            )? {
+                return Ok(None);
+            }
+        }
+        let roots = artifact
+            .production_binders
+            .iter()
+            .chain(artifact.pattern_values.iter())
+            .chain(inputs.iter())
+            .copied()
+            .collect::<Vec<_>>();
+        let first = staged.fresh_name(&roots)?;
+        for (index, assignment) in assignments.iter_mut().enumerate() {
+            if assignment.is_none() {
+                let offset = u64::try_from(index).map_err(|_| KernelError::TooManyNames)?;
+                let name = first.checked_add(offset).ok_or(KernelError::TooManyNames)?;
+                let classifier = staged.classifier(artifact.production_binders[index])?;
+                *assignment = Some(staged.tm_fv(name, classifier)?);
+            }
+        }
+        let witnesses = assignments
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or(DefinitionProofError::ConditionShape)?;
+        *kernel = staged;
+        Ok(Some(witnesses))
+    }
+
     /// Constructs a clause's lowered right-hand-side result at chosen values.
     ///
     /// The result expression is retained as the right operand of the final
@@ -171,7 +244,7 @@ impl RelationalDefinition {
     /// # Errors
     ///
     /// Returns an error for a missing case, mismatched input or witness arity,
-    /// malformed retained result equality, or failed checked substitution.
+    /// or failed checked substitution.
     /// `kernel` is unchanged on failure.
     pub fn production_result(
         &self,
@@ -196,27 +269,8 @@ impl RelationalDefinition {
                 actual: witnesses.len(),
             });
         }
-        let result_condition = artifact
-            .production_conditions
-            .last()
-            .copied()
-            .ok_or(DefinitionProofError::ConditionShape)?;
-        if kernel.arena().tag(result_condition) != Some(Tag::Tm(covalence_logic_hol::TmTag::Eq)) {
-            return Err(DefinitionProofError::ConditionShape);
-        }
-        let children = kernel
-            .arena()
-            .children(result_condition)
-            .ok_or(DefinitionProofError::ConditionShape)?
-            .collect::<Vec<_>>();
-        let [_operand_ty, formal_result, result] = children.as_slice() else {
-            return Err(DefinitionProofError::ConditionShape);
-        };
-        if *formal_result != self.formal_result {
-            return Err(DefinitionProofError::ConditionShape);
-        }
         let mut staged = kernel.fork();
-        let mut result = *result;
+        let mut result = artifact.result_value;
         for (variable, value) in self
             .formal_inputs
             .iter()
@@ -307,6 +361,12 @@ impl RelationalDefinition {
                 };
                 Ok(RelationalCaseArtifact {
                     case,
+                    pattern_values: artifact
+                        .pattern_values
+                        .iter()
+                        .map(|&pattern| specialize(&mut staged, pattern))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    result_value: specialize(&mut staged, artifact.result_value)?,
                     applicable_binders: artifact.applicable_binders.clone(),
                     applicable_conditions,
                     production_binders: artifact.production_binders.clone(),
@@ -327,6 +387,66 @@ impl RelationalDefinition {
             body,
         })
     }
+}
+
+fn match_pattern_term(
+    kernel: &mut Kernel,
+    pattern: Ref,
+    input: Ref,
+    binders: &[Ref],
+    assignments: &mut [Option<Ref>],
+) -> Result<bool, DefinitionProofError> {
+    if let Some(index) = binders.iter().position(|&binder| binder == pattern) {
+        if let Some(existing) = assignments[index] {
+            return match covalence_logic_hol_derived::join_same_syntax(kernel, existing, input) {
+                Ok(_) => Ok(true),
+                Err(SyntaxError::Different) => Ok(false),
+                Err(SyntaxError::Kernel { source }) => Err(DefinitionProofError::Kernel { source }),
+            };
+        }
+        let pattern_ty = kernel.classifier(pattern)?;
+        let input_ty = kernel.classifier(input)?;
+        match covalence_logic_hol_derived::join_same_syntax(kernel, pattern_ty, input_ty) {
+            Ok(_) => {
+                assignments[index] = Some(input);
+                return Ok(true);
+            }
+            Err(SyntaxError::Different) => return Ok(false),
+            Err(SyntaxError::Kernel { source }) => {
+                return Err(DefinitionProofError::Kernel { source });
+            }
+        }
+    }
+    if pattern == input {
+        return Ok(true);
+    }
+    if kernel.arena().tag(pattern) != kernel.arena().tag(input)
+        || kernel.arena().name(pattern) != kernel.arena().name(input)
+        || kernel.arena().bool_value(pattern) != kernel.arena().bool_value(input)
+        || kernel.arena().op1(pattern) != kernel.arena().op1(input)
+        || kernel.arena().op2(pattern) != kernel.arena().op2(input)
+    {
+        return Ok(false);
+    }
+    let pattern_children = kernel
+        .arena()
+        .children(pattern)
+        .ok_or(DefinitionProofError::ConditionShape)?
+        .collect::<Vec<_>>();
+    let input_children = kernel
+        .arena()
+        .children(input)
+        .ok_or(DefinitionProofError::ConditionShape)?
+        .collect::<Vec<_>>();
+    if pattern_children.len() != input_children.len() {
+        return Ok(false);
+    }
+    for (&pattern_child, &input_child) in pattern_children.iter().zip(&input_children) {
+        if !match_pattern_term(kernel, pattern_child, input_child, binders, assignments)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 impl RelationalDefinitionInstance {
@@ -1179,6 +1299,8 @@ fn relational_hol_case_artifact(
     };
     Ok(RelationalCaseArtifact {
         case,
+        pattern_values: clause.patterns.iter().map(RelationalTerm::value).collect(),
+        result_value: clause.result.value(),
         applicable_binders: locals,
         applicable_conditions: applicability,
         production_binders: production_locals,

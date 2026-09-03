@@ -637,7 +637,10 @@ fn exact_source_definition_lowers_from_selector_and_schema() {
             .equivalent(kernel.classifier(definition.equation).unwrap(), bool_ty)
             .unwrap()
     );
-    let production_witnesses = vec![x; definition.case_artifacts[0].production_binders.len()];
+    let production_witnesses = definition
+        .match_production_witnesses(&mut kernel, 0, &[x])
+        .unwrap()
+        .unwrap();
     let inferred_result = definition
         .production_result(&mut kernel, 0, &[x], &production_witnesses)
         .unwrap();
@@ -1854,8 +1857,10 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         )
         .unwrap();
     assert_eq!(store_instance.cases.len(), 1);
-    assert_eq!(store_instance.case_artifacts[0].production_binders.len(), 2);
-    let store_witnesses = vec![start.initialized_store, witnesses[4]];
+    let store_witnesses = store_definition
+        .match_production_witnesses(&mut kernel, 0, &[start.initialized])
+        .unwrap()
+        .unwrap();
     let store_conditions = store_instance
         .production_obligations(&mut kernel, 0, &store_witnesses)
         .unwrap();
