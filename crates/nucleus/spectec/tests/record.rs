@@ -614,14 +614,31 @@ fn exact_source_definition_lowers_from_selector_and_schema() {
     let instance = definition
         .specialize(&mut kernel, bool_ty, &[x], x)
         .unwrap();
-    let selected = instance.cases[0].produces;
-    let selected_fact = kernel
-        .identity(covalence_logic_hol::Lit::positive(selected.get()))
+    let production_witnesses = vec![x; instance.case_artifacts[0].production_binders.len()];
+    let production_obligations = instance
+        .production_obligations(&mut kernel, 0, &production_witnesses)
+        .unwrap();
+    let production_facts = production_obligations
+        .iter()
+        .map(|proposition| {
+            kernel
+                .identity(covalence_logic_hol::Lit::positive(proposition.get()))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let selected = instance
+        .prove_production(
+            &mut kernel,
+            bool_ty,
+            0,
+            &production_witnesses,
+            &production_facts,
+        )
         .unwrap();
     let body = instance
-        .prove_body_case(&mut kernel, bool_ty, 0, selected_fact)
+        .prove_body_case(&mut kernel, bool_ty, 0, selected.theorem)
         .unwrap();
-    covalence_nucleus_spectec::EvidenceScope::positive(&[selected])
+    covalence_nucleus_spectec::EvidenceScope::positive(&production_obligations)
         .check(&kernel, body)
         .unwrap();
     let before = kernel.arena().len();
@@ -1779,12 +1796,29 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         )
         .unwrap();
     assert_eq!(store_instance.cases.len(), 1);
-    let store_branch = store_instance.cases[0].produces;
-    let store_branch_fact = kernel
-        .identity(covalence_logic_hol::Lit::positive(store_branch.get()))
+    let store_witnesses = store_instance.case_artifacts[0].production_binders.clone();
+    let store_conditions = store_instance
+        .production_obligations(&mut kernel, 0, &store_witnesses)
+        .unwrap();
+    let store_condition_facts = store_conditions
+        .iter()
+        .map(|condition| {
+            kernel
+                .identity(covalence_logic_hol::Lit::positive(condition.get()))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let store_branch = store_instance
+        .prove_production(
+            &mut kernel,
+            bool_ty,
+            0,
+            &store_witnesses,
+            &store_condition_facts,
+        )
         .unwrap();
     let store_body = store_instance
-        .prove_body_case(&mut kernel, bool_ty, 0, store_branch_fact)
+        .prove_body_case(&mut kernel, bool_ty, 0, store_branch.theorem)
         .unwrap();
     obligation_facts[3] = document
         .semantics
@@ -1811,12 +1845,29 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         )
         .unwrap();
     assert_eq!(invoke_instance.cases.len(), 1);
-    let invoke_branch = invoke_instance.cases[0].produces;
-    let invoke_branch_fact = kernel
-        .identity(covalence_logic_hol::Lit::positive(invoke_branch.get()))
+    let invoke_witnesses = invoke_instance.case_artifacts[0].production_binders.clone();
+    let invoke_conditions = invoke_instance
+        .production_obligations(&mut kernel, 0, &invoke_witnesses)
+        .unwrap();
+    let invoke_condition_facts = invoke_conditions
+        .iter()
+        .map(|condition| {
+            kernel
+                .identity(covalence_logic_hol::Lit::positive(condition.get()))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let invoke_branch = invoke_instance
+        .prove_production(
+            &mut kernel,
+            bool_ty,
+            0,
+            &invoke_witnesses,
+            &invoke_condition_facts,
+        )
         .unwrap();
     let invoke_body = invoke_instance
-        .prove_body_case(&mut kernel, bool_ty, 0, invoke_branch_fact)
+        .prove_body_case(&mut kernel, bool_ty, 0, invoke_branch.theorem)
         .unwrap();
     obligation_facts[4] = document
         .semantics
@@ -1910,7 +1961,8 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         )
         .unwrap();
     let mut grounding = obligations[..3].to_vec();
-    grounding.extend([store_branch, invoke_branch]);
+    grounding.extend(store_conditions);
+    grounding.extend(invoke_conditions);
     grounding.extend([steps_at_final, calls_at_final, cannot_export]);
     document
         .evidence_scope(&grounding)
