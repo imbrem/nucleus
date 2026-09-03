@@ -1,4 +1,3 @@
-use covalence_data_basic::Symbol;
 use covalence_data_cbor::drisl::{self, CidCodec, CidHash, Policy};
 use covalence_data_spectec::{
     ClauseId, DeclarationId, IlClauseSchema, IlDocument, IlExpression, IlExpressionKind,
@@ -1514,7 +1513,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         source.declaration_count()
     );
     assert!(!document.interpretation.is_empty());
-    assert!(!document.has_closed_interpretation());
+    assert!(!document.has_no_missing_interpretations());
     assert_eq!(
         document.grounding_obligations().len(),
         document.interpretation.len()
@@ -1587,10 +1586,8 @@ fn immutable_interpretations_discharge_checked_grounding_obligations() {
         .next()
         .unwrap()
         .clone();
-    let provided = std::collections::BTreeMap::from([(
-        Symbol::from(supplied.label.as_str()),
-        supplied.reference,
-    )]);
+    let provided =
+        std::collections::BTreeMap::from([(supplied.signature.clone(), supplied.reference)]);
 
     let interpreted =
         parameterized_document_with(&source, &mut kernel, value, bool_ty, &provided).unwrap();
@@ -1598,11 +1595,11 @@ fn immutable_interpretations_discharge_checked_grounding_obligations() {
     assert!(
         interpreted
             .grounding_obligations()
-            .all(|obligation| obligation.label != supplied.label)
+            .all(|obligation| obligation.signature != supplied.signature)
     );
 
     let wrong = kernel.bool(bool_ty, true).unwrap();
-    let incompatible = std::collections::BTreeMap::from([(supplied.label, wrong)]);
+    let incompatible = std::collections::BTreeMap::from([(supplied.signature, wrong)]);
     let before = kernel.arena().clone();
     assert!(
         parameterized_document_with(&source, &mut kernel, value, bool_ty, &incompatible).is_err()

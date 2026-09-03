@@ -22,12 +22,23 @@ const LOCAL_NAME_BLOCK: u64 = 1 << 32;
 /// One explicit free interpretation symbol introduced by parameterized lowering.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InterpretationSymbol {
-    /// Stable structural description and checked signature discriminator.
-    pub label: Symbol,
+    /// Stable operation and checked argument/result signature.
+    pub signature: InterpretationSignature,
     /// Checked free term.
     pub reference: Ref,
     /// Checked classifier of `reference`.
     pub classifier: Ref,
+}
+
+/// One overload-safe request for a value-level semantic operation.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct InterpretationSignature {
+    /// Stable structural operation name.
+    pub label: Symbol,
+    /// Checked argument classifiers in application order.
+    pub domains: Arc<[Ref]>,
+    /// Checked result classifier.
+    pub codomain: Ref,
 }
 
 /// The semantic obligation represented by a free interpretation symbol.
@@ -56,7 +67,7 @@ impl InterpretationSymbol {
     /// parameterized symbol.
     #[must_use]
     pub fn kind(&self) -> InterpretationKind {
-        interpretation_kind(&self.label)
+        interpretation_kind(&self.signature.label)
     }
 }
 
@@ -104,10 +115,13 @@ impl ParameterizedDocument {
         self.interpretation.iter()
     }
 
-    /// Returns whether all value-level interpretation obligations were
-    /// discharged by the lowering.
+    /// Returns whether the lowering generated no missing value-level
+    /// interpretation operations.
+    ///
+    /// Supplied implementations can themselves contain free variables, so
+    /// this is not a claim that the resulting HOL theory is closed.
     #[must_use]
-    pub fn has_closed_interpretation(&self) -> bool {
+    pub fn has_no_missing_interpretations(&self) -> bool {
         self.interpretation.is_empty()
     }
 }
@@ -177,7 +191,7 @@ pub enum ParameterizedError {
 #[derive(Debug, Default)]
 struct SharedInterpretation {
     next_name: u64,
-    symbols: BTreeMap<String, InterpretationSymbol>,
+    symbols: BTreeMap<InterpretationSignature, InterpretationSymbol>,
     canonical_types: BTreeMap<(Ref, Ref), Ref>,
     canonical_type_refs: BTreeMap<Ref, Ref>,
 }
@@ -194,7 +208,7 @@ struct ParameterizedResolver<'a> {
     expression_scopes: Vec<Vec<(Symbol, Option<Ref>, Ref)>>,
     implicit_binders: Vec<Ref>,
     interpretation: SharedInterpretation,
-    provided: &'a BTreeMap<Symbol, Ref>,
+    provided: &'a BTreeMap<InterpretationSignature, Ref>,
 }
 
 /// Transactionally declares generic slots and lowers an entire exact document
@@ -220,8 +234,8 @@ pub fn parameterized_document(
 /// Transactionally lowers a document using immutable concrete implementations
 /// for any named value-level interpretation operations supplied by the caller.
 ///
-/// Each map key is the stable [`InterpretationSymbol::label`] that an ordinary
-/// parameterized pass would emit. A supplied term is used only after its
+/// Each map key is the overload-safe [`InterpretationSignature`] that an
+/// ordinary parameterized pass would emit. A supplied term is used only after its
 /// classifier is checked against the requested operation signature. Missing
 /// entries remain explicit in [`ParameterizedDocument::grounding_obligations`].
 /// This function constructs syntax and constraints; it does not assume the
@@ -236,7 +250,7 @@ pub fn parameterized_document_with(
     kernel: &mut Kernel,
     value: Ref,
     bool_ty: Ref,
-    provided: &BTreeMap<Symbol, Ref>,
+    provided: &BTreeMap<InterpretationSignature, Ref>,
 ) -> Result<ParameterizedDocument, ParameterizedError> {
     let mut staged = kernel.fork();
     let schema = declare_hol_schema(source, &mut staged, value, bool_ty)
@@ -365,12 +379,17 @@ impl ParameterizedResolver<'_> {
     fn primitive(
         &mut self,
         kernel: &mut Kernel,
-        label: String,
+        label: impl Into<Symbol>,
         domains: &[Ref],
         codomain: Ref,
     ) -> Result<Ref, ParameterizedError> {
-        let key = format!("{label}|{domains:?}->{codomain:?}");
-        if let Some(symbol) = self.interpretation.symbols.get(&key) {
+        let label = label.into();
+        let signature = InterpretationSignature {
+            label: label.clone(),
+            domains: Arc::from(domains),
+            codomain,
+        };
+        if let Some(symbol) = self.interpretation.symbols.get(&signature) {
             return Ok(symbol.reference);
         }
         let classifier = domains.iter().rev().try_fold(codomain, |tail, &domain| {
@@ -379,7 +398,7 @@ impl ParameterizedResolver<'_> {
                 .map_err(|source| ParameterizedError::Kernel { source })?;
             self.canonical_type(kernel, arrow)
         })?;
-        if let Some(&reference) = self.provided.get(label.as_str()) {
+        if let Some(&reference) = self.provided.get(&signature) {
             let actual = kernel
                 .classifier(reference)
                 .map_err(|source| ParameterizedError::Kernel { source })?;
@@ -399,9 +418,9 @@ impl ParameterizedResolver<'_> {
             .tm_fv(self.take_name()?, classifier)
             .map_err(|source| ParameterizedError::Kernel { source })?;
         self.interpretation.symbols.insert(
-            key,
+            signature.clone(),
             InterpretationSymbol {
-                label: Symbol::from(label),
+                signature,
                 reference,
                 classifier,
             },
