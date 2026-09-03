@@ -18,6 +18,11 @@ so host policies cannot be mixed silently. A domain also defines `same_runs`
 as equality of two immutable characteristic functions: the admissible
 invocations and the complete allowed run graph. This representation gives
 checked reflexivity, symmetry, and transitivity directly from HOL equality.
+Every behavior proposition is an application of a shared pure observer to those
+two functions. Checked congruence therefore proves that `same_runs` preserves
+every `may`, `every`, `must`, and `never` observation, including a trace
+predicate for `callsAssert`, without trusting an evaluator or a special-purpose
+preservation axiom.
 The domain additionally defines directional `refines_runs`: an implementation
 has the same admissible invocation domain and may remove, but not add, behaviors
 of its specification, but must retain some behavior whenever the specification

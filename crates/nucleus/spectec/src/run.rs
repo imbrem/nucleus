@@ -1082,8 +1082,8 @@ impl RunObservation {
     /// `Must` is deliberately non-vacuous per invocation: for every admissible
     /// entry/input/host choice, at least one matching execution must exist and
     /// every execution must satisfy the observation.
-    /// `Never` is the literal HOL negation of `May`, so the duality is visible
-    /// in the resulting syntax rather than encoded as frontend policy.
+    /// `Never` is defined by literal HOL negation of `May` inside the shared
+    /// characteristic-function observer, rather than by frontend policy.
     ///
     /// # Errors
     ///
@@ -1101,80 +1101,164 @@ impl RunObservation {
         let types = self.domain.relation.types;
         require_classifier(&mut staged, profile, types.profile)?;
         require_classifier(&mut staged, module, types.module)?;
+        let graphs = self.domain.run_graphs(&mut staged, profile, module)?;
+        let observer = self.graph_observer(&mut staged, quantifier)?;
+        let proposition = apply(&mut staged, observer, &[graphs.domain, graphs.runs])?;
+        *kernel = staged;
+        Ok(proposition)
+    }
+
+    fn graph_observer(
+        self,
+        kernel: &mut Kernel,
+        quantifier: BehaviorQuantifier,
+    ) -> Result<Ref, KernelError> {
+        let name = kernel.fresh_name(&[
+            self.domain.domain_ty,
+            self.domain.run_graph_ty,
+            self.domain.relation.types.bool_ty,
+            self.observe,
+        ])?;
+        let domain = kernel.tm_fv(name, self.domain.domain_ty)?;
+        let runs = kernel.tm_fv(checked_name(name, 1)?, self.domain.run_graph_ty)?;
+        let body = self.graph_proposition(kernel, quantifier, domain, runs)?;
+        let by_runs_ty =
+            kernel.ty_arr(self.domain.run_graph_ty, self.domain.relation.types.bool_ty)?;
+        let by_runs = kernel.lam_at(by_runs_ty, runs, body)?;
+        let observer_ty = kernel.ty_arr(self.domain.domain_ty, by_runs_ty)?;
+        kernel.lam_at(observer_ty, domain, by_runs)
+    }
+
+    fn graph_proposition(
+        self,
+        kernel: &mut Kernel,
+        quantifier: BehaviorQuantifier,
+        domain: Ref,
+        runs: Ref,
+    ) -> Result<Ref, KernelError> {
+        let types = self.domain.relation.types;
+        require_classifier(kernel, domain, self.domain.domain_ty)?;
+        require_classifier(kernel, runs, self.domain.run_graph_ty)?;
         let roots = [
-            types.profile,
-            types.module,
             types.entry,
             types.inputs,
             types.host,
             types.trace,
             types.outcome,
             types.bool_ty,
-            self.domain.relation.runs,
-            self.domain.admissible,
             self.observe,
-            profile,
-            module,
         ];
-        let first = staged.fresh_name(&roots)?;
-        let entry = staged.tm_fv(first, types.entry)?;
-        let inputs = staged.tm_fv(checked_name(first, 1)?, types.inputs)?;
-        let host = staged.tm_fv(checked_name(first, 2)?, types.host)?;
-        let trace = staged.tm_fv(checked_name(first, 3)?, types.trace)?;
-        let outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
+        let first = kernel.fresh_name(&roots)?;
+        let entry = kernel.tm_fv(first, types.entry)?;
+        let inputs = kernel.tm_fv(checked_name(first, 1)?, types.inputs)?;
+        let host = kernel.tm_fv(checked_name(first, 2)?, types.host)?;
+        let trace = kernel.tm_fv(checked_name(first, 3)?, types.trace)?;
+        let outcome = kernel.tm_fv(checked_name(first, 4)?, types.outcome)?;
         let invocation_variables = [entry, inputs, host];
         let result_variables = [trace, outcome];
         let run_variables = [entry, inputs, host, trace, outcome];
-        let allowed = apply(
-            &mut staged,
-            self.domain.admissible,
-            &[profile, module, entry, inputs, host],
-        )?;
-        let runs = apply(
-            &mut staged,
-            self.domain.relation.runs,
-            &[profile, module, entry, inputs, host, trace, outcome],
-        )?;
-        let observed = apply(&mut staged, self.observe, &[trace, outcome])?;
+        let allowed = apply(kernel, domain, &[entry, inputs, host])?;
+        let runs = apply(kernel, runs, &[entry, inputs, host, trace, outcome])?;
+        let observed = apply(kernel, self.observe, &[trace, outcome])?;
         let proposition = match quantifier {
             BehaviorQuantifier::May | BehaviorQuantifier::Never => {
-                let eligible = staged.op2(Op2::And, allowed, runs)?;
-                let witnessed = staged.op2(Op2::And, eligible, observed)?;
-                let may = quantify_exists(&mut staged, types.bool_ty, &run_variables, witnessed)?;
+                let witnessed = kernel.op2(Op2::And, runs, observed)?;
+                let may = quantify_exists(kernel, types.bool_ty, &run_variables, witnessed)?;
                 if quantifier == BehaviorQuantifier::May {
                     may
                 } else {
-                    staged.op1(Op1::Not, may)?
+                    kernel.op1(Op1::Not, may)?
                 }
             }
             BehaviorQuantifier::Every => {
-                let eligible = staged.op2(Op2::And, allowed, runs)?;
-                let required = staged.op2(Op2::Imp, eligible, observed)?;
-                quantify_forall(&mut staged, types.bool_ty, &run_variables, required)?
+                let required = kernel.op2(Op2::Imp, runs, observed)?;
+                quantify_forall(kernel, types.bool_ty, &run_variables, required)?
             }
             BehaviorQuantifier::Must => {
-                let matching = staged.op2(Op2::And, runs, observed)?;
+                let matching = kernel.op2(Op2::And, runs, observed)?;
                 let exists_matching =
-                    quantify_exists(&mut staged, types.bool_ty, &result_variables, matching)?;
-                let run_implies_observed = staged.op2(Op2::Imp, runs, observed)?;
+                    quantify_exists(kernel, types.bool_ty, &result_variables, matching)?;
+                let run_implies_observed = kernel.op2(Op2::Imp, runs, observed)?;
                 let every_run = quantify_forall(
-                    &mut staged,
+                    kernel,
                     types.bool_ty,
                     &result_variables,
                     run_implies_observed,
                 )?;
-                let required = staged.op2(Op2::And, exists_matching, every_run)?;
-                let required_when_allowed = staged.op2(Op2::Imp, allowed, required)?;
+                let required = kernel.op2(Op2::And, exists_matching, every_run)?;
+                let required_when_allowed = kernel.op2(Op2::Imp, allowed, required)?;
                 quantify_forall(
-                    &mut staged,
+                    kernel,
                     types.bool_ty,
                     &invocation_variables,
                     required_when_allowed,
                 )?
             }
         };
-        *kernel = staged;
         Ok(proposition)
+    }
+
+    /// Proves that identical allowed run graphs have identical observations.
+    ///
+    /// This is the generic soundness bridge from closed run equality to any
+    /// `may`, `every`, `must`, or `never` trace/outcome observation. Every
+    /// premise in `same_runs` evidence remains visible in the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `same_runs` positively proves equality for the
+    /// supplied modules, or a checked equality/congruence operation fails.
+    /// `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_same_runs_preserves(
+        self,
+        kernel: &mut Kernel,
+        same_runs: Evidence,
+        quantifier: BehaviorQuantifier,
+        profile: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let expected = self.domain.same_runs(&mut staged, profile, left, right)?;
+        let theorem = align_evidence(&mut staged, same_runs, expected)?;
+        let domain_fact = staged.expand_conclusion(theorem, positive(expected), Some(false))?;
+        let runs_fact = staged.expand_conclusion(theorem, positive(expected), Some(true))?;
+        let left_graphs = self.domain.run_graphs(&mut staged, profile, left)?;
+        let right_graphs = self.domain.run_graphs(&mut staged, profile, right)?;
+
+        let observer = self.graph_observer(&mut staged, quantifier)?;
+        let by_domain_function = staged.ap_term(domain_fact, observer)?;
+        let by_domain = staged.ap_thm(by_domain_function.theorem, left_graphs.runs)?;
+        let right_domain_observer = staged.app(observer, right_graphs.domain)?;
+        let by_runs = staged.ap_term(runs_fact, right_domain_observer)?;
+        let preserved = equality_transitivity(
+            &mut staged,
+            self.domain.relation.types.bool_ty,
+            by_domain.theorem,
+            by_runs.theorem,
+        )?;
+        let left_observation = self.proposition(&mut staged, quantifier, profile, left)?;
+        let right_observation = self.proposition(&mut staged, quantifier, profile, right)?;
+        let target = staged.eq(
+            self.domain.relation.types.bool_ty,
+            left_observation,
+            right_observation,
+        )?;
+        align_theorem_conclusion(
+            &mut staged,
+            preserved.theorem,
+            preserved.equality,
+            target,
+            "same-runs observation preservation alignment",
+        )?;
+        staged.contract_theorem(preserved.theorem)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: target,
+            theorem: preserved.theorem,
+            holds: true,
+        })
     }
 
     /// Constructs `module -> bool` for one profile and quantification mode.
@@ -1481,7 +1565,7 @@ fn require_classifier(kernel: &mut Kernel, term: Ref, expected: Ref) -> Result<(
 mod tests {
     use super::{BehaviorQuantifier, RunRelation, RunTypes};
     use crate::{Evidence, EvidenceScope};
-    use covalence_logic_hol::{Kernel, Tag, TmTag};
+    use covalence_logic_hol::Kernel;
 
     #[test]
     #[allow(clippy::too_many_lines)]
@@ -1574,10 +1658,6 @@ mod tests {
         assert_eq!(kernel.classifier(every).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(never).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(must).unwrap(), bool_ty);
-        assert_eq!(kernel.arena().tag(never), Some(Tag::Tm(TmTag::Op1)));
-        assert_eq!(kernel.arena().tag(must), Some(Tag::Tm(TmTag::Eq)));
-        let never_body = kernel.arena().children(never).unwrap().next().unwrap();
-        covalence_logic_hol_derived::join_same_syntax(&mut kernel, never_body, may).unwrap();
         for composed in [
             combined_observation,
             alternative_observation,
@@ -1625,6 +1705,27 @@ mod tests {
         EvidenceScope::positive(&[left_middle])
             .check(&kernel, symmetric)
             .unwrap();
+        for quantifier in [
+            BehaviorQuantifier::May,
+            BehaviorQuantifier::Every,
+            BehaviorQuantifier::Must,
+            BehaviorQuantifier::Never,
+        ] {
+            let preserved = observation
+                .prove_same_runs_preserves(
+                    &mut kernel,
+                    left_middle_evidence,
+                    quantifier,
+                    profile,
+                    module,
+                    other_module,
+                )
+                .unwrap();
+            EvidenceScope::positive(&[left_middle])
+                .check(&kernel, preserved)
+                .unwrap();
+            assert_eq!(kernel.classifier(preserved.proposition).unwrap(), bool_ty);
+        }
         let middle_right = domain
             .same_runs(&mut kernel, profile, other_module, third_module)
             .unwrap();
@@ -1654,6 +1755,29 @@ mod tests {
                 .prove_same_runs_symmetric(
                     &mut kernel,
                     equivalence_reflexive,
+                    profile,
+                    module,
+                    other_module,
+                )
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+        let denied_same_runs = Evidence {
+            proposition: left_middle,
+            theorem: kernel
+                .identity(super::positive(left_middle).negated())
+                .unwrap(),
+            holds: false,
+        };
+        let before = kernel.arena().clone();
+        let theorem_count = kernel.thm().live_theorems().count();
+        assert!(
+            observation
+                .prove_same_runs_preserves(
+                    &mut kernel,
+                    denied_same_runs,
+                    BehaviorQuantifier::May,
                     profile,
                     module,
                     other_module,
