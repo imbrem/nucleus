@@ -16,9 +16,9 @@ pub mod wire;
 pub use arena::Arena;
 pub use kernel::{
     AX_INF, AX_SUB, AbsThm, ApTerm, ApThm, BINDER_COUNT, Binder, CheckedArena, CheckedPrefix,
-    ChoiceThm, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, CopyMap, Dnf, DnfId,
-    ForallThm, INFINITY_BINDER_COUNT, InfinityAxiom, InfinityBinder, Kernel, KernelError, Lit,
-    LitError, LitVec, LogicalAlias, ReflThm, Refutation, SubtypeAxiom, ThmId, ThmRef, TyForallThm,
+    ChoiceThm, ClassicalArena, ClassicalKernel, CopyMap, ForallThm, INFINITY_BINDER_COUNT,
+    InfinityAxiom, InfinityBinder, Kernel, KernelError, Lit, LitError, LitVec, LogicalAlias,
+    Matrix, ReflThm, Refutation, RowId, SubtypeAxiom, ThmId, ThmRef, TyForallThm,
 };
 pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
@@ -397,7 +397,7 @@ impl Arena {
             ctx: BTreeSet::new(),
             amb_pred: Vec::new(),
             amb_ax: BTreeSet::new(),
-            amb_ctx: Cnf::empty(),
+            amb_ctx: Matrix::empty(),
             amb_thm: ClassicalArena::new(),
             syl: ClassicalArena::new(),
             thm: ClassicalArena::new(),
@@ -488,7 +488,7 @@ impl Arena {
     }
 
     #[must_use]
-    pub const fn ambient_context(&self) -> &Cnf {
+    pub const fn ambient_context(&self) -> &Matrix {
         &self.amb_ctx
     }
 
@@ -561,7 +561,7 @@ impl Arena {
         self.amb_pred.push(record);
         let mut rows = self.amb_ctx.to_rows();
         rows.push(LitVec::from_slice(&[Lit::positive(next.get())]));
-        self.amb_ctx = Cnf::new(rows);
+        self.amb_ctx = Matrix::new(rows);
         true
     }
 
@@ -575,8 +575,8 @@ impl Arena {
         if self
             .amb_thm
             .insert(
-                Cnf::new([]),
-                Dnf::new([LitVec::from_slice(&[Lit::positive(next.get())])]),
+                Matrix::new([]),
+                Matrix::new([LitVec::from_slice(&[Lit::positive(next.get())])]),
             )
             .is_err()
         {
@@ -913,7 +913,7 @@ impl Arena {
             ctx: ctx.into_iter().collect(),
             amb_pred: Vec::new(),
             amb_ax: BTreeSet::new(),
-            amb_ctx: Cnf::empty(),
+            amb_ctx: Matrix::empty(),
             amb_thm: ClassicalArena::new(),
             syl: ClassicalArena::new(),
             thm: ClassicalArena::new(),
@@ -956,7 +956,7 @@ struct ArenaSerde {
 struct AmbSerde {
     pred: Vec<AmbPred>,
     ax: Vec<String>,
-    ctx: Cnf,
+    ctx: Matrix,
     thm: ClassicalArena,
 }
 

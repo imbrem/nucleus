@@ -1,19 +1,17 @@
-//! Tagged classical logic runtime and compatibility-facing matrix views.
+//! Checked classical logic.
 //!
-//! The selected runtime uses fixed 64-bit `LIT`/`AND`/`OR`/`SAT` references,
-//! checked ownership, and an intrusive allocator. The former `Cnf`/`Dnf` API
-//! remains as an untrusted builder and borrowed-view facade: every raw live
-//! slot is actually backed by [`tagged::Checked`], and universal theorem slots
-//! can only contain sealed [`tagged::Theorem`] values.
-//!
-//! External theorem IDs are stable handles with LIFO reuse. They are not part
-//! of the packed authority-bearing representation.
+//! The runtime stores tagged formulas in 32-bit words. Validation, equality,
+//! hashing, and decoding traverse that storage without recursion. The theorem
+//! wrapper is sealed; validating syntax alone creates no theorem fact.
 
-mod compat;
-pub mod tagged;
+mod cnf;
+mod tagged;
 
-pub use compat::{
-    CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, CnfRef, Dnf, DnfId,
-    DnfRef, Error, KernelRules, Lit, LitError, LitVec, RatGroup, Refutation, Refuter, ThmId,
-    ThmRef,
+pub use cnf::{
+    CheckedArena, ClassicalArena, ClassicalKernel, Error, Lit, LitError, LitVec, Matrix, RatGroup,
+    Refutation, Refuter, RowId, ThmId, ThmRef,
+};
+pub use tagged::{
+    Checked, EditError, Formula, FormulaKind, FormulaPath, FormulaView, ModelWitness, RuntimeError,
+    Sequent, SequentView, Side, Theorem,
 };

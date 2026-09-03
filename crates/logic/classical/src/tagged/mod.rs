@@ -1,20 +1,27 @@
-//! Selected tagged classical runtime.
+//! Tagged formula storage and theorem rules.
 //!
-//! This module mirrors the fixed-64-bit Lean design: self-describing
-//! `LIT`/`AND`/`OR`/`SAT` formulas, intrusive free rings, strict ownership
-//! validation, canonical packing, structural equality/hashing, and a sealed
-//! LCF theorem wrapper. The matrix API is a compatibility facade over this
-//! implementation; its wire representation is defined separately.
+//! Checked values expose semantic views while allocator storage remains private.
 
 mod kernel;
 mod runtime;
 mod syntax;
 mod word;
 
-pub use kernel::{EditError, Theorem};
-pub use runtime::{Arena, Block, Checked, RuntimeError, pack};
-pub use syntax::{Formula, Sequent, Side};
-pub use word::{Ref, Word, WordError};
+#[cfg(test)]
+mod cost_tests;
+#[cfg(test)]
+mod deep_arena_tests;
+#[cfg(test)]
+mod validator_tests;
+
+pub use kernel::{EditError, ModelWitness, Theorem};
+#[cfg(test)]
+pub(crate) use runtime::Arena;
+pub(crate) use runtime::pack;
+pub use runtime::{Checked, FormulaKind, FormulaView, RuntimeError, SequentView};
+pub use syntax::{Formula, FormulaPath, Sequent, Side};
+pub use word::WordError;
+pub(crate) use word::{Ref, Word};
 
 #[cfg(test)]
 mod tests {
@@ -41,8 +48,8 @@ mod tests {
             self.0.push(u64::from(value));
         }
 
-        fn write_u64(&mut self, value: u64) {
-            self.0.push(value);
+        fn write_u32(&mut self, value: u32) {
+            self.0.push(u64::from(value));
         }
 
         fn write_usize(&mut self, value: usize) {
@@ -51,15 +58,15 @@ mod tests {
         }
     }
 
-    fn literal(atom: u64) -> Formula {
+    fn literal(atom: u32) -> Formula {
         Formula::Literal {
             atom,
             negative: false,
         }
     }
 
-    fn pointer(base: u64) -> Word {
-        Word::pointer(base, 0, false).expect("test pointer must fit")
+    fn pointer(base: u32) -> Word {
+        Word::pointer(base, false).expect("test pointer must fit")
     }
 
     #[test]
@@ -67,12 +74,13 @@ mod tests {
         let positive = Word::literal(7, false).unwrap();
         let negative = positive.negated();
         assert_eq!(positive.raw(), 31);
-        assert_eq!(negative.raw(), (1_u64 << 63) | 31);
+        assert_eq!(negative.raw(), (1_u32 << 31) | 31);
         assert_eq!(Word::from_raw(negative.raw()), negative);
         assert_eq!(negative.tag(), 3);
         assert_eq!(negative.base(), 28);
         assert_eq!(Ref::new(negative).unwrap().negated().word(), positive);
         assert!(Ref::new(Word::ZERO).is_err());
+        assert!(Word::literal(1 << 29, false).is_err());
     }
 
     #[test]
@@ -94,7 +102,7 @@ mod tests {
             },
         }];
         let checked = pack(&input).unwrap();
-        assert_eq!(checked.sequents(), input);
+        assert_eq!(checked.decode_sequents().unwrap(), input);
         assert_eq!(&checked.arena().words()[..4], [Word::ZERO; 4]);
         assert_eq!(checked.arena().free_root(), Word::ZERO);
         assert!(checked.free_blocks().is_empty());
@@ -122,7 +130,7 @@ mod tests {
             Word::ZERO,
         ];
         let checked = Checked::check(Arena::new(words, pointer(4), vec![])).unwrap();
-        assert!(checked.sequents().is_empty());
+        assert!(checked.decode_sequents().unwrap().is_empty());
         assert_eq!(checked.free_blocks().len(), 2);
         assert_eq!(checked.free_blocks()[0].base(), 12);
         assert_eq!(checked.free_blocks()[0].size_class(), 0);
@@ -187,7 +195,7 @@ mod tests {
         }])
         .unwrap();
         let (mut words, _, roots) = canonical.arena().clone().into_parts();
-        let base = u64::try_from(words.len()).unwrap();
+        let base = u32::try_from(words.len()).unwrap();
         let free = pointer(base);
         words.extend([Word::ZERO, free, free, Word::ZERO]);
         let with_free = Checked::check(Arena::new(words, free, roots)).unwrap();
@@ -229,6 +237,37 @@ mod tests {
     }
 
     #[test]
+    fn identity_proves_a_formula_from_itself() {
+        for formula in [
+            literal(1),
+            Formula::Literal {
+                negative: true,
+                atom: 7,
+            },
+            Formula::And {
+                negative: false,
+                children: vec![literal(1), literal(2)],
+            },
+            Formula::Or {
+                negative: true,
+                children: vec![literal(3)],
+            },
+        ] {
+            let table = Theorem::identity(formula.clone())
+                .expect("identity")
+                .checked()
+                .decode_sequents()
+                .expect("decode");
+            assert_eq!(table.len(), 1);
+            assert_eq!(table[0].premise, formula, "premise is the formula itself");
+            assert_eq!(
+                table[0].conclusion, formula,
+                "conclusion is the same formula, with the same polarity"
+            );
+        }
+    }
+
+    #[test]
     fn identity_append_and_canonical_edits_remain_sealed() {
         let p = literal(1);
         let q = literal(2);
@@ -237,19 +276,17 @@ mod tests {
             children: vec![q.clone(), p.clone(), p.clone()],
         };
         let identity = Theorem::identity(formula).unwrap();
-        let sorted = identity
-            .canonical_sort_root_by_key(0, super::Side::Left, |formula| match formula {
-                Formula::Literal { atom, .. } => *atom,
-                _ => u64::MAX,
-            })
-            .unwrap();
-        let deduped = sorted.canonical_dedupe_root(0, super::Side::Left).unwrap();
-        let weakened = deduped.weaken(0, super::Side::Left, q.clone()).unwrap();
+        let path = super::FormulaPath::new(0, super::Side::Left, Vec::new());
+        let mut weakened = identity;
+        weakened.permute_mut(&path, &[1, 0, 2]).unwrap();
+        weakened.dedup_local_mut(&path, 2, 0).unwrap();
+        weakened.weaken_mut(0, super::Side::Left, &q).unwrap();
         let combined = weakened
             .append(&Theorem::identity(q.clone()).unwrap())
             .unwrap();
-        assert_eq!(combined.checked().sequents().len(), 2);
-        let Formula::And { children, .. } = &combined.checked().sequents()[0].premise else {
+        let table = combined.checked().decode_sequents().unwrap();
+        assert_eq!(table.len(), 2);
+        let Formula::And { children, .. } = &table[0].premise else {
             panic!("edited premise must remain an AND")
         };
         assert_eq!(children, &[p, q.clone(), q]);

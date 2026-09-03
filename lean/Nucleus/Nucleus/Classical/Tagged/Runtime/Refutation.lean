@@ -19,7 +19,8 @@ open Nucleus.Classical.Tagged.Runtime
 
 namespace Abstract
 export Nucleus.Classical.Refutation.Tagged
-  (sequent satSequent sequent_syllogism_iff satSequent_entailsAt_iff)
+  (sequent satSequent closedRefutation sequent_syllogism_iff
+    satSequent_entailsAt_iff closedRefutation_entailsAt_iff)
 end Abstract
 
 namespace Matrix
@@ -64,6 +65,14 @@ theorem unsat_of_satSequent {known : PartialAssignment Nat}
     (member : Contains checked (Abstract.satSequent value)) :
     Matrix.BooleanUnsat value := by
   exact (Abstract.satSequent_entailsAt_iff known value).mp
+    (entailsAt_member holds member)
+
+theorem unsat_of_closedRefutation {known : PartialAssignment Nat}
+    {checked : Checked payloadWidth} {value : Cnf Nat}
+    (holds : Mutate.EntailsAt known checked)
+    (member : Contains checked (Abstract.closedRefutation value)) :
+    Matrix.BooleanUnsat value := by
+  exact (Abstract.closedRefutation_entailsAt_iff known value).mp
     (entailsAt_member holds member)
 
 /-- The canonical runtime can represent a refutation goal whenever its public

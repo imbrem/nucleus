@@ -54,6 +54,75 @@ theorem Holds.rhsOrPush (assignment : Classical.Assignment Atom)
   apply (Formula.eval_disjunction assignment (rhs ++ [pushed])).mpr
   exact ⟨child, List.mem_append.mpr (Or.inl member), childTrue⟩
 
+/-- Removing the final disjunct from a premise preserves a sequent. -/
+theorem Holds.lhsOrPop (assignment : Classical.Assignment Atom)
+    (lhs : List (Formula Atom)) (removed rhs : Formula Atom)
+    (holds : Holds ⟨Formula.disjunction (lhs ++ [removed]), rhs⟩ assignment) :
+    Holds ⟨Formula.disjunction lhs, rhs⟩ assignment := by
+  intro premise
+  apply holds
+  obtain ⟨child, member, childTrue⟩ :=
+    (Formula.eval_disjunction assignment lhs).mp premise
+  exact (Formula.eval_disjunction assignment (lhs ++ [removed])).mpr
+    ⟨child, List.mem_append.mpr (Or.inl member), childTrue⟩
+
+/-- Removing the final conjunct from a conclusion preserves a sequent. -/
+theorem Holds.rhsAndPop (assignment : Classical.Assignment Atom)
+    (lhs : Formula Atom) (rhs : List (Formula Atom)) (removed : Formula Atom)
+    (holds : Holds ⟨lhs, Formula.conjunction (rhs ++ [removed])⟩ assignment) :
+    Holds ⟨lhs, Formula.conjunction rhs⟩ assignment := by
+  intro premise
+  have expanded := holds premise
+  apply (Formula.eval_conjunction assignment rhs).mpr
+  intro child member
+  exact (Formula.eval_conjunction assignment (rhs ++ [removed])).mp
+    expanded child (List.mem_append.mpr (Or.inl member))
+
+/-- Refuting the conjunction of `clauses` proves that conjunction implies
+false.  Empty conjunction and disjunction carry truth and falsehood; zero is
+not used as a formula encoding. -/
+theorem Holds.refutationToSequent (assignment : Classical.Assignment Atom)
+    (clauses : List (Formula Atom))
+    (holds : Holds
+      ⟨Formula.conjunction [], (Formula.sat false clauses).neg⟩ assignment) :
+    Holds ⟨Formula.conjunction clauses, Formula.disjunction []⟩ assignment := by
+  intro clausesTrue
+  have notSat : (Formula.sat false clauses).neg.Eval assignment := by
+    apply holds
+    simp
+  have sat : (Formula.sat false clauses).Eval assignment := by
+    simp only [Formula.Eval, Signed, Bool.false_eq_true, ↓reduceIte]
+    exact ⟨assignment,
+      (Formula.evalAll_iff assignment clauses).mpr
+        ((Formula.eval_conjunction assignment clauses).mp clausesTrue)⟩
+  exact False.elim
+    ((Formula.eval_neg (Formula.sat false clauses) assignment).mp notSat sat)
+
+theorem EntailsAt.lhsOrPop {known : Classical.PartialAssignment Atom}
+    (lhs : List (Formula Atom)) (removed rhs : Formula Atom)
+    (holds : EntailsAt known
+      ⟨Formula.disjunction (lhs ++ [removed]), rhs⟩) :
+    EntailsAt known ⟨Formula.disjunction lhs, rhs⟩ := by
+  intro assignment completes
+  exact Holds.lhsOrPop assignment lhs removed rhs (holds assignment completes)
+
+theorem EntailsAt.rhsAndPop {known : Classical.PartialAssignment Atom}
+    (lhs : Formula Atom) (rhs : List (Formula Atom)) (removed : Formula Atom)
+    (holds : EntailsAt known
+      ⟨lhs, Formula.conjunction (rhs ++ [removed])⟩) :
+    EntailsAt known ⟨lhs, Formula.conjunction rhs⟩ := by
+  intro assignment completes
+  exact Holds.rhsAndPop assignment lhs rhs removed (holds assignment completes)
+
+theorem EntailsAt.refutationToSequent {known : Classical.PartialAssignment Atom}
+    (clauses : List (Formula Atom))
+    (holds : EntailsAt known
+      ⟨Formula.conjunction [], (Formula.sat false clauses).neg⟩) :
+    EntailsAt known
+      ⟨Formula.conjunction clauses, Formula.disjunction []⟩ := by
+  intro assignment completes
+  exact Holds.refutationToSequent assignment clauses (holds assignment completes)
+
 /-- Cut a formula occurring as the final disjunct of one conclusion and the
 first conjunct of a second premise. -/
 theorem Holds.cut (assignment : Classical.Assignment Atom)

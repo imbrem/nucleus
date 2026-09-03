@@ -4,11 +4,12 @@
 
 use std::fmt::Write as _;
 
+use crate::classical::PySequent;
 use crate::sat::{PyClause, PyLiteral};
 use covalence_lib_python::exceptions::create_exception;
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::types::PyType;
-use covalence_logic_hol::{ClassicalKernel, Cnf, Dnf, Lit, LitVec, Refutation, ThmId};
+use covalence_logic_hol::{ClassicalKernel, Lit, LitVec, Matrix, Refutation, ThmId};
 use covalence_logic_lrat::{
     Formula, RatGroup,
     parse::{
@@ -32,32 +33,30 @@ fn rows(rows: Vec<Vec<i32>>) -> PyResult<Vec<LitVec>> {
     rows.into_iter()
         .map(|row| {
             row.into_iter()
-                .map(|literal| Lit::try_new(literal).map_err(rejection))
+                .map(|literal| Lit::try_from_signed(literal).map_err(rejection))
                 .collect()
         })
         .collect()
 }
 
-fn formula(cnf: &Cnf) -> PyResult<Formula> {
+fn formula(cnf: &Matrix) -> PyResult<Formula> {
     Formula::from_signed(
         cnf.rows()
-            .map(|row| row.iter().map(|literal| i64::from(literal.get()))),
+            .map(|row| row.iter().map(|literal| i64::from(literal.signed()))),
     )
     .map_err(rejection)
 }
 
-type PyClassicalSequent = (Vec<Vec<i32>>, Vec<Vec<i32>>);
-
 #[pyclass(module = "covalence.logic.classical", name = "Cnf")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
-pub struct PyCnf(pub(crate) Cnf);
+pub struct PyCnf(pub(crate) Matrix);
 
 #[pymethods]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyCnf {
     #[new]
     fn new(value: Vec<Vec<i32>>) -> PyResult<Self> {
-        Ok(Self(Cnf::new(rows(value)?)))
+        Ok(Self(Matrix::new(rows(value)?)))
     }
 
     #[staticmethod]
@@ -78,7 +77,7 @@ impl PyCnf {
     fn rows(&self) -> Vec<Vec<i32>> {
         self.0
             .rows()
-            .map(|row| row.iter().map(|literal| literal.get()).collect())
+            .map(|row| row.iter().map(|literal| literal.signed()).collect())
             .collect()
     }
 
@@ -96,7 +95,7 @@ impl PyCnf {
         );
         for row in self.0.rows() {
             for literal in row {
-                write!(text, "{} ", literal.get()).expect("writing to a string is infallible");
+                write!(text, "{} ", literal.signed()).expect("writing to a string is infallible");
             }
             text.push_str("0\n");
         }
@@ -110,21 +109,21 @@ impl PyCnf {
 
 #[pyclass(module = "covalence.logic.classical", name = "Dnf")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
-pub struct PyDnf(Dnf);
+pub struct PyDnf(Matrix);
 
 #[pymethods]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyDnf {
     #[new]
     fn new(value: Vec<Vec<i32>>) -> PyResult<Self> {
-        Ok(Self(Dnf::new(rows(value)?)))
+        Ok(Self(Matrix::new(rows(value)?)))
     }
 
     #[getter]
     fn rows(&self) -> Vec<Vec<i32>> {
         self.0
             .rows()
-            .map(|row| row.iter().map(|literal| literal.get()).collect())
+            .map(|row| row.iter().map(|literal| literal.signed()).collect())
             .collect()
     }
 
@@ -159,7 +158,7 @@ impl PyRefutation {
 
     #[getter]
     fn cnf(&self) -> PyCnf {
-        PyCnf(self.0.theorem().lhs.to_owned())
+        PyCnf(self.0.theorem().lhs.clone())
     }
 }
 
@@ -177,31 +176,25 @@ impl PyClassicalKernel {
 
     fn copy_refutation(&mut self, refutation: PyRef<'_, PyRefutation>) -> PyResult<i32> {
         self.0
-            .rules()
             .copy_refutation(&refutation.0)
             .map(ThmId::get)
             .map_err(rejection)
     }
 
-    fn theorem(&self, theorem: i32) -> PyResult<PyClassicalSequent> {
+    fn theorem(&self, theorem: i32) -> PyResult<PySequent> {
         let id =
             ThmId::new(theorem).ok_or_else(|| rejection("theorem IDs are positive i32 values"))?;
         let theorem = self
             .0
-            .get(id)
+            .theorem_fact(id)
             .ok_or_else(|| rejection("theorem is absent"))?;
-        Ok((
-            theorem
-                .lhs
-                .rows()
-                .map(|row| row.iter().map(|literal| literal.get()).collect())
-                .collect(),
-            theorem
-                .rhs
-                .rows()
-                .map(|row| row.iter().map(|literal| literal.get()).collect())
-                .collect(),
-        ))
+        theorem
+            .checked()
+            .decode_sequents()
+            .map_err(rejection)?
+            .pop()
+            .map(PySequent)
+            .ok_or_else(|| rejection("theorem contains no sequent"))
     }
 }
 

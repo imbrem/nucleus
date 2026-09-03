@@ -1,8 +1,8 @@
 //! Userspace classical matrices and checked LRAT replay for WebAssembly.
 
 use covalence_logic_classical::{
-    ClassicalKernel as Kernel, Cnf as NativeCnf, Dnf as NativeDnf, Lit, LitVec,
-    Refutation as NativeRefutation, ThmId,
+    ClassicalKernel as Kernel, Lit, LitVec, Matrix as NativeMatrix, Refutation as NativeRefutation,
+    ThmId,
 };
 use covalence_logic_lrat::{
     Formula,
@@ -21,7 +21,7 @@ fn parse_rows(text: &str) -> Result<Vec<LitVec>, JsError> {
         .into_iter()
         .map(|row| {
             row.into_iter()
-                .map(|literal| Lit::try_new(literal).map_err(error))
+                .map(|literal| Lit::try_from_signed(literal).map_err(error))
                 .collect()
         })
         .collect()
@@ -31,17 +31,17 @@ fn rows_json(rows: impl Iterator<Item = Vec<i32>>) -> Result<String, JsError> {
     covalence_lib_json::to_string(&rows.collect::<Vec<_>>()).map_err(error)
 }
 
-fn formula(cnf: &NativeCnf) -> Result<Formula, JsError> {
+fn formula(cnf: &NativeMatrix) -> Result<Formula, JsError> {
     Formula::from_signed(
         cnf.rows()
-            .map(|row| row.iter().map(|literal| i64::from(literal.get()))),
+            .map(|row| row.iter().map(|literal| i64::from(literal.signed()))),
     )
     .map_err(error)
 }
 
 /// A non-normal CNF matrix preserving row and literal order.
 #[wasm_bindgen]
-pub struct Cnf(pub(crate) NativeCnf);
+pub struct Cnf(pub(crate) NativeMatrix);
 
 #[wasm_bindgen]
 impl Cnf {
@@ -52,7 +52,7 @@ impl Cnf {
     /// Returns an error for malformed JSON or literals.
     #[wasm_bindgen(constructor)]
     pub fn new(rows: &str) -> Result<Self, JsError> {
-        Ok(Self(NativeCnf::new(parse_rows(rows)?)))
+        Ok(Self(NativeMatrix::new(parse_rows(rows)?)))
     }
 
     /// Parses a DIMACS CNF byte stream.
@@ -89,7 +89,7 @@ impl Cnf {
         rows_json(
             self.0
                 .rows()
-                .map(|row| row.iter().map(|literal| literal.get()).collect()),
+                .map(|row| row.iter().map(|literal| literal.signed()).collect()),
         )
     }
 
@@ -101,7 +101,7 @@ impl Cnf {
 
 /// A non-normal DNF matrix preserving row and literal order.
 #[wasm_bindgen]
-pub struct Dnf(pub(crate) NativeDnf);
+pub struct Dnf(pub(crate) NativeMatrix);
 
 #[wasm_bindgen]
 impl Dnf {
@@ -112,7 +112,7 @@ impl Dnf {
     /// Returns an error for malformed JSON or literals.
     #[wasm_bindgen(constructor)]
     pub fn new(rows: &str) -> Result<Self, JsError> {
-        Ok(Self(NativeDnf::new(parse_rows(rows)?)))
+        Ok(Self(NativeMatrix::new(parse_rows(rows)?)))
     }
 
     /// Returns the non-normal rows as JSON.
@@ -125,7 +125,7 @@ impl Dnf {
         rows_json(
             self.0
                 .rows()
-                .map(|row| row.iter().map(|literal| literal.get()).collect()),
+                .map(|row| row.iter().map(|literal| literal.signed()).collect()),
         )
     }
 
@@ -177,7 +177,7 @@ impl Refutation {
                 .theorem()
                 .lhs
                 .rows()
-                .map(|row| row.iter().map(|literal| literal.get()).collect()),
+                .map(|row| row.iter().map(|literal| literal.signed()).collect()),
         )
     }
 }
@@ -208,7 +208,6 @@ impl ClassicalKernel {
     #[wasm_bindgen(js_name = copyRefutation)]
     pub fn copy_refutation(&mut self, refutation: &Refutation) -> Result<i32, JsError> {
         self.0
-            .rules()
             .copy_refutation(&refutation.0)
             .map(ThmId::get)
             .map_err(error)
@@ -226,16 +225,25 @@ impl ClassicalKernel {
         let theorem = self
             .0
             .get(id)
+            .or_else(|| self.0.refutation(id))
             .ok_or_else(|| JsError::new("theorem is absent"))?;
         let lhs = theorem
             .lhs
             .rows()
-            .map(|row| row.iter().map(|literal| literal.get()).collect::<Vec<_>>())
+            .map(|row| {
+                row.iter()
+                    .map(|literal| literal.signed())
+                    .collect::<Vec<_>>()
+            })
             .collect::<Vec<_>>();
         let rhs = theorem
             .rhs
             .rows()
-            .map(|row| row.iter().map(|literal| literal.get()).collect::<Vec<_>>())
+            .map(|row| {
+                row.iter()
+                    .map(|literal| literal.signed())
+                    .collect::<Vec<_>>()
+            })
             .collect::<Vec<_>>();
         covalence_lib_json::to_string(&(lhs, rhs)).map_err(error)
     }

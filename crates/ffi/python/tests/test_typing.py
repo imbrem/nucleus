@@ -89,11 +89,22 @@ def test_every_public_name_is_reexported() -> None:
                 "replay_into_classical",
                 "replay_into_syllogisms",
                 "replay_into_theorems",
+                "read_theorem",
                 "solve_cadical",
                 "solve_cadical_into_classical",
                 "solve_cadical_into_syllogisms",
                 "solve_cadical_into_theorems",
             }
+        if public_module is public_classical:
+            names -= {"contradiction", "dedup", "sort_by_key"}
+            direct = {"ClassicalKernel", "Cnf", "Dnf", "Refutation"}
+            for name in names - direct:
+                assert getattr(public_module, name) is getattr(
+                    _covalence, f"Classical{name}"
+                )
+            for name in names & direct:
+                assert getattr(public_module, name) is getattr(_covalence, name)
+            continue
         if public_module is public_hol:
             # The public HOL module removes the extension's `Hol` prefix.
             pure_python = {

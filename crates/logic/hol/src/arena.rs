@@ -6,7 +6,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::{AmbPred, ClassicalArena, Cnf, Import, Ref, SynFactId, row::Row, syn::SynSlot};
+use crate::{AmbPred, ClassicalArena, Import, Matrix, Ref, SynFactId, row::Row, syn::SynSlot};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Dense {
@@ -98,7 +98,7 @@ pub struct Arena {
     pub(crate) ctx: BTreeSet<Ref>,
     pub(crate) amb_pred: Vec<AmbPred>,
     pub(crate) amb_ax: BTreeSet<String>,
-    pub(crate) amb_ctx: Cnf,
+    pub(crate) amb_ctx: Matrix,
     pub(crate) amb_thm: ClassicalArena,
     pub(crate) syl: ClassicalArena,
     pub(crate) thm: ClassicalArena,

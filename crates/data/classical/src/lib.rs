@@ -1,190 +1,339 @@
-//! Untrusted wire codec for checked tagged-classical arenas.
+//! Semantic wire codec for checked classical syntax.
 //!
-//! The wire object is a closed, link-free ATProto-style record. Machine words
-//! and roots are exact eight-byte big-endian blobs. Decoding validates the
-//! complete arena and returns checked syntax only; it cannot create a theorem.
+//! The wire records formulas and sequents. Allocator metadata remains private.
 
 use std::collections::BTreeMap;
 
 use covalence_data_cbor::drisl::{self, Policy, Value};
-use covalence_lib_error::snafu::{ResultExt, Snafu};
-use covalence_logic_classical::tagged::{Arena, Checked, Ref, RuntimeError, Word};
+use covalence_lib_error::snafu::Snafu;
+use covalence_logic_classical::{
+    Checked, Formula, FormulaKind, FormulaView, RuntimeError, Sequent,
+};
 
-/// Stable discriminator for the version-one tagged-classical arena object.
-pub const TYPE_NAME: &str = "io.github.imbrem.nucleus.classicalArenaV1";
+/// Discriminator for the semantic classical-arena object.
+pub const TYPE_NAME: &str = "io.github.imbrem.nucleus.classicalArenaV3";
 
-const WORD_BYTES: usize = 8;
-const RESERVED_BYTES: usize = 4 * WORD_BYTES;
+const MAX_SEQUENTS: usize = 500_000;
+const MAX_TOKENS: usize = 1_000_000;
 
-/// Failure to decode and validate a tagged-classical arena object.
+/// Failure to decode semantic classical syntax.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum DecodeError {
-    /// The bytes are not one complete canonical `ATProto` DRISL item.
-    #[snafu(display("could not decode tagged-classical DRISL: {source}"))]
-    Drisl {
-        /// Reusable profile/canonicality failure.
-        source: drisl::DecodeError,
-    },
-    /// The data item does not have the exact closed record shape.
-    #[snafu(display("invalid tagged-classical CBOR schema: {reason}"))]
-    Schema {
-        /// Rejected schema invariant.
-        reason: &'static str,
-    },
-    /// The raw arena fails its allocator, ownership, or syntax checks.
-    #[snafu(display("invalid tagged-classical CBOR arena: {source}"))]
-    Runtime {
-        /// Underlying complete arena validation failure.
-        source: RuntimeError,
-    },
+    /// The bytes are not one canonical DRISL item.
+    #[snafu(context(suffix(DecodeSnafu)))]
+    #[snafu(display("could not decode classical DRISL: {source}"))]
+    Drisl { source: drisl::DecodeError },
+    /// The item does not have the closed semantic schema.
+    #[snafu(display("invalid classical CBOR schema: {reason}"))]
+    Schema { reason: &'static str },
+    /// The decoded syntax cannot be represented by the runtime.
+    #[snafu(context(suffix(DecodeSnafu)))]
+    #[snafu(display("invalid classical CBOR arena: {source}"))]
+    Runtime { source: RuntimeError },
 }
 
-/// Failure to encode a checked tagged-classical arena.
+/// Failure to encode checked classical syntax.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
-#[snafu(display("could not encode tagged-classical CBOR: {source}"))]
-pub struct EncodeError {
-    /// Underlying reusable DRISL encoder failure.
-    source: drisl::EncodeError,
+pub enum EncodeError {
+    /// The checked value could not be read.
+    #[snafu(context(suffix(EncodeSnafu)))]
+    #[snafu(display("could not read checked classical syntax: {source}"))]
+    Runtime { source: RuntimeError },
+    /// The semantic object exceeds the codec policy.
+    #[snafu(display("classical semantic encoding exceeds its resource bound"))]
+    ResourceBound,
+    /// DRISL rejected the semantic value.
+    #[snafu(context(suffix(EncodeSnafu)))]
+    #[snafu(display("could not encode classical CBOR: {source}"))]
+    Drisl { source: drisl::EncodeError },
 }
 
-/// Decodes one exact deterministic DRISL object and validates its arena.
-///
-/// This establishes checked syntax only. Only the sealed kernel API can turn
-/// checked syntax into theorem facts.
+/// Decodes canonical semantic DRISL and packs its syntax.
 ///
 /// # Errors
 ///
-/// Returns an error for malformed or trailing CBOR, noncanonical bytes, a
-/// schema mismatch, or an arena that fails complete runtime validation.
+/// Returns an error for invalid DRISL, schema, resource use, or syntax.
 pub fn decode_checked(bytes: &[u8]) -> Result<Checked, DecodeError> {
-    let value = drisl::decode(Policy::ATPROTO, bytes).context(DrislSnafu)?;
-    let arena = arena_from_value(&value)?;
-    Checked::check(arena).context(RuntimeSnafu)
+    let value =
+        drisl::decode(Policy::ATPROTO, bytes).map_err(|source| DecodeError::Drisl { source })?;
+    Checked::from_sequents(&decode_arena(&value)?).map_err(|source| DecodeError::Runtime { source })
 }
 
-/// Encodes checked syntax as the unique deterministic version-one DRISL bytes.
+/// Encodes checked syntax as canonical semantic DRISL.
 ///
 /// # Errors
 ///
-/// Returns an error only if the reusable DRISL encoder rejects the value.
+/// Returns an error if syntax cannot be read, is too large, or encoding fails.
 pub fn encode_checked(checked: &Checked) -> Result<Vec<u8>, EncodeError> {
-    drisl::encode(Policy::ATPROTO, &arena_value(checked.arena())).context(EncodeSnafu)
+    drisl::encode(Policy::ATPROTO, &encode_checked_value(checked)?)
+        .map_err(|source| EncodeError::Drisl { source })
 }
 
-fn arena_value(arena: &Arena) -> Value {
-    let mut words = Vec::new();
-    for word in arena.words() {
-        words.extend_from_slice(&word.raw().to_be_bytes());
+fn encode_checked_value(checked: &Checked) -> Result<Value, EncodeError> {
+    if checked.len() > MAX_SEQUENTS {
+        return Err(EncodeError::ResourceBound);
     }
-    let roots = arena
-        .roots()
-        .iter()
-        .map(|(premise, conclusion)| {
-            Value::Map(BTreeMap::from([
-                field(
-                    "premise",
-                    Value::Bytes(premise.word().raw().to_be_bytes().to_vec()),
-                ),
-                field(
-                    "conclusion",
-                    Value::Bytes(conclusion.word().raw().to_be_bytes().to_vec()),
-                ),
-            ]))
-        })
-        .collect();
-
-    Value::Map(BTreeMap::from([
-        field("$type", Value::Text(TYPE_NAME.to_owned())),
-        field("roots", Value::Array(roots)),
-        field("words", Value::Bytes(words)),
-        field(
-            "freeRoot",
-            Value::Bytes(arena.free_root().raw().to_be_bytes().to_vec()),
-        ),
-    ]))
+    let mut budget = MAX_TOKENS;
+    let mut sequents = Vec::with_capacity(checked.len());
+    for index in 0..checked.len() {
+        let view = checked.view(index).ok_or(EncodeError::Runtime {
+            source: RuntimeError::InvalidArena,
+        })?;
+        sequents.push(Value::Map(BTreeMap::from([
+            entry("premise", encode_view(view.premise, &mut budget)?),
+            entry("conclusion", encode_view(view.conclusion, &mut budget)?),
+        ])));
+    }
+    Ok(Value::Map(BTreeMap::from([
+        entry("$type", Value::Text(TYPE_NAME.to_owned())),
+        entry("sequents", Value::Array(sequents)),
+    ])))
 }
 
-fn field(name: &str, value: Value) -> (String, Value) {
+fn encode_view(view: FormulaView<'_>, budget: &mut usize) -> Result<Value, EncodeError> {
+    let mut pending = vec![view];
+    let mut tokens = Vec::new();
+    while let Some(view) = pending.pop() {
+        *budget = budget.checked_sub(1).ok_or(EncodeError::ResourceBound)?;
+        let kind = match view.kind() {
+            FormulaKind::And => "and",
+            FormulaKind::Or => "or",
+            FormulaKind::Sat => "sat",
+            FormulaKind::Literal => "literal",
+        };
+        let extra = if let Some(atom) = view.atom() {
+            entry("atom", Value::Integer(i64::from(atom)))
+        } else {
+            for index in (0..view.len()).rev() {
+                pending.push(view.child(index).ok_or(EncodeError::Runtime {
+                    source: RuntimeError::InvalidArena,
+                })?);
+            }
+            let arity = i64::try_from(view.len()).map_err(|_| EncodeError::ResourceBound)?;
+            entry("arity", Value::Integer(arity))
+        };
+        tokens.push(Value::Map(BTreeMap::from([
+            entry("kind", Value::Text(kind.to_owned())),
+            entry("negative", Value::Bool(view.is_negative())),
+            extra,
+        ])));
+    }
+    Ok(Value::Array(tokens))
+}
+
+fn entry(name: &str, value: Value) -> (String, Value) {
     (name.to_owned(), value)
 }
 
-fn arena_from_value(value: &Value) -> Result<Arena, DecodeError> {
-    let Value::Map(fields) = value else {
-        return schema("top-level item must be a map");
-    };
-    if fields.len() != 4 {
-        return schema("top-level map must have exactly four fields");
+#[cfg(test)]
+fn encode_arena(sequents: &[Sequent]) -> Result<Value, EncodeError> {
+    if sequents.len() > MAX_SEQUENTS {
+        return Err(EncodeError::ResourceBound);
     }
-    if fields.get("$type") != Some(&Value::Text(TYPE_NAME.to_owned())) {
-        return schema("$type must be the exact classical-arena discriminator");
+    let mut budget = MAX_TOKENS;
+    let mut values = Vec::with_capacity(sequents.len());
+    for sequent in sequents {
+        values.push(Value::Map(BTreeMap::from([
+            entry("premise", encode_formula(&sequent.premise, &mut budget)?),
+            entry(
+                "conclusion",
+                encode_formula(&sequent.conclusion, &mut budget)?,
+            ),
+        ])));
     }
-    let Some(Value::Array(root_values)) = fields.get("roots") else {
-        return schema("roots must be an array");
-    };
-    let mut roots = Vec::with_capacity(root_values.len());
-    for root in root_values {
-        roots.push(root_from_value(root)?);
-    }
+    Ok(Value::Map(BTreeMap::from([
+        entry("$type", Value::Text(TYPE_NAME.to_owned())),
+        entry("sequents", Value::Array(values)),
+    ])))
+}
 
-    let Some(Value::Bytes(word_bytes)) = fields.get("words") else {
-        return schema("words must be a byte string");
-    };
-    if word_bytes.len() < RESERVED_BYTES || !word_bytes.len().is_multiple_of(WORD_BYTES) {
-        return schema("words must contain at least four complete 64-bit words");
-    }
-    let mut words = Vec::with_capacity(word_bytes.len() / WORD_BYTES);
-    for bytes in word_bytes.chunks_exact(WORD_BYTES) {
-        let Ok(bytes) = <&[u8; WORD_BYTES]>::try_from(bytes) else {
-            return schema("words must contain complete 64-bit words");
+#[cfg(test)]
+fn encode_formula(formula: &Formula, budget: &mut usize) -> Result<Value, EncodeError> {
+    let mut pending = vec![formula];
+    let mut tokens = Vec::new();
+    while let Some(formula) = pending.pop() {
+        *budget = budget.checked_sub(1).ok_or(EncodeError::ResourceBound)?;
+        let (kind, negative, extra) = match formula {
+            Formula::Literal { atom, negative } => (
+                "literal",
+                *negative,
+                entry("atom", Value::Integer(i64::from(*atom))),
+            ),
+            Formula::And { negative, children }
+            | Formula::Or { negative, children }
+            | Formula::Sat { negative, children } => {
+                let kind = match formula {
+                    Formula::And { .. } => "and",
+                    Formula::Or { .. } => "or",
+                    Formula::Sat { .. } => "sat",
+                    Formula::Literal { .. } => unreachable!(),
+                };
+                pending.extend(children.iter().rev());
+                let arity =
+                    i64::try_from(children.len()).map_err(|_| EncodeError::ResourceBound)?;
+                (kind, *negative, entry("arity", Value::Integer(arity)))
+            }
         };
-        words.push(Word::from_raw(u64::from_be_bytes(*bytes)));
+        tokens.push(Value::Map(BTreeMap::from([
+            entry("kind", Value::Text(kind.to_owned())),
+            entry("negative", Value::Bool(negative)),
+            extra,
+        ])));
     }
-
-    let Some(Value::Bytes(free_root_bytes)) = fields.get("freeRoot") else {
-        return schema("freeRoot must be a byte string");
-    };
-    let free_root = Word::from_raw(raw_word(free_root_bytes, "freeRoot must be eight bytes")?);
-
-    Ok(Arena::new(words, free_root, roots))
+    Ok(Value::Array(tokens))
 }
 
-fn root_from_value(value: &Value) -> Result<(Ref, Ref), DecodeError> {
+fn decode_arena(value: &Value) -> Result<Vec<Sequent>, DecodeError> {
+    let fields = exact_map(value, 2, "top-level item must be a two-field map")?;
+    if fields.get("$type") != Some(&Value::Text(TYPE_NAME.to_owned())) {
+        return schema("wrong classical-arena discriminator");
+    }
+    let Some(Value::Array(values)) = fields.get("sequents") else {
+        return schema("sequents must be an array");
+    };
+    if values.len() > MAX_SEQUENTS {
+        return schema("too many sequents");
+    }
+    let mut budget = MAX_TOKENS;
+    let mut sequents = Vec::with_capacity(values.len());
+    for value in values {
+        let fields = exact_map(value, 2, "each sequent must be a two-field map")?;
+        sequents.push(Sequent {
+            premise: decode_formula(required(fields, "premise")?, &mut budget)?,
+            conclusion: decode_formula(required(fields, "conclusion")?, &mut budget)?,
+        });
+    }
+    Ok(sequents)
+}
+
+#[derive(Clone, Copy)]
+enum Kind {
+    And,
+    Or,
+    Sat,
+}
+
+struct Frame {
+    kind: Kind,
+    negative: bool,
+    remaining: usize,
+    children: Vec<Formula>,
+}
+
+fn decode_formula(value: &Value, budget: &mut usize) -> Result<Formula, DecodeError> {
+    let Value::Array(tokens) = value else {
+        return schema("formula must be an array of preorder tokens");
+    };
+    *budget = budget
+        .checked_sub(tokens.len())
+        .ok_or(DecodeError::Schema {
+            reason: "formula token bound exceeded",
+        })?;
+    let mut stack: Vec<Frame> = Vec::new();
+    let mut root = None;
+    for token in tokens {
+        if root.is_some() {
+            return schema("formula has trailing tokens");
+        }
+        let fields = exact_map(token, 3, "formula token must be a three-field map")?;
+        let Some(Value::Text(kind)) = fields.get("kind") else {
+            return schema("formula kind must be text");
+        };
+        let Some(Value::Bool(negative)) = fields.get("negative") else {
+            return schema("formula polarity must be boolean");
+        };
+        let mut formula = if kind == "literal" {
+            let Some(Value::Integer(atom)) = fields.get("atom") else {
+                return schema("literal atom must be an integer");
+            };
+            Formula::Literal {
+                atom: u32::try_from(*atom).map_err(|_| DecodeError::Schema {
+                    reason: "literal atom must fit u32",
+                })?,
+                negative: *negative,
+            }
+        } else {
+            let kind = match kind.as_str() {
+                "and" => Kind::And,
+                "or" => Kind::Or,
+                "sat" => Kind::Sat,
+                _ => return schema("unknown formula constructor"),
+            };
+            let Some(Value::Integer(arity)) = fields.get("arity") else {
+                return schema("formula arity must be an integer");
+            };
+            let arity = usize::try_from(*arity).map_err(|_| DecodeError::Schema {
+                reason: "formula arity must be nonnegative",
+            })?;
+            if arity > tokens.len() {
+                return schema("formula arity exceeds its token array");
+            }
+            if arity != 0 {
+                stack.push(Frame {
+                    kind,
+                    negative: *negative,
+                    remaining: arity,
+                    children: Vec::with_capacity(arity),
+                });
+                continue;
+            }
+            node(kind, *negative, Vec::new())
+        };
+        loop {
+            let Some(frame) = stack.last_mut() else {
+                root = Some(formula);
+                break;
+            };
+            frame.children.push(formula);
+            frame.remaining -= 1;
+            if frame.remaining != 0 {
+                break;
+            }
+            let frame = stack.pop().ok_or(DecodeError::Schema {
+                reason: "invalid formula stack",
+            })?;
+            formula = node(frame.kind, frame.negative, frame.children);
+        }
+    }
+    if !stack.is_empty() {
+        return schema("formula is missing children");
+    }
+    root.ok_or(DecodeError::Schema {
+        reason: "formula is empty",
+    })
+}
+
+fn node(kind: Kind, negative: bool, children: Vec<Formula>) -> Formula {
+    match kind {
+        Kind::And => Formula::And { negative, children },
+        Kind::Or => Formula::Or { negative, children },
+        Kind::Sat => Formula::Sat { negative, children },
+    }
+}
+
+fn exact_map<'a>(
+    value: &'a Value,
+    len: usize,
+    reason: &'static str,
+) -> Result<&'a BTreeMap<String, Value>, DecodeError> {
     let Value::Map(fields) = value else {
-        return schema("each root must be a map");
+        return schema(reason);
     };
-    if fields.len() != 2 {
-        return schema("each root must have exactly two fields");
+    if fields.len() != len {
+        return schema(reason);
     }
-    let Some(Value::Bytes(premise_bytes)) = fields.get("premise") else {
-        return schema("premise must be a byte string");
-    };
-    let Some(Value::Bytes(conclusion_bytes)) = fields.get("conclusion") else {
-        return schema("conclusion must be a byte string");
-    };
-    let premise = Ref::new(Word::from_raw(raw_word(
-        premise_bytes,
-        "premise must be eight bytes",
-    )?))
-    .map_err(|_| DecodeError::Schema {
-        reason: "premise must be a nonzero reference",
-    })?;
-    let conclusion = Ref::new(Word::from_raw(raw_word(
-        conclusion_bytes,
-        "conclusion must be eight bytes",
-    )?))
-    .map_err(|_| DecodeError::Schema {
-        reason: "conclusion must be a nonzero reference",
-    })?;
-    Ok((premise, conclusion))
+    Ok(fields)
 }
 
-fn raw_word(bytes: &[u8], reason: &'static str) -> Result<u64, DecodeError> {
-    bytes
-        .try_into()
-        .map(u64::from_be_bytes)
-        .map_err(|_| DecodeError::Schema { reason })
+fn required<'a>(
+    fields: &'a BTreeMap<String, Value>,
+    name: &'static str,
+) -> Result<&'a Value, DecodeError> {
+    fields.get(name).ok_or(DecodeError::Schema {
+        reason: "required field is missing",
+    })
 }
 
 fn schema<T>(reason: &'static str) -> Result<T, DecodeError> {
@@ -194,45 +343,50 @@ fn schema<T>(reason: &'static str) -> Result<T, DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use covalence_logic_classical::tagged::{Formula, Sequent, pack};
 
-    fn empty() -> Checked {
-        Checked::check(Arena::new(vec![Word::ZERO; 4], Word::ZERO, vec![])).unwrap()
+    fn lit(atom: u32) -> Formula {
+        Formula::Literal {
+            atom,
+            negative: false,
+        }
     }
-
+    fn empty() -> Checked {
+        Checked::from_sequents(&[]).unwrap()
+    }
     fn sample() -> Checked {
-        pack(&[Sequent {
-            premise: Formula::Literal {
-                atom: 1,
-                negative: false,
-            },
+        Checked::from_sequents(&[Sequent {
+            premise: lit(1),
             conclusion: Formula::Or {
                 negative: true,
-                children: vec![Formula::Literal {
-                    atom: 2,
-                    negative: false,
-                }],
+                children: vec![lit(2)],
             },
         }])
         .unwrap()
     }
 
-    fn formula_corpus() -> Vec<Formula> {
-        let literals = vec![
+    #[test]
+    fn semantic_round_trip_is_stable() {
+        let checked = sample();
+        let encoded = encode_checked(&checked).unwrap();
+        assert!(String::from_utf8_lossy(&encoded).contains("classicalArenaV3"));
+        let decoded = decode_checked(&encoded).unwrap();
+        assert_eq!(
+            decoded.decode_sequents().unwrap(),
+            checked.decode_sequents().unwrap()
+        );
+        assert_eq!(encode_checked(&decoded).unwrap(), encoded);
+    }
+
+    #[test]
+    fn constructors_polarities_and_empty_nodes_round_trip() {
+        let leaves = vec![
+            lit(0),
             Formula::Literal {
-                atom: 0,
-                negative: false,
-            },
-            Formula::Literal {
-                atom: 1,
+                atom: (1 << 29) - 1,
                 negative: true,
             },
-            Formula::Literal {
-                atom: (1_u64 << 60) - 1,
-                negative: false,
-            },
         ];
-        let mut formulas = literals.clone();
+        let mut formulas = leaves.clone();
         for negative in [false, true] {
             formulas.push(Formula::And {
                 negative,
@@ -240,175 +394,83 @@ mod tests {
             });
             formulas.push(Formula::Or {
                 negative,
-                children: literals.clone(),
+                children: leaves.clone(),
             });
             formulas.push(Formula::Sat {
                 negative,
-                children: vec![
-                    Formula::And {
-                        negative: !negative,
-                        children: literals.clone(),
-                    },
-                    Formula::Or {
-                        negative,
-                        children: literals.clone(),
-                    },
-                ],
+                children: leaves.clone(),
             });
         }
-        formulas
-    }
-
-    #[test]
-    fn exact_empty_bytes_match_the_formal_codec() {
-        let expected = [
-            0xa4, 0x65, b'$', b't', b'y', b'p', b'e', 0x78, 0x29, b'i', b'o', b'.', b'g', b'i',
-            b't', b'h', b'u', b'b', b'.', b'i', b'm', b'b', b'r', b'e', b'm', b'.', b'n', b'u',
-            b'c', b'l', b'e', b'u', b's', b'.', b'c', b'l', b'a', b's', b's', b'i', b'c', b'a',
-            b'l', b'A', b'r', b'e', b'n', b'a', b'V', b'1', 0x65, b'r', b'o', b'o', b't', b's',
-            0x80, 0x65, b'w', b'o', b'r', b'd', b's', 0x58, 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x68, b'f', b'r', b'e',
-            b'e', b'R', b'o', b'o', b't', 0x48, 0, 0, 0, 0, 0, 0, 0, 0,
-        ];
-        let encoded = encode_checked(&empty()).unwrap();
-        assert_eq!(encoded, expected);
-        assert_eq!(decode_checked(&encoded).unwrap(), empty());
-    }
-
-    #[test]
-    fn checked_syntax_round_trips() {
-        let checked = sample();
-        let encoded = encode_checked(&checked).unwrap();
-        let decoded = decode_checked(&encoded).unwrap();
-        assert_eq!(decoded, checked);
-        assert_eq!(decoded.arena(), checked.arena());
-    }
-
-    #[test]
-    fn every_constructor_polarity_and_root_pair_round_trips_stably() {
-        let formulas = formula_corpus();
         let sequents = formulas
             .iter()
-            .enumerate()
-            .flat_map(|(left_index, premise)| {
-                formulas
-                    .iter()
-                    .enumerate()
-                    .map(move |(right_index, conclusion)| Sequent {
-                        premise: if left_index.is_multiple_of(2) {
-                            premise.clone()
-                        } else {
-                            premise.clone().negated()
-                        },
-                        conclusion: if right_index.is_multiple_of(2) {
-                            conclusion.clone()
-                        } else {
-                            conclusion.clone().negated()
-                        },
-                    })
+            .zip(formulas.iter().rev())
+            .map(|(a, b)| Sequent {
+                premise: a.clone(),
+                conclusion: b.clone(),
             })
             .collect::<Vec<_>>();
-        let checked = pack(&sequents).unwrap();
-        let encoded = encode_checked(&checked).unwrap();
-        let decoded = decode_checked(&encoded).unwrap();
-        assert_eq!(decoded.sequents(), sequents);
-        assert_eq!(decoded.arena(), checked.arena());
-        assert_eq!(encode_checked(&decoded).unwrap(), encoded);
+        let decoded =
+            decode_checked(&encode_checked(&Checked::from_sequents(&sequents).unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(decoded.decode_sequents().unwrap(), sequents);
     }
 
     #[test]
-    fn intrusive_allocator_state_round_trips_exactly() {
-        let root = Word::pointer(4, 0, false).unwrap();
-        let small = Word::pointer(12, 0, false).unwrap();
-        let checked = Checked::check(Arena::new(
-            vec![
-                Word::ZERO,
-                Word::ZERO,
-                Word::ZERO,
-                Word::ZERO,
-                Word::ZERO,
-                root,
-                root,
-                Word::natural(1).unwrap(),
-                small,
-                Word::ZERO,
-                Word::ZERO,
-                Word::ZERO,
-                Word::ZERO,
-                small,
-                small,
-                Word::ZERO,
-            ],
-            root,
-            vec![],
-        ))
-        .unwrap();
-
-        let decoded = decode_checked(&encode_checked(&checked).unwrap()).unwrap();
-        assert_eq!(decoded.arena(), checked.arena());
-        assert_eq!(decoded.free_blocks(), checked.free_blocks());
-    }
-
-    #[test]
-    fn malformed_schema_and_runtime_are_rejected() {
-        let mut short_words = arena_value(empty().arena());
-        let Value::Map(fields) = &mut short_words else {
-            unreachable!()
-        };
-        *fields.get_mut("words").unwrap() = Value::Bytes(vec![0; 24]);
-        assert_value_rejected(&short_words);
-
-        let mut partial_word = arena_value(empty().arena());
-        let Value::Map(fields) = &mut partial_word else {
-            unreachable!()
-        };
-        *fields.get_mut("words").unwrap() = Value::Bytes(vec![0; 33]);
-        assert_value_rejected(&partial_word);
-
-        let mut bad_reserved_word = arena_value(empty().arena());
-        let Value::Map(fields) = &mut bad_reserved_word else {
-            unreachable!()
-        };
-        let Value::Bytes(words) = fields.get_mut("words").unwrap() else {
-            unreachable!()
-        };
-        words[7] = 1;
-        assert_value_rejected(&bad_reserved_word);
-
-        let mut unknown_field = arena_value(empty().arena());
-        let Value::Map(fields) = &mut unknown_field else {
-            unreachable!()
-        };
-        fields.insert("extra".to_owned(), Value::Null);
-        assert_value_rejected(&unknown_field);
-    }
-
-    #[test]
-    fn zero_roots_and_invalid_drisl_are_rejected() {
-        let zero_root = Value::Map(BTreeMap::from([
-            field("premise", Value::Bytes(vec![0; 8])),
-            field("conclusion", Value::Bytes(vec![0; 8])),
-        ]));
-        let mut value = arena_value(empty().arena());
+    fn closed_schema_and_incomplete_formula_are_rejected() {
+        let mut value = encode_arena(&[]).unwrap();
         let Value::Map(fields) = &mut value else {
             unreachable!()
         };
-        *fields.get_mut("roots").unwrap() = Value::Array(vec![zero_root]);
-        assert_value_rejected(&value);
+        fields.insert("words".to_owned(), Value::Bytes(vec![0; 16]));
+        reject(&value);
 
+        let bad = Value::Array(vec![Value::Map(BTreeMap::from([
+            entry("kind", Value::Text("and".to_owned())),
+            entry("negative", Value::Bool(false)),
+            entry("arity", Value::Integer(1)),
+        ]))]);
+        let value = Value::Map(BTreeMap::from([
+            entry("$type", Value::Text(TYPE_NAME.to_owned())),
+            entry(
+                "sequents",
+                Value::Array(vec![Value::Map(BTreeMap::from([
+                    entry("premise", bad),
+                    entry("conclusion", encode_formula(&lit(1), &mut 2).unwrap()),
+                ]))]),
+            ),
+        ]));
+        reject(&value);
+    }
+
+    #[test]
+    fn deep_formula_has_flat_wire_shape() {
+        let mut formula = lit(1);
+        for _ in 0..10_000 {
+            formula = Formula::And {
+                negative: false,
+                children: vec![formula],
+            };
+        }
+        let checked = Checked::from_sequents(&[Sequent {
+            premise: formula,
+            conclusion: lit(2),
+        }])
+        .unwrap();
+        let decoded = decode_checked(&encode_checked(&checked).unwrap()).unwrap();
+        assert_eq!(decoded, checked);
+    }
+
+    #[test]
+    fn invalid_and_noncanonical_drisl_are_rejected() {
         let mut trailing = encode_checked(&empty()).unwrap();
         trailing.push(0);
         assert!(matches!(
             decode_checked(&trailing),
             Err(DecodeError::Drisl { .. })
         ));
-    }
-
-    #[test]
-    fn nonminimal_container_encoding_is_rejected() {
         let canonical = encode_checked(&empty()).unwrap();
-        assert_eq!(canonical[0], 0xa4);
-        let mut noncanonical = vec![0xb8, 0x04];
+        assert_eq!(canonical[0], 0xa2);
+        let mut noncanonical = vec![0xb8, 0x02];
         noncanonical.extend_from_slice(&canonical[1..]);
         assert!(matches!(
             decode_checked(&noncanonical),
@@ -416,8 +478,8 @@ mod tests {
         ));
     }
 
-    fn assert_value_rejected(value: &Value) {
-        let encoded = drisl::encode(Policy::ATPROTO, value).unwrap();
-        assert!(decode_checked(&encoded).is_err());
+    fn reject(value: &Value) {
+        let bytes = drisl::encode(Policy::ATPROTO, value).unwrap();
+        assert!(decode_checked(&bytes).is_err());
     }
 }

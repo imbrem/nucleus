@@ -4,11 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use covalence_lib_error::snafu::{self, Snafu};
 use covalence_logic_classical::{
-    ClassicalKernel, CnfId, Error as ClassicalError, RatGroup as ClassicalRatGroup, Refutation,
-    Refuter,
+    ClassicalKernel, Error as ClassicalError, RatGroup as ClassicalRatGroup, Refutation, Refuter,
+    RowId,
 };
 use covalence_logic_hol::{
-    Cnf, Kernel, KernelError, Lit, LitVec, Ref, ThmId, ThmRef,
+    Kernel, KernelError, Lit, LitVec, Matrix, Ref, ThmId, ThmRef,
     builtin::{Op1, Op2},
 };
 
@@ -18,7 +18,7 @@ use crate::{Clause, ClauseId, Formula, Literal, Step};
 #[derive(Clone, Debug)]
 struct ClauseRecord {
     term: Ref,
-    row: CnfId,
+    row: RowId,
 }
 
 /// A rejected CNF construction or LRAT proof step.
@@ -74,7 +74,7 @@ pub enum Error {
 /// # Errors
 ///
 /// Returns an error if a literal or row index does not fit the classical `i32` representation.
-pub fn load_cnf(formula: &Formula) -> Result<Cnf, Error> {
+pub fn load_cnf(formula: &Formula) -> Result<Matrix, Error> {
     formula
         .clauses()
         .iter()
@@ -84,7 +84,7 @@ pub fn load_cnf(formula: &Formula) -> Result<Cnf, Error> {
                 .map(|literal| {
                     i32::try_from(literal.get())
                         .ok()
-                        .and_then(|value| Lit::try_new(value).ok())
+                        .and_then(|value| Lit::try_from_signed(value).ok())
                         .ok_or(Error::InvalidLiteral {
                             literal: literal.get(),
                         })
@@ -92,14 +92,14 @@ pub fn load_cnf(formula: &Formula) -> Result<Cnf, Error> {
                 .collect::<Result<_, _>>()
         })
         .collect::<Result<Vec<_>, _>>()
-        .map(Cnf::new)
+        .map(Matrix::new)
 }
 
 /// Incremental userspace replay of LRAT over uninterpreted classical atoms.
 #[derive(Debug)]
 pub struct ClassicalProver {
     refuter: Refuter,
-    live: BTreeMap<ClauseId, CnfId>,
+    live: BTreeMap<ClauseId, RowId>,
     high_water: ClauseId,
 }
 
@@ -120,7 +120,7 @@ impl ClassicalProver {
             let row = i32::try_from(index)
                 .ok()
                 .and_then(|value| value.checked_add(1))
-                .and_then(CnfId::new)
+                .and_then(RowId::new)
                 .ok_or(Error::TooManyClauses)?;
             live.insert(id, row);
         }
@@ -131,7 +131,7 @@ impl ClassicalProver {
         })
     }
 
-    fn rows(&self, step: ClauseId, ids: &[ClauseId]) -> Result<Vec<CnfId>, Error> {
+    fn rows(&self, step: ClauseId, ids: &[ClauseId]) -> Result<Vec<RowId>, Error> {
         ids.iter()
             .map(|id| {
                 self.live
@@ -342,7 +342,7 @@ impl CnfBuilder {
             .cloned()
             .zip(terms.iter().copied())
             .collect();
-        let goal = Cnf::new(self.clauses.iter().map(|row| row.iter().copied().collect()));
+        let goal = Matrix::new(self.clauses.iter().map(|row| row.iter().copied().collect()));
         let syllogisms = ClassicalKernel::new();
         let refuter = Refuter::new(goal);
         let mut live = BTreeMap::new();
@@ -352,7 +352,7 @@ impl CnfBuilder {
                 .ok()
                 .and_then(|value| value.checked_add(1))
                 .ok_or(Error::TooManyClauses)?;
-            let row = CnfId::new(i32::try_from(index + 1).map_err(|_| Error::TooManyClauses)?)
+            let row = RowId::new(i32::try_from(index + 1).map_err(|_| Error::TooManyClauses)?)
                 .ok_or(Error::TooManyClauses)?;
             live.insert(id, ClauseRecord { term, row });
         }
@@ -484,7 +484,7 @@ impl LratProver {
         Ok(())
     }
 
-    fn rows(&self, step: ClauseId, ids: &[ClauseId]) -> Result<Vec<CnfId>, Error> {
+    fn rows(&self, step: ClauseId, ids: &[ClauseId]) -> Result<Vec<RowId>, Error> {
         ids.iter()
             .map(|id| {
                 self.live
@@ -587,7 +587,7 @@ impl LratProver {
     /// `[[formula]] ⊢ []`.
     pub fn done(mut self) -> Result<UnsatFormula, Error> {
         let refutation = self.refuter.done()?;
-        let universal = self.syllogisms.rules().copy_refutation(&refutation)?;
+        let universal = self.syllogisms.copy_refutation(&refutation)?;
         self.kernel.syl_mut().copy_refutation(&refutation)?;
         let theorem =
             self.kernel
@@ -642,7 +642,7 @@ impl UnsatFormula {
             .get(self.refutation)
             .ok_or(Error::NoRefutation)?;
         let formula = positive(self.formula);
-        if is_unit_refutation(sequent, formula) {
+        if is_unit_refutation(&sequent, formula) {
             Ok(())
         } else {
             Err(Error::NoRefutation)
@@ -684,7 +684,7 @@ fn reference(proposition: Lit) -> Ref {
         .expect("literal magnitude is nonzero")
 }
 
-fn is_unit_refutation(theorem: ThmRef<'_>, formula: Lit) -> bool {
+fn is_unit_refutation(theorem: &ThmRef, formula: Lit) -> bool {
     let mut premises = theorem.lhs.rows();
     premises.next() == Some(&[formula][..])
         && premises.next().is_none()
@@ -1162,6 +1162,9 @@ mod tests {
 #[test]
 fn standalone_text_and_binary_replay_produce_the_same_refutation() {
     let formula = Formula::from_signed([vec![1], vec![-1]]).unwrap();
+    let rows = load_cnf(&formula).unwrap().to_rows();
+    assert!(rows[0][0].is_positive());
+    assert!(!rows[1][0].is_positive());
     let text = crate::parse::parse_text("3 0 1 2 0\n").unwrap();
     let binary = crate::parse::parse_binary(&[b'a', 6, 0, 2, 4, 0]).unwrap();
     let text = replay(&formula, &text).unwrap();

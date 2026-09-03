@@ -565,6 +565,19 @@ def NormalForm (payloadWidth : Nat) (input : List (Tagged.Sequent Nat))
     (arena : Arena payloadWidth) : Prop :=
   raw? payloadWidth input = some arena
 
+theorem NormalForm.freeRoot_zero
+    {input : List (Tagged.Sequent Nat)} {arena : Arena payloadWidth}
+    (normal : NormalForm payloadWidth input arena) :
+    arena.freeRoot = Word.zero payloadWidth := by
+  unfold NormalForm raw? at normal
+  cases built : sequents? payloadWidth 4 input with
+  | none => simp [built] at normal
+  | some value =>
+      rw [built] at normal
+      have equal := Option.some.inj normal
+      subst arena
+      rfl
+
 /-- Canonically pack syntax and return it only through the checked runtime
 wrapper. -/
 def pack? (payloadWidth : Nat) (input : List (Tagged.Sequent Nat)) :

@@ -3,9 +3,9 @@ import Nucleus.Classical.Tagged.Equality
 import Nucleus.Classical.Tagged.Packed
 
 /-!
-# Self-describing tagged classical runtime
+# Legacy uniquely-owned tagged-pointer runtime
 
-This is the selected packed representation for a Rust implementation.  The
+This comparative model predates the reference-counted Rust representation. The
 low two pointer bits remain `AND`, `OR`, `SAT`, and literal tags.  A live array
 starts with one unsigned size-class word followed by its zero-terminated child
 references.  A free array uses the intrusive four-word header from
