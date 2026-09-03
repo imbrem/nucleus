@@ -187,10 +187,12 @@ the existential exported-function predicate by checked conjunction and
 existential introduction. The configuration-to-module-instance fact is derived
 from the retained `$moduleinst` SpecTec production. Membership comes from the
 finite-list theorem; module-instance-to-export-list and
-export-instance-to-function-address remain explicit graph premises. Syntax
-matching is only used to select the list witness, while the graph, membership,
-and existential conclusions come from kernel-checked rules and retain their
-input premises.
+export-instance-to-function-address remain explicit graph premises. The latter
+is no longer an uninterpreted predicate: it is the generic structural pattern
+that recognizes a `{NAME, ADDR}` record whose `ADDR` field is the exact unary
+`FUNC` case applied to the selected address. Syntax matching is only used to
+select the list witness, while the graph, membership, and existential
+conclusions come from kernel-checked rules and retain their input premises.
 
 Grounding therefore requires all of the following:
 
@@ -263,9 +265,11 @@ grounding premises. The final reflexive `Steps` fact is derived the same way,
 leaving only its two structural equalities as premises. Export selection is
 derived from the retained `$moduleinst` production, the finite-list membership
 law, and two explicit structural graph premises rather than retained as one
-opaque premise. The host-call observer is an immutable structural predicate
-equating its configuration with the exact retained `$invoke` production
-result; its concrete fact is discharged by checked beta reduction and equality
+opaque premise. The function-address graph is itself built generically from
+the exact export-record and `FUNC` constructors; only its concrete application
+remains a premise. The host-call observer is an immutable structural predicate
+equating its configuration with the exact retained `$invoke` production result;
+its concrete fact is discharged by checked beta reduction and equality
 reflexivity. Interpreter traces cannot be passed in place of theorem handles.
 
 For `FALSE`, the negative proof opens the concrete exported-function predicate

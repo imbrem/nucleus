@@ -1840,7 +1840,9 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             )
             .unwrap(),
         member: builder.membership_predicate().unwrap(),
-        function_address: kernel.tm_fv(name_base + 3, binary_ty).unwrap(),
+        function_address: builder
+            .struct_case_field_graph(&mut kernel, &["NAME", "ADDR"], "ADDR", "FUNC%")
+            .unwrap(),
     };
     let exported = export_view.predicate(&mut kernel).unwrap();
     let [instantiate_id] = document.schema.named(IlKind::Definition, "instantiate") else {

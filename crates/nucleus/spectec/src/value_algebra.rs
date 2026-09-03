@@ -432,6 +432,80 @@ impl StructuralConstructorLaws {
 }
 
 impl StructuralValueAlgebra {
+    /// Constructs a binary graph matching one constructor field against a
+    /// unary structural pattern.
+    ///
+    /// For a record-like constructor `R` and unary pattern constructor `P`,
+    /// the result is
+    /// `lambda record output. exists fields. record = R(fields) and
+    /// fields[selected] = P(output)`. Constructor meaning remains explicit;
+    /// this method creates syntax and no theorem fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless both constructors belong to this algebra, the
+    /// pattern is unary, `selected` names a record field, and checked HOL
+    /// construction succeeds. `kernel` is unchanged on failure.
+    pub fn field_pattern_graph(
+        self,
+        kernel: &mut Kernel,
+        record_constructor: StructuralConstructor,
+        selected: usize,
+        pattern_constructor: StructuralConstructor,
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        self.require_constructor(&mut staged, record_constructor)?;
+        self.require_constructor(&mut staged, pattern_constructor)?;
+        if selected >= record_constructor.arity {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "structural field pattern index",
+            });
+        }
+        if pattern_constructor.arity != 1 {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "structural field pattern arity",
+            });
+        }
+        let first = staged.fresh_name(&[
+            self.value_ty,
+            self.bool_ty,
+            record_constructor.operation,
+            pattern_constructor.operation,
+        ])?;
+        let record = staged.tm_fv(first, self.value_ty)?;
+        let output = staged.tm_fv(
+            first.checked_add(1).ok_or(KernelError::TooManyNames)?,
+            self.value_ty,
+        )?;
+        let mut fields = Vec::with_capacity(record_constructor.arity);
+        for offset in 0..record_constructor.arity {
+            let offset = u64::try_from(offset).map_err(|_| KernelError::TooManyNames)?;
+            fields.push(
+                staged.tm_fv(
+                    first
+                        .checked_add(2)
+                        .and_then(|name| name.checked_add(offset))
+                        .ok_or(KernelError::TooManyNames)?,
+                    self.value_ty,
+                )?,
+            );
+        }
+        let constructed = apply(&mut staged, record_constructor.operation, &fields)?;
+        let record_equality = staged.eq(self.bool_ty, record, constructed)?;
+        let pattern = apply(&mut staged, pattern_constructor.operation, &[output])?;
+        let field_equality = staged.eq(self.bool_ty, fields[selected], pattern)?;
+        let mut body = staged.op2(Op2::And, record_equality, field_equality)?;
+        for &field in fields.iter().rev() {
+            body = staged.exists_tm(field, body)?;
+        }
+        let output_predicate_ty = staged.ty_arr(self.value_ty, self.bool_ty)?;
+        let by_output = staged.lam_at(output_predicate_ty, output, body)?;
+        let graph_ty = staged.ty_arr(self.value_ty, output_predicate_ty)?;
+        let graph = staged.lam_at(graph_ty, record, by_output)?;
+        *kernel = staged;
+        Ok(graph)
+    }
+
     /// Constructs the complete constructor-separation obligations for a finite
     /// vocabulary.
     ///
@@ -703,7 +777,6 @@ mod tests {
 
         let applied = apply(&mut kernel, unary.operation(), &[element]).unwrap();
         assert_eq!(kernel.classifier(applied).unwrap(), value_ty);
-
         let before = kernel.arena().clone();
         assert!(
             algebra
@@ -728,6 +801,44 @@ mod tests {
         assert!(
             algebra
                 .constructor_laws(&mut kernel, &[unary, unary])
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+    }
+
+    #[test]
+    fn structural_field_patterns_are_generic_and_transactional() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let value_ty = kernel.ty_fv(1, star).unwrap();
+        let unary_ty = kernel.ty_arr(value_ty, value_ty).unwrap();
+        let binary_tail = kernel.ty_arr(value_ty, value_ty).unwrap();
+        let binary_ty = kernel.ty_arr(value_ty, binary_tail).unwrap();
+        let graph_tail = kernel.ty_arr(value_ty, bool_ty).unwrap();
+        let graph_ty = kernel.ty_arr(value_ty, graph_tail).unwrap();
+        let unary = kernel.tm_fv(10, unary_ty).unwrap();
+        let binary = kernel.tm_fv(11, binary_ty).unwrap();
+        let algebra = StructuralValueAlgebra { value_ty, bool_ty };
+        let unary = algebra.constructor(&mut kernel, unary, 1).unwrap();
+        let binary = algebra.constructor(&mut kernel, binary, 2).unwrap();
+
+        let graph = algebra
+            .field_pattern_graph(&mut kernel, binary, 1, unary)
+            .unwrap();
+        let actual = kernel.classifier(graph).unwrap();
+        covalence_logic_hol_derived::join_same_syntax(&mut kernel, actual, graph_ty).unwrap();
+
+        let before = kernel.arena().clone();
+        assert!(
+            algebra
+                .field_pattern_graph(&mut kernel, binary, 2, unary)
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert!(
+            algebra
+                .field_pattern_graph(&mut kernel, binary, 1, binary)
                 .is_err()
         );
         assert_eq!(kernel.arena(), &before);

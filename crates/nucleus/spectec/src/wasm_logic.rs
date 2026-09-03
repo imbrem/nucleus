@@ -524,6 +524,55 @@ impl<'a> SpecTecValueBuilder<'a> {
         Ok(graph)
     }
 
+    /// Constructs a graph matching one structural record field against a
+    /// unary tagged case.
+    ///
+    /// The result is generic structural syntax: for selected field `F` and
+    /// case `C`, it recognizes records whose `F` field is `C(output)`. It does
+    /// not assign meaning to either constructor or create theorem evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `selected` is absent or ambiguous, either exact
+    /// recorded constructor is unavailable, or checked graph construction
+    /// fails. `kernel` is unchanged on failure.
+    pub fn struct_case_field_graph(
+        self,
+        kernel: &mut Kernel,
+        fields: &[&str],
+        selected: &str,
+        case: &str,
+    ) -> Result<Ref, WasmLogicError> {
+        let mut selected_indices = fields
+            .iter()
+            .enumerate()
+            .filter_map(|(index, field)| (*field == selected).then_some(index));
+        let selected_index = selected_indices
+            .next()
+            .ok_or_else(|| WasmLogicError::Operation {
+                label: Symbol::new(selected),
+            })?;
+        if selected_indices.next().is_some() {
+            return Err(WasmLogicError::Operation {
+                label: Symbol::new(selected),
+            });
+        }
+        let mut staged = kernel.fork();
+        let record = self.structural_constructor(
+            &mut staged,
+            &format!("expression:Struct({fields:?})"),
+            fields.len(),
+        )?;
+        let pattern =
+            self.structural_constructor(&mut staged, &format!("expression:Case({case:?})"), 1)?;
+        let graph = self
+            .algebra()
+            .field_pattern_graph(&mut staged, record, selected_index, pattern)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        *kernel = staged;
+        Ok(graph)
+    }
+
     fn expression(
         self,
         kernel: &mut Kernel,
