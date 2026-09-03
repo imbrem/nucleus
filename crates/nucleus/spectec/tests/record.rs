@@ -1618,6 +1618,13 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         .evidence_scope(&[steps_definition.least.closure, reflexive_antecedent])
         .check(&kernel, reflexive_candidate)
         .unwrap();
+    let reflexive_steps = steps_definition
+        .close_rule_instance(&mut kernel, reflexive_candidate, steps_constraint.theorem)
+        .unwrap();
+    document
+        .evidence_scope(&[reflexive_antecedent])
+        .check(&kernel, reflexive_steps)
+        .unwrap();
     let specialized_steps = document
         .semantics
         .theory()

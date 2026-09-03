@@ -8,7 +8,10 @@ use covalence_data_spectec::{
 };
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, Tag, TyTag, builtin::Op1, builtin::Op2};
-use covalence_logic_hol_derived::{ForallError, SyntaxError, forall_elim, join_alpha_equivalent};
+use covalence_logic_hol_derived::{
+    EqualityError, ForallError, ModelError, SyntaxError, equality_symmetry, forall_elim,
+    join_alpha_equivalent, substitute,
+};
 
 use crate::{
     Evidence, ExpressionAlgebra, HolCase, HolFamilyError, HolRule, HolSchema, HolTheoryError,
@@ -180,6 +183,8 @@ pub struct RelationalRelationDefinition {
     pub rule_schemas: Arc<[HolRule]>,
     /// Source-ordered rules for the complete mutually recursive family.
     pub family_rules: Arc<[Ref]>,
+    /// Candidate predicates quantified by the least-family definition.
+    pub family_candidates: Arc<[Ref]>,
     /// Checked proposition `predicate = least.predicate`.
     pub equation: Ref,
 }
@@ -306,6 +311,95 @@ impl RelationalRelationDefinition {
             holds: true,
         })
     }
+
+    /// Closes a candidate rule fact into the public least-defined relation.
+    ///
+    /// `candidate_fact` must conclude this member candidate applied to the
+    /// single erased relation argument, with the shared family closure as a
+    /// premise. `equation_fact` must prove this relation's checked defining
+    /// equation. Other visible premises, such as grounding laws, are retained.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed candidate fact, a candidate-dependent
+    /// residual premise, a mismatched defining equation, or a rejected checked
+    /// quantification, beta-conversion, or equality step. `kernel` is unchanged
+    /// on failure.
+    pub fn close_rule_instance(
+        &self,
+        kernel: &mut Kernel,
+        candidate_fact: Evidence,
+        equation_fact: covalence_logic_hol::ThmId,
+    ) -> Result<Evidence, RelationProofError> {
+        if !candidate_fact.holds {
+            return Err(RelationProofError::CandidateFact);
+        }
+        let mut candidate_children = kernel
+            .arena()
+            .children(candidate_fact.proposition)
+            .ok_or(RelationProofError::CandidateFact)?;
+        let function = candidate_children
+            .next()
+            .ok_or(RelationProofError::CandidateFact)?;
+        let argument = candidate_children
+            .next()
+            .ok_or(RelationProofError::CandidateFact)?;
+        drop(candidate_children);
+        if function != self.least.candidate {
+            return Err(RelationProofError::CandidateFact);
+        }
+
+        let mut staged = kernel.fork();
+        let implication = staged.op2(Op2::Imp, self.least.closure, candidate_fact.proposition)?;
+        let mut theorem = staged.copy_theorem(candidate_fact.theorem)?;
+        theorem = staged.imp_right(theorem, positive(implication))?;
+        let mut characterization = implication;
+        for &candidate in self.family_candidates.iter().rev() {
+            let bool_ty = staged.classifier(characterization)?;
+            characterization = staged.forall_tm(bool_ty, candidate, characterization)?;
+            theorem = staged.forall_intro_at(theorem, candidate, characterization)?;
+        }
+
+        let least_application = staged.app(self.least.predicate, argument)?;
+        let mut lambda_children = staged
+            .arena()
+            .children(self.least.predicate)
+            .ok_or(RelationProofError::CandidateFact)?;
+        let binder = lambda_children
+            .next()
+            .ok_or(RelationProofError::CandidateFact)?;
+        let body = lambda_children
+            .next()
+            .ok_or(RelationProofError::CandidateFact)?;
+        drop(lambda_children);
+        let reduced = substitute(&mut staged, binder, argument, body)
+            .map_err(|source| RelationProofError::Substitute { source })?;
+        let beta = staged.tm_beta_fact(None, least_application, reduced.fact)?;
+        staged.union_syn_fact(beta)?;
+        join_alpha_equivalent(&mut staged, characterization, reduced.output)
+            .map_err(|source| RelationProofError::Syntax { source })?;
+        staged.convert_conclusions(theorem, characterization, least_application)?;
+
+        let equation_source = sole_positive_conclusion(&staged, equation_fact)?;
+        join_alpha_equivalent(&mut staged, equation_source, self.equation)
+            .map_err(|source| RelationProofError::Syntax { source })?;
+        let aligned_equation = staged.copy_theorem(equation_fact)?;
+        staged.convert_conclusions(aligned_equation, equation_source, self.equation)?;
+        let applied_equation = staged.ap_thm(aligned_equation, argument)?;
+        join_alpha_equivalent(&mut staged, least_application, applied_equation.right)
+            .map_err(|source| RelationProofError::Syntax { source })?;
+        staged.convert_conclusions(theorem, least_application, applied_equation.right)?;
+        let bool_ty = staged.classifier(applied_equation.left)?;
+        let reversed = equality_symmetry(&mut staged, bool_ty, applied_equation.theorem)
+            .map_err(|source| RelationProofError::Equality { source })?;
+        let theorem = staged.eq_mp(reversed.theorem, theorem)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: applied_equation.left,
+            theorem,
+            holds: true,
+        })
+    }
 }
 
 fn sole_positive_conclusion(
@@ -350,6 +444,9 @@ pub enum RelationProofError {
     /// The supplied premise theorem is not one positive fact.
     #[snafu(display("SpecTec relation rule premises are not one positive fact"))]
     PremiseFact,
+    /// The supplied fact is not an application of this least-family candidate.
+    #[snafu(display("SpecTec relation candidate fact has the wrong shape"))]
+    CandidateFact,
     /// A checked theorem step failed.
     #[snafu(transparent)]
     Kernel {
@@ -367,6 +464,18 @@ pub enum RelationProofError {
     Syntax {
         /// Underlying checked syntax failure.
         source: SyntaxError,
+    },
+    /// Capture-avoiding beta substitution failed.
+    #[snafu(display("could not beta-reduce a least SpecTec relation: {source}"))]
+    Substitute {
+        /// Underlying checked substitution failure.
+        source: ModelError,
+    },
+    /// Equality transport from the least predicate to the public relation failed.
+    #[snafu(display("could not rewrite a least SpecTec relation fact: {source}"))]
+    Equality {
+        /// Underlying checked derived equality failure.
+        source: EqualityError,
     },
 }
 
@@ -1112,7 +1221,7 @@ where
             .map_err(|source| resolver.least_error(source))?;
     let mut relation_rules = Vec::with_capacity(relations.len());
     let mut relation_rule_schemas = Vec::with_capacity(relations.len());
-    let (closure, family_rules) = {
+    let (closure, family_rules, family_candidates) = {
         let (staged, candidates) = builder.parts();
         let candidate_names = relations
             .iter()
@@ -1162,7 +1271,7 @@ where
             .map_err(|source| resolver.kernel_error(source))?;
         let family_rules = Arc::from(closures);
         resolver.restore_scope(scoped);
-        (closure, family_rules)
+        (closure, family_rules, Arc::from(candidates))
     };
     let family = builder
         .finish(closure)
@@ -1181,6 +1290,7 @@ where
                     rules,
                     rule_schemas,
                     family_rules: Arc::clone(&family_rules),
+                    family_candidates: Arc::clone(&family_candidates),
                     equation,
                 })
                 .map_err(|source| resolver.kernel_error(source))
