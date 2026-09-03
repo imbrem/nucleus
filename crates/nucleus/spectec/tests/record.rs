@@ -9,19 +9,20 @@ use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan,
     AdmissibleStartFacts, AdmissibleStartWitness, ArtifactError, CompilationRecord, CompileError,
     Compiler, Coverage, CoverageArtifact, CoverageDisposition, CoveragePlan, Disposition,
-    ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase, HolEmbedding, HolFamilyBranch,
-    HolRule, HolTheoryError, IndexErasure, InterpretationKind, KernelRoot, RelationalCall,
-    RelationalClause, RelationalCondition, RelationalDefinitionSchema, RelationalDefinitionSource,
-    RelationalExpressionAlgebra, RelationalRelation, RelationalResolver, RelationalTerm,
-    SelectedCompileError, SelectedCompiler, Source, SpecTecValueBuilder, TYPE_NAME,
-    TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family, close_family_definition,
-    close_graph_equation, close_hol_rule, close_hol_rules, close_hol_theory, declare_hol_schema,
-    empty_wasm_module, fold_expression, fold_grammar, fold_type, forwarding_wasm_module,
-    least_closed_family, least_closed_predicate, ordered_cases, parameterized_document,
-    parameterized_document_with, relational_definition, relational_definition_declaration,
-    relational_definition_schema, relational_document, relational_grammar_declaration,
-    relational_hol_case, relational_hol_rule, relational_relation_declaration,
-    relational_relations, relational_type_declaration, spectec_execution,
+    ExportedFunctionView, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase,
+    HolEmbedding, HolFamilyBranch, HolRule, HolTheoryError, IndexErasure, InterpretationKind,
+    KernelRoot, RelationalCall, RelationalClause, RelationalCondition, RelationalDefinitionSchema,
+    RelationalDefinitionSource, RelationalExpressionAlgebra, RelationalRelation,
+    RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler, Source,
+    SpecTecValueBuilder, TYPE_NAME, TranslationCase, TypeAlgebra, TypeChildren,
+    begin_least_closed_family, close_family_definition, close_graph_equation, close_hol_rule,
+    close_hol_rules, close_hol_theory, declare_hol_schema, empty_wasm_module, fold_expression,
+    fold_grammar, fold_type, forwarding_wasm_module, least_closed_family, least_closed_predicate,
+    ordered_cases, parameterized_document, parameterized_document_with, relational_definition,
+    relational_definition_declaration, relational_definition_schema, relational_document,
+    relational_grammar_declaration, relational_hol_case, relational_hol_rule,
+    relational_relation_declaration, relational_relations, relational_type_declaration,
+    spectec_execution,
 };
 
 #[derive(Clone)]
@@ -1786,8 +1787,16 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     // not turn the Wasmtime checks below into theorem authority.
     let binary_tail = kernel.ty_arr(value, bool_ty).unwrap();
     let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
-    let exported = kernel.tm_fv(name_base + 3, binary_ty).unwrap();
-    let host_call = kernel.tm_fv(name_base + 4, binary_ty).unwrap();
+    let export_view = ExportedFunctionView {
+        value_ty: value,
+        bool_ty,
+        module_instance: execution.moduleinst,
+        exports: kernel.tm_fv(name_base + 3, binary_ty).unwrap(),
+        member: kernel.tm_fv(name_base + 4, binary_ty).unwrap(),
+        function_address: kernel.tm_fv(name_base + 5, binary_ty).unwrap(),
+    };
+    let exported = export_view.predicate(&mut kernel).unwrap();
+    let host_call = kernel.tm_fv(name_base + 6, binary_ty).unwrap();
     let [store_id] = document.schema.named(IlKind::Definition, "store") else {
         panic!("expected one $store definition")
     };
@@ -1796,7 +1805,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         panic!("expected one $invoke definition")
     };
     let invoke_definition = document.semantics.definitions().get(invoke_id).unwrap();
-    let witnesses = (name_base + 5..name_base + 14)
+    let witnesses = (name_base + 7..name_base + 16)
         .map(|name| kernel.tm_fv(name, value).unwrap())
         .collect::<Vec<_>>();
     let initialized = builder
@@ -1975,18 +1984,26 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         )
         .unwrap();
 
-    let cannot_export = execution
-        .program_cannot_export(&mut kernel, exported, empty_module)
+    let no_export_entries = export_view
+        .program_has_no_export_entries(&mut kernel, execution, empty_module)
         .unwrap();
-    let cannot_export_fact = kernel
-        .identity(covalence_logic_hol::Lit::positive(cannot_export.get()))
+    let no_export_entries_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(no_export_entries.get()))
+        .unwrap();
+    let cannot_export = export_view
+        .prove_program_cannot_export_from_no_entries(
+            &mut kernel,
+            execution,
+            empty_module,
+            no_export_entries_fact,
+        )
         .unwrap();
     let no_false_start = execution
         .prove_no_admissible_start_from_no_export(
             &mut kernel,
             exported,
             empty_module,
-            cannot_export_fact,
+            cannot_export.theorem,
         )
         .unwrap();
     let false_does_not_call = reachability
@@ -2012,7 +2029,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let mut grounding = obligations[..3].to_vec();
     grounding.extend(store_remaining);
     grounding.extend(invoke_remaining);
-    grounding.extend([steps_at_final, calls_at_final, cannot_export]);
+    grounding.extend([steps_at_final, calls_at_final, no_export_entries]);
     document
         .evidence_scope(&grounding)
         .check(&kernel, true_not_false)
