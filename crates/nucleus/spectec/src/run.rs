@@ -5,9 +5,11 @@
 //! relation, the allowed invocation/host policy, and the observation over a
 //! trace and outcome.
 
+use std::sync::Arc;
+
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    Kernel, KernelError, Lit, Ref, SynRel, Tag, TmTag,
+    Kernel, KernelError, Lit, Ref, SynRel,
     builtin::{Op1, Op2},
 };
 use covalence_logic_hol_derived::{
@@ -199,13 +201,13 @@ pub struct ClosedRunContext {
 /// An immutable module transformation interpreted under one semantic profile.
 ///
 /// Soundness means that every input module is contextually observationally
-/// equivalent to the transformed module. The transformation is a checked HOL
-/// function; packaging it creates no theorem fact.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// equivalent to the transformed module. Each immutable pipeline step is a
+/// checked HOL function; packaging or composing steps creates no theorem fact.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunTransformation {
     context: RunContext,
     profile: Ref,
-    transform: Ref,
+    steps: Arc<[Ref]>,
 }
 
 /// A module transformation paired with checked evidence for its exact
@@ -213,7 +215,7 @@ pub struct RunTransformation {
 ///
 /// This wrapper adds no trust: construction rechecks an existing kernel
 /// theorem and retains all of that theorem's premises.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SoundRunTransformation {
     transformation: RunTransformation,
     soundness: Evidence,
@@ -295,7 +297,7 @@ impl RunContext {
         Ok(RunTransformation {
             context: self,
             profile,
-            transform,
+            steps: Arc::from([transform]),
         })
     }
 
@@ -303,36 +305,28 @@ impl RunContext {
     ///
     /// # Errors
     ///
-    /// Returns an error for an incompatible profile or if checked abstraction
-    /// fails. `kernel` is unchanged on failure.
+    /// Returns an error for an incompatible profile. `kernel` is unchanged on
+    /// failure.
     pub fn identity_transformation(
         self,
         kernel: &mut Kernel,
         profile: Ref,
     ) -> Result<RunTransformation, KernelError> {
         let mut staged = kernel.fork();
-        let module_ty = self.domain.relation.types.module;
-        let module = staged.tm_fv(
-            staged.fresh_name(&[
-                self.context_ty,
-                self.plug,
-                self.admissible,
-                profile,
-                module_ty,
-            ])?,
-            module_ty,
-        )?;
-        let transform_ty = staged.ty_arr(module_ty, module_ty)?;
-        let transform = staged.lam_at(transform_ty, module, module)?;
-        let transformation = self.transformation(&mut staged, profile, transform)?;
+        require_classifier(&mut staged, profile, self.domain.relation.types.profile)?;
+        let transformation = RunTransformation {
+            context: self,
+            profile,
+            steps: Arc::from([]),
+        };
         *kernel = staged;
         Ok(transformation)
     }
 
     /// Derives premise-free soundness of the identity transformation.
     ///
-    /// The proof uses only checked contextual-equivalence reflexivity,
-    /// universal introduction, and beta conversion.
+    /// The proof uses only checked contextual-equivalence reflexivity and
+    /// universal introduction.
     ///
     /// # Errors
     ///
@@ -352,7 +346,6 @@ impl RunContext {
                 self.plug,
                 self.admissible,
                 profile,
-                transformation.transform,
                 types.module,
                 types.bool_ty,
             ])?,
@@ -1398,14 +1391,14 @@ impl ClosedRunContext {
     /// preservation, beta-conversion, or alignment steps succeed. `kernel` is
     /// unchanged on failure.
     pub fn prove_preserves_property(
-        self,
+        &self,
         kernel: &mut Kernel,
-        sound: SoundRunTransformation,
+        sound: &SoundRunTransformation,
         property: RunProperty,
         module: Ref,
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
-        let transformation = sound.transformation;
+        let transformation = &sound.transformation;
         if transformation.context != self.context {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "closed context/transformation mismatch",
@@ -1442,18 +1435,15 @@ impl ClosedRunContext {
     pub fn prove_preserves(
         self,
         kernel: &mut Kernel,
-        sound: SoundRunTransformation,
+        sound: &SoundRunTransformation,
         observation: RunObservation,
         quantifier: BehaviorQuantifier,
         module: Ref,
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
         self.context.require_observation(observation)?;
-        let property = observation.property_avoiding(
-            &mut staged,
-            quantifier,
-            &[module, sound.transformation.transform],
-        )?;
+        let avoiding = sound.transformation.avoiding(&[module]);
+        let property = observation.property_avoiding(&mut staged, quantifier, &avoiding)?;
         let preserved = self.prove_preserves_property(&mut staged, sound, property, module)?;
         *kernel = staged;
         Ok(preserved)
@@ -1474,13 +1464,13 @@ impl ClosedRunContext {
     pub fn transport_property(
         self,
         kernel: &mut Kernel,
-        sound: SoundRunTransformation,
+        sound: &SoundRunTransformation,
         property: RunProperty,
         module: Ref,
         behavior: Evidence,
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
-        let transformation = sound.transformation;
+        let transformation = &sound.transformation;
         if transformation.context != self.context {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "closed context/transformation mismatch",
@@ -1518,7 +1508,7 @@ impl ClosedRunContext {
     pub fn transport(
         self,
         kernel: &mut Kernel,
-        sound: SoundRunTransformation,
+        sound: &SoundRunTransformation,
         observation: RunObservation,
         quantifier: BehaviorQuantifier,
         module: Ref,
@@ -1526,11 +1516,8 @@ impl ClosedRunContext {
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
         self.context.require_observation(observation)?;
-        let property = observation.property_avoiding(
-            &mut staged,
-            quantifier,
-            &[module, sound.transformation.transform],
-        )?;
+        let avoiding = sound.transformation.avoiding(&[module]);
+        let property = observation.property_avoiding(&mut staged, quantifier, &avoiding)?;
         let transported =
             self.transport_property(&mut staged, sound, property, module, behavior)?;
         *kernel = staged;
@@ -1539,22 +1526,29 @@ impl ClosedRunContext {
 }
 
 impl RunTransformation {
+    fn avoiding(&self, leading: &[Ref]) -> Vec<Ref> {
+        let mut roots = Vec::with_capacity(leading.len() + self.steps.len());
+        roots.extend_from_slice(leading);
+        roots.extend_from_slice(&self.steps);
+        roots
+    }
+
     /// Returns the contextual semantics used to judge this transformation.
     #[must_use]
-    pub const fn context(self) -> RunContext {
+    pub const fn context(&self) -> RunContext {
         self.context
     }
 
     /// Returns the semantic profile under which soundness is stated.
     #[must_use]
-    pub const fn profile(self) -> Ref {
+    pub const fn profile(&self) -> Ref {
         self.profile
     }
 
-    /// Returns the checked `module -> module` transformation.
+    /// Returns the checked `module -> module` pipeline steps.
     #[must_use]
-    pub const fn transform(self) -> Ref {
-        self.transform
+    pub fn steps(&self) -> &[Ref] {
+        &self.steps
     }
 
     /// Applies this transformation to one module.
@@ -1563,14 +1557,17 @@ impl RunTransformation {
     ///
     /// Returns an error unless `module` has the configured module classifier.
     /// `kernel` is unchanged on failure.
-    pub fn apply(self, kernel: &mut Kernel, module: Ref) -> Result<Ref, KernelError> {
+    pub fn apply(&self, kernel: &mut Kernel, module: Ref) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
         require_classifier(
             &mut staged,
             module,
             self.context.domain.relation.types.module,
         )?;
-        let transformed = staged.app(self.transform, module)?;
+        let mut transformed = module;
+        for &step in self.steps.iter() {
+            transformed = staged.app(step, transformed)?;
+        }
         *kernel = staged;
         Ok(transformed)
     }
@@ -1585,21 +1582,19 @@ impl RunTransformation {
     ///
     /// Returns an error if checked application, contextual-equivalence, or
     /// universal construction fails. `kernel` is unchanged on failure.
-    pub fn sound(self, kernel: &mut Kernel) -> Result<Ref, KernelError> {
+    pub fn sound(&self, kernel: &mut Kernel) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
         let types = self.context.domain.relation.types;
-        let module = staged.tm_fv(
-            staged.fresh_name(&[
-                self.context.context_ty,
-                self.context.plug,
-                self.context.admissible,
-                self.profile,
-                self.transform,
-                types.module,
-                types.bool_ty,
-            ])?,
+        let mut roots = vec![
+            self.context.context_ty,
+            self.context.plug,
+            self.context.admissible,
+            self.profile,
             types.module,
-        )?;
+            types.bool_ty,
+        ];
+        roots.extend_from_slice(&self.steps);
+        let module = staged.tm_fv(staged.fresh_name(&roots)?, types.module)?;
         let transformed = self.sound_application(&mut staged, module)?;
         let equivalent = self
             .context
@@ -1618,7 +1613,7 @@ impl RunTransformation {
     /// contextual-observation construction fails. `kernel` is unchanged on
     /// failure.
     pub fn preserves_property(
-        self,
+        &self,
         kernel: &mut Kernel,
         property: RunProperty,
     ) -> Result<Ref, KernelError> {
@@ -1629,18 +1624,11 @@ impl RunTransformation {
             &mut staged,
             property,
             self.profile,
-            &[self.transform],
+            &self.steps,
         )?;
-        let module = staged.tm_fv(
-            staged.fresh_name(&[
-                observed.observe,
-                self.transform,
-                self.profile,
-                types.module,
-                types.bool_ty,
-            ])?,
-            types.module,
-        )?;
+        let mut roots = vec![observed.observe, self.profile, types.module, types.bool_ty];
+        roots.extend_from_slice(&self.steps);
+        let module = staged.tm_fv(staged.fresh_name(&roots)?, types.module)?;
         let transformed = self.sound_application(&mut staged, module)?;
         let preserved = observed.equivalent(&mut staged, module, transformed)?;
         let proposition = staged.forall_tm(types.bool_ty, module, preserved)?;
@@ -1648,26 +1636,8 @@ impl RunTransformation {
         Ok(proposition)
     }
 
-    fn sound_application(self, kernel: &mut Kernel, module: Ref) -> Result<Ref, KernelError> {
-        let mut transformed = self.apply(kernel, module)?;
-        loop {
-            let Some(children) = kernel.arena().children(transformed) else {
-                break;
-            };
-            let children = children.collect::<Vec<_>>();
-            let [function, _argument] = children.as_slice() else {
-                break;
-            };
-            if kernel.arena().tag(*function) != Some(Tag::Tm(TmTag::Lam)) {
-                break;
-            }
-            transformed = certify_beta_application(kernel, transformed)
-                .map_err(|_| KernelError::InvalidTheoremRule {
-                    rule: "transformation soundness beta reduction",
-                })?
-                .0;
-        }
-        Ok(transformed)
+    fn sound_application(&self, kernel: &mut Kernel, module: Ref) -> Result<Ref, KernelError> {
+        self.apply(kernel, module)
     }
 
     /// Pairs this transformation with checked evidence of its exact soundness
@@ -1682,7 +1652,7 @@ impl RunTransformation {
     /// for this exact transformation, context schema, and semantic profile.
     /// `kernel` is unchanged on failure.
     pub fn with_soundness(
-        self,
+        &self,
         kernel: &mut Kernel,
         soundness: Evidence,
     ) -> Result<SoundRunTransformation, RunProofError> {
@@ -1691,7 +1661,7 @@ impl RunTransformation {
         let theorem = align_evidence(&mut staged, soundness, proposition)?;
         *kernel = staged;
         Ok(SoundRunTransformation {
-            transformation: self,
+            transformation: self.clone(),
             soundness: Evidence {
                 proposition,
                 theorem,
@@ -1702,49 +1672,41 @@ impl RunTransformation {
 
     /// Composes this transformation with `next` without mutating either one.
     ///
-    /// The resulting function applies `self` first and `next` second.
+    /// The resulting immutable pipeline applies `self` first and `next` second.
     ///
     /// # Errors
     ///
     /// Returns [`RunTransformationError::ContextMismatch`] or
     /// [`RunTransformationError::ProfileMismatch`] unless both transformations
-    /// use the same semantic configuration, or an error if checked application
-    /// or abstraction fails. `kernel` is unchanged on failure.
-    pub fn then(self, kernel: &mut Kernel, next: Self) -> Result<Self, RunTransformationError> {
+    /// use the same semantic configuration.
+    pub fn then(&self, next: &Self) -> Result<Self, RunTransformationError> {
         if self.context != next.context {
             return Err(RunTransformationError::ContextMismatch);
         }
         if self.profile != next.profile {
             return Err(RunTransformationError::ProfileMismatch);
         }
-        let mut staged = kernel.fork();
-        let module_ty = self.context.domain.relation.types.module;
-        let module = staged.tm_fv(
-            staged.fresh_name(&[self.transform, next.transform, module_ty])?,
-            module_ty,
-        )?;
-        let intermediate = self.apply(&mut staged, module)?;
-        let transformed = next.apply(&mut staged, intermediate)?;
-        let transform_ty = staged.ty_arr(module_ty, module_ty)?;
-        let transform = staged.lam_at(transform_ty, module, transformed)?;
-        let composed = self
-            .context
-            .transformation(&mut staged, self.profile, transform)?;
-        *kernel = staged;
-        Ok(composed)
+        let mut steps = Vec::with_capacity(self.steps.len() + next.steps.len());
+        steps.extend_from_slice(&self.steps);
+        steps.extend_from_slice(&next.steps);
+        Ok(Self {
+            context: self.context,
+            profile: self.profile,
+            steps: Arc::from(steps),
+        })
     }
 }
 
 impl SoundRunTransformation {
     /// Returns the underlying checked transformation schema.
     #[must_use]
-    pub const fn transformation(self) -> RunTransformation {
-        self.transformation
+    pub const fn transformation(&self) -> &RunTransformation {
+        &self.transformation
     }
 
     /// Returns the checked soundness evidence, including all visible premises.
     #[must_use]
-    pub const fn soundness(self) -> Evidence {
+    pub const fn soundness(&self) -> Evidence {
         self.soundness
     }
 
@@ -1762,27 +1724,20 @@ impl SoundRunTransformation {
     /// preservation, conversion, or universal step succeeds. `kernel` is
     /// unchanged on failure.
     pub fn prove_preserves_property(
-        self,
+        &self,
         kernel: &mut Kernel,
         property: RunProperty,
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
-        let transformation = self.transformation;
+        let transformation = &self.transformation;
         let context = transformation.context;
         context.require_property(property)?;
         let sound = transformation.sound(&mut staged)?;
         let sound_theorem = align_evidence(&mut staged, self.soundness, sound)?;
         let types = context.domain.relation.types;
-        let module = staged.tm_fv(
-            staged.fresh_name(&[
-                sound,
-                transformation.transform,
-                property.property,
-                types.module,
-                types.bool_ty,
-            ])?,
-            types.module,
-        )?;
+        let roots =
+            transformation.avoiding(&[sound, property.property, types.module, types.bool_ty]);
+        let module = staged.tm_fv(staged.fresh_name(&roots)?, types.module)?;
         let transformed = transformation.sound_application(&mut staged, module)?;
         let specialized = forall_elim(&mut staged, sound_theorem, module)?;
         let equivalent =
@@ -1832,23 +1787,24 @@ impl SoundRunTransformation {
     /// and the generic checked preservation theorem can be constructed and
     /// specialized. `kernel` is unchanged on failure.
     pub fn prove_preserves_property_at(
-        self,
+        &self,
         kernel: &mut Kernel,
         property: RunProperty,
         module: Ref,
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
-        let transformation = self.transformation;
+        let transformation = &self.transformation;
         let context = transformation.context;
         context.require_property(property)?;
         require_classifier(&mut staged, module, context.domain.relation.types.module)?;
         let universal = self.prove_preserves_property(&mut staged, property)?;
         let specialized = forall_elim(&mut staged, universal.theorem, module)?;
+        let avoiding = transformation.avoiding(&[module]);
         let observed = context.observe_property_avoiding(
             &mut staged,
             property,
             transformation.profile,
-            &[module, transformation.transform],
+            &avoiding,
         )?;
         let transformed = transformation.sound_application(&mut staged, module)?;
         let canonical = observed.equivalent(&mut staged, module, transformed)?;
@@ -1882,7 +1838,7 @@ impl SoundRunTransformation {
     /// unchanged on failure.
     #[allow(clippy::too_many_arguments)]
     pub fn prove_preserves_property_in_context(
-        self,
+        &self,
         kernel: &mut Kernel,
         property: RunProperty,
         module: Ref,
@@ -1891,7 +1847,7 @@ impl SoundRunTransformation {
         right_admissible: Evidence,
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
-        let transformation = self.transformation;
+        let transformation = &self.transformation;
         let context = transformation.context;
         context.require_property(property)?;
         let transformed = transformation.sound_application(&mut staged, module)?;
@@ -1934,7 +1890,7 @@ impl SoundRunTransformation {
     /// `kernel` is unchanged on failure.
     #[allow(clippy::too_many_arguments)]
     pub fn transport_property_in_context(
-        self,
+        &self,
         kernel: &mut Kernel,
         property: RunProperty,
         module: Ref,
@@ -1990,7 +1946,7 @@ impl SoundRunTransformation {
     /// run domain and the generic checked preservation derivation succeeds.
     /// `kernel` is unchanged on failure.
     pub fn prove_preserves(
-        self,
+        &self,
         kernel: &mut Kernel,
         observation: RunObservation,
         quantifier: BehaviorQuantifier,
@@ -1999,11 +1955,8 @@ impl SoundRunTransformation {
         self.transformation
             .context
             .require_observation(observation)?;
-        let property = observation.property_avoiding(
-            &mut staged,
-            quantifier,
-            &[self.transformation.transform],
-        )?;
+        let property =
+            observation.property_avoiding(&mut staged, quantifier, &self.transformation.steps)?;
         let preserved = self.prove_preserves_property(&mut staged, property)?;
         *kernel = staged;
         Ok(preserved)
@@ -2022,7 +1975,7 @@ impl SoundRunTransformation {
     /// transformation's semantic domain and the generic checked preservation
     /// derivation succeeds. `kernel` is unchanged on failure.
     pub fn prove_preserves_at(
-        self,
+        &self,
         kernel: &mut Kernel,
         observation: RunObservation,
         quantifier: BehaviorQuantifier,
@@ -2032,11 +1985,8 @@ impl SoundRunTransformation {
         self.transformation
             .context
             .require_observation(observation)?;
-        let property = observation.property_avoiding(
-            &mut staged,
-            quantifier,
-            &[module, self.transformation.transform],
-        )?;
+        let avoiding = self.transformation.avoiding(&[module]);
+        let property = observation.property_avoiding(&mut staged, quantifier, &avoiding)?;
         let preserved = self.prove_preserves_property_at(&mut staged, property, module)?;
         *kernel = staged;
         Ok(preserved)
@@ -2052,7 +2002,7 @@ impl SoundRunTransformation {
     /// belongs to another run domain. `kernel` is unchanged on failure.
     #[allow(clippy::too_many_arguments)]
     pub fn prove_preserves_in_context(
-        self,
+        &self,
         kernel: &mut Kernel,
         observation: RunObservation,
         quantifier: BehaviorQuantifier,
@@ -2065,11 +2015,8 @@ impl SoundRunTransformation {
         self.transformation
             .context
             .require_observation(observation)?;
-        let property = observation.property_avoiding(
-            &mut staged,
-            quantifier,
-            &[module, linking_context, self.transformation.transform],
-        )?;
+        let avoiding = self.transformation.avoiding(&[module, linking_context]);
+        let property = observation.property_avoiding(&mut staged, quantifier, &avoiding)?;
         let preserved = self.prove_preserves_property_in_context(
             &mut staged,
             property,
@@ -2092,7 +2039,7 @@ impl SoundRunTransformation {
     /// another run domain. `kernel` is unchanged on failure.
     #[allow(clippy::too_many_arguments)]
     pub fn transport_in_context(
-        self,
+        &self,
         kernel: &mut Kernel,
         observation: RunObservation,
         quantifier: BehaviorQuantifier,
@@ -2106,11 +2053,8 @@ impl SoundRunTransformation {
         self.transformation
             .context
             .require_observation(observation)?;
-        let property = observation.property_avoiding(
-            &mut staged,
-            quantifier,
-            &[module, linking_context, self.transformation.transform],
-        )?;
+        let avoiding = self.transformation.avoiding(&[module, linking_context]);
+        let property = observation.property_avoiding(&mut staged, quantifier, &avoiding)?;
         let transported = self.transport_property_in_context(
             &mut staged,
             property,
@@ -2139,12 +2083,12 @@ impl SoundRunTransformation {
     /// specialization, transitivity, conversion, or universal step succeeds.
     /// `kernel` is unchanged on failure.
     pub fn then(
-        self,
+        &self,
         kernel: &mut Kernel,
-        next: Self,
+        next: &Self,
     ) -> Result<Self, SoundRunTransformationError> {
         let mut staged = kernel.fork();
-        let composed = self.transformation.then(&mut staged, next.transformation)?;
+        let composed = self.transformation.then(&next.transformation)?;
         let left_sound = self.transformation.sound(&mut staged)?;
         let left_theorem = align_evidence(&mut staged, self.soundness, left_sound)?;
         let right_sound = next.transformation.sound(&mut staged)?;
@@ -2152,16 +2096,8 @@ impl SoundRunTransformation {
         let context = self.transformation.context;
         let profile = self.transformation.profile;
         let types = context.domain.relation.types;
-        let module = staged.tm_fv(
-            staged.fresh_name(&[
-                left_sound,
-                right_sound,
-                composed.transform,
-                types.module,
-                types.bool_ty,
-            ])?,
-            types.module,
-        )?;
+        let roots = composed.avoiding(&[left_sound, right_sound, types.module, types.bool_ty]);
+        let module = staged.tm_fv(staged.fresh_name(&roots)?, types.module)?;
         let intermediate = self.transformation.sound_application(&mut staged, module)?;
         let final_module = next
             .transformation
@@ -2266,12 +2202,6 @@ pub enum RunTransformationError {
     /// Transformations use different semantic profiles.
     #[snafu(display("cannot compose transformations from different semantic profiles"))]
     ProfileMismatch,
-    /// A checked HOL construction failed.
-    #[snafu(transparent)]
-    Kernel {
-        /// Underlying checked failure.
-        source: KernelError,
-    },
 }
 
 /// Failure to derive a checked law about run relations.
@@ -6710,7 +6640,7 @@ mod tests {
         let closed_identity_preserves_may = closed_context
             .prove_preserves(
                 &mut kernel,
-                closed_sound_identity,
+                &closed_sound_identity,
                 observation,
                 BehaviorQuantifier::May,
                 module,
@@ -6731,7 +6661,7 @@ mod tests {
         let closed_positive_transport = closed_context
             .transport(
                 &mut kernel,
-                closed_sound_identity,
+                &closed_sound_identity,
                 observation,
                 BehaviorQuantifier::May,
                 module,
@@ -6752,7 +6682,7 @@ mod tests {
         let closed_negative_transport = closed_context
             .transport(
                 &mut kernel,
-                closed_sound_identity,
+                &closed_sound_identity,
                 observation,
                 BehaviorQuantifier::May,
                 module,
@@ -6871,7 +6801,14 @@ mod tests {
         ])
         .check(&kernel, transported_negative)
         .unwrap();
-        let sound_identity_composition = sound_identity.then(&mut kernel, sound_identity).unwrap();
+        let sound_identity_composition = sound_identity.then(&mut kernel, &sound_identity).unwrap();
+        assert!(sound_identity.transformation().steps().is_empty());
+        assert!(
+            sound_identity_composition
+                .transformation()
+                .steps()
+                .is_empty()
+        );
         EvidenceScope::positive(&[])
             .check(&kernel, sound_identity_composition.soundness())
             .unwrap();
@@ -6886,7 +6823,7 @@ mod tests {
             .unwrap();
         assert_eq!(transformation.context(), context);
         assert_eq!(transformation.profile(), profile);
-        assert_eq!(transformation.transform(), transform);
+        assert_eq!(transformation.steps(), &[transform]);
         let transformed = transformation.apply(&mut kernel, module).unwrap();
         assert_eq!(kernel.classifier(transformed).unwrap(), types.module);
         let transformation_sound = transformation.sound(&mut kernel).unwrap();
@@ -6901,7 +6838,7 @@ mod tests {
         let sound_transformation = transformation
             .with_soundness(&mut kernel, transformation_sound_evidence)
             .unwrap();
-        assert_eq!(sound_transformation.transformation(), transformation);
+        assert_eq!(sound_transformation.transformation(), &transformation);
         EvidenceScope::positive(&[transformation_sound])
             .check(&kernel, sound_transformation.soundness())
             .unwrap();
@@ -6943,14 +6880,20 @@ mod tests {
             .with_soundness(&mut kernel, next_sound_evidence)
             .unwrap();
         let sound_composition = sound_transformation
-            .then(&mut kernel, sound_next_transformation)
+            .then(&mut kernel, &sound_next_transformation)
             .unwrap();
+        assert_eq!(
+            sound_composition.transformation().steps(),
+            &[transform, next_transform]
+        );
         EvidenceScope::positive(&[transformation_sound, next_sound])
             .check(&kernel, sound_composition.soundness())
             .unwrap();
-        let composed_transformation = transformation
-            .then(&mut kernel, next_transformation)
-            .unwrap();
+        let composed_transformation = transformation.then(&next_transformation).unwrap();
+        assert_eq!(
+            composed_transformation.steps(),
+            &[transform, next_transform]
+        );
         let composed_sound = composed_transformation.sound(&mut kernel).unwrap();
         assert_eq!(kernel.classifier(composed_sound).unwrap(), bool_ty);
         let other_profile = kernel.tm_fv(36, types.profile).unwrap();
@@ -6959,7 +6902,7 @@ mod tests {
             .unwrap();
         let before = kernel.arena().clone();
         assert!(matches!(
-            transformation.then(&mut kernel, other_profile_transformation),
+            transformation.then(&other_profile_transformation),
             Err(super::RunTransformationError::ProfileMismatch)
         ));
         assert_eq!(kernel.arena(), &before);
