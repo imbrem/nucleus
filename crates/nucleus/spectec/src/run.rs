@@ -16,7 +16,7 @@ use covalence_logic_hol_derived::{
     substitute,
 };
 
-use crate::{ContextualObservation, Evidence};
+use crate::{ContextualObservation, Evidence, ObservationProofError};
 
 /// Classifiers used by an eventful execution relation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1642,6 +1642,63 @@ impl SoundRunTransformation {
         })
     }
 
+    /// Eliminates property preservation at one chosen admissible linking
+    /// context and concrete module.
+    ///
+    /// The result equates the property on the two closed modules produced by
+    /// plugging the original and transformed subjects into `linking_context`.
+    /// For an always-admissible identity context this is the bare
+    /// `property(P) = property(transform(P))` equation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless both admissibility facts positively prove the
+    /// exact obligations for the selected context and subjects, or the generic
+    /// preservation and checked contextual-elimination steps fail. `kernel` is
+    /// unchanged on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_preserves_property_in_context(
+        self,
+        kernel: &mut Kernel,
+        property: RunProperty,
+        module: Ref,
+        linking_context: Ref,
+        left_admissible: Evidence,
+        right_admissible: Evidence,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let transformation = self.transformation;
+        let context = transformation.context;
+        context.require_property(property)?;
+        let transformed = transformation.sound_application(&mut staged, module)?;
+        let left_ok = apply(&mut staged, context.admissible, &[linking_context, module])?;
+        let right_ok = apply(
+            &mut staged,
+            context.admissible,
+            &[linking_context, transformed],
+        )?;
+        let left_ok_theorem = align_evidence(&mut staged, left_admissible, left_ok)?;
+        let right_ok_theorem = align_evidence(&mut staged, right_admissible, right_ok)?;
+        let contextual = context.observe_property_avoiding(
+            &mut staged,
+            property,
+            transformation.profile,
+            &[module, transformed, linking_context],
+        )?;
+        let equivalence = self.prove_preserves_property_at(&mut staged, property, module)?;
+        let preserved = contextual.prove_preservation(
+            &mut staged,
+            equivalence.theorem,
+            linking_context,
+            module,
+            transformed,
+            left_ok_theorem,
+            right_ok_theorem,
+        )?;
+        *kernel = staged;
+        Ok(preserved)
+    }
+
     /// Derives preservation of one quantified behavior observation.
     ///
     /// This is convenience syntax for constructing the observation's generic
@@ -1674,9 +1731,10 @@ impl SoundRunTransformation {
 
     /// Specializes behavior-observation preservation to one concrete module.
     ///
-    /// This is the direct API for conclusions such as
-    /// `callsAssert(P) = callsAssert(transform(P))` in every admissible linking
-    /// context.
+    /// The result is contextual equivalence of the selected observation for
+    /// `P` and `transform(P)`. Use [`Self::prove_preserves_in_context`] with
+    /// concrete admissibility evidence to obtain the observation equality in
+    /// one selected context.
     ///
     /// # Errors
     ///
@@ -1700,6 +1758,46 @@ impl SoundRunTransformation {
             &[module, self.transformation.transform],
         )?;
         let preserved = self.prove_preserves_property_at(&mut staged, property, module)?;
+        *kernel = staged;
+        Ok(preserved)
+    }
+
+    /// Eliminates behavior-observation preservation at one chosen admissible
+    /// linking context and concrete module.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`Self::prove_preserves_property_in_context`], or if the observation
+    /// belongs to another run domain. `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_preserves_in_context(
+        self,
+        kernel: &mut Kernel,
+        observation: RunObservation,
+        quantifier: BehaviorQuantifier,
+        module: Ref,
+        linking_context: Ref,
+        left_admissible: Evidence,
+        right_admissible: Evidence,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        self.transformation
+            .context
+            .require_observation(observation)?;
+        let property = observation.property_avoiding(
+            &mut staged,
+            quantifier,
+            &[module, linking_context, self.transformation.transform],
+        )?;
+        let preserved = self.prove_preserves_property_in_context(
+            &mut staged,
+            property,
+            module,
+            linking_context,
+            left_admissible,
+            right_admissible,
+        )?;
         *kernel = staged;
         Ok(preserved)
     }
@@ -1887,6 +1985,12 @@ pub enum RunProofError {
     Model {
         /// Underlying derived substitution failure.
         source: ModelError,
+    },
+    /// Contextual-observation elimination failed.
+    #[snafu(transparent)]
+    Observation {
+        /// Underlying checked contextual-observation proof failure.
+        source: ObservationProofError,
     },
 }
 
@@ -6256,6 +6360,32 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, identity_preserves_module_observation)
+            .unwrap();
+        let linking_context = kernel.tm_fv(37, context_ty).unwrap();
+        let module_admissible = super::apply(
+            &mut kernel,
+            contextual_admissible,
+            &[linking_context, module],
+        )
+        .unwrap();
+        let module_admissible_evidence = Evidence {
+            proposition: module_admissible,
+            theorem: kernel.identity(super::positive(module_admissible)).unwrap(),
+            holds: true,
+        };
+        let identity_preserves_in_context = sound_identity
+            .prove_preserves_in_context(
+                &mut kernel,
+                observation,
+                BehaviorQuantifier::May,
+                module,
+                linking_context,
+                module_admissible_evidence,
+                module_admissible_evidence,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[module_admissible])
+            .check(&kernel, identity_preserves_in_context)
             .unwrap();
         let sound_identity_composition = sound_identity.then(&mut kernel, sound_identity).unwrap();
         EvidenceScope::positive(&[])
