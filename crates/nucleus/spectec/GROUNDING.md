@@ -58,7 +58,9 @@ retaining the premises of both component proofs.
 Any proof-carrying sound transformation also generically preserves every
 `RunProperty` in all admissible linking contexts. This includes composed
 contracts and `callsAssert` observations without adding transformation- or
-property-specific proof rules.
+property-specific proof rules. The same checked theorem specializes directly
+to a concrete module, yielding the contextual observation equality for that
+program and its transformed image.
 Conversely, checked negative evidence for any one contextual observation
 refutes `equivalent`. Thus, once `callsAssert` is supplied as a trace
 observation, its distinction between `TRUE` and `FALSE` is sufficient to prove

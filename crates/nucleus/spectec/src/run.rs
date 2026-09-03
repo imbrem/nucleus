@@ -1600,6 +1600,48 @@ impl SoundRunTransformation {
         })
     }
 
+    /// Specializes generic property preservation to one concrete module.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `module` has the configured module classifier
+    /// and the generic checked preservation theorem can be constructed and
+    /// specialized. `kernel` is unchanged on failure.
+    pub fn prove_preserves_property_at(
+        self,
+        kernel: &mut Kernel,
+        property: RunProperty,
+        module: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let transformation = self.transformation;
+        let context = transformation.context;
+        context.require_property(property)?;
+        require_classifier(&mut staged, module, context.domain.relation.types.module)?;
+        let universal = self.prove_preserves_property(&mut staged, property)?;
+        let specialized = forall_elim(&mut staged, universal.theorem, module)?;
+        let observed = context.observe_property_avoiding(
+            &mut staged,
+            property,
+            transformation.profile,
+            &[module, transformation.transform],
+        )?;
+        let transformed = transformation.sound_application(&mut staged, module)?;
+        let canonical = observed.equivalent(&mut staged, module, transformed)?;
+        join_alpha_equivalent(&mut staged, specialized.proposition, canonical).map_err(|_| {
+            KernelError::InvalidTheoremRule {
+                rule: "transformation property preservation specialization",
+            }
+        })?;
+        staged.convert_conclusions(specialized.theorem, specialized.proposition, canonical)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: canonical,
+            theorem: specialized.theorem,
+            holds: true,
+        })
+    }
+
     /// Derives preservation of one quantified behavior observation.
     ///
     /// This is convenience syntax for constructing the observation's generic
@@ -1626,6 +1668,38 @@ impl SoundRunTransformation {
             &[self.transformation.transform],
         )?;
         let preserved = self.prove_preserves_property(&mut staged, property)?;
+        *kernel = staged;
+        Ok(preserved)
+    }
+
+    /// Specializes behavior-observation preservation to one concrete module.
+    ///
+    /// This is the direct API for conclusions such as
+    /// `callsAssert(P) = callsAssert(transform(P))` in every admissible linking
+    /// context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the observation and module belong to this
+    /// transformation's semantic domain and the generic checked preservation
+    /// derivation succeeds. `kernel` is unchanged on failure.
+    pub fn prove_preserves_at(
+        self,
+        kernel: &mut Kernel,
+        observation: RunObservation,
+        quantifier: BehaviorQuantifier,
+        module: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        self.transformation
+            .context
+            .require_observation(observation)?;
+        let property = observation.property_avoiding(
+            &mut staged,
+            quantifier,
+            &[module, self.transformation.transform],
+        )?;
+        let preserved = self.prove_preserves_property_at(&mut staged, property, module)?;
         *kernel = staged;
         Ok(preserved)
     }
@@ -6177,6 +6251,12 @@ mod tests {
         EvidenceScope::positive(&[])
             .check(&kernel, identity_preserves_observation)
             .unwrap();
+        let identity_preserves_module_observation = sound_identity
+            .prove_preserves_at(&mut kernel, observation, BehaviorQuantifier::May, module)
+            .unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, identity_preserves_module_observation)
+            .unwrap();
         let sound_identity_composition = sound_identity.then(&mut kernel, sound_identity).unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, sound_identity_composition.soundness())
@@ -6216,6 +6296,12 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[transformation_sound])
             .check(&kernel, transformation_preserves_contract)
+            .unwrap();
+        let transformation_preserves_module_contract = sound_transformation
+            .prove_preserves_property_at(&mut kernel, contract_property, module)
+            .unwrap();
+        EvidenceScope::positive(&[transformation_sound])
+            .check(&kernel, transformation_preserves_module_contract)
             .unwrap();
         let rejected_soundness = Evidence {
             proposition: transformation_sound,
