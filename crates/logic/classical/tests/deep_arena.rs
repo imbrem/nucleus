@@ -7,6 +7,11 @@
 //! This file builds such an arena directly from words, so no recursive
 //! constructor runs before the code under test does.
 
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
+
 use covalence_logic_classical::tagged::{Arena, Checked, Formula, Ref, Word};
 
 /// A left-nested chain of `depth` unary `AND` nodes over one literal.
@@ -50,8 +55,9 @@ fn chain_depth(formula: &Formula) -> usize {
 #[test]
 fn a_shallow_chain_validates_and_decodes() {
     let checked = Checked::check(nested_chain(64)).expect("valid arena");
-    assert_eq!(checked.sequents().len(), 1);
-    assert_eq!(chain_depth(&checked.sequents()[0].premise), 64);
+    let table = checked.decode_sequents().expect("decodes");
+    assert_eq!(table.len(), 1);
+    assert_eq!(chain_depth(&table[0].premise), 64);
 }
 
 #[test]
@@ -61,7 +67,15 @@ fn validation_decoding_and_destruction_survive_an_arena_too_deep_to_recurse() {
     // destructor for the syntax it produced.
     let depth = 200_000;
     let checked = Checked::check(nested_chain(depth)).expect("valid arena");
-    assert_eq!(chain_depth(&checked.sequents()[0].premise), depth);
+    let table = checked.decode_sequents().expect("decodes");
+    assert_eq!(chain_depth(&table[0].premise), depth);
+    // Structural equality and hashing walk the words, not the tree, so they
+    // are safe at this depth too.
+    assert_eq!(checked, Checked::check(nested_chain(depth)).expect("valid"));
+    let mut digest = DefaultHasher::new();
+    checked.hash(&mut digest);
+    std::hint::black_box(digest.finish());
+    drop(table);
     drop(checked);
 }
 

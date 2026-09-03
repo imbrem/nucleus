@@ -280,91 +280,175 @@ impl Arena {
         words.get(..terminator)
     }
 
-    /// Recovers one root's syntax with an explicit worklist.
+    /// Opens a flat traversal of the whole sequent table.
     ///
-    /// The traversal claims each live block as it reaches it, which decides
-    /// unique ownership against everything already claimed -- the free rings
-    /// and every live block of every earlier root included. Children are
-    /// pushed reversed so they pop left first, giving exactly the preorder a
-    /// recursive descent would visit.
+    /// Lean: the prologue of `Flat.check?` -- the reserved prefix, the free
+    /// rings, and the initial worklist.
+    fn walk(&self) -> Option<Walk<'_>> {
+        if !self.zero_range(0, RESERVED_WORDS) {
+            return None;
+        }
+        let mut coverage = Coverage::new(self.words.len());
+        let free = self.decode_free(&mut coverage)?;
+        // Reversed, so the table pops premise-then-conclusion in table order.
+        let mut pending = Vec::with_capacity(2 * self.roots.len());
+        for (premise, conclusion) in self.roots.iter().rev() {
+            pending.push(*conclusion);
+            pending.push(*premise);
+        }
+        Some(Walk {
+            arena: self,
+            pending,
+            coverage,
+            free,
+        })
+    }
+
+    /// Validates this arena and materializes its sequent table in one pass.
     ///
-    /// There is no fuel counter. Every step down claims at least four fresh
-    /// words inside `[4, len)`, so the depth this can reach is bounded by
-    /// storage, and an arena deep enough to exhaust the former counter is
-    /// rejected by a repeated claim first.
-    fn decode_root(
-        &self,
-        coverage: &mut Coverage,
-        live: &mut Vec<Block>,
-        root: Ref,
-    ) -> Option<Formula> {
-        let mut pending = vec![root];
+    /// The fold stack is the nesting, so nothing recurses: a completed formula
+    /// is pushed into the frame that was waiting for it, and a completed frame
+    /// becomes a formula in turn.
+    fn decode_table(&self) -> Result<Vec<Sequent>, RuntimeError> {
+        let mut walk = self.walk().ok_or(RuntimeError::InvalidArena)?;
         let mut stack: Vec<Frame> = Vec::new();
-        loop {
-            let word = pending.pop()?.word();
-            let mut formula = if word.tag() == 3 {
+        let mut roots: Vec<Formula> = Vec::with_capacity(2 * self.roots.len());
+        while let Some(token) = walk.step()? {
+            let mut formula = if token.tag == 3 {
                 Formula::Literal {
-                    atom: word.base() / 4,
-                    negative: word.is_negative(),
+                    atom: token.value,
+                    negative: token.negative,
                 }
             } else {
-                let block = self.live_block(word.base())?;
-                if !coverage.claim(block) {
-                    return None;
-                }
-                live.push(block);
-                let children = self.child_words(block)?;
-                if children.is_empty() {
-                    node(word.tag(), word.is_negative(), Vec::new())?
-                } else {
+                let arity = usize::try_from(token.value).map_err(|_| RuntimeError::InvalidArena)?;
+                if arity > 0 {
                     stack.push(Frame {
-                        tag: word.tag(),
-                        negative: word.is_negative(),
-                        remaining: children.len(),
-                        children: Vec::with_capacity(children.len()),
+                        tag: token.tag,
+                        negative: token.negative,
+                        remaining: arity,
+                        children: Vec::with_capacity(arity),
                     });
-                    for child in children.iter().rev() {
-                        pending.push(Ref::new(*child).ok()?);
-                    }
                     continue;
                 }
+                node(token.tag, token.negative, Vec::new()).ok_or(RuntimeError::InvalidArena)?
             };
             loop {
                 let Some(frame) = stack.last_mut() else {
-                    return Some(formula);
+                    roots.push(formula);
+                    break;
                 };
                 frame.children.push(formula);
                 frame.remaining -= 1;
                 if frame.remaining > 0 {
                     break;
                 }
-                let frame = stack.pop()?;
-                formula = node(frame.tag, frame.negative, frame.children)?;
+                let Some(frame) = stack.pop() else {
+                    return Err(RuntimeError::InvalidArena);
+                };
+                formula = node(frame.tag, frame.negative, frame.children)
+                    .ok_or(RuntimeError::InvalidArena)?;
             }
         }
-    }
-
-    fn decode_state(&self) -> Option<Decoded> {
-        if !self.zero_range(0, RESERVED_WORDS) {
-            return None;
+        walk.finish()?;
+        if !stack.is_empty() || roots.len() != 2 * self.roots.len() {
+            return Err(RuntimeError::InvalidArena);
         }
-        let mut coverage = Coverage::new(self.words.len());
-        let free = self.decode_free(&mut coverage)?;
-        let mut live = Vec::new();
         let mut sequents = Vec::with_capacity(self.roots.len());
-        for (premise, conclusion) in &self.roots {
-            let premise = self.decode_root(&mut coverage, &mut live, *premise)?;
-            let conclusion = self.decode_root(&mut coverage, &mut live, *conclusion)?;
+        let mut decoded = roots.into_iter();
+        while let (Some(premise), Some(conclusion)) = (decoded.next(), decoded.next()) {
             sequents.push(Sequent {
                 premise,
                 conclusion,
             });
         }
-        coverage.complete().then_some(Decoded {
-            sequents,
-            live,
-            free,
-        })
+        Ok(sequents)
+    }
+}
+
+/// One step of the flat traversal.
+///
+/// Lean: the `output` triple emitted by `Flat.traceStep?`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Token {
+    tag: u8,
+    negative: bool,
+    /// Child arity for a node, atom identifier for a literal.
+    value: u64,
+}
+
+/// The complete state of one flat traversal.
+///
+/// Lean: `Flat.TraceState`, except that the output is handed to the caller a
+/// step at a time rather than accumulated. Validation, hashing, structural
+/// equality and decoding are then four consumers of one traversal.
+///
+/// There is no fuel counter. Every step down claims at least four fresh words
+/// inside `[4, len)`, so the depth this can reach is bounded by storage, and
+/// an arena deep enough to exhaust the former counter is rejected by a
+/// repeated claim first. Lean: `Flat.traceRun_halts`.
+struct Walk<'a> {
+    arena: &'a Arena,
+    pending: Vec<Ref>,
+    coverage: Coverage,
+    free: Vec<Block>,
+}
+
+impl Walk<'_> {
+    /// Advances one node, claiming its storage. `Ok(None)` is the idle state.
+    ///
+    /// Children are pushed reversed so they pop left first, giving exactly the
+    /// preorder a recursive descent would visit. The claim decides unique
+    /// ownership against everything already claimed -- the free rings and
+    /// every block of every earlier root included.
+    ///
+    /// Lean: `Flat.traceStep?`.
+    fn step(&mut self) -> Result<Option<Token>, RuntimeError> {
+        let Some(reference) = self.pending.pop() else {
+            return Ok(None);
+        };
+        let word = reference.word();
+        if word.tag() == 3 {
+            return Ok(Some(Token {
+                tag: 3,
+                negative: word.is_negative(),
+                value: word.base() / 4,
+            }));
+        }
+        let block = self
+            .arena
+            .live_block(word.base())
+            .ok_or(RuntimeError::InvalidArena)?;
+        if !self.coverage.claim(block) {
+            return Err(RuntimeError::InvalidArena);
+        }
+        let children = self
+            .arena
+            .child_words(block)
+            .ok_or(RuntimeError::InvalidArena)?;
+        let arity = children.len();
+        for child in children.iter().rev() {
+            self.pending
+                .push(Ref::new(*child).map_err(|_| RuntimeError::InvalidArena)?);
+        }
+        if word.tag() > 2 {
+            return Err(RuntimeError::InvalidArena);
+        }
+        Ok(Some(Token {
+            tag: word.tag(),
+            negative: word.is_negative(),
+            value: u64::try_from(arity).map_err(|_| RuntimeError::InvalidArena)?,
+        }))
+    }
+
+    /// Accepts only a drained worklist that claimed the whole of storage.
+    ///
+    /// Lean: the acceptance condition of `Flat.check?`.
+    fn finish(self) -> Result<Vec<Block>, RuntimeError> {
+        if self.pending.is_empty() && self.coverage.complete() {
+            Ok(self.free)
+        } else {
+            Err(RuntimeError::InvalidArena)
+        }
     }
 }
 
@@ -471,18 +555,16 @@ enum NullablePointer {
     Address(usize),
 }
 
-#[derive(Clone, Debug)]
-struct Decoded {
-    sequents: Vec<Sequent>,
-    live: Vec<Block>,
-    free: Vec<Block>,
-}
-
-/// An arena paired with the exact result of the complete executable validator.
+/// An arena that the complete executable validator accepted.
+///
+/// The syntax is not stored beside the words. Lean makes the corresponding
+/// field `noncomputable` for the same reason: a materialized recursive
+/// `Formula` tree is as deep as untrusted storage, and everything that touches
+/// it -- copying, comparing, hashing, dropping -- would inherit that depth.
+/// Copying a `Checked` is copying its words.
 #[derive(Clone, Debug)]
 pub struct Checked {
     arena: Arena,
-    decoded: Decoded,
 }
 
 impl Checked {
@@ -497,8 +579,10 @@ impl Checked {
     /// Returns an error when any allocator, reference, syntax, or ownership
     /// invariant fails.
     pub fn check(arena: Arena) -> Result<Self, RuntimeError> {
-        let decoded = arena.decode_state().ok_or(RuntimeError::InvalidArena)?;
-        Ok(Self { arena, decoded })
+        let mut walk = arena.walk().ok_or(RuntimeError::InvalidArena)?;
+        while walk.step()?.is_some() {}
+        walk.finish()?;
+        Ok(Self { arena })
     }
 
     /// Returns the validated raw arena.
@@ -507,38 +591,83 @@ impl Checked {
         &self.arena
     }
 
-    /// Returns the recursively decoded sequent table.
-    #[must_use]
-    pub fn sequents(&self) -> &[Sequent] {
-        &self.decoded.sequents
+    /// Materializes the sequent table.
+    ///
+    /// The result is computed, not stored: nothing keeps a recursive syntax
+    /// tree alive beside the words. Lean pins the specification rather than
+    /// this fold -- `FlatCorrect.hashSequents_inj` says the token stream
+    /// determines a unique table, and `decodeMany_of_traceRun` says the
+    /// traversal and the syntax agree.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only if the arena stopped validating, which cannot
+    /// happen for a value of this type.
+    pub fn decode_sequents(&self) -> Result<Vec<Sequent>, RuntimeError> {
+        self.arena.decode_table()
     }
 
-    /// Returns the live blocks recovered from the roots.
+    /// Recovers the free blocks from the intrusive allocator root.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the arena stopped validating, which cannot happen for a
+    /// value of this type.
     #[must_use]
-    pub fn live_blocks(&self) -> &[Block] {
-        &self.decoded.live
+    pub fn free_blocks(&self) -> Vec<Block> {
+        let mut coverage = Coverage::new(self.arena.words.len());
+        self.arena
+            .decode_free(&mut coverage)
+            .expect("a checked arena revalidates")
     }
 
-    /// Returns the free blocks recovered from the intrusive allocator root.
-    #[must_use]
-    pub fn free_blocks(&self) -> &[Block] {
-        &self.decoded.free
+    /// Streams this arena's structural token sequence.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the arena stopped validating, which cannot happen for a
+    /// value of this type. Lean: `Flat.Checked.hashTrace_eq` states exactly
+    /// that the pass is defined on a checked arena.
+    fn tokens(&self) -> impl Iterator<Item = Token> + '_ {
+        let mut walk = self.arena.walk().expect("a checked arena revalidates");
+        std::iter::from_fn(move || walk.step().expect("a checked arena revalidates"))
     }
 }
 
 impl PartialEq for Checked {
+    /// Compares decoded syntax by advancing two traversals in lockstep.
+    ///
+    /// This is equality of syntax, not agreement of a digest: Lean's
+    /// `FlatCorrect.hashSequents_inj` says equal token streams are equal
+    /// sequent tables. Allocator layout is invisible to it, exactly as it was
+    /// to the comparison of materialized syntax.
     fn eq(&self, other: &Self) -> bool {
-        self.decoded.sequents == other.decoded.sequents
+        self.arena.roots.len() == other.arena.roots.len() && self.tokens().eq(other.tokens())
     }
 }
 
 impl Eq for Checked {}
 
 impl Hash for Checked {
+    /// Feeds the same typed writes the materialized syntax used to feed.
+    ///
+    /// The traversal visits roots in table order and each root in preorder,
+    /// which is what `Hash for Formula` did, so the feed is unchanged down to
+    /// the individual `write_u8`/`write_u64`/`write_usize` calls. Lean:
+    /// `FlatCorrect.check?_eq_hashSequents` -- one pass serves validation and
+    /// hashing.
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.decoded.sequents.len().hash(state);
-        for sequent in &self.decoded.sequents {
-            sequent.hash(state);
+        self.arena.roots.len().hash(state);
+        for token in self.tokens() {
+            token.tag.hash(state);
+            token.negative.hash(state);
+            if token.tag == 3 {
+                token.value.hash(state);
+            } else {
+                usize::try_from(token.value)
+                    .expect("a checked arity fits the host")
+                    .hash(state);
+            }
         }
     }
 }
@@ -558,9 +687,14 @@ pub fn pack(sequents: &[Sequent]) -> Result<Checked, RuntimeError> {
     let mut words = vec![Word::ZERO; RESERVED_WORDS];
     words.extend(built.words);
     let candidate = Arena::new(words, Word::ZERO, built.roots);
-    let checked = Checked::check(candidate).map_err(|_| RuntimeError::PackerPostcheck)?;
-    if checked.sequents() == sequents {
-        Ok(checked)
+    // The postcheck is the ordinary validator, run over the candidate exactly
+    // as it would run over untrusted bytes, and it recovers the syntax in the
+    // same pass.
+    let decoded = candidate
+        .decode_table()
+        .map_err(|_| RuntimeError::PackerPostcheck)?;
+    if decoded == sequents {
+        Ok(Checked { arena: candidate })
     } else {
         Err(RuntimeError::PackerPostcheck)
     }

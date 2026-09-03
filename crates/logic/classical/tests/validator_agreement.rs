@@ -72,7 +72,6 @@ mod reference {
     #[derive(Debug)]
     pub struct Decoded {
         pub sequents: Vec<Sequent>,
-        pub live: Vec<Block>,
         pub free: Vec<Block>,
     }
 
@@ -297,11 +296,8 @@ mod reference {
             if !covers_storage(&live, &free, self.words.len()) {
                 return None;
             }
-            Some(Decoded {
-                sequents,
-                live,
-                free,
-            })
+            drop(live);
+            Some(Decoded { sequents, free })
         }
     }
 
@@ -508,37 +504,25 @@ fn mutate(arena: &Arena, rng: &mut Rng) -> Arena {
     Arena::new(words, free_root, roots)
 }
 
-/// Live blocks as a sorted set, and free blocks in the order reported.
-type Ownership = (Vec<(usize, usize)>, Vec<(usize, usize)>);
-
-fn blocks(checked: &Checked) -> Ownership {
-    let mut live = checked
-        .live_blocks()
-        .iter()
-        .map(|block| (block.base(), block.size_class()))
-        .collect::<Vec<_>>();
-    live.sort_unstable();
-    let free = checked
+/// Free blocks in the order the validator reports them.
+///
+/// Live blocks are no longer reported at all: the flat pass recovers them to
+/// decide ownership and then forgets them, and nothing in the tree ever read
+/// them.
+fn free_blocks(checked: &Checked) -> Vec<(usize, usize)> {
+    checked
         .free_blocks()
         .iter()
         .map(|block| (block.base(), block.size_class()))
-        .collect::<Vec<_>>();
-    (live, free)
+        .collect()
 }
 
-fn reference_blocks(decoded: &reference::Decoded) -> Ownership {
-    let mut live = decoded
-        .live
-        .iter()
-        .map(|block| (block.base, block.size_class))
-        .collect::<Vec<_>>();
-    live.sort_unstable();
-    let free = decoded
+fn reference_free_blocks(decoded: &reference::Decoded) -> Vec<(usize, usize)> {
+    decoded
         .free
         .iter()
         .map(|block| (block.base, block.size_class))
-        .collect::<Vec<_>>();
-    (live, free)
+        .collect()
 }
 
 /// Checks one arena both ways and reports whether the flat pass accepted it.
@@ -547,8 +531,13 @@ fn agree(arena: &Arena, label: &str) -> bool {
     let recursive = reference::check(arena);
     match (flat, recursive) {
         (Ok(flat), Some(recursive)) => {
-            assert_eq!(flat.sequents(), recursive.sequents.as_slice(), "{label}");
-            assert_eq!(blocks(&flat), reference_blocks(&recursive), "{label}");
+            let decoded = flat.decode_sequents().expect("a checked arena decodes");
+            assert_eq!(decoded, recursive.sequents, "{label}");
+            assert_eq!(
+                free_blocks(&flat),
+                reference_free_blocks(&recursive),
+                "{label}"
+            );
             true
         }
         (Err(_), None) => false,

@@ -1,5 +1,7 @@
 use std::hash::{Hash, Hasher};
 
+use smallvec::SmallVec;
+
 /// One signed atom or signed n-ary classical connective.
 ///
 /// `Sat` binds every atom below it as a fresh uninterpreted Boolean variable.
@@ -72,10 +74,13 @@ impl Drop for Formula {
     /// Dismantles a formula with an explicit worklist.
     ///
     /// The derived destructor recurses once per level. Syntax decoded from an
-    /// untrusted arena is as deep as that arena, and a destructor cannot fail
-    /// or be skipped, so the depth has to leave the stack. Each node's child
-    /// vector is taken out and queued, which leaves behind a node whose own
-    /// drop reaches no further.
+    /// untrusted arena is as deep as that arena, and a destructor can neither
+    /// fail nor be skipped, so the depth has to leave the stack. Each node's
+    /// child vector is taken out and queued, which leaves behind a node whose
+    /// own drop reaches no further.
+    ///
+    /// The queue is inline for the first few levels, so dismantling the small
+    /// formulas that ordinary rules build allocates nothing.
     fn drop(&mut self) {
         let (Self::And { children, .. } | Self::Or { children, .. } | Self::Sat { children, .. }) =
             self
@@ -85,9 +90,10 @@ impl Drop for Formula {
         if children.is_empty() {
             return;
         }
-        let mut pending = vec![std::mem::take(children)];
-        while let Some(children) = pending.pop() {
-            for mut child in children {
+        let mut pending: SmallVec<[Vec<Self>; 8]> = SmallVec::new();
+        let mut current = std::mem::take(children);
+        loop {
+            for mut child in current {
                 if let Self::And { children, .. }
                 | Self::Or { children, .. }
                 | Self::Sat { children, .. } = &mut child
@@ -96,6 +102,10 @@ impl Drop for Formula {
                     pending.push(std::mem::take(children));
                 }
             }
+            let Some(next) = pending.pop() else {
+                return;
+            };
+            current = next;
         }
     }
 }

@@ -757,7 +757,13 @@ struct TheoremSlot {
 
 impl TheoremSlot {
     fn new(theorem: tagged::Theorem, projection: Projection) -> Self {
-        assert_eq!(theorem.checked().sequents(), &[projection.sequent()]);
+        assert_eq!(
+            theorem
+                .checked()
+                .decode_sequents()
+                .expect("sealed syntax decodes"),
+            [projection.sequent()]
+        );
         Self {
             theorem,
             projection,
@@ -1085,7 +1091,7 @@ mod tests {
         for slot in arena.slots.iter().flatten() {
             let sequent = slot.projection.sequent();
             let packed = tagged::pack(std::slice::from_ref(&sequent)).unwrap();
-            assert_eq!(packed.sequents(), std::slice::from_ref(&sequent));
+            assert_eq!(packed.decode_sequents().unwrap(), [sequent]);
         }
     }
 
@@ -1139,8 +1145,13 @@ mod tests {
         assert_eq!(kernel.get(id).unwrap().lhs.to_rows(), vec![LitVec::new()]);
         assert!(kernel.get(id).unwrap().rhs.rows().next().is_none());
         assert_eq!(
-            kernel.theorem_fact(id).unwrap().checked().sequents(),
-            &[refutation.sequent_for_sealing()]
+            kernel
+                .theorem_fact(id)
+                .unwrap()
+                .checked()
+                .decode_sequents()
+                .unwrap(),
+            [refutation.sequent_for_sealing()]
         );
     }
 

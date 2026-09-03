@@ -113,8 +113,8 @@ impl Theorem {
     /// Returns an error when the combined table exceeds the canonical
     /// packer's fixed-word or host resource bounds.
     pub fn append(&self, other: &Self) -> Result<Self, RuntimeError> {
-        let mut sequents = self.checked.sequents().to_vec();
-        sequents.extend_from_slice(other.checked.sequents());
+        let mut sequents = self.checked.decode_sequents()?;
+        sequents.extend(other.checked.decode_sequents()?);
         Ok(Self {
             checked: pack(&sequents)?,
         })
@@ -128,7 +128,7 @@ impl Theorem {
     /// packer's resource bounds.
     pub fn canonical_copy(&self) -> Result<Self, RuntimeError> {
         Ok(Self {
-            checked: pack(self.checked.sequents())?,
+            checked: pack(&self.checked.decode_sequents()?)?,
         })
     }
 
@@ -150,23 +150,20 @@ impl Theorem {
         right_index: usize,
         pivot: &Formula,
     ) -> Result<Self, EditError> {
-        let left =
-            self.checked
-                .sequents()
-                .get(left_index)
-                .ok_or(EditError::MissingInputSequent {
-                    input: "left",
-                    index: left_index,
-                })?;
-        let right =
-            right
-                .checked
-                .sequents()
-                .get(right_index)
-                .ok_or(EditError::MissingInputSequent {
-                    input: "right",
-                    index: right_index,
-                })?;
+        let left_table = self.checked.decode_sequents()?;
+        let left = left_table
+            .get(left_index)
+            .ok_or(EditError::MissingInputSequent {
+                input: "left",
+                index: left_index,
+            })?;
+        let right_table = right.checked.decode_sequents()?;
+        let right = right_table
+            .get(right_index)
+            .ok_or(EditError::MissingInputSequent {
+                input: "right",
+                index: right_index,
+            })?;
         let (left_premise, mut left_conclusion) =
             positive_roots(left).ok_or(EditError::InapplicableBinaryRule { rule: "cut" })?;
         let (mut right_premise, right_conclusion) =
@@ -212,23 +209,20 @@ impl Theorem {
         right_index: usize,
         pivot: &Formula,
     ) -> Result<Self, EditError> {
-        let left =
-            self.checked
-                .sequents()
-                .get(left_index)
-                .ok_or(EditError::MissingInputSequent {
-                    input: "left",
-                    index: left_index,
-                })?;
-        let right =
-            right
-                .checked
-                .sequents()
-                .get(right_index)
-                .ok_or(EditError::MissingInputSequent {
-                    input: "right",
-                    index: right_index,
-                })?;
+        let left_table = self.checked.decode_sequents()?;
+        let left = left_table
+            .get(left_index)
+            .ok_or(EditError::MissingInputSequent {
+                input: "left",
+                index: left_index,
+            })?;
+        let right_table = right.checked.decode_sequents()?;
+        let right = right_table
+            .get(right_index)
+            .ok_or(EditError::MissingInputSequent {
+                input: "right",
+                index: right_index,
+            })?;
         let (left_premise, mut left_conclusion) =
             positive_roots(left).ok_or(EditError::InapplicableBinaryRule { rule: "resolve" })?;
         let (right_premise, mut right_conclusion) =
@@ -400,7 +394,7 @@ impl Theorem {
         index: usize,
         edit: impl FnOnce(&mut Sequent) -> Result<(), EditError>,
     ) -> Result<Self, EditError> {
-        let mut sequents = self.checked.sequents().to_vec();
+        let mut sequents = self.checked.decode_sequents()?;
         let sequent = sequents
             .get_mut(index)
             .ok_or(EditError::MissingSequent { index })?;
@@ -526,7 +520,8 @@ mod tests {
         // this constructor.
         let theorem = Theorem { checked };
         let crossed = theorem.canonical_cross_root(0, Side::Left).unwrap();
-        let sequent = &crossed.checked().sequents()[0];
+        let table = crossed.checked().decode_sequents().unwrap();
+        let sequent = &table[0];
         assert_eq!(
             sequent.premise,
             Formula::And {
@@ -575,7 +570,8 @@ mod tests {
         };
 
         let cut = positive.cut(0, &positive, 0, &p).unwrap();
-        let cut_result = &cut.checked().sequents()[0];
+        let cut_table = cut.checked().decode_sequents().unwrap();
+        let cut_result = &cut_table[0];
         assert_eq!(
             cut_result.premise,
             Formula::And {
@@ -592,7 +588,8 @@ mod tests {
         );
 
         let resolved = positive.resolve(0, &negative, 0, &p).unwrap();
-        let resolved_result = &resolved.checked().sequents()[0];
+        let resolved_table = resolved.checked().decode_sequents().unwrap();
+        let resolved_result = &resolved_table[0];
         assert_eq!(
             resolved_result.premise,
             Formula::And {

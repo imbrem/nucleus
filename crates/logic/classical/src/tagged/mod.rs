@@ -94,7 +94,7 @@ mod tests {
             },
         }];
         let checked = pack(&input).unwrap();
-        assert_eq!(checked.sequents(), input);
+        assert_eq!(checked.decode_sequents().unwrap(), input);
         assert_eq!(&checked.arena().words()[..4], [Word::ZERO; 4]);
         assert_eq!(checked.arena().free_root(), Word::ZERO);
         assert!(checked.free_blocks().is_empty());
@@ -122,7 +122,7 @@ mod tests {
             Word::ZERO,
         ];
         let checked = Checked::check(Arena::new(words, pointer(4), vec![])).unwrap();
-        assert!(checked.sequents().is_empty());
+        assert!(checked.decode_sequents().unwrap().is_empty());
         assert_eq!(checked.free_blocks().len(), 2);
         assert_eq!(checked.free_blocks()[0].base(), 12);
         assert_eq!(checked.free_blocks()[0].size_class(), 0);
@@ -248,8 +248,9 @@ mod tests {
         let combined = weakened
             .append(&Theorem::identity(q.clone()).unwrap())
             .unwrap();
-        assert_eq!(combined.checked().sequents().len(), 2);
-        let Formula::And { children, .. } = &combined.checked().sequents()[0].premise else {
+        let table = combined.checked().decode_sequents().unwrap();
+        assert_eq!(table.len(), 2);
+        let Formula::And { children, .. } = &table[0].premise else {
             panic!("edited premise must remain an AND")
         };
         assert_eq!(children, &[p, q.clone(), q]);

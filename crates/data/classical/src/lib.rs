@@ -311,7 +311,7 @@ mod tests {
         let checked = pack(&sequents).unwrap();
         let encoded = encode_checked(&checked).unwrap();
         let decoded = decode_checked(&encoded).unwrap();
-        assert_eq!(decoded.sequents(), sequents);
+        assert_eq!(decoded.decode_sequents().unwrap(), sequents);
         assert_eq!(decoded.arena(), checked.arena());
         assert_eq!(encode_checked(&decoded).unwrap(), encoded);
     }
