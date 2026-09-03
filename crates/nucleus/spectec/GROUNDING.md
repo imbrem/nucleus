@@ -46,7 +46,10 @@ relation is an equivalence.
 one context schema and semantic profile. Its `sound` proposition is exactly
 that every input module is contextually observationally equivalent to the
 transformed module. Transformations compose immutably, while mismatched context
-schemas or profiles are rejected before composition.
+schemas or profiles are rejected before composition. `SoundRunTransformation`
+is the proof-carrying form: it can only be constructed by checking positive
+kernel evidence against that exact soundness proposition, and it retains every
+premise of the supplied theorem.
 Conversely, checked negative evidence for any one contextual observation
 refutes `equivalent`. Thus, once `callsAssert` is supplied as a trace
 observation, its distinction between `TRUE` and `FALSE` is sufficient to prove

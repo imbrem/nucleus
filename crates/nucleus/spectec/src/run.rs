@@ -197,6 +197,17 @@ pub struct RunTransformation {
     transform: Ref,
 }
 
+/// A module transformation paired with checked evidence for its exact
+/// contextual-observational soundness proposition.
+///
+/// This wrapper adds no trust: construction rechecks an existing kernel
+/// theorem and retains all of that theorem's premises.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SoundRunTransformation {
+    transformation: RunTransformation,
+    soundness: Evidence,
+}
+
 impl RunContext {
     /// Validates a reusable context schema.
     ///
@@ -1292,6 +1303,36 @@ impl RunTransformation {
         Ok(sound)
     }
 
+    /// Pairs this transformation with checked evidence of its exact soundness
+    /// proposition.
+    ///
+    /// All premises of `soundness` remain visible in the returned evidence.
+    /// No theorem fact is created by this operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `soundness` positively proves [`Self::sound`]
+    /// for this exact transformation, context schema, and semantic profile.
+    /// `kernel` is unchanged on failure.
+    pub fn with_soundness(
+        self,
+        kernel: &mut Kernel,
+        soundness: Evidence,
+    ) -> Result<SoundRunTransformation, RunProofError> {
+        let mut staged = kernel.fork();
+        let proposition = self.sound(&mut staged)?;
+        let theorem = align_evidence(&mut staged, soundness, proposition)?;
+        *kernel = staged;
+        Ok(SoundRunTransformation {
+            transformation: self,
+            soundness: Evidence {
+                proposition,
+                theorem,
+                holds: true,
+            },
+        })
+    }
+
     /// Composes this transformation with `next` without mutating either one.
     ///
     /// The resulting function applies `self` first and `next` second.
@@ -1324,6 +1365,20 @@ impl RunTransformation {
             .transformation(&mut staged, self.profile, transform)?;
         *kernel = staged;
         Ok(composed)
+    }
+}
+
+impl SoundRunTransformation {
+    /// Returns the underlying checked transformation schema.
+    #[must_use]
+    pub const fn transformation(self) -> RunTransformation {
+        self.transformation
+    }
+
+    /// Returns the checked soundness evidence, including all visible premises.
+    #[must_use]
+    pub const fn soundness(self) -> Evidence {
+        self.soundness
     }
 }
 
@@ -5731,6 +5786,36 @@ mod tests {
         assert_eq!(kernel.classifier(transformed).unwrap(), types.module);
         let transformation_sound = transformation.sound(&mut kernel).unwrap();
         assert_eq!(kernel.classifier(transformation_sound).unwrap(), bool_ty);
+        let transformation_sound_evidence = Evidence {
+            proposition: transformation_sound,
+            theorem: kernel
+                .identity(super::positive(transformation_sound))
+                .unwrap(),
+            holds: true,
+        };
+        let sound_transformation = transformation
+            .with_soundness(&mut kernel, transformation_sound_evidence)
+            .unwrap();
+        assert_eq!(sound_transformation.transformation(), transformation);
+        EvidenceScope::positive(&[transformation_sound])
+            .check(&kernel, sound_transformation.soundness())
+            .unwrap();
+        let rejected_soundness = Evidence {
+            proposition: transformation_sound,
+            theorem: kernel
+                .identity(super::positive(transformation_sound).negated())
+                .unwrap(),
+            holds: false,
+        };
+        let before = kernel.arena().clone();
+        let theorem_count = kernel.thm().live_theorems().count();
+        assert!(
+            transformation
+                .with_soundness(&mut kernel, rejected_soundness)
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
         let composed_transformation = transformation
             .then(&mut kernel, next_transformation)
             .unwrap();
