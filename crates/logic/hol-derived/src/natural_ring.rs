@@ -39,6 +39,8 @@ pub struct NaturalRingDecl {
     pub add_associative: Ref,
     /// `∀a b c. (a + b) + c = (a + c) + b`.
     pub add_exchange: Ref,
+    /// `∀a b c d. (a + b) + (c + d) = (a + c) + (b + d)`.
+    pub add_interchange: Ref,
     /// `∀a. 0 * a = 0`.
     pub mul_zero: Ref,
     /// `∀a b. succ a * b = a * b + b`.
@@ -80,6 +82,8 @@ pub struct NaturalRingProof {
     pub add_associative: ThmId,
     /// Exact theorem `⊢ add_exchange`.
     pub add_exchange: ThmId,
+    /// Exact theorem `⊢ add_interchange`.
+    pub add_interchange: ThmId,
     /// Exact theorem `⊢ mul_zero`.
     pub mul_zero: ThmId,
     /// Exact theorem `⊢ mul_successor`.
@@ -185,6 +189,11 @@ impl NaturalRing {
                 "nat.add.exchange",
                 declaration.add_exchange,
                 proof.add_exchange,
+            ),
+            (
+                "nat.add.interchange",
+                declaration.add_interchange,
+                proof.add_interchange,
             ),
             ("nat.mul.zero", declaration.mul_zero, proof.mul_zero),
             (
@@ -382,6 +391,7 @@ struct Inherited {
 struct Derived {
     add_associative: Law,
     add_exchange: Law,
+    add_interchange: Law,
     mul_right_zero: Law,
     mul_right_successor: Law,
     mul_one: Law,
@@ -441,6 +451,7 @@ impl Semiring<'_> {
             self.add_commutative,
         )?;
         self.add_exchange = add_exchange.1;
+        let add_interchange = self.prove_add_interchange(kernel, names)?;
         let mul_right_zero = self.prove_mul_right_zero(kernel, names)?;
         self.mul_right_zero = mul_right_zero.1;
         let mul_right_successor = self.prove_mul_right_successor(kernel, names)?;
@@ -463,6 +474,7 @@ impl Semiring<'_> {
         Ok(Derived {
             add_associative,
             add_exchange,
+            add_interchange,
             mul_right_zero,
             mul_right_successor,
             mul_one,
@@ -492,6 +504,7 @@ fn assemble(
             add_commutative: inherited.add_commutative.0,
             add_associative: derived.add_associative.0,
             add_exchange: derived.add_exchange.0,
+            add_interchange: derived.add_interchange.0,
             mul_zero: inherited.mul_zero.0,
             mul_successor: inherited.mul_successor.0,
             mul_right_zero: derived.mul_right_zero.0,
@@ -512,6 +525,7 @@ fn assemble(
             add_commutative: inherited.add_commutative.1,
             add_associative: derived.add_associative.1,
             add_exchange: derived.add_exchange.1,
+            add_interchange: derived.add_interchange.1,
             mul_zero: inherited.mul_zero.1,
             mul_successor: inherited.mul_successor.1,
             mul_right_zero: derived.mul_right_zero.1,
@@ -676,6 +690,28 @@ impl Semiring<'_> {
         let back = self.symm(kernel, back)?; // (a ∘ c) ∘ b
         let theorem = self.chain(kernel, &[regroup, swapped, back])?;
         quantify(kernel, theorem, &[a, b, c])
+    }
+
+    /// `∀a b c d. (a + b) + (c + d) = (a + c) + (b + d)`.
+    ///
+    /// Binary numerals add two at a time, so this is the law that lets two
+    /// doubled halves recombine.
+    fn prove_add_interchange(
+        &self,
+        kernel: &mut Kernel,
+        names: &mut NaturalNameSupply,
+    ) -> Result<Law, NaturalError> {
+        let [a, b, c] = self.triple(kernel, names)?;
+        let d = self.calc.variable(kernel, names)?;
+        let left_pair = self.sum(kernel, a, b)?;
+        let right_pair = self.sum(kernel, a, c)?;
+        let flatten = self.at(kernel, self.add_associative, &[left_pair, c, d])?;
+        let flatten = self.symm(kernel, flatten)?; // ((a + b) + c) + d
+        let swap = self.at(kernel, self.add_exchange, &[a, b, c])?;
+        let swap = self.add_left(kernel, swap, d)?; // ((a + c) + b) + d
+        let regroup = self.at(kernel, self.add_associative, &[right_pair, b, d])?;
+        let theorem = self.chain(kernel, &[flatten, swap, regroup])?;
+        quantify(kernel, theorem, &[a, b, c, d])
     }
 
     /// `∀a. a * 0 = 0`, by induction on `a`.

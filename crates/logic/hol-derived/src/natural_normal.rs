@@ -27,23 +27,68 @@ use covalence_logic_hol::{Kernel, Ref, ThmId};
 use crate::{
     Expr, NaturalError, NaturalRing, NaturalSubtraction, Naturals, ProvedEquality,
     natural_arithmetic::{exact_equality, sole_conclusion},
-    natural_calc::{Calc, on_left, on_right},
+    natural_calc::{Calc, on_left, on_right, under},
     natural_expr::Node,
     syntax::join_same_syntax,
 };
 
-/// Largest literal the normalizer will build as a `succ` tower.
+/// Largest literal [`NumeralEngine::Unary`] will build.
 pub const MAX_LITERAL: u64 = 4096;
+
+/// How a literal is lowered to a `nat` term.
+///
+/// Both engines prove the same statements; they differ in how much work the
+/// kernel does. Pick one with [`NaturalNormalizer::with_engine`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum NumeralEngine {
+    /// `succ` applied to zero, once per unit.
+    ///
+    /// A literal reads back as itself, which keeps small normal forms easy to
+    /// look at, but building `n` costs `n` rows and adding two literals costs
+    /// `n` checked steps. Capped at [`MAX_LITERAL`].
+    #[default]
+    Unary,
+    /// Doubling and `succ`, one level per bit.
+    ///
+    /// A literal is `O(log n)` terms, addition is `O(log n)` checked steps and
+    /// multiplication `O(log n)` of those. Doubling is written `a + a`, so this
+    /// needs no definition the semiring does not already have. Literals are
+    /// bounded only by `u64`.
+    Binary,
+}
+
+impl NumeralEngine {
+    /// The largest literal this engine will build.
+    #[must_use]
+    pub const fn max_literal(self) -> u64 {
+        match self {
+            Self::Unary => MAX_LITERAL,
+            Self::Binary => u64::MAX,
+        }
+    }
+
+    /// The name used in benchmark output.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Unary => "unary",
+            Self::Binary => "binary",
+        }
+    }
+}
 
 /// Normalizes arithmetic expressions against one proved law package.
 ///
-/// A normalizer holds kernel-local theorem handles and caches the terms it
-/// builds, so use one with the single kernel it was created for.
+/// A normalizer holds kernel-local theorem handles, so use one with the kernel
+/// its law packages were proved in.
 pub struct NaturalNormalizer<'a> {
     calc: Calc<'a>,
     ring: NaturalRing,
     subtraction: Option<NaturalSubtraction>,
-    /// Applications already built, so equal terms share one row.
+    engine: NumeralEngine,
+    /// Applications built during the call in progress, so equal terms share one
+    /// row. Cleared at each entry point: a row belongs to one kernel, and the
+    /// next call may be given a different one.
     ///
     /// The arena appends rather than shares, and the normalizer rebuilds the
     /// same subterms constantly. Caching keeps the arena small and, more
@@ -101,8 +146,22 @@ impl<'a> NaturalNormalizer<'a> {
             },
             ring,
             subtraction: None,
+            engine: NumeralEngine::Unary,
             applications: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// Selects how literals are lowered.
+    #[must_use]
+    pub fn with_engine(mut self, engine: NumeralEngine) -> Self {
+        self.engine = engine;
+        self
+    }
+
+    /// The engine this normalizer lowers literals with.
+    #[must_use]
+    pub const fn engine(&self) -> NumeralEngine {
+        self.engine
     }
 
     /// Normalizes sums, products, and truncated subtraction.
@@ -147,24 +206,22 @@ impl<'a> NaturalNormalizer<'a> {
 
     /// Runs one derivation on a staged kernel, committing only on success.
     ///
-    /// The term cache names rows in this kernel, so a discarded attempt drops
-    /// it too.
+    /// The term cache names rows in whichever kernel is passed, so it starts
+    /// empty and is emptied again afterwards. That keeps a normalizer usable
+    /// with a forked or replaced kernel, at the cost of not sharing rows
+    /// between calls.
     fn staged<T>(
         &self,
         kernel: &mut Kernel,
         action: impl FnOnce(&Self, &mut Kernel) -> Result<T, NaturalError>,
     ) -> Result<T, NaturalError> {
+        self.applications.borrow_mut().clear();
         let mut forked = kernel.fork();
-        match action(self, &mut forked) {
-            Ok(value) => {
-                *kernel = forked;
-                Ok(value)
-            }
-            Err(error) => {
-                self.applications.borrow_mut().clear();
-                Err(error)
-            }
-        }
+        let result = action(self, &mut forked);
+        self.applications.borrow_mut().clear();
+        let value = result?;
+        *kernel = forked;
+        Ok(value)
     }
 
     /// Builds the `succ` tower for one literal.
@@ -179,16 +236,46 @@ impl<'a> NaturalNormalizer<'a> {
     }
 
     fn build_numeral(&self, kernel: &mut Kernel, value: u64) -> Result<Ref, NaturalError> {
-        if value > MAX_LITERAL {
+        if value > self.engine.max_literal() {
             return Err(NaturalError::WrongForm {
-                expected: "a literal within the unary numeral bound",
+                expected: "a literal within the numeral bound",
             });
         }
-        let mut term = self.ring.signature.zero;
-        for _ in 0..value {
-            term = self.app(kernel, self.ring.signature.succ, term)?;
+        match self.engine {
+            NumeralEngine::Unary => {
+                let mut term = self.ring.signature.zero;
+                for _ in 0..value {
+                    term = self.app(kernel, self.ring.signature.succ, term)?;
+                }
+                Ok(term)
+            }
+            NumeralEngine::Binary => self.binary_numeral(kernel, value),
         }
-        Ok(term)
+    }
+
+    /// `numeral(0) = 0`, `numeral(2k) = numeral(k) + numeral(k)`, and
+    /// `numeral(2k + 1) = succ numeral(2k)`.
+    ///
+    /// Doubling zero collapses to zero, so every value has one term.
+    fn binary_numeral(&self, kernel: &mut Kernel, value: u64) -> Result<Ref, NaturalError> {
+        if value == 0 {
+            return Ok(self.ring.signature.zero);
+        }
+        let doubled = self.binary_double(kernel, value / 2)?;
+        if value.is_multiple_of(2) {
+            Ok(doubled)
+        } else {
+            self.app(kernel, self.ring.signature.succ, doubled)
+        }
+    }
+
+    /// The term for `2 * half`.
+    fn binary_double(&self, kernel: &mut Kernel, half: u64) -> Result<Ref, NaturalError> {
+        if half == 0 {
+            return Ok(self.ring.signature.zero);
+        }
+        let inner = self.binary_numeral(kernel, half)?;
+        self.binary(kernel, self.ring.signature.add, inner, inner)
     }
 
     /// Builds the HOL term an expression denotes.
@@ -550,8 +637,181 @@ impl Sorted for Factors<'_, '_> {
 
 /// Numerals, monomials, and the polynomial arithmetic built on top of them.
 impl NaturalNormalizer<'_> {
+    /// `⊢ succ numeral(value) = numeral(value + 1)`.
+    ///
+    /// A unary numeral already carries its successor on the outside, so this is
+    /// reflexivity there.
+    fn succ_numeral(&self, kernel: &mut Kernel, value: u64) -> Result<ThmId, NaturalError> {
+        match self.engine {
+            NumeralEngine::Unary => {
+                let term = self.build_numeral(kernel, value + 1)?;
+                Ok(kernel.refl(self.calc.bool_ty, term)?.theorem)
+            }
+            NumeralEngine::Binary => self.succ_numeral_binary(kernel, value),
+        }
+    }
+
+    /// `⊢ pred numeral(value) = numeral(value - 1)`, truncated at zero.
+    fn pred_numeral(
+        &self,
+        kernel: &mut Kernel,
+        subtraction: &NaturalSubtraction,
+        value: u64,
+    ) -> Result<ThmId, NaturalError> {
+        if value == 0 {
+            return Ok(subtraction.proof.pred_zero);
+        }
+        let pred = subtraction.declaration.pred;
+        let previous = self.build_numeral(kernel, value - 1)?;
+        // numeral(v) is succ numeral(v - 1), so pred strips the successor.
+        let raise = self.succ_numeral(kernel, value - 1)?;
+        let raise = self.calc.symm(kernel, raise)?;
+        let under = under(kernel, pred, raise)?;
+        let strip = self
+            .calc
+            .at(kernel, subtraction.proof.pred_successor, &[previous])?;
+        self.calc.chain(kernel, &[under, strip])
+    }
+
+    /// `⊢ numeral x - numeral y = numeral (x - y)`, truncated at zero.
+    ///
+    /// One step per unit of `y`, which is what the byte layer needs: indices
+    /// and slice bounds are small even when the values are not.
+    fn sub_numerals(
+        &self,
+        kernel: &mut Kernel,
+        subtraction: &NaturalSubtraction,
+        left: u64,
+        right: u64,
+    ) -> Result<ThmId, NaturalError> {
+        let pred = subtraction.declaration.pred;
+        let left_term = self.build_numeral(kernel, left)?;
+        let mut theorem = self
+            .calc
+            .at(kernel, subtraction.proof.sub_zero, &[left_term])?;
+        for taken in 1..=right {
+            let previous = self.build_numeral(kernel, taken - 1)?;
+            // `sub.successor` is stated at `succ b`, and a binary numeral is not
+            // syntactically the successor of its predecessor, so say so first.
+            let raise = self.succ_numeral(kernel, taken - 1)?;
+            let raise = self.calc.symm(kernel, raise)?;
+            let shaped = on_right(kernel, subtraction.declaration.sub, left_term, raise)?;
+            let expand = self.calc.at(
+                kernel,
+                subtraction.proof.sub_successor,
+                &[left_term, previous],
+            )?;
+            let expand = self.calc.chain(kernel, &[shaped, expand])?;
+            let inner = under(kernel, pred, theorem)?;
+            let collapse = self.pred_numeral(kernel, subtraction, left.saturating_sub(taken - 1))?;
+            theorem = self.calc.chain(kernel, &[expand, inner, collapse])?;
+        }
+        Ok(theorem)
+    }
+
+    /// `⊢ succ numeral(value) = numeral(value + 1)`, for binary numerals.
+    ///
+    /// An even value already carries its successor on the outside, so only an
+    /// odd one has to do work: it turns into a double, which needs the same
+    /// fact one bit down.
+    fn succ_numeral_binary(
+        &self,
+        kernel: &mut Kernel,
+        value: u64,
+    ) -> Result<ThmId, NaturalError> {
+        let add = self.ring.signature.add;
+        let succ = self.ring.signature.succ;
+        let term = self.binary_numeral(kernel, value)?;
+        let raised = self.app(kernel, succ, term)?;
+        let target = self.binary_numeral(kernel, value + 1)?;
+        if raised == target {
+            return Ok(kernel.refl(self.calc.bool_ty, raised)?.theorem);
+        }
+
+        // value = 2a + 1, so the successor carries: succ (succ (2a)) = 2(a + 1).
+        let half = value / 2;
+        let inner = self.binary_numeral(kernel, half)?;
+        let next = self.binary_numeral(kernel, half + 1)?;
+        let raised_inner = self.app(kernel, succ, inner)?;
+        let carried = self.succ_numeral_binary(kernel, half)?;
+        let carried = self.calc.symm(kernel, carried)?; // numeral(a + 1) = succ numeral(a)
+
+        let left = on_left(kernel, add, carried, next)?;
+        let right = on_right(kernel, add, raised_inner, carried)?;
+        let expand = self.calc.at(
+            kernel,
+            self.ring.proof.add_successor,
+            &[inner, raised_inner],
+        )?;
+        let shift = self
+            .calc
+            .at(kernel, self.ring.proof.add_right_successor, &[inner, inner])?;
+        let shift = self.calc.under_succ(kernel, shift)?;
+        let mut steps = vec![left, right, expand, shift];
+        if half == 0 {
+            // Doubling zero collapses, so the two sides meet at succ (succ 0).
+            let zero = self.ring.signature.zero;
+            let collapse = self.calc.at(kernel, self.ring.proof.add_zero, &[zero])?;
+            let once = self.calc.under_succ(kernel, collapse)?;
+            steps.push(self.calc.under_succ(kernel, once)?);
+        }
+        let forward = self.calc.chain(kernel, &steps)?;
+        self.calc.symm(kernel, forward)
+    }
+
+    /// `⊢ 2a + 2b = 2(a + b)`, on the doubled halves of two binary numerals.
+    fn double_sum(
+        &self,
+        kernel: &mut Kernel,
+        left: u64,
+        right: u64,
+    ) -> Result<ThmId, NaturalError> {
+        let add = self.ring.signature.add;
+        let doubled_right = self.binary_double(kernel, right)?;
+        if left == 0 {
+            return self
+                .calc
+                .at(kernel, self.ring.proof.add_zero, &[doubled_right]);
+        }
+        let doubled_left = self.binary_double(kernel, left)?;
+        if right == 0 {
+            return self
+                .calc
+                .at(kernel, self.ring.proof.add_right_zero, &[doubled_left]);
+        }
+        let first = self.binary_numeral(kernel, left)?;
+        let second = self.binary_numeral(kernel, right)?;
+        let total = left.checked_add(right).ok_or(NaturalError::WrongForm {
+            expected: "a literal sum within range",
+        })?;
+        let summed = self.binary_numeral(kernel, total)?;
+        let pair = self.binary(kernel, add, first, second)?;
+
+        let regroup = self.calc.at(
+            kernel,
+            self.ring.proof.add_interchange,
+            &[first, first, second, second],
+        )?;
+        let halves = self.add_numerals(kernel, left, right)?;
+        let outer = on_left(kernel, add, halves, pair)?;
+        let inner = on_right(kernel, add, summed, halves)?;
+        self.calc.chain(kernel, &[regroup, outer, inner])
+    }
+
     /// `⊢ x + y = x + y` evaluated: `numeral x + numeral y = numeral (x + y)`.
     fn add_numerals(
+        &self,
+        kernel: &mut Kernel,
+        left: u64,
+        right: u64,
+    ) -> Result<ThmId, NaturalError> {
+        match self.engine {
+            NumeralEngine::Unary => self.add_numerals_unary(kernel, left, right),
+            NumeralEngine::Binary => self.add_numerals_binary(kernel, left, right),
+        }
+    }
+
+    fn add_numerals_unary(
         &self,
         kernel: &mut Kernel,
         left: u64,
@@ -581,6 +841,18 @@ impl NaturalNormalizer<'_> {
         left: u64,
         right: u64,
     ) -> Result<ThmId, NaturalError> {
+        match self.engine {
+            NumeralEngine::Unary => self.mul_numerals_unary(kernel, left, right),
+            NumeralEngine::Binary => self.mul_numerals_binary(kernel, left, right),
+        }
+    }
+
+    fn mul_numerals_unary(
+        &self,
+        kernel: &mut Kernel,
+        left: u64,
+        right: u64,
+    ) -> Result<ThmId, NaturalError> {
         let right_term = self.build_numeral(kernel, right)?;
         let mut theorem = self
             .calc
@@ -602,6 +874,141 @@ impl NaturalNormalizer<'_> {
             theorem = self.calc.chain(kernel, &[expand, lifted, collapse])?;
         }
         Ok(theorem)
+    }
+
+    /// `numeral x + numeral y = numeral (x + y)`, one bit at a time.
+    fn add_numerals_binary(
+        &self,
+        kernel: &mut Kernel,
+        left: u64,
+        right: u64,
+    ) -> Result<ThmId, NaturalError> {
+        let right_term = self.binary_numeral(kernel, right)?;
+        if left == 0 {
+            return self
+                .calc
+                .at(kernel, self.ring.proof.add_zero, &[right_term]);
+        }
+        let left_term = self.binary_numeral(kernel, left)?;
+        if right == 0 {
+            return self
+                .calc
+                .at(kernel, self.ring.proof.add_right_zero, &[left_term]);
+        }
+
+        let (left_half, right_half) = (left / 2, right / 2);
+        let doubled_left = self.binary_double(kernel, left_half)?;
+        let doubled_right = self.binary_double(kernel, right_half)?;
+        let halves = self.double_sum(kernel, left_half, right_half)?;
+
+        match (left % 2, right % 2) {
+            (0, 0) => Ok(halves),
+            (1, 0) => {
+                let expand = self.calc.at(
+                    kernel,
+                    self.ring.proof.add_successor,
+                    &[doubled_left, doubled_right],
+                )?;
+                let lifted = self.calc.under_succ(kernel, halves)?;
+                self.calc.chain(kernel, &[expand, lifted])
+            }
+            (0, 1) => {
+                let expand = self.calc.at(
+                    kernel,
+                    self.ring.proof.add_right_successor,
+                    &[doubled_left, doubled_right],
+                )?;
+                let lifted = self.calc.under_succ(kernel, halves)?;
+                self.calc.chain(kernel, &[expand, lifted])
+            }
+            // Both bits set, so the sum carries into the next bit.
+            _ => {
+                let raised_right = self.app(kernel, self.ring.signature.succ, doubled_right)?;
+                let expand = self.calc.at(
+                    kernel,
+                    self.ring.proof.add_successor,
+                    &[doubled_left, raised_right],
+                )?;
+                let shift = self.calc.at(
+                    kernel,
+                    self.ring.proof.add_right_successor,
+                    &[doubled_left, doubled_right],
+                )?;
+                let shift = self.calc.under_succ(kernel, shift)?;
+                let lifted = self.calc.under_succ(kernel, halves)?;
+                let lifted = self.calc.under_succ(kernel, lifted)?;
+                let carry_from = left_half
+                    .checked_add(right_half)
+                    .and_then(|half| half.checked_mul(2))
+                    .and_then(|even| even.checked_add(1))
+                    .ok_or(NaturalError::WrongForm {
+                        expected: "a literal sum within range",
+                    })?;
+                let carry = self.succ_numeral(kernel, carry_from)?;
+                self.calc.chain(kernel, &[expand, shift, lifted, carry])
+            }
+        }
+    }
+
+    /// `numeral x * numeral y = numeral (x * y)`, one bit of `x` at a time.
+    fn mul_numerals_binary(
+        &self,
+        kernel: &mut Kernel,
+        left: u64,
+        right: u64,
+    ) -> Result<ThmId, NaturalError> {
+        let add = self.ring.signature.add;
+        let right_term = self.binary_numeral(kernel, right)?;
+        if left == 0 {
+            return self
+                .calc
+                .at(kernel, self.ring.proof.mul_zero, &[right_term]);
+        }
+        let left_term = self.binary_numeral(kernel, left)?;
+        if right == 0 {
+            return self
+                .calc
+                .at(kernel, self.ring.proof.mul_right_zero, &[left_term]);
+        }
+        if left == 1 {
+            return self.calc.at(kernel, self.ring.proof.mul_one, &[right_term]);
+        }
+
+        let half = left / 2;
+        let inner = self.binary_numeral(kernel, half)?;
+        let partial = half.checked_mul(right).ok_or(NaturalError::WrongForm {
+            expected: "a literal product within range",
+        })?;
+        let partial_term = self.binary_numeral(kernel, partial)?;
+        let product = self.binary(kernel, self.ring.signature.mul, inner, right_term)?;
+
+        // 2a * y = a*y + a*y, which is the doubled numeral for a*y.
+        let split = self.calc.at(
+            kernel,
+            self.ring.proof.mul_right_distributive,
+            &[inner, inner, right_term],
+        )?;
+        let recursed = self.mul_numerals_binary(kernel, half, right)?;
+        let outer = on_left(kernel, add, recursed, product)?;
+        let folded = on_right(kernel, add, partial_term, recursed)?;
+        let even = self.calc.chain(kernel, &[split, outer, folded])?;
+        if left.is_multiple_of(2) {
+            return Ok(even);
+        }
+
+        // 2a + 1 times y is the even case plus one more y.
+        let doubled = self.binary_double(kernel, half)?;
+        let expand = self.calc.at(
+            kernel,
+            self.ring.proof.mul_successor,
+            &[doubled, right_term],
+        )?;
+        let rewritten = on_left(kernel, add, even, right_term)?;
+        let doubled_partial = partial.checked_mul(2).ok_or(NaturalError::WrongForm {
+            expected: "a literal product within range",
+        })?;
+        let total = self.add_numerals(kernel, doubled_partial, right)?;
+        self.calc.chain(kernel, &[expand, rewritten, total])
     }
 
     /// The factor list of a monomial: its coefficient, then its atoms.
@@ -1033,6 +1440,32 @@ impl NaturalNormalizer<'_> {
         let (right_polynomial, right_theorem) = self.polynomial(kernel, right)?;
 
         let amount = constant_value(&right_polynomial);
+
+        // Two literals always fold, even when the result truncates to zero.
+        if let (Some(from), Some(taken)) = (constant_value(&left_polynomial), amount) {
+            let subtraction = *self.require_subtraction()?;
+            let steps = self.congruence(
+                kernel,
+                sub,
+                right,
+                &left_polynomial,
+                left_theorem,
+                right_theorem,
+            )?;
+            let fold = self.sub_numerals(kernel, &subtraction, from, taken)?;
+            let theorem = self.calc.chain(kernel, &[steps.0, steps.1, fold])?;
+            let remainder = from.saturating_sub(taken);
+            let polynomial = if remainder == 0 {
+                Vec::new()
+            } else {
+                vec![Monomial {
+                    atoms: Vec::new(),
+                    coefficient: remainder,
+                }]
+            };
+            return Ok((polynomial, theorem));
+        }
+
         let cancellable =
             amount.is_some_and(|amount| amount <= trailing_constant(&left_polynomial));
         let Some(amount) = amount.filter(|_| cancellable) else {

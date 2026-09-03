@@ -5,8 +5,8 @@ use std::sync::OnceLock;
 use covalence_lib_json::serde_json;
 use covalence_logic_hol::{Kernel, Lit, Ref, ThmId, init};
 use covalence_logic_hol_derived::{
-    Expr, NaturalNormalizer, NaturalRing, NaturalRingExt, NaturalSubtraction,
-    NaturalSubtractionExt, Naturals, ProvedEquality, join_same_syntax,
+    Bytes, Expr, NaturalNormalizer, NaturalRing, NaturalRingExt, NaturalSubtraction,
+    NaturalSubtractionExt, Naturals, NumeralEngine, ProvedEquality, join_same_syntax,
 };
 use covalence_nucleus_script::compile_init_library;
 
@@ -91,7 +91,7 @@ fn the_semiring_laws_are_premise_free_theorems() {
     let mut unique = names.clone();
     unique.dedup();
     assert_eq!(names, unique, "law names collide");
-    assert_eq!(ring.symbols().len(), 18);
+    assert_eq!(ring.symbols().len(), 19);
 }
 
 #[test]
@@ -100,6 +100,7 @@ fn every_law_is_reachable_by_name() {
     for name in [
         "nat.add.associative",
         "nat.add.exchange",
+        "nat.add.interchange",
         "nat.mul.right_zero",
         "nat.mul.right_successor",
         "nat.mul.one",
@@ -291,12 +292,12 @@ fn an_undischargeable_subtraction_stays_an_atom() {
         .expect("the difference collects like any other atom");
     check_proved(&kernel, &proof);
 
-    // Truncation is not asserted: 5 - 7 is left alone rather than folded to 0.
-    assert!(
-        normalizer
-            .evaluate(&mut kernel, &(Expr::literal(5) - 7))
-            .is_err()
-    );
+    // Two literals fold even when the result truncates.
+    let (value, proof) = normalizer
+        .evaluate(&mut kernel, &(Expr::literal(5) - 7))
+        .expect("truncated difference");
+    assert_eq!(value, 0);
+    check_proved(&kernel, &proof);
 }
 
 #[test]
@@ -317,4 +318,211 @@ fn a_literal_above_the_numeral_bound_is_refused() {
     let normalizer = NaturalNormalizer::new(&naturals, ring);
     let bound = covalence_logic_hol_derived::MAX_LITERAL;
     assert!(normalizer.numeral(&mut kernel, bound + 1).is_err());
+}
+
+#[test]
+fn both_numeral_engines_evaluate_the_same_arithmetic() {
+    let (kernel, naturals, ring, subtraction) = subtraction_kernel();
+    for engine in [NumeralEngine::Unary, NumeralEngine::Binary] {
+        let normalizer =
+            NaturalNormalizer::with_subtraction(&naturals, ring, subtraction).with_engine(engine);
+        for (expr, value) in [
+            ((Expr::literal(2) + 3) * 4, 20),
+            (Expr::literal(7) - 4, 3),
+            (Expr::literal(4) * 5 - 2, 18),
+            (Expr::literal(0) * 9, 0),
+        ] {
+            let mut case = kernel.fork();
+            let (evaluated, proof) = normalizer
+                .evaluate(&mut case, &expr)
+                .unwrap_or_else(|error| panic!("{} engine: {error}", engine.name()));
+            assert_eq!(evaluated, value, "{} engine", engine.name());
+            check_proved(&case, &proof);
+        }
+    }
+}
+
+#[test]
+fn the_binary_engine_reaches_literals_the_unary_one_cannot() {
+    let (kernel, naturals, ring, _) = subtraction_kernel();
+    let unary = NaturalNormalizer::new(&naturals, ring);
+    let binary = NaturalNormalizer::new(&naturals, ring).with_engine(NumeralEngine::Binary);
+    let beyond = covalence_logic_hol_derived::MAX_LITERAL + 1;
+
+    let mut case = kernel.fork();
+    assert!(unary.numeral(&mut case, beyond).is_err());
+
+    // Well past the unary bound, and past what a succ tower could hold at all.
+    for value in [beyond, 1_000_000, 4_294_967_296] {
+        let mut case = kernel.fork();
+        let (evaluated, proof) = binary
+            .evaluate(&mut case, &Expr::literal(value))
+            .expect("binary literal");
+        assert_eq!(evaluated, value);
+        check_proved(&case, &proof);
+    }
+}
+
+#[test]
+fn the_binary_engine_evaluates_a_nontrivial_product() {
+    let (kernel, naturals, ring, _) = subtraction_kernel();
+    let normalizer = NaturalNormalizer::new(&naturals, ring).with_engine(NumeralEngine::Binary);
+    let mut case = kernel.fork();
+    let goal = (Expr::literal(123) + 456) * 789;
+    let (evaluated, proof) = normalizer.evaluate(&mut case, &goal).expect("product");
+    assert_eq!(evaluated, (123 + 456) * 789);
+    check_proved(&case, &proof);
+}
+
+/// What one evaluation cost the kernel.
+struct Cost {
+    micros: u128,
+    rows: usize,
+    theorems: usize,
+}
+
+fn measure(
+    kernel: &Kernel,
+    normalizer: &NaturalNormalizer<'_>,
+    expr: &Expr,
+) -> Result<(u64, Cost), covalence_logic_hol_derived::NaturalError> {
+    let mut case = kernel.fork();
+    let rows_before = case.arena().len();
+    let theorems_before = case.thm().live_theorems().count();
+    let start = std::time::Instant::now();
+    let (value, _) = normalizer.evaluate(&mut case, expr)?;
+    let micros = start.elapsed().as_micros();
+    Ok((
+        value,
+        Cost {
+            micros,
+            rows: case.arena().len() - rows_before,
+            theorems: case.thm().live_theorems().count() - theorems_before,
+        },
+    ))
+}
+
+/// Compares the numeral engines on closed arithmetic.
+///
+/// Ignored: it is a measurement, not an assertion. Run it with
+/// `cargo test -p covalence-nucleus-script --test arithmetic -- --ignored --nocapture`.
+#[test]
+#[ignore = "benchmark"]
+fn numeral_engines_benchmark() {
+    let (kernel, naturals, ring, _) = subtraction_kernel();
+    // Unary multiplication is quadratic, so the shared cases stay small. The
+    // last two are past what unary can build at all.
+    let cases: [(&str, Expr); 6] = [
+        ("2 + 3", Expr::literal(2) + 3),
+        ("60 + 40", Expr::literal(60) + 40),
+        ("7 * 8", Expr::literal(7) * 8),
+        ("(3 + 4) * 12", (Expr::literal(3) + 4) * 12),
+        ("(123 + 456) * 789", (Expr::literal(123) + 456) * 789),
+        ("999999 + 1", Expr::literal(999_999) + 1),
+    ];
+
+    println!(
+        "\n{:<20} {:>8}  {:>12} {:>8} {:>9}",
+        "expression", "engine", "micros", "rows", "theorems"
+    );
+    for (name, expr) in &cases {
+        for engine in [NumeralEngine::Unary, NumeralEngine::Binary] {
+            let normalizer = NaturalNormalizer::new(&naturals, ring).with_engine(engine);
+            match measure(&kernel, &normalizer, expr) {
+                Ok((value, cost)) => println!(
+                    "{:<20} {:>8}  {:>12} {:>8} {:>9}   = {}",
+                    name,
+                    engine.name(),
+                    cost.micros,
+                    cost.rows,
+                    cost.theorems,
+                    value
+                ),
+                Err(error) => println!(
+                    "{:<20} {:>8}  {:>12}",
+                    name,
+                    engine.name(),
+                    format!("refused: {error}")
+                        .chars()
+                        .take(40)
+                        .collect::<String>()
+                ),
+            }
+        }
+    }
+    println!();
+}
+
+#[test]
+fn byte_strings_evaluate_inside_arithmetic() {
+    let (kernel, naturals, ring, subtraction) = subtraction_kernel();
+    let normalizer = NaturalNormalizer::with_subtraction(&naturals, ring, subtraction)
+        .with_engine(NumeralEngine::Binary);
+    let hello = Bytes::literal(*b"hello");
+    let world = Bytes::literal(*b" world");
+
+    for (goal, expected) in [
+        // Length, in arithmetic.
+        (hello.len().expect("len") + 1, 6),
+        // Concatenation adds lengths.
+        (hello.cat(&world).len().expect("len"), 11),
+        // Slicing, then measuring.
+        (hello.slice(1, 4).len().expect("len"), 3),
+        // Indexing yields a byte, which is a natural below 256.
+        (hello.index(0).expect("index"), u64::from(b'h')),
+        // A byte taking part in real arithmetic.
+        (hello.index(1).expect("index") * 2, u64::from(b'e') * 2),
+    ] {
+        let mut case = kernel.fork();
+        let (value, proof) = normalizer.evaluate(&mut case, &goal).expect("evaluate");
+        assert_eq!(value, expected);
+        check_proved(&case, &proof);
+    }
+}
+
+#[test]
+fn every_byte_evaluates_to_a_natural_below_the_byte_bound() {
+    let (kernel, naturals, ring, _) = subtraction_kernel();
+    let normalizer = NaturalNormalizer::new(&naturals, ring).with_engine(NumeralEngine::Binary);
+    let raw = vec![0u8, 1, 127, 128, 255];
+    let bytes = Bytes::literal(raw.clone());
+
+    for (at, expected) in raw.iter().enumerate() {
+        let index = u64::try_from(at).expect("index fits");
+        let mut case = kernel.fork();
+        let (value, proof) = normalizer
+            .evaluate(&mut case, &bytes.index(index).expect("index"))
+            .expect("evaluate");
+        assert_eq!(value, u64::from(*expected));
+        assert!(value < covalence_logic_hol_derived::BYTE_BOUND);
+        check_proved(&case, &proof);
+    }
+}
+
+#[test]
+fn out_of_range_byte_access_is_refused() {
+    let bytes = Bytes::literal(*b"abc");
+    assert!(bytes.index(3).is_err());
+    assert!(bytes.slice(0, 4).len().is_err());
+    assert!(bytes.slice(2, 1).len().is_err());
+    // A slice of a slice is checked against the inner slice, not the literal.
+    assert!(bytes.slice(0, 2).slice(0, 3).len().is_err());
+    assert!(bytes.slice(0, 2).index(1).is_ok());
+}
+
+#[test]
+fn literal_subtraction_truncates_at_zero() {
+    let (kernel, naturals, ring, subtraction) = subtraction_kernel();
+    for engine in [NumeralEngine::Unary, NumeralEngine::Binary] {
+        let normalizer =
+            NaturalNormalizer::with_subtraction(&naturals, ring, subtraction).with_engine(engine);
+        for (left, right) in [(5u64, 7u64), (7, 5), (4, 4), (0, 3), (9, 0)] {
+            let mut case = kernel.fork();
+            let (value, proof) = normalizer
+                .evaluate(&mut case, &(Expr::literal(left) - right))
+                .unwrap_or_else(|error| panic!("{} engine, {left} - {right}: {error}", engine.name()));
+            assert_eq!(value, left.saturating_sub(right), "{left} - {right}");
+            check_proved(&case, &proof);
+        }
+    }
 }

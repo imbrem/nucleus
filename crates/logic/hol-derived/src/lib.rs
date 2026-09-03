@@ -13,6 +13,7 @@ mod infinity;
 mod model;
 mod natural;
 mod natural_arithmetic;
+mod natural_bytes;
 mod natural_calc;
 mod natural_expr;
 mod natural_normal;
@@ -49,8 +50,9 @@ pub use natural::{
 pub use natural_arithmetic::{
     NaturalArithmetic, NaturalArithmeticDecl, NaturalArithmeticExt, NaturalArithmeticProof,
 };
+pub use natural_bytes::{BYTE_BOUND, Bytes};
 pub use natural_expr::Expr;
-pub use natural_normal::{MAX_LITERAL, NaturalNormalizer};
+pub use natural_normal::{MAX_LITERAL, NaturalNormalizer, NumeralEngine};
 pub use natural_rec::{
     NaturalNameSupply, NaturalRecExt, NaturalRecGraph, NaturalRecGraphDecl, NaturalRecGraphProof,
     NaturalRecSchemas, NaturalRecursor, NaturalRecursorDecl, NaturalRecursorProof,
