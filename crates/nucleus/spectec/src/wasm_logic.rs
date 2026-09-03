@@ -1875,6 +1875,41 @@ fn reduce_binary_application(
     Ok((curried, inner_reduced.output))
 }
 
+/// Proves an application of a checked binary predicate whose beta-reduced body
+/// is reflexive equality.
+///
+/// This is a generic structural-observation helper. It beta-reduces
+/// `predicate left right`, asks the ordinary reflexive-condition proof to
+/// discharge the resulting equality, and converts that checked theorem back
+/// to the original application. It cannot turn a non-reflexive body into a
+/// fact and introduces no evaluator or axiom authority.
+///
+/// # Errors
+///
+/// Returns an error unless `predicate` is a checked curried binary lambda, its
+/// application beta-reduces successfully, and the reduced body is reflexive
+/// equality. `kernel` is unchanged on failure.
+pub fn prove_reflexive_binary_application(
+    kernel: &mut Kernel,
+    predicate: Ref,
+    left: Ref,
+    right: Ref,
+) -> Result<Evidence, WasmLogicError> {
+    let mut staged = kernel.fork();
+    let (application, reduced) = reduce_binary_application(&mut staged, predicate, left, right)?;
+    let reflexive = crate::prove_reflexive_condition(&mut staged, reduced)
+        .map_err(|source| WasmLogicError::ReflexiveObservation { source })?
+        .ok_or(WasmLogicError::ObservationFact)?;
+    let theorem = staged.copy_theorem(reflexive.theorem)?;
+    staged.convert_conclusions(theorem, reduced, application)?;
+    *kernel = staged;
+    Ok(Evidence {
+        proposition: application,
+        theorem,
+        holds: true,
+    })
+}
+
 fn align_positive_fact(
     kernel: &mut Kernel,
     theorem: covalence_logic_hol::ThmId,
@@ -1955,6 +1990,15 @@ pub enum WasmLogicError {
     /// A supplied fact is not a positive lowered `Steps` relation fact.
     #[snafu(display("supplied SpecTec Steps fact has the wrong shape"))]
     StepFact,
+    /// A structural observation did not beta-reduce to reflexive equality.
+    #[snafu(display("supplied SpecTec structural observation is not reflexive"))]
+    ObservationFact,
+    /// Checked reflexive-condition proof construction failed.
+    #[snafu(display("could not prove a reflexive SpecTec structural observation: {source}"))]
+    ReflexiveObservation {
+        /// Underlying relational proof failure.
+        source: crate::DefinitionProofError,
+    },
     /// A supplied admissible-start theorem is not one positive fact.
     #[snafu(display("supplied SpecTec admissible-start fact has the wrong shape"))]
     StartFact,
@@ -2531,6 +2575,42 @@ mod tests {
                 .is_err()
         );
         assert_eq!(kernel.arena(), &before_failure);
+    }
+
+    #[test]
+    fn reflexive_binary_observation_is_checked_and_transactional() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let value = kernel.ty_fv(0, star).unwrap();
+        let left = kernel.tm_fv(10, value).unwrap();
+        let right = kernel.tm_fv(11, value).unwrap();
+        let first = kernel.tm_fv(12, value).unwrap();
+        let second = kernel.tm_fv(13, value).unwrap();
+        let body = kernel.eq(bool_ty, first, first).unwrap();
+        let second_ty = kernel.ty_arr(value, bool_ty).unwrap();
+        let by_second = kernel.lam_at(second_ty, second, body).unwrap();
+        let predicate_ty = kernel.ty_arr(value, second_ty).unwrap();
+        let predicate = kernel.lam_at(predicate_ty, first, by_second).unwrap();
+
+        let proved =
+            prove_reflexive_binary_application(&mut kernel, predicate, left, right).unwrap();
+        crate::EvidenceScope::positive(&[])
+            .check(&kernel, proved)
+            .unwrap();
+
+        let non_reflexive_body = kernel.eq(bool_ty, first, second).unwrap();
+        let non_reflexive_by_second = kernel
+            .lam_at(second_ty, second, non_reflexive_body)
+            .unwrap();
+        let non_reflexive = kernel
+            .lam_at(predicate_ty, first, non_reflexive_by_second)
+            .unwrap();
+        let before = kernel.arena().clone();
+        assert!(
+            prove_reflexive_binary_application(&mut kernel, non_reflexive, left, right).is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
     }
 
     #[test]

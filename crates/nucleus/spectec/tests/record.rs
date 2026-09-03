@@ -18,11 +18,11 @@ use covalence_nucleus_spectec::{
     begin_least_closed_family, close_family_definition, close_graph_equation, close_hol_rule,
     close_hol_rules, close_hol_theory, declare_hol_schema, empty_wasm_module, fold_expression,
     fold_grammar, fold_type, forwarding_wasm_module, least_closed_family, least_closed_predicate,
-    ordered_cases, parameterized_document, parameterized_document_with, relational_definition,
-    relational_definition_declaration, relational_definition_schema, relational_document,
-    relational_grammar_declaration, relational_hol_case, relational_hol_rule,
-    relational_relation_declaration, relational_relations, relational_type_declaration,
-    spectec_execution,
+    ordered_cases, parameterized_document, parameterized_document_with,
+    prove_reflexive_binary_application, relational_definition, relational_definition_declaration,
+    relational_definition_schema, relational_document, relational_grammar_declaration,
+    relational_hol_case, relational_hol_rule, relational_relation_declaration,
+    relational_relations, relational_type_declaration, spectec_execution,
 };
 
 #[derive(Clone)]
@@ -1810,7 +1810,6 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         function_address: kernel.tm_fv(name_base + 3, binary_ty).unwrap(),
     };
     let exported = export_view.predicate(&mut kernel).unwrap();
-    let host_call = kernel.tm_fv(name_base + 4, binary_ty).unwrap();
     let [instantiate_id] = document.schema.named(IlKind::Definition, "instantiate") else {
         panic!("expected one $instantiate definition")
     };
@@ -2071,6 +2070,33 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         )
         .unwrap()
         .theorem;
+    let host_name = kernel
+        .fresh_name(&[
+            start.initial,
+            start.initialized_store,
+            start.arguments,
+            invoke_definition.equation,
+        ])
+        .unwrap();
+    let host_configuration = kernel.tm_fv(host_name, value).unwrap();
+    let host_function = kernel.tm_fv(host_name + 1, value).unwrap();
+    let expected_host_configuration = invoke_definition
+        .production_result(
+            &mut kernel,
+            0,
+            &[start.initialized_store, host_function, start.arguments],
+            &invoke_witnesses,
+        )
+        .unwrap();
+    let host_body = kernel
+        .eq(bool_ty, host_configuration, expected_host_configuration)
+        .unwrap();
+    let host_by_function = kernel
+        .lam_at(binary_tail, host_function, host_body)
+        .unwrap();
+    let host_call = kernel
+        .lam_at(binary_ty, host_configuration, host_by_function)
+        .unwrap();
     let starts = execution
         .prove_admissible_start(
             &mut kernel,
@@ -2088,17 +2114,15 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let reachability = execution
         .assertion_reachability(&mut kernel, exported, host_call)
         .unwrap();
-    let final_state = witnesses[8];
+    let final_state = start.initial;
     let steps_at_final = kernel.app(execution.steps, start.initial).unwrap();
     let steps_at_final = kernel.app(steps_at_final, final_state).unwrap();
     let steps_fact = kernel
         .identity(covalence_logic_hol::Lit::positive(steps_at_final.get()))
         .unwrap();
-    let calls_at_final = kernel.app(host_call, final_state).unwrap();
-    let calls_at_final = kernel.app(calls_at_final, start.function).unwrap();
-    let calls_fact = kernel
-        .identity(covalence_logic_hol::Lit::positive(calls_at_final.get()))
-        .unwrap();
+    let calls_fact =
+        prove_reflexive_binary_application(&mut kernel, host_call, final_state, start.function)
+            .unwrap();
     let true_calls = reachability
         .prove_calls_assert(
             &mut kernel,
@@ -2108,7 +2132,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             final_state,
             starts.theorem,
             steps_fact,
-            calls_fact,
+            calls_fact.theorem,
         )
         .unwrap();
 
@@ -2181,7 +2205,6 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         initialization_before_equality,
         initialization_after_equality,
         steps_at_final,
-        calls_at_final,
         false_export_lists,
         empty_has_no_members,
     ]);

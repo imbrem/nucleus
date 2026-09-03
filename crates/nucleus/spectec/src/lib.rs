@@ -74,7 +74,7 @@ pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
 pub use wasm_logic::{
     AdmissibleStartFacts, AdmissibleStartWitness, ExportedFunctionView, SpecTecExecution,
     SpecTecValueBuilder, WasmLogicError, empty_wasm_module, forwarding_wasm_module,
-    spectec_execution,
+    prove_reflexive_binary_application, spectec_execution,
 };
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};
