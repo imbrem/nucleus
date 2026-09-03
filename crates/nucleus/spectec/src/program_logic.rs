@@ -1177,6 +1177,71 @@ impl ContextualObservation {
         })
     }
 
+    /// Proves two subjects contextually distinct when one is admissible and
+    /// the other is rejected by the same context.
+    ///
+    /// Contextual admissibility is observable in [`Self::equivalent`]. This
+    /// proof specializes an assumed equivalence, projects its admissibility
+    /// equality, transports the positive admissibility fact, and contradicts
+    /// the negative fact. Every semantic premise remains visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either admissibility theorem has the wrong signed
+    /// conclusion, or checked specialization, equality transport, or
+    /// classical refutation fails. `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_admissibility_distinct(
+        self,
+        kernel: &mut Kernel,
+        context: Ref,
+        left: Ref,
+        right: Ref,
+        left_admissible: ThmId,
+        right_not_admissible: ThmId,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        let equivalence = self.equivalent(&mut staged, left, right)?;
+        let assumed_equivalence = staged.identity(positive(equivalence))?;
+        let specialized = forall_elim(&mut staged, assumed_equivalence, context)?;
+        let at_context = self.at_context(&mut staged, context, left, right)?;
+        join_alpha_equivalent(&mut staged, specialized.proposition, at_context)?;
+        staged.convert_conclusions(specialized.theorem, specialized.proposition, at_context)?;
+        let [admissibility_equality, _] = binary_children(&staged, at_context)?;
+        let equality_fact =
+            staged.expand_conclusion(specialized.theorem, positive(at_context), Some(false))?;
+        let equality_operands = staged
+            .arena()
+            .children(admissibility_equality)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "contextual admissibility equality",
+            })?
+            .collect::<Vec<_>>();
+        let [_, left_ok, right_ok] = equality_operands.as_slice() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "contextual admissibility equality operands",
+            }
+            .into());
+        };
+        let left_fact = align_positive_fact(&mut staged, left_admissible, *left_ok)?;
+        let right_negative =
+            align_observation_fact(&mut staged, right_not_admissible, *right_ok, false)?;
+        let right_positive = staged.eq_mp(equality_fact, left_fact)?;
+        staged.not_left(right_positive, positive(*right_ok))?;
+        let contradiction = staged.cut(
+            right_negative,
+            right_positive,
+            positive(*right_ok).negated(),
+        )?;
+        staged.not_right(contradiction, positive(equivalence))?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: equivalence,
+            theorem: contradiction,
+            holds: false,
+        })
+    }
+
     /// Proves that one context distinguishes two subjects.
     ///
     /// The left observation must hold and the right observation must not hold;
@@ -2880,6 +2945,35 @@ mod tests {
             .unwrap();
         assert!(!distinct.holds);
         require_conclusion(&kernel, distinct).unwrap();
+
+        let right_not_ok = kernel.identity(positive(right_ok).negated()).unwrap();
+        let admissibility_distinct = schema
+            .prove_admissibility_distinct(
+                &mut kernel,
+                context,
+                left,
+                right,
+                left_ok_fact,
+                right_not_ok,
+            )
+            .unwrap();
+        EvidenceScope::signed(&[positive(left_ok), positive(right_ok).negated()])
+            .check(&kernel, admissibility_distinct)
+            .unwrap();
+        let before = kernel.arena().clone();
+        assert!(
+            schema
+                .prove_admissibility_distinct(
+                    &mut kernel,
+                    context,
+                    left,
+                    right,
+                    left_ok_fact,
+                    right_ok_fact,
+                )
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
     }
 
     #[test]

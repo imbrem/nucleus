@@ -113,7 +113,10 @@ module-observation context. It requires both sides to agree whether each
 context is admissible and, when admissible, to agree on the observation. Thus
 contextual rejection is observable and the relation is transitive. Checked
 reflexivity, symmetry, and transitivity theorems establish the equivalence
-laws. The checked replacement theorem proves that replacing a function by an
-equivalent function preserves module contextual equivalence. This theorem is
-structural and premise-free; it does not depend on an evaluator or on the
+laws, and a checked discriminator refutes equivalence when one side alone is
+admissible. Equivalence is relative to the observation predicate supplied by
+the caller; a complete Wasm observation suite belongs in that parameter. The
+checked replacement theorem proves that replacing a function by an equivalent
+function preserves the supplied module contextual equivalence. This theorem
+is structural and premise-free; it does not depend on an evaluator or on the
 pending concrete representation laws.
