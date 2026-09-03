@@ -134,9 +134,8 @@ pub type LitVec = SmallVec<[Lit; 2]>;
 
 /// An untrusted matrix of literal rows with positional tombstones.
 ///
-/// The turnstile side, not the type, fixes polarity: a left matrix denotes a
-/// conjunction of disjunctive rows and a right matrix denotes a disjunction of
-/// conjunctive rows. Nothing else ever distinguished the two former types.
+/// A left matrix is a conjunction of disjunctive rows. A right matrix is a
+/// disjunction of conjunctive rows.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct Matrix(Vec<Option<LitVec>>);
@@ -545,10 +544,9 @@ impl PartialEq for SyntaxSlot {
 
 impl Eq for SyntaxSlot {}
 
-/// Mutable checked-syntax storage with stable external handles and LIFO reuse.
+/// Mutable checked syntax with stable handles and LIFO reuse.
 ///
-/// Slots contain packed, validated syntax. They do not carry theorem
-/// authority; universal facts live in [`ClassicalKernel`].
+/// Universal facts live in [`ClassicalKernel`].
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ClassicalArena {
     slots: Vec<Option<SyntaxSlot>>,
@@ -779,14 +777,7 @@ struct TheoremSlot {
 }
 
 impl TheoremSlot {
-    fn new(theorem: tagged::Theorem, projection: &Projection) -> Self {
-        assert_eq!(
-            theorem
-                .checked()
-                .decode_sequents()
-                .expect("sealed syntax decodes"),
-            [projection.sequent()]
-        );
+    const fn new(theorem: tagged::Theorem) -> Self {
         Self { theorem }
     }
 
@@ -826,14 +817,18 @@ impl ClassicalKernel {
         self.slot(id).ok()?.view().ok()
     }
 
-    /// Borrows the sealed selected-runtime fact behind one live handle.
-    ///
-    /// This is the only read of the retained [`tagged::Theorem`]. The fact is
-    /// what distinguishes this store from [`ClassicalArena`], which merely
-    /// gates its syntax through canonical packing and discards the result.
+    /// Borrows the theorem fact behind a live handle.
     #[must_use]
     pub fn theorem_fact(&self, id: ThmId) -> Option<&tagged::Theorem> {
         self.slot(id).ok().map(|slot| &slot.theorem)
+    }
+
+    /// Derives the universal matrix refutation represented by a sealed
+    /// negative-`SAT` theorem.
+    #[must_use]
+    pub fn refutation(&self, id: ThmId) -> Option<ThmRef> {
+        let theorem = self.theorem_fact(id)?.refutation_to_false(0).ok()?;
+        TheoremSlot::new(theorem).view().ok()
     }
 
     fn slot(&self, id: ThmId) -> Result<&TheoremSlot, Error> {
@@ -859,21 +854,20 @@ impl ClassicalKernel {
         Ok(id)
     }
 
-    /// Seals an opaque checked refutation into a fresh tagged theorem slot.
+    /// Stores a checked refutation as a theorem fact.
     ///
     /// # Errors
     ///
     /// Returns an error if tagged packing fails or theorem storage is full.
     pub fn copy_refutation(&mut self, refutation: &Refutation) -> Result<ThmId, Error> {
         let theorem = tagged::Theorem::seal_refutation(refutation)?;
-        self.allocate(TheoremSlot::new(theorem, &refutation.projection))
+        self.allocate(TheoremSlot::new(theorem))
     }
 }
 
-/// An opaque certificate produced by checked RUP/RAT state transitions.
+/// A certificate produced by checked RUP/RAT transitions.
 ///
-/// It has no public constructor or deserializer. The sealed kernel may ingest
-/// it without retaining or replaying parser data.
+/// It has no public constructor or deserializer.
 #[derive(Clone, Debug)]
 pub struct Refutation {
     projection: Projection,
@@ -887,7 +881,27 @@ impl Refutation {
     }
 
     pub(crate) fn sequent_for_sealing(&self) -> Sequent {
-        self.projection.sequent()
+        let clauses = self
+            .projection
+            .0
+            .rows()
+            .map(|clause| {
+                junction(
+                    tagged::Side::Right,
+                    clause.iter().copied().map(Lit::formula).collect(),
+                )
+            })
+            .collect();
+        Sequent {
+            premise: Formula::And {
+                negative: false,
+                children: Vec::new(),
+            },
+            conclusion: Formula::Sat {
+                negative: true,
+                children: clauses,
+            },
+        }
     }
 }
 
@@ -1099,7 +1113,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_slots_pack_canonically_and_reuse_lifo_handles() {
+    fn checked_slots_reuse_lifo_handles() {
         let mut arena = ClassicalArena::new();
         let first = arena
             .insert(Matrix::new([row([-1])]), Matrix::default())
@@ -1165,12 +1179,19 @@ mod tests {
     }
 
     #[test]
-    fn opaque_refuter_certificate_seals_through_the_tagged_kernel() {
+    fn checked_refutation_enters_the_tagged_kernel() {
         let refutation = Refuter::new(Matrix::new([LitVec::new()])).done().unwrap();
         let mut kernel = ClassicalKernel::new();
         let id = kernel.copy_refutation(&refutation).unwrap();
-        assert_eq!(kernel.get(id).unwrap().lhs.to_rows(), vec![LitVec::new()]);
-        assert!(kernel.get(id).unwrap().rhs.rows().next().is_none());
+        // The generic matrix projection cannot express negative `SAT`; inspect
+        // the allocation-free tagged view instead.
+        assert!(kernel.get(id).is_none());
+        assert_eq!(kernel.refutation(id), Some(refutation.theorem()));
+        let view = kernel.theorem_fact(id).unwrap().checked().view(0).unwrap();
+        assert_eq!(view.premise.tag(), 0);
+        assert!(view.premise.is_empty());
+        assert_eq!(view.conclusion.tag(), 2);
+        assert!(view.conclusion.is_negative());
         assert_eq!(
             kernel
                 .theorem_fact(id)
@@ -1200,21 +1221,12 @@ mod tests {
     }
 
     #[test]
-    fn serde_rechecks_and_canonicalizes_runtime_storage() {
+    fn serde_round_trips_semantic_slots() {
         let mut arena = ClassicalArena::new();
         identity(&mut arena, Lit::positive(1)).unwrap();
         let mut bytes = Vec::new();
         covalence_lib_cbor::into_writer(&arena, &mut bytes).unwrap();
         let decoded: ClassicalArena = covalence_lib_cbor::from_reader(bytes.as_slice()).unwrap();
         assert_eq!(decoded, arena);
-        // Decoding re-gates every slot through canonical packing, which leaves
-        // no free blocks. The packed arena is checked here, not retained.
-        let sequent = decoded.slots[0]
-            .as_ref()
-            .unwrap()
-            .projection()
-            .unwrap()
-            .sequent();
-        assert!(tagged::pack(&[sequent]).unwrap().free_blocks().is_empty());
     }
 }

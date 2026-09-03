@@ -19,19 +19,13 @@ import Nucleus.Classical.Tagged.Abstract
 import Nucleus.Classical.Tagged.Equality
 import Nucleus.Classical.Tagged.Packed
 import Nucleus.Classical.Tagged.Rules
-import Nucleus.Classical.Tagged.Runtime
-import Nucleus.Classical.Tagged.Runtime.Allocator
-import Nucleus.Classical.Tagged.Runtime.Canonical
-import Nucleus.Classical.Tagged.Runtime.Cbor
-import Nucleus.Classical.Tagged.Runtime.Correspondence
-import Nucleus.Classical.Tagged.Runtime.Encode
-import Nucleus.Classical.Tagged.Runtime.EncodeCorrect
-import Nucleus.Classical.Tagged.Runtime.Equality
-import Nucleus.Classical.Tagged.Runtime.Matrix
-import Nucleus.Classical.Tagged.Runtime.Kernel
-import Nucleus.Classical.Tagged.Runtime.MachineWord
-import Nucleus.Classical.Tagged.Runtime.Mutate
-import Nucleus.Classical.Tagged.Runtime.Refutation
+import Nucleus.Classical.Tagged.RewriteRules
+import Nucleus.Classical.Tagged.Runtime.Shared
+import Nucleus.Classical.Tagged.Runtime.SharedRuntime
+import Nucleus.Classical.Tagged.Runtime.LengthIndex
+import Nucleus.Classical.Tagged.Runtime.SharedKernel
+import Nucleus.Classical.Tagged.Runtime.SemanticWire
+import Nucleus.Classical.Tagged.Runtime.V3
 
 /-!
 # Classical prover designs

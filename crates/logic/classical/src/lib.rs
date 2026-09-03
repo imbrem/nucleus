@@ -11,4 +11,7 @@ pub use cnf::{
     CheckedArena, ClassicalArena, ClassicalKernel, Error, Lit, LitError, LitVec, Matrix, RatGroup,
     Refutation, Refuter, RowId, ThmId, ThmRef,
 };
-pub use tagged::{Checked, EditError, Formula, RuntimeError, Sequent, Side, Theorem, pack};
+pub use tagged::{
+    Checked, EditError, Formula, FormulaKind, FormulaPath, FormulaView, ModelWitness, RuntimeError,
+    Sequent, SequentView, Side, Theorem,
+};

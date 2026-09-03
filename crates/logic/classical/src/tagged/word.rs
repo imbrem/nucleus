@@ -13,8 +13,8 @@ pub enum WordError {
         /// Rejected atom identifier.
         atom: u32,
     },
-    /// A packed array pointer was not nonzero, aligned, and tagged `AND`/`OR`/`SAT`.
-    #[snafu(display("invalid packed pointer base {base} with tag {tag}"))]
+    /// A packed reference was neither an aligned pointer nor a literal.
+    #[snafu(display("invalid packed reference base {base} with low bits {tag}"))]
     InvalidPointer {
         /// Rejected array base.
         base: u32,
@@ -35,7 +35,8 @@ pub enum WordError {
 /// One 32-bit sign-magnitude runtime word.
 ///
 /// Bit 31 is polarity. The low 31 bits are an unsigned payload whose bottom
-/// two bits are `AND = 0`, `OR = 1`, `SAT = 2`, and `literal = 3`.
+/// two bits distinguish aligned pointers (`00`) from literal immediates (`11`).
+/// A pointed-to live header stores its connective, size class, and refcount.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct Word(u32);
@@ -110,19 +111,14 @@ impl Word {
     ///
     /// # Errors
     ///
-    /// Returns an error unless `base` is nonzero and four-aligned, `tag` is
-    /// `AND`, `OR`, or `SAT`, and the complete payload fits.
-    pub fn pointer(base: u32, tag: u8, negative: bool) -> Result<Self, WordError> {
-        let valid = base != 0
-            && base.is_multiple_of(4)
-            && tag < 3
-            && base
-                .checked_add(u32::from(tag))
-                .is_some_and(|value| value <= PAYLOAD_MASK);
+    /// Returns an error unless `base` is nonzero, four-aligned, and fits the
+    /// payload. The constructor is stored in the target header.
+    pub fn pointer(base: u32, negative: bool) -> Result<Self, WordError> {
+        let valid = base != 0 && base.is_multiple_of(4) && base <= PAYLOAD_MASK;
         if !valid {
-            return Err(WordError::InvalidPointer { base, tag });
+            return Err(WordError::InvalidPointer { base, tag: 0 });
         }
-        Ok(Self::with_polarity(base + u32::from(tag), negative))
+        Ok(Self::with_polarity(base, negative))
     }
 
     /// Encodes one unsigned metadata value.
@@ -155,8 +151,13 @@ impl Ref {
     ///
     /// Returns an error for canonical zero and negative zero.
     pub const fn new(word: Word) -> Result<Self, WordError> {
-        if word.is_ref() {
+        if word.is_ref() && (word.tag() == 0 || word.tag() == 3) {
             Ok(Self(word))
+        } else if word.is_ref() {
+            Err(WordError::InvalidPointer {
+                base: word.base(),
+                tag: word.tag(),
+            })
         } else {
             Err(WordError::ZeroReference)
         }

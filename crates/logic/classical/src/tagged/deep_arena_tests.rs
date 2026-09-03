@@ -29,12 +29,12 @@ fn nested_chain(depth: usize) -> Arena {
             leaf
         } else {
             let next = u32::try_from(base + 4).expect("address fits");
-            Word::pointer(next, 0, false).expect("pointer fits")
+            Word::pointer(next, false).expect("pointer fits")
         };
-        words.extend([Word::natural(0).expect("size class fits"), child]);
+        words.extend([Word::from_raw(1 << 7), child]);
         words.extend([Word::ZERO, Word::ZERO]);
     }
-    let root = Ref::new(Word::pointer(4, 0, false).expect("pointer fits")).expect("root is a ref");
+    let root = Ref::new(Word::pointer(4, false).expect("pointer fits")).expect("root is a ref");
     let conclusion = Ref::new(leaf).expect("literal is a ref");
     Arena::new(words, Word::ZERO, vec![(root, conclusion)])
 }
@@ -94,6 +94,6 @@ fn a_chain_that_revisits_a_block_is_rejected() {
     // at the first makes one block reachable twice.
     let (mut words, free_root, roots) = nested_chain(1_000).into_parts();
     let last = 4 + 4 * 999;
-    words[last + 1] = Word::pointer(4, 0, false).expect("pointer fits");
+    words[last + 1] = Word::pointer(4, false).expect("pointer fits");
     assert!(Checked::check(Arena::new(words, free_root, roots)).is_err());
 }

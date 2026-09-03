@@ -607,6 +607,12 @@
           "kinds": [
             "lib"
           ]
+        },
+        {
+          "name": "slot_copy_cost",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     },
@@ -621,6 +627,12 @@
           "name": "covalence_logic_hol",
           "kinds": [
             "lib"
+          ]
+        },
+        {
+          "name": "fork_cost",
+          "kinds": [
+            "test"
           ]
         },
         {
@@ -1509,6 +1521,13 @@
     {
       "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-logic-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-logic-classical@0.0.0",
       "kinds": [
         "normal"
       ]

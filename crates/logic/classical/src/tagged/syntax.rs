@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 ///
 /// `Sat` binds every atom below it as a fresh uninterpreted Boolean variable.
 /// Its meaning is therefore independent of an ambient assignment.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum Formula {
     /// A signed Boolean atom.
     Literal {
@@ -37,6 +37,97 @@ pub enum Formula {
         children: Vec<Self>,
     },
 }
+
+impl Clone for Formula {
+    fn clone(&self) -> Self {
+        enum Task<'a> {
+            Visit(&'a Formula),
+            Finish {
+                tag: u8,
+                negative: bool,
+                children: usize,
+            },
+        }
+        let mut tasks = vec![Task::Visit(self)];
+        let mut built = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Self::Literal { atom, negative }) => built.push(Self::Literal {
+                    atom: *atom,
+                    negative: *negative,
+                }),
+                Task::Visit(formula) => {
+                    let (tag, negative, children) = match formula {
+                        Self::And { negative, children } => (0, *negative, children),
+                        Self::Or { negative, children } => (1, *negative, children),
+                        Self::Sat { negative, children } => (2, *negative, children),
+                        Self::Literal { .. } => unreachable!(),
+                    };
+                    tasks.push(Task::Finish {
+                        tag,
+                        negative,
+                        children: children.len(),
+                    });
+                    tasks.extend(children.iter().rev().map(Task::Visit));
+                }
+                Task::Finish {
+                    tag,
+                    negative,
+                    children,
+                } => {
+                    let first = built.len() - children;
+                    let children = built.drain(first..).collect();
+                    built.push(match tag {
+                        0 => Self::And { negative, children },
+                        1 => Self::Or { negative, children },
+                        2 => Self::Sat { negative, children },
+                        _ => unreachable!(),
+                    });
+                }
+            }
+        }
+        built.pop().expect("one formula is built")
+    }
+}
+
+impl PartialEq for Formula {
+    fn eq(&self, other: &Self) -> bool {
+        let mut pending = vec![(self, other)];
+        while let Some((left, right)) = pending.pop() {
+            if left.tag() != right.tag() || left.negative() != right.negative() {
+                return false;
+            }
+            match (left, right) {
+                (Self::Literal { atom: left, .. }, Self::Literal { atom: right, .. })
+                    if left == right => {}
+                (
+                    Self::And { children: left, .. },
+                    Self::And {
+                        children: right, ..
+                    },
+                )
+                | (
+                    Self::Or { children: left, .. },
+                    Self::Or {
+                        children: right, ..
+                    },
+                )
+                | (
+                    Self::Sat { children: left, .. },
+                    Self::Sat {
+                        children: right, ..
+                    },
+                ) if left.len() == right.len() => {
+                    pending.extend(left.iter().zip(right).rev());
+                }
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
+impl Eq for Formula {}
 
 impl Formula {
     /// Returns the same formula with its root polarity complemented.
@@ -112,14 +203,17 @@ impl Drop for Formula {
 
 impl Hash for Formula {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.tag().hash(state);
-        self.negative().hash(state);
-        match self {
-            Self::Literal { atom, .. } => atom.hash(state),
-            Self::And { children, .. } | Self::Or { children, .. } | Self::Sat { children, .. } => {
-                children.len().hash(state);
-                for child in children {
-                    child.hash(state);
+        let mut pending = vec![self];
+        while let Some(formula) = pending.pop() {
+            formula.tag().hash(state);
+            formula.negative().hash(state);
+            match formula {
+                Self::Literal { atom, .. } => atom.hash(state),
+                Self::And { children, .. }
+                | Self::Or { children, .. }
+                | Self::Sat { children, .. } => {
+                    children.len().hash(state);
+                    pending.extend(children.iter().rev());
                 }
             }
         }
@@ -142,4 +236,42 @@ pub enum Side {
     Left,
     /// The conclusion root.
     Right,
+}
+
+/// An abstract route to a formula in a sequent table.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct FormulaPath {
+    sequent: usize,
+    side: Side,
+    children: Vec<usize>,
+}
+
+impl FormulaPath {
+    /// Constructs a path from a sequent root and child indices.
+    #[must_use]
+    pub const fn new(sequent: usize, side: Side, children: Vec<usize>) -> Self {
+        Self {
+            sequent,
+            side,
+            children,
+        }
+    }
+
+    /// Returns the sequent-table index.
+    #[must_use]
+    pub const fn sequent(&self) -> usize {
+        self.sequent
+    }
+
+    /// Returns the selected side.
+    #[must_use]
+    pub const fn side(&self) -> Side {
+        self.side
+    }
+
+    /// Returns the child-index route below the root.
+    #[must_use]
+    pub fn children(&self) -> &[usize] {
+        &self.children
+    }
 }

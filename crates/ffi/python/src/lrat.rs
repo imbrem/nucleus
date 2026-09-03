@@ -4,6 +4,7 @@
 
 use std::fmt::Write as _;
 
+use crate::classical::PySequent;
 use crate::sat::{PyClause, PyLiteral};
 use covalence_lib_python::exceptions::create_exception;
 use covalence_lib_python::prelude::*;
@@ -45,8 +46,6 @@ fn formula(cnf: &Matrix) -> PyResult<Formula> {
     )
     .map_err(rejection)
 }
-
-type PyClassicalSequent = (Vec<Vec<i32>>, Vec<Vec<i32>>);
 
 #[pyclass(module = "covalence.logic.classical", name = "Cnf")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
@@ -182,25 +181,20 @@ impl PyClassicalKernel {
             .map_err(rejection)
     }
 
-    fn theorem(&self, theorem: i32) -> PyResult<PyClassicalSequent> {
+    fn theorem(&self, theorem: i32) -> PyResult<PySequent> {
         let id =
             ThmId::new(theorem).ok_or_else(|| rejection("theorem IDs are positive i32 values"))?;
         let theorem = self
             .0
-            .get(id)
+            .theorem_fact(id)
             .ok_or_else(|| rejection("theorem is absent"))?;
-        Ok((
-            theorem
-                .lhs
-                .rows()
-                .map(|row| row.iter().map(|literal| literal.get()).collect())
-                .collect(),
-            theorem
-                .rhs
-                .rows()
-                .map(|row| row.iter().map(|literal| literal.get()).collect())
-                .collect(),
-        ))
+        theorem
+            .checked()
+            .decode_sequents()
+            .map_err(rejection)?
+            .pop()
+            .map(PySequent)
+            .ok_or_else(|| rejection("theorem contains no sequent"))
     }
 }
 

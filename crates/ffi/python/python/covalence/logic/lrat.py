@@ -14,7 +14,7 @@ from .._covalence import (
     parse_binary,
     parse_text,
 )
-from .classical import ClassicalKernel, Cnf, Refutation
+from .classical import ClassicalKernel, Cnf, Refutation, Theorem
 from .hol import Kernel as _Kernel
 
 __all__ = [
@@ -23,6 +23,7 @@ __all__ = [
     "Step",
     "parse_binary",
     "parse_text",
+    "read_theorem",
     "replay_into_classical",
     "replay_into_syllogisms",
     "replay_into_theorems",
@@ -41,6 +42,11 @@ def _replay(cnf: Cnf, proof: str | bytes, binary: bool) -> Refutation:
     if not isinstance(proof, str):
         raise TypeError("text LRAT must be str")
     return Refutation.from_text_lrat(cnf, proof)
+
+
+def read_theorem(cnf: Cnf, proof: str | bytes, *, binary: bool = False) -> Theorem:
+    """Check an LRAT proof and return ``|- -SAT(OR(clause)...)``."""
+    return Theorem.from_refutation(_replay(cnf, proof, binary))
 
 
 def replay_into_classical(

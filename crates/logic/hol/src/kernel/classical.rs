@@ -154,9 +154,11 @@ impl Kernel {
         theorem: ThmId,
         formula: Lit,
     ) -> Result<ThmId, KernelError> {
-        let theorem = source.get(theorem).ok_or(KernelError::InvalidTheoremRule {
-            rule: "classical refutation import",
-        })?;
+        let theorem = source
+            .refutation(theorem)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "classical refutation import",
+            })?;
         if theorem.rhs.rows().next().is_some() {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "classical refutation conclusion",

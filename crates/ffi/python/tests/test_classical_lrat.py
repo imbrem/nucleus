@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import shutil
+from typing import Any
 
 import pytest
 from covalence.logic.classical import ClassicalKernel, Cnf, Dnf, Refutation
 from covalence.logic.hol import Kernel
 from covalence.logic.lrat import (
+    read_theorem,
     replay_into_classical,
     replay_into_syllogisms,
     replay_into_theorems,
@@ -15,6 +17,11 @@ from covalence.logic.lrat import (
 DIMACS = b"p cnf 1 2\n1 0\n-1 0\n"
 TEXT_LRAT = "3 0 1 2 0\n"
 BINARY_LRAT = bytes([ord("a"), 6, 0, 2, 4, 0])
+
+
+def assert_refutation_sequent(theorem: Any) -> None:
+    assert theorem.premise.kind == "and" and theorem.premise.children == []
+    assert theorem.conclusion.kind == "sat" and theorem.conclusion.negative
 
 
 def test_non_normal_matrices_and_both_lrat_encodings() -> None:
@@ -38,7 +45,8 @@ def test_refutations_copy_into_all_three_checked_targets() -> None:
     refutation = Refutation.from_text_lrat(Cnf.from_dimacs(DIMACS), TEXT_LRAT)
     classical = ClassicalKernel()
     theorem = classical.copy_refutation(refutation)
-    assert classical.theorem(theorem) == ([[1], [-1]], [])
+    assert_refutation_sequent(classical.theorem(theorem))
+    assert_refutation_sequent(read_theorem(Cnf.from_dimacs(DIMACS), TEXT_LRAT).sequents[0])
 
     hol = Kernel()
     assert hol.copy_refutation_to_syllogisms(refutation) == 1
@@ -46,10 +54,7 @@ def test_refutations_copy_into_all_three_checked_targets() -> None:
     assert hol.theorem(theorem) == ([[1], [-1]], [])
 
     problem = Cnf.from_dimacs(DIMACS)
-    assert replay_into_classical(problem, TEXT_LRAT).theorem(1) == (
-        [[1], [-1]],
-        [],
-    )
+    assert_refutation_sequent(replay_into_classical(problem, TEXT_LRAT).theorem(1))
     hol = Kernel()
     assert replay_into_syllogisms(hol, problem, BINARY_LRAT, binary=True) == 1
     theorem = replay_into_theorems(hol, problem, TEXT_LRAT)

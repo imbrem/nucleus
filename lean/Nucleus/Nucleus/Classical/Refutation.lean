@@ -124,6 +124,10 @@ def sequent (value : Cnf Atom) : Tagged.Sequent Atom :=
 def satSequent (value : Cnf Atom) : Tagged.Sequent Atom :=
   ⟨sat value, falsity Atom⟩
 
+/-- The closed refutation fact emitted by certificate checking. -/
+def closedRefutation (value : Cnf Atom) : Tagged.Sequent Atom :=
+  ⟨Tagged.Formula.conjunction [], (sat value).neg⟩
+
 @[simp] theorem clause_eval (assignment : Assignment Atom) (value : Clause Atom) :
     (clause value).Eval assignment ↔
       value.Holds (Matrix.boolValuation assignment) := by
@@ -246,6 +250,25 @@ theorem satSequent_entailsAt_iff (known : PartialAssignment Atom)
     exact (satSequent_holds completion value).mp (holds completion completes)
   · intro unsat _ _
     exact (satSequent_holds _ value).mpr unsat
+
+theorem closedRefutation_entailsAt_iff (known : PartialAssignment Atom)
+    (value : Cnf Atom) :
+    (closedRefutation value).EntailsAt known ↔ Matrix.BooleanUnsat value := by
+  constructor
+  · intro holds
+    obtain ⟨assignment, completes⟩ := known.exists_completion
+    have truth : (Tagged.Formula.conjunction []).Eval assignment := by
+      rw [Tagged.Formula.eval_conjunction]
+      simp
+    have negated := holds assignment completes truth
+    exact (Matrix.booleanUnsat_iff_not_satisfiable value).mpr (by
+      intro satisfiable
+      have satTrue : (sat value).Eval assignment := (sat_eval assignment value).mpr satisfiable
+      exact (Tagged.Formula.eval_neg (sat value) assignment).mp negated satTrue)
+  · intro unsat assignment _ _
+    apply (Tagged.Formula.eval_neg (sat value) assignment).mpr
+    exact (sat_eval assignment value).not.mpr
+      ((Matrix.booleanUnsat_iff_not_satisfiable value).mp unsat)
 
 /-- Exact bridge to the existing empty-DNF refutation theorem. -/
 theorem sequent_syllogism_iff_legacy (value : Cnf Atom) :

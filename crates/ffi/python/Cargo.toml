@@ -31,6 +31,7 @@ covalence-data-cbor = { path = "../../data/cbor" }
 covalence-data-sexpr = { path = "../../data/sexpr" }
 covalence-lib-python = { path = "../../lib/python" }
 covalence-logic-cas = { path = "../../logic/cas" }
+covalence-logic-classical = { path = "../../logic/classical" }
 covalence-logic-lrat = { path = "../../logic/lrat" }
 covalence-logic-metamath = { path = "../../logic/metamath" }
 covalence-logic-sat = { path = "../../logic/sat" }

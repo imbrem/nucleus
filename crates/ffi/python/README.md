@@ -131,6 +131,29 @@ evidence from being reused after its slot is overwritten or across kernels.
 True
 ```
 
+`covalence.logic.classical` keeps packed storage private. `Formula`, `Sequent`,
+and `Arena` are ordinary owned syntax; checking an arena validates and packs it
+without granting theorem authority. `CheckedArena.sequent()` returns views
+which inspect packed formulas without decoding or copying their storage.
+`Theorem` is sealed and is created only by checked rules, including checked
+LRAT replay. Its `push`, `pop`, and `cross` primitives mutate owned theorem
+roots while the kernel preserves validity. `Path` selects nested formulas for
+De Morgan, contradiction, flattening, permutation, deduplication, and checked
+equivalence rewrites. `ModelWitness.check` validates an explicit assignment
+before the SAT theorem constructors accept it. Python sorting remains an
+untrusted helper: the kernel checks its proposed index permutation.
+
+```python
+>>> from covalence.logic.classical import Arena, Formula, Sequent, Theorem
+>>> p = Formula.literal(1, False)
+>>> checked = Arena([Sequent(Formula.and_([p], False), Formula.or_([], False))]).check()
+>>> checked.sequent(0).premise.child(0).atom
+1
+>>> theorem = Theorem.identity(p)
+>>> theorem.sequents[0].premise.atom
+1
+```
+
 `Strategy` instantiates a portable WASM component implementing the
 `nucleus:proof/proof` world once and may be called repeatedly. Its one portable
 operation applies a numeric tactic with small byte arguments to an optional

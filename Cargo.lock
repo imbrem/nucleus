@@ -1090,6 +1090,7 @@ dependencies = [
  "covalence-lib-hash",
  "covalence-lib-python",
  "covalence-logic-cas",
+ "covalence-logic-classical",
  "covalence-logic-hol",
  "covalence-logic-lrat",
  "covalence-logic-metamath",

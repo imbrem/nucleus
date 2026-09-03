@@ -1,8 +1,6 @@
 //! Tagged formula storage and theorem rules.
 //!
-//! Validation uses an explicit worklist and a bitmap for ownership. A checked
-//! value stores only words and roots; decoded syntax is never retained beside
-//! it.
+//! Checked values expose semantic views while allocator storage remains private.
 
 mod kernel;
 mod runtime;
@@ -16,11 +14,12 @@ mod deep_arena_tests;
 #[cfg(test)]
 mod validator_tests;
 
-pub use kernel::{EditError, Theorem};
+pub use kernel::{EditError, ModelWitness, Theorem};
 #[cfg(test)]
 pub(crate) use runtime::Arena;
-pub use runtime::{Checked, RuntimeError, pack};
-pub use syntax::{Formula, Sequent, Side};
+pub(crate) use runtime::pack;
+pub use runtime::{Checked, FormulaKind, FormulaView, RuntimeError, SequentView};
+pub use syntax::{Formula, FormulaPath, Sequent, Side};
 pub use word::WordError;
 pub(crate) use word::{Ref, Word};
 
@@ -67,7 +66,7 @@ mod tests {
     }
 
     fn pointer(base: u32) -> Word {
-        Word::pointer(base, 0, false).expect("test pointer must fit")
+        Word::pointer(base, false).expect("test pointer must fit")
     }
 
     #[test]
@@ -203,22 +202,6 @@ mod tests {
 
         assert_ne!(canonical.arena(), with_free.arena());
         assert_eq!(canonical, with_free);
-        let (words, _, roots) = with_free.arena().clone().into_parts();
-        assert!(
-            Checked::from_snapshot(
-                words.into_iter().map(Word::raw).collect(),
-                roots
-                    .into_iter()
-                    .map(|(left, right)| (left.word().raw(), right.word().raw()))
-                    .collect(),
-            )
-            .is_err()
-        );
-        let snapshot = canonical.snapshot();
-        assert_eq!(
-            Checked::from_snapshot(snapshot.0, snapshot.1).unwrap(),
-            canonical
-        );
         let mut canonical_hash = DefaultHasher::new();
         canonical.hash(&mut canonical_hash);
         let mut with_free_hash = DefaultHasher::new();
@@ -255,8 +238,6 @@ mod tests {
 
     #[test]
     fn identity_proves_a_formula_from_itself() {
-        // Mutation testing found nothing pinned this: `identity` could be made
-        // to conclude the negation of its premise and every test still passed.
         for formula in [
             literal(1),
             Formula::Literal {
@@ -295,14 +276,11 @@ mod tests {
             children: vec![q.clone(), p.clone(), p.clone()],
         };
         let identity = Theorem::identity(formula).unwrap();
-        let sorted = identity
-            .canonical_sort_root_by_key(0, super::Side::Left, |formula| match formula {
-                Formula::Literal { atom, .. } => *atom,
-                _ => u32::MAX,
-            })
-            .unwrap();
-        let deduped = sorted.canonical_dedupe_root(0, super::Side::Left).unwrap();
-        let weakened = deduped.weaken(0, super::Side::Left, q.clone()).unwrap();
+        let path = super::FormulaPath::new(0, super::Side::Left, Vec::new());
+        let mut weakened = identity;
+        weakened.permute_mut(&path, &[1, 0, 2]).unwrap();
+        weakened.dedup_local_mut(&path, 2, 0).unwrap();
+        weakened.weaken_mut(0, super::Side::Left, &q).unwrap();
         let combined = weakened
             .append(&Theorem::identity(q.clone()).unwrap())
             .unwrap();

@@ -171,6 +171,47 @@ private theorem selected_entailsAt {fact : Theorem payloadWidth}
   intro assignment completes
   exact sound assignment completes sequent (member_of_getElem? selected)
 
+def refutationToFalseTarget? : Tagged.Sequent Nat → Option (Tagged.Sequent Nat)
+  | ⟨.and false [], .sat true children⟩ =>
+      some ⟨.and false children, .or false []⟩
+  | _ => none
+
+private theorem refutationToFalse_sound {children : List (Tagged.Formula Nat)}
+    {fact : Theorem payloadWidth} {index : Nat} {checked : Checked payloadWidth}
+    (selected : fact.checked.decoded.sequents[index]? =
+      some ⟨.and false [], .sat true children⟩)
+    (packed : Encode.pack? payloadWidth
+      [⟨.and false children, .or false []⟩] = some checked) :
+    Mutate.Syllogism checked := by
+  have sourceSound := selected_entailsAt selected
+  have targetSound :
+      (Tagged.Sequent.mk (.and false children) (.or false [])).EntailsAt
+        Classical.bottom := by
+    intro assignment completes
+    exact Tagged.Sequent.Holds.refutationToSequent assignment children
+      (sourceSound assignment completes)
+  have decoded := (Encode.pack?_result packed).2.1
+  unfold Mutate.Syllogism Mutate.EntailsAt
+  rw [decoded]
+  intro assignment completes sequent member
+  have equal : sequent = ⟨.and false children, .or false []⟩ := by
+    simpa using member
+  subst sequent
+  exact targetSound assignment completes
+
+/-- Turn `true ⊢ ¬sat(A)` into the universal refutation `and(A) ⊢ false`. -/
+def refutationToFalse? (fact : Theorem payloadWidth) (index : Nat) :
+    Option (Theorem payloadWidth) :=
+  match selected : fact.checked.decoded.sequents[index]? with
+  | none => none
+  | some ⟨.and false [], .sat true children⟩ =>
+      match packed : Encode.pack? payloadWidth
+          [⟨.and false children, .or false []⟩] with
+      | none => none
+      | some checked => some ⟨checked,
+          refutationToFalse_sound selected packed⟩
+  | some _ => none
+
 private theorem cut_sound {left right : Theorem payloadWidth}
     {leftIndex rightIndex : Nat} {pivot : Tagged.Formula Nat}
     {leftSequent rightSequent result : Tagged.Sequent Nat}
@@ -565,18 +606,20 @@ private theorem checkedRefutation_sound
     {checked : Checked payloadWidth}
     (certificate : Runtime.Refutation.Checker.Result initial)
     (packed : Encode.pack? payloadWidth
-      [Nucleus.Classical.Refutation.Tagged.sequent initial] = some checked) :
+      [Nucleus.Classical.Refutation.Tagged.closedRefutation initial] = some checked) :
     Mutate.Syllogism checked := by
   have decoded := (Encode.pack?_result packed).2.1
   have unsat : Nucleus.Classical.Refutation.Matrix.BooleanUnsat initial :=
     (Nucleus.Classical.Refutation.Matrix.booleanUnsat_iff_legacy initial).mpr
       certificate.unsat
   have sound :=
-    (Nucleus.Classical.Refutation.Tagged.sequent_syllogism_iff initial).mpr unsat
+    (Nucleus.Classical.Refutation.Tagged.closedRefutation_entailsAt_iff
+      Classical.bottom initial).mpr unsat
   unfold Mutate.Syllogism Mutate.EntailsAt
   rw [decoded]
   intro assignment completes sequent member
-  have equal : sequent = Nucleus.Classical.Refutation.Tagged.sequent initial := by
+  have equal : sequent =
+      Nucleus.Classical.Refutation.Tagged.closedRefutation initial := by
     simpa using member
   subst sequent
   exact sound assignment completes
@@ -590,7 +633,7 @@ def sealRefutation? (payloadWidth : Nat)
     (certificate : Runtime.Refutation.Checker.Result initial) :
     Option (Theorem payloadWidth) :=
   match packed : Encode.pack? payloadWidth
-    [Nucleus.Classical.Refutation.Tagged.sequent initial] with
+    [Nucleus.Classical.Refutation.Tagged.closedRefutation initial] with
   | none => none
   | some checked => some ⟨checked, checkedRefutation_sound certificate packed⟩
 
@@ -600,7 +643,7 @@ theorem sealRefutation?_decoded {payloadWidth : Nat}
     {result : Theorem payloadWidth}
     (sealed : sealRefutation? payloadWidth initial certificate = some result) :
     result.checked.decoded.sequents =
-      [Nucleus.Classical.Refutation.Tagged.sequent initial] := by
+      [Nucleus.Classical.Refutation.Tagged.closedRefutation initial] := by
   unfold sealRefutation? at sealed
   split at sealed
   · contradiction
@@ -617,7 +660,7 @@ theorem sealRefutation?_complete {payloadWidth : Nat}
     {initial : Nucleus.Hol.Ethane.ClassicalMatrix.Cnf Nat}
     {certificate : Runtime.Refutation.Checker.Result initial}
     (fits : Encode.Fits payloadWidth
-      [Nucleus.Classical.Refutation.Tagged.sequent initial]) :
+      [Nucleus.Classical.Refutation.Tagged.closedRefutation initial]) :
     ∃ result, sealRefutation? payloadWidth initial certificate = some result := by
   obtain ⟨checked, packed⟩ := Encode.pack?_complete fits
   unfold sealRefutation?
@@ -641,7 +684,7 @@ theorem checkRefutation?_decoded {payloadWidth : Nat}
     {result : Theorem payloadWidth}
     (accepted : checkRefutation? payloadWidth initial steps = some result) :
     result.checked.decoded.sequents =
-      [Nucleus.Classical.Refutation.Tagged.sequent initial] := by
+      [Nucleus.Classical.Refutation.Tagged.closedRefutation initial] := by
   unfold checkRefutation? at accepted
   cases replayed : Runtime.Refutation.Checker.refute? initial steps with
   | none => simp [replayed] at accepted
@@ -655,8 +698,8 @@ member.  No signature or content address can replace this semantic evidence. -/
 theorem refutes {fact : Theorem payloadWidth}
     {value : Nucleus.Hol.Ethane.ClassicalMatrix.Cnf Nat}
     (member : Runtime.Refutation.Contains fact.checked
-      (Nucleus.Classical.Refutation.Tagged.sequent value)) :
+      (Nucleus.Classical.Refutation.Tagged.closedRefutation value)) :
     Nucleus.Classical.Refutation.Matrix.BooleanUnsat value :=
-  Runtime.Refutation.unsat_of_sequent fact.sound member
+  Runtime.Refutation.unsat_of_closedRefutation fact.sound member
 
 end Nucleus.Classical.Tagged.Runtime.Kernel
