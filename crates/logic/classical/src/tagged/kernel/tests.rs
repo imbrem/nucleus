@@ -128,6 +128,46 @@ mod tests {
     }
 
     #[test]
+    fn public_refcount_overflow_is_recoverable_and_nonmutating() {
+        use crate::tagged::{Arena, Ref, Word};
+
+        const REFCOUNT_MAX: u32 = (1 << 25) - 1;
+        let parent = Ref::new(Word::pointer(4, false).unwrap()).unwrap();
+        let child = Ref::new(Word::pointer(8, false).unwrap()).unwrap();
+        let arena = Arena::new(
+            vec![
+                Word::ZERO,
+                Word::ZERO,
+                Word::ZERO,
+                Word::ZERO,
+                Word::from_raw(2 << 7),
+                child.word(),
+                child.word(),
+                Word::ZERO,
+                Word::from_raw(REFCOUNT_MAX << 7),
+                Word::ZERO,
+                Word::ZERO,
+                Word::ZERO,
+            ],
+            Word::ZERO,
+            vec![(parent, parent)],
+        );
+        let mut theorem = Theorem {
+            checked: Checked::check(arena).unwrap(),
+        };
+        let before = theorem.clone();
+
+        assert_eq!(
+            theorem.weaken_mut(0, Side::Left, &literal(1)),
+            Err(EditError::Runtime {
+                source: RuntimeError::RefcountOverflow,
+            })
+        );
+        assert_eq!(theorem, before);
+        Checked::check(theorem.checked.arena().clone()).unwrap();
+    }
+
+    #[test]
     fn refutation_bridge_produces_empty_disjunction() {
         let clause = Formula::Or {
             negative: false,
