@@ -2166,16 +2166,20 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let false_export_lists = export_view
         .program_export_lists_equal(&mut kernel, execution, empty_module, instructions)
         .unwrap();
-    let empty_has_no_members = export_view
-        .list_has_no_members(&mut kernel, instructions)
+    let empty_membership = builder.list_membership_law(&mut kernel, &[]).unwrap();
+    assert_eq!(empty_membership.list(), instructions);
+    let empty_membership_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            empty_membership.proposition().get(),
+        ))
+        .unwrap();
+    let empty_has_no_members = builder
+        .sequence_algebra(&mut kernel)
+        .unwrap()
+        .prove_empty_has_no_members(&mut kernel, &empty_membership, empty_membership_fact)
         .unwrap();
     let false_export_lists_fact = kernel
         .identity(covalence_logic_hol::Lit::positive(false_export_lists.get()))
-        .unwrap();
-    let empty_has_no_members_fact = kernel
-        .identity(covalence_logic_hol::Lit::positive(
-            empty_has_no_members.get(),
-        ))
         .unwrap();
     let no_export_entries = export_view
         .prove_no_export_entries_from_list_invariant(
@@ -2184,7 +2188,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             empty_module,
             instructions,
             false_export_lists_fact,
-            empty_has_no_members_fact,
+            empty_has_no_members.theorem,
         )
         .unwrap();
     let cannot_export = export_view
@@ -2234,7 +2238,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         final_before_equality,
         final_after_equality,
         false_export_lists,
-        empty_has_no_members,
+        empty_membership.proposition(),
     ]);
     document
         .evidence_scope(&grounding)

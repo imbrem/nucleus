@@ -12,9 +12,9 @@ use covalence_logic_hol_derived::{
 };
 
 use crate::{
-    AssertionReachability, ContextualObservation, Evidence, FunctionObservation,
+    AssertionReachability, ContextualObservation, Evidence, FiniteSequenceLaw, FunctionObservation,
     ParameterizedDocument, StructuralConstructor, StructuralConstructorLaws,
-    StructuralValueAlgebra,
+    StructuralSequenceAlgebra, StructuralValueAlgebra,
 };
 
 fn application_spine(kernel: &Kernel, mut value: Ref) -> (Ref, Vec<Ref>) {
@@ -358,6 +358,46 @@ impl<'a> SpecTecValueBuilder<'a> {
             &[self.value_ty(), self.value_ty()],
             self.document.schema.bool_ty(),
         )
+    }
+
+    /// Returns the exact recorded sequence-membership operation as a generic
+    /// checked sequence algebra.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the lowering recorded a compatible membership
+    /// predicate. `kernel` is unchanged on failure.
+    pub fn sequence_algebra(
+        self,
+        kernel: &mut Kernel,
+    ) -> Result<StructuralSequenceAlgebra, WasmLogicError> {
+        let member = self.membership_predicate()?;
+        StructuralSequenceAlgebra::new(kernel, self.algebra(), member)
+            .map_err(|source| WasmLogicError::Kernel { source })
+    }
+
+    /// Constructs finite membership semantics for the exact recorded
+    /// `SpecTec` list constructor at `elements.len()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the list constructor or membership operation is
+    /// absent or incompatible, or checked law construction fails. `kernel` is
+    /// unchanged on failure.
+    pub fn list_membership_law(
+        self,
+        kernel: &mut Kernel,
+        elements: &[Ref],
+    ) -> Result<FiniteSequenceLaw, WasmLogicError> {
+        let mut staged = kernel.fork();
+        let constructor =
+            self.structural_constructor(&mut staged, "expression:List", elements.len())?;
+        let sequence = self.sequence_algebra(&mut staged)?;
+        let law = sequence
+            .membership_law(&mut staged, constructor, elements)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        *kernel = staged;
+        Ok(law)
     }
 
     /// Constructs a relational graph for one exact record-field operation.

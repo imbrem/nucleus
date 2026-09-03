@@ -8,11 +8,16 @@
 
 use std::sync::Arc;
 
+use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    Kernel, KernelError, Ref,
+    Kernel, KernelError, Lit, Ref, ThmId,
     builtin::{Op1, Op2},
 };
-use covalence_logic_hol_derived::join_same_syntax;
+use covalence_logic_hol_derived::{
+    ForallError, SyntaxError, forall_elim, join_alpha_equivalent, join_same_syntax,
+};
+
+use crate::Evidence;
 
 /// One validated constructor in an erased structural-value algebra.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,6 +57,278 @@ pub struct StructuralValueAlgebra {
 pub struct StructuralConstructorLaws {
     constructors: Arc<[StructuralConstructor]>,
     propositions: Arc<[Ref]>,
+}
+
+/// One finite structural sequence and its exact membership-law proposition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FiniteSequenceLaw {
+    list: Ref,
+    elements: Arc<[Ref]>,
+    binder: Ref,
+    proposition: Ref,
+}
+
+impl FiniteSequenceLaw {
+    /// Returns the structural list term.
+    #[must_use]
+    pub const fn list(&self) -> Ref {
+        self.list
+    }
+
+    /// Returns the elements in semantic order.
+    #[must_use]
+    pub fn elements(&self) -> &[Ref] {
+        &self.elements
+    }
+
+    /// Returns `forall x. member x list = (x=e0 or ...)`.
+    #[must_use]
+    pub const fn proposition(&self) -> Ref {
+        self.proposition
+    }
+}
+
+/// A checked membership operation over one structural-value carrier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StructuralSequenceAlgebra {
+    values: StructuralValueAlgebra,
+    member: Ref,
+}
+
+impl StructuralSequenceAlgebra {
+    /// Validates `member : value -> value -> bool`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `member` has the exact required classifier.
+    /// `kernel` is unchanged on failure.
+    pub fn new(
+        kernel: &mut Kernel,
+        values: StructuralValueAlgebra,
+        member: Ref,
+    ) -> Result<Self, KernelError> {
+        let mut staged = kernel.fork();
+        let tail = staged.ty_arr(values.value_ty, values.bool_ty)?;
+        let expected = staged.ty_arr(values.value_ty, tail)?;
+        let actual = staged.classifier(member)?;
+        join_same_syntax(&mut staged, actual, expected)
+            .map_err(|_| KernelError::ClassifierMismatch { expected, actual })?;
+        *kernel = staged;
+        Ok(Self { values, member })
+    }
+
+    /// Returns the checked membership predicate.
+    #[must_use]
+    pub const fn member(self) -> Ref {
+        self.member
+    }
+
+    /// Constructs exact finite membership semantics for one list constructor.
+    ///
+    /// For elements `[e0, ...]`, the proposition is
+    /// `forall x. member x (list e0 ...) = (x=e0 or ...)`. The empty
+    /// disjunction is false. This creates no theorem fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `list_constructor` belongs to this value
+    /// algebra with arity equal to `elements.len()`, every element has the
+    /// value classifier, and checked construction succeeds. `kernel` is
+    /// unchanged on failure.
+    pub fn membership_law(
+        self,
+        kernel: &mut Kernel,
+        list_constructor: StructuralConstructor,
+        elements: &[Ref],
+    ) -> Result<FiniteSequenceLaw, KernelError> {
+        let mut staged = kernel.fork();
+        self.values
+            .require_constructor(&mut staged, list_constructor)?;
+        if list_constructor.arity != elements.len() {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "finite sequence constructor arity",
+            });
+        }
+        for &element in elements {
+            let actual = staged.classifier(element)?;
+            join_same_syntax(&mut staged, actual, self.values.value_ty).map_err(|_| {
+                KernelError::ClassifierMismatch {
+                    expected: self.values.value_ty,
+                    actual,
+                }
+            })?;
+        }
+        let list = apply(&mut staged, list_constructor.operation, elements)?;
+        let mut roots = vec![
+            self.values.value_ty,
+            self.values.bool_ty,
+            self.member,
+            list_constructor.operation,
+            list,
+        ];
+        roots.extend_from_slice(elements);
+        let candidate = staged.tm_fv(staged.fresh_name(&roots)?, self.values.value_ty)?;
+        let contains = apply(&mut staged, self.member, &[candidate, list])?;
+        let mut enumerated = staged.bool(self.values.bool_ty, false)?;
+        for &element in elements.iter().rev() {
+            let equal = staged.eq(self.values.bool_ty, candidate, element)?;
+            enumerated = staged.op2(Op2::Or, equal, enumerated)?;
+        }
+        let exact = staged.eq(self.values.bool_ty, contains, enumerated)?;
+        let proposition = staged.forall_tm(self.values.bool_ty, candidate, exact)?;
+        let law = FiniteSequenceLaw {
+            list,
+            elements: Arc::from(elements),
+            binder: candidate,
+            proposition,
+        };
+        *kernel = staged;
+        Ok(law)
+    }
+
+    /// Constructs `forall x. not (member x list)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `list` has the value classifier or checked
+    /// construction fails. `kernel` is unchanged on failure.
+    pub fn no_members(self, kernel: &mut Kernel, list: Ref) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let actual = staged.classifier(list)?;
+        join_same_syntax(&mut staged, actual, self.values.value_ty).map_err(|_| {
+            KernelError::ClassifierMismatch {
+                expected: self.values.value_ty,
+                actual,
+            }
+        })?;
+        let candidate = staged.tm_fv(
+            staged.fresh_name(&[self.values.value_ty, self.values.bool_ty, self.member, list])?,
+            self.values.value_ty,
+        )?;
+        let contains = apply(&mut staged, self.member, &[candidate, list])?;
+        let absent = staged.op1(Op1::Not, contains)?;
+        let proposition = staged.forall_tm(self.values.bool_ty, candidate, absent)?;
+        *kernel = staged;
+        Ok(proposition)
+    }
+
+    /// Derives absence of members from checked exact membership semantics for
+    /// an empty finite sequence.
+    ///
+    /// Every premise of `membership_fact` remains visible. No property of the
+    /// membership operation is assumed beyond the supplied checked theorem.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `law` has no elements and `membership_fact`
+    /// positively proves its exact proposition, or a checked specialization,
+    /// equality, contradiction, universal, or alignment step fails. `kernel`
+    /// is unchanged on failure.
+    pub fn prove_empty_has_no_members(
+        self,
+        kernel: &mut Kernel,
+        law: &FiniteSequenceLaw,
+        membership_fact: ThmId,
+    ) -> Result<Evidence, StructuralValueProofError> {
+        if !law.elements.is_empty() {
+            return Err(StructuralValueProofError::NonemptySequence);
+        }
+        let mut staged = kernel.fork();
+        let source = positive_conclusion(&staged, membership_fact)?;
+        let membership_fact = staged.copy_theorem(membership_fact)?;
+        if source != law.proposition {
+            join_alpha_equivalent(&mut staged, source, law.proposition)?;
+            staged.convert_conclusions(membership_fact, source, law.proposition)?;
+        }
+        let candidate = staged.tm_fv(
+            staged.fresh_name(&[
+                self.values.value_ty,
+                self.values.bool_ty,
+                self.member,
+                law.list,
+                law.binder,
+                law.proposition,
+            ])?,
+            self.values.value_ty,
+        )?;
+        let specialized = forall_elim(&mut staged, membership_fact, candidate)?;
+        let contains = apply(&mut staged, self.member, &[candidate, law.list])?;
+        let falsehood = staged.bool(self.values.bool_ty, false)?;
+        let equality = staged.eq(self.values.bool_ty, contains, falsehood)?;
+        join_alpha_equivalent(&mut staged, specialized.proposition, equality)?;
+        staged.convert_conclusions(specialized.theorem, specialized.proposition, equality)?;
+        let assumed = staged.identity(positive(contains))?;
+        let impossible = staged.eq_mp(specialized.theorem, assumed)?;
+        let false_left = staged.false_left(positive(falsehood))?;
+        let contradiction = staged.cut(impossible, false_left, positive(falsehood))?;
+        staged.not_right(contradiction, positive(contains))?;
+        let absent = staged.op1(Op1::Not, contains)?;
+        let flattened = staged.flatten_conclusion(contradiction, positive(contains).negated())?;
+        let absent_fact = staged.fold_conclusion(flattened, positive(absent))?;
+        let direct = staged.forall_tm(self.values.bool_ty, candidate, absent)?;
+        let theorem = staged.forall_intro_at(absent_fact, candidate, direct)?;
+        let canonical = self.no_members(&mut staged, law.list)?;
+        join_alpha_equivalent(&mut staged, direct, canonical)?;
+        staged.convert_conclusions(theorem, direct, canonical)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: canonical,
+            theorem,
+            holds: true,
+        })
+    }
+}
+
+/// Failure to derive a checked structural-value algebra law.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum StructuralValueProofError {
+    /// Empty-sequence elimination was requested for a nonempty law.
+    #[snafu(display("expected an empty finite-sequence law"))]
+    NonemptySequence,
+    /// A checked kernel operation failed.
+    #[snafu(transparent)]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+    /// Universal specialization failed.
+    #[snafu(transparent)]
+    Forall {
+        /// Underlying derived universal-elimination failure.
+        source: ForallError,
+    },
+    /// Checked formulas could not be aligned.
+    #[snafu(transparent)]
+    Syntax {
+        /// Underlying alpha-equivalence failure.
+        source: SyntaxError,
+    },
+}
+
+fn positive(proposition: Ref) -> Lit {
+    Lit::positive(proposition.get())
+}
+
+fn positive_conclusion(kernel: &Kernel, theorem: ThmId) -> Result<Ref, KernelError> {
+    let theorem = kernel
+        .thm()
+        .get(theorem)
+        .ok_or(KernelError::MissingTheorem { id: theorem })?;
+    let mut conclusions = theorem.rhs.rows();
+    let Some([literal]) = conclusions.next() else {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "structural value proof unit conclusion",
+        });
+    };
+    if conclusions.next().is_some() || !literal.is_positive() {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "structural value proof positive conclusion",
+        });
+    }
+    Ref::new(literal.magnitude().cast_signed()).ok_or(KernelError::InvalidTheoremRule {
+        rule: "structural value proof conclusion reference",
+    })
 }
 
 impl StructuralConstructorLaws {
@@ -263,7 +540,8 @@ fn quantify(
 
 #[cfg(test)]
 mod tests {
-    use super::{StructuralValueAlgebra, apply};
+    use super::{StructuralSequenceAlgebra, StructuralValueAlgebra, apply};
+    use crate::EvidenceScope;
     use covalence_logic_hol::Kernel;
 
     #[test]
@@ -275,15 +553,43 @@ mod tests {
         let unary_ty = kernel.ty_arr(value_ty, value_ty).unwrap();
         let binary_tail = kernel.ty_arr(value_ty, value_ty).unwrap();
         let binary_ty = kernel.ty_arr(value_ty, binary_tail).unwrap();
+        let member_tail = kernel.ty_arr(value_ty, bool_ty).unwrap();
+        let member_ty = kernel.ty_arr(value_ty, member_tail).unwrap();
+        let empty = kernel.tm_fv(9, value_ty).unwrap();
         let unary = kernel.tm_fv(10, unary_ty).unwrap();
         let binary = kernel.tm_fv(11, binary_ty).unwrap();
+        let member = kernel.tm_fv(13, member_ty).unwrap();
         let algebra = StructuralValueAlgebra { value_ty, bool_ty };
+        let empty = algebra.constructor(&mut kernel, empty, 0).unwrap();
         let unary = algebra.constructor(&mut kernel, unary, 1).unwrap();
         let binary = algebra.constructor(&mut kernel, binary, 2).unwrap();
         let injective = algebra.injective(&mut kernel, binary).unwrap();
         let disjoint = algebra.disjoint(&mut kernel, unary, binary).unwrap();
         assert_eq!(kernel.classifier(injective).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(disjoint).unwrap(), bool_ty);
+
+        let sequences = StructuralSequenceAlgebra::new(&mut kernel, algebra, member).unwrap();
+        let empty_law = sequences.membership_law(&mut kernel, empty, &[]).unwrap();
+        let element = kernel.tm_fv(12, value_ty).unwrap();
+        let singleton_law = sequences
+            .membership_law(&mut kernel, unary, &[element])
+            .unwrap();
+        assert!(empty_law.elements().is_empty());
+        assert_eq!(singleton_law.elements(), &[element]);
+        assert_eq!(kernel.classifier(empty_law.proposition()).unwrap(), bool_ty);
+        assert_eq!(
+            kernel.classifier(singleton_law.proposition()).unwrap(),
+            bool_ty
+        );
+        let empty_fact = kernel
+            .identity(super::positive(empty_law.proposition()))
+            .unwrap();
+        let no_members = sequences
+            .prove_empty_has_no_members(&mut kernel, &empty_law, empty_fact)
+            .unwrap();
+        EvidenceScope::positive(&[empty_law.proposition()])
+            .check(&kernel, no_members)
+            .unwrap();
 
         let laws = algebra
             .constructor_laws(&mut kernel, &[unary, binary])
@@ -296,8 +602,7 @@ mod tests {
                 .all(|&law| kernel.classifier(law).unwrap() == bool_ty)
         );
 
-        let value = kernel.tm_fv(12, value_ty).unwrap();
-        let applied = apply(&mut kernel, unary.operation(), &[value]).unwrap();
+        let applied = apply(&mut kernel, unary.operation(), &[element]).unwrap();
         assert_eq!(kernel.classifier(applied).unwrap(), value_ty);
 
         let before = kernel.arena().clone();
@@ -306,6 +611,14 @@ mod tests {
                 .constructor(&mut kernel, unary.operation(), 2)
                 .is_err()
         );
+        assert_eq!(kernel.arena(), &before);
+        assert!(
+            sequences
+                .prove_empty_has_no_members(&mut kernel, &singleton_law, empty_fact)
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert!(sequences.membership_law(&mut kernel, unary, &[]).is_err());
         assert_eq!(kernel.arena(), &before);
         assert!(
             algebra

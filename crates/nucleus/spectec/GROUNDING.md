@@ -173,6 +173,14 @@ minimal finite law bundle without requiring callers to duplicate the lowering
 vocabulary. The record tests exercise this path over the complete structural
 empty-module term.
 
+Finite sequence membership has a parallel generic boundary.
+`StructuralSequenceAlgebra::membership_law` states that membership in an exact
+list constructor is equivalent to equality with one of its elements; the empty
+disjunction is false. A checked elimination derives the universal no-members
+property for the empty list while preserving the membership equation as its
+premise. The full pinned Wasm audit uses that derivation in the `FALSE`
+non-reachability proof instead of assuming the no-members result directly.
+
 Grounding therefore requires all of the following:
 
 1. A faithful HOL representation of the SpecTec value algebra, including the
