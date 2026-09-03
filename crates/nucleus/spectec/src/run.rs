@@ -314,6 +314,230 @@ impl RunContext {
         Ok(proposition)
     }
 
+    /// Proves contextual run equivalence is reflexive.
+    ///
+    /// The theorem is premise-free: context admissibility is reflexive, and
+    /// every plugged module has the same complete allowed run graph as itself.
+    /// No property of the execution relation, linker, or context policy is
+    /// assumed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an incompatible domain/profile/module or a rejected
+    /// checked equality, implication, universal, or alignment step. `kernel`
+    /// is unchanged on failure.
+    pub fn prove_equivalent_runs_reflexive(
+        self,
+        kernel: &mut Kernel,
+        domain: RunDomain,
+        profile: Ref,
+        module: Ref,
+    ) -> Result<Evidence, KernelError> {
+        let mut staged = kernel.fork();
+        self.require_domain(domain)?;
+        require_classifier(&mut staged, profile, self.types.profile)?;
+        require_classifier(&mut staged, module, self.types.module)?;
+        let context_name =
+            staged.fresh_name(&[self.context_ty, self.plug, self.admissible, profile, module])?;
+        let context = staged.tm_fv(context_name, self.context_ty)?;
+        let at_context =
+            self.same_runs_at(&mut staged, domain, profile, context, module, module)?;
+        let [same_admissibility, preservation] = binary_children(&staged, at_context)?;
+        let [both_admissible, same_runs] = binary_children(&staged, preservation)?;
+        let admissibility_operands = staged
+            .arena()
+            .children(same_admissibility)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "contextual run reflexivity admissibility equality",
+            })?
+            .collect::<Vec<_>>();
+        let [_, admissible, _] = admissibility_operands.as_slice() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "contextual run reflexivity admissibility equality operands",
+            });
+        };
+        let admissibility_reflexive = staged.refl(self.types.bool_ty, *admissible)?;
+        align_theorem_conclusion(
+            &mut staged,
+            admissibility_reflexive.theorem,
+            admissibility_reflexive.equality,
+            same_admissibility,
+            "contextual run reflexivity admissibility alignment",
+        )?;
+        let closed = apply(&mut staged, self.plug, &[context, module])?;
+        let run_reflexive = domain.prove_same_runs_reflexive(&mut staged, profile, closed)?;
+        align_theorem_conclusion(
+            &mut staged,
+            run_reflexive.theorem,
+            run_reflexive.proposition,
+            same_runs,
+            "contextual run reflexivity graph alignment",
+        )?;
+        staged.weaken(run_reflexive.theorem, &[positive(both_admissible)], &[])?;
+        let preservation_theorem =
+            staged.imp_right(run_reflexive.theorem, positive(preservation))?;
+        let body = staged.and_right(
+            admissibility_reflexive.theorem,
+            preservation_theorem,
+            positive(at_context),
+        )?;
+        let universal = staged.forall_tm(self.types.bool_ty, context, at_context)?;
+        let theorem = staged.forall_intro_at(body, context, universal)?;
+        let canonical = self.equivalent_runs(&mut staged, domain, profile, module, module)?;
+        align_theorem_conclusion(
+            &mut staged,
+            theorem,
+            universal,
+            canonical,
+            "contextual run reflexivity alignment",
+        )?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: canonical,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Reverses checked contextual run equivalence evidence.
+    ///
+    /// All premises remain visible while both context-admissibility equality
+    /// and the complete run equality are reversed with checked equality laws.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `equivalence` positively proves the displayed
+    /// contextual run equivalence, or a checked specialization, equality,
+    /// propositional, universal, or alignment step fails. `kernel` is unchanged
+    /// on failure.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    pub fn prove_equivalent_runs_symmetric(
+        self,
+        kernel: &mut Kernel,
+        equivalence: Evidence,
+        domain: RunDomain,
+        profile: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        self.require_domain(domain)?;
+        let expected = self.equivalent_runs(&mut staged, domain, profile, left, right)?;
+        let theorem = align_evidence(&mut staged, equivalence, expected)?;
+        let context_name = staged.fresh_name(&[
+            expected,
+            self.context_ty,
+            self.plug,
+            self.admissible,
+            profile,
+            left,
+            right,
+        ])?;
+        let context = staged.tm_fv(context_name, self.context_ty)?;
+        let specialized = forall_elim(&mut staged, theorem, context)?;
+        let source = self.same_runs_at(&mut staged, domain, profile, context, left, right)?;
+        align_theorem_conclusion(
+            &mut staged,
+            specialized.theorem,
+            specialized.proposition,
+            source,
+            "contextual run symmetry specialization alignment",
+        )?;
+        let source_admissibility =
+            staged.expand_conclusion(specialized.theorem, positive(source), Some(false))?;
+        let source_preservation =
+            staged.expand_conclusion(specialized.theorem, positive(source), Some(true))?;
+        let [_source_admissibility_formula, source_implication] = binary_children(&staged, source)?;
+        let [source_both, source_same_runs] = binary_children(&staged, source_implication)?;
+
+        let target = self.same_runs_at(&mut staged, domain, profile, context, right, left)?;
+        let [target_admissibility, target_implication] = binary_children(&staged, target)?;
+        let [target_both, target_same_runs] = binary_children(&staged, target_implication)?;
+        let reversed_admissibility =
+            equality_symmetry(&mut staged, self.types.bool_ty, source_admissibility)?;
+        align_theorem_conclusion(
+            &mut staged,
+            reversed_admissibility.theorem,
+            reversed_admissibility.equality,
+            target_admissibility,
+            "contextual run symmetry admissibility alignment",
+        )?;
+
+        let assumed_target = staged.identity(positive(target_both))?;
+        let right_fact =
+            staged.expand_conclusion(assumed_target, positive(target_both), Some(false))?;
+        let left_fact =
+            staged.expand_conclusion(assumed_target, positive(target_both), Some(true))?;
+        let [source_left, source_right] = binary_children(&staged, source_both)?;
+        let [target_right, target_left] = binary_children(&staged, target_both)?;
+        align_theorem_conclusion(
+            &mut staged,
+            left_fact,
+            target_left,
+            source_left,
+            "contextual run symmetry left admissibility alignment",
+        )?;
+        align_theorem_conclusion(
+            &mut staged,
+            right_fact,
+            target_right,
+            source_right,
+            "contextual run symmetry right admissibility alignment",
+        )?;
+        let source_both_theorem = staged.and_right(left_fact, right_fact, positive(source_both))?;
+        let expanded_source =
+            staged.expand_conclusion(source_preservation, positive(source_implication), None)?;
+        let source_same_runs_theorem = staged.resolve(
+            expanded_source,
+            source_both_theorem,
+            positive(source_both).negated(),
+        )?;
+        let left_closed = apply(&mut staged, self.plug, &[context, left])?;
+        let right_closed = apply(&mut staged, self.plug, &[context, right])?;
+        let reversed_runs = domain.prove_same_runs_symmetric(
+            &mut staged,
+            Evidence {
+                proposition: source_same_runs,
+                theorem: source_same_runs_theorem,
+                holds: true,
+            },
+            profile,
+            left_closed,
+            right_closed,
+        )?;
+        align_theorem_conclusion(
+            &mut staged,
+            reversed_runs.theorem,
+            reversed_runs.proposition,
+            target_same_runs,
+            "contextual run symmetry graph alignment",
+        )?;
+        let target_preservation =
+            staged.imp_right(reversed_runs.theorem, positive(target_implication))?;
+        let body = staged.and_right(
+            reversed_admissibility.theorem,
+            target_preservation,
+            positive(target),
+        )?;
+        staged.contract_theorem(body)?;
+        let universal = staged.forall_tm(self.types.bool_ty, context, target)?;
+        let theorem = staged.forall_intro_at(body, context, universal)?;
+        let canonical = self.equivalent_runs(&mut staged, domain, profile, right, left)?;
+        align_theorem_conclusion(
+            &mut staged,
+            theorem,
+            universal,
+            canonical,
+            "contextual run symmetry alignment",
+        )?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: canonical,
+            theorem,
+            holds: true,
+        })
+    }
+
     /// Proves that contextual run equivalence preserves one observation.
     ///
     /// The result is the ordinary [`ContextualObservation::equivalent`]
@@ -2283,6 +2507,12 @@ mod tests {
             .equivalent_runs(&mut kernel, domain, profile, module, other_module)
             .unwrap();
         assert_eq!(kernel.classifier(contextual_same_runs).unwrap(), bool_ty);
+        let contextual_reflexive = context
+            .prove_equivalent_runs_reflexive(&mut kernel, domain, profile, module)
+            .unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, contextual_reflexive)
+            .unwrap();
         let contextual_same_runs_evidence = Evidence {
             proposition: contextual_same_runs,
             theorem: kernel
@@ -2290,6 +2520,19 @@ mod tests {
                 .unwrap(),
             holds: true,
         };
+        let contextual_symmetric = context
+            .prove_equivalent_runs_symmetric(
+                &mut kernel,
+                contextual_same_runs_evidence,
+                domain,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[contextual_same_runs])
+            .check(&kernel, contextual_symmetric)
+            .unwrap();
         for quantifier in [
             BehaviorQuantifier::May,
             BehaviorQuantifier::Every,
