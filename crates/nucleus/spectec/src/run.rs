@@ -178,7 +178,7 @@ pub struct RunDomain {
 /// explicit rather than hiding either condition in execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RunContext {
-    types: RunTypes,
+    domain: RunDomain,
     context_ty: Ref,
     plug: Ref,
     admissible: Ref,
@@ -194,19 +194,20 @@ impl RunContext {
     /// `context -> module -> bool`. `kernel` is unchanged on failure.
     pub fn new(
         kernel: &mut Kernel,
-        types: RunTypes,
+        domain: RunDomain,
         context_ty: Ref,
         plug: Ref,
         admissible: Ref,
     ) -> Result<Self, KernelError> {
         let mut staged = kernel.fork();
+        let types = domain.relation.types;
         let plug_ty = curried_type(&mut staged, &[context_ty, types.module], types.module)?;
         require_classifier(&mut staged, plug, plug_ty)?;
         let admissible_ty = curried_type(&mut staged, &[context_ty, types.module], types.bool_ty)?;
         require_classifier(&mut staged, admissible, admissible_ty)?;
         *kernel = staged;
         Ok(Self {
-            types,
+            domain,
             context_ty,
             plug,
             admissible,
@@ -229,6 +230,12 @@ impl RunContext {
     #[must_use]
     pub const fn admissible(self) -> Ref {
         self.admissible
+    }
+
+    /// Returns the execution domain closed by this context schema.
+    #[must_use]
+    pub const fn domain(self) -> RunDomain {
+        self.domain
     }
 
     /// Selects one behavior observation for this reusable context schema.
@@ -257,13 +264,13 @@ impl RunContext {
         avoiding: &[Ref],
     ) -> Result<ContextualObservation, KernelError> {
         let mut staged = kernel.fork();
-        self.require_domain(observation.domain)?;
+        self.require_observation(observation)?;
         let observe = observation.predicate_avoiding(&mut staged, quantifier, profile, avoiding)?;
         let contextual = ContextualObservation {
-            subject_ty: self.types.module,
+            subject_ty: self.domain.relation.types.module,
             context_ty: self.context_ty,
-            observed_ty: self.types.module,
-            bool_ty: self.types.bool_ty,
+            observed_ty: self.domain.relation.types.module,
+            bool_ty: self.domain.relation.types.bool_ty,
             plug: self.plug,
             admissible: self.admissible,
             observe,
@@ -287,16 +294,15 @@ impl RunContext {
     pub fn equivalent_runs(
         self,
         kernel: &mut Kernel,
-        domain: RunDomain,
         profile: Ref,
         left: Ref,
         right: Ref,
     ) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
-        self.require_domain(domain)?;
-        require_classifier(&mut staged, profile, self.types.profile)?;
-        require_classifier(&mut staged, left, self.types.module)?;
-        require_classifier(&mut staged, right, self.types.module)?;
+        let types = self.domain.relation.types;
+        require_classifier(&mut staged, profile, types.profile)?;
+        require_classifier(&mut staged, left, types.module)?;
+        require_classifier(&mut staged, right, types.module)?;
         let context = staged.tm_fv(
             staged.fresh_name(&[
                 self.context_ty,
@@ -308,8 +314,8 @@ impl RunContext {
             ])?,
             self.context_ty,
         )?;
-        let at_context = self.same_runs_at(&mut staged, domain, profile, context, left, right)?;
-        let proposition = staged.forall_tm(self.types.bool_ty, context, at_context)?;
+        let at_context = self.same_runs_at(&mut staged, profile, context, left, right)?;
+        let proposition = staged.forall_tm(types.bool_ty, context, at_context)?;
         *kernel = staged;
         Ok(proposition)
     }
@@ -329,19 +335,17 @@ impl RunContext {
     pub fn prove_equivalent_runs_reflexive(
         self,
         kernel: &mut Kernel,
-        domain: RunDomain,
         profile: Ref,
         module: Ref,
     ) -> Result<Evidence, KernelError> {
         let mut staged = kernel.fork();
-        self.require_domain(domain)?;
-        require_classifier(&mut staged, profile, self.types.profile)?;
-        require_classifier(&mut staged, module, self.types.module)?;
+        let types = self.domain.relation.types;
+        require_classifier(&mut staged, profile, types.profile)?;
+        require_classifier(&mut staged, module, types.module)?;
         let context_name =
             staged.fresh_name(&[self.context_ty, self.plug, self.admissible, profile, module])?;
         let context = staged.tm_fv(context_name, self.context_ty)?;
-        let at_context =
-            self.same_runs_at(&mut staged, domain, profile, context, module, module)?;
+        let at_context = self.same_runs_at(&mut staged, profile, context, module, module)?;
         let [same_admissibility, preservation] = binary_children(&staged, at_context)?;
         let [both_admissible, same_runs] = binary_children(&staged, preservation)?;
         let admissibility_operands = staged
@@ -356,7 +360,7 @@ impl RunContext {
                 rule: "contextual run reflexivity admissibility equality operands",
             });
         };
-        let admissibility_reflexive = staged.refl(self.types.bool_ty, *admissible)?;
+        let admissibility_reflexive = staged.refl(types.bool_ty, *admissible)?;
         align_theorem_conclusion(
             &mut staged,
             admissibility_reflexive.theorem,
@@ -365,7 +369,9 @@ impl RunContext {
             "contextual run reflexivity admissibility alignment",
         )?;
         let closed = apply(&mut staged, self.plug, &[context, module])?;
-        let run_reflexive = domain.prove_same_runs_reflexive(&mut staged, profile, closed)?;
+        let run_reflexive = self
+            .domain
+            .prove_same_runs_reflexive(&mut staged, profile, closed)?;
         align_theorem_conclusion(
             &mut staged,
             run_reflexive.theorem,
@@ -381,9 +387,9 @@ impl RunContext {
             preservation_theorem,
             positive(at_context),
         )?;
-        let universal = staged.forall_tm(self.types.bool_ty, context, at_context)?;
+        let universal = staged.forall_tm(types.bool_ty, context, at_context)?;
         let theorem = staged.forall_intro_at(body, context, universal)?;
-        let canonical = self.equivalent_runs(&mut staged, domain, profile, module, module)?;
+        let canonical = self.equivalent_runs(&mut staged, profile, module, module)?;
         align_theorem_conclusion(
             &mut staged,
             theorem,
@@ -415,14 +421,12 @@ impl RunContext {
         self,
         kernel: &mut Kernel,
         equivalence: Evidence,
-        domain: RunDomain,
         profile: Ref,
         left: Ref,
         right: Ref,
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
-        self.require_domain(domain)?;
-        let expected = self.equivalent_runs(&mut staged, domain, profile, left, right)?;
+        let expected = self.equivalent_runs(&mut staged, profile, left, right)?;
         let theorem = align_evidence(&mut staged, equivalence, expected)?;
         let context_name = staged.fresh_name(&[
             expected,
@@ -435,7 +439,7 @@ impl RunContext {
         ])?;
         let context = staged.tm_fv(context_name, self.context_ty)?;
         let specialized = forall_elim(&mut staged, theorem, context)?;
-        let source = self.same_runs_at(&mut staged, domain, profile, context, left, right)?;
+        let source = self.same_runs_at(&mut staged, profile, context, left, right)?;
         align_theorem_conclusion(
             &mut staged,
             specialized.theorem,
@@ -450,11 +454,14 @@ impl RunContext {
         let [_source_admissibility_formula, source_implication] = binary_children(&staged, source)?;
         let [source_both, source_same_runs] = binary_children(&staged, source_implication)?;
 
-        let target = self.same_runs_at(&mut staged, domain, profile, context, right, left)?;
+        let target = self.same_runs_at(&mut staged, profile, context, right, left)?;
         let [target_admissibility, target_implication] = binary_children(&staged, target)?;
         let [target_both, target_same_runs] = binary_children(&staged, target_implication)?;
-        let reversed_admissibility =
-            equality_symmetry(&mut staged, self.types.bool_ty, source_admissibility)?;
+        let reversed_admissibility = equality_symmetry(
+            &mut staged,
+            self.domain.relation.types.bool_ty,
+            source_admissibility,
+        )?;
         align_theorem_conclusion(
             &mut staged,
             reversed_admissibility.theorem,
@@ -494,7 +501,7 @@ impl RunContext {
         )?;
         let left_closed = apply(&mut staged, self.plug, &[context, left])?;
         let right_closed = apply(&mut staged, self.plug, &[context, right])?;
-        let reversed_runs = domain.prove_same_runs_symmetric(
+        let reversed_runs = self.domain.prove_same_runs_symmetric(
             &mut staged,
             Evidence {
                 proposition: source_same_runs,
@@ -520,9 +527,9 @@ impl RunContext {
             positive(target),
         )?;
         staged.contract_theorem(body)?;
-        let universal = staged.forall_tm(self.types.bool_ty, context, target)?;
+        let universal = staged.forall_tm(self.domain.relation.types.bool_ty, context, target)?;
         let theorem = staged.forall_intro_at(body, context, universal)?;
-        let canonical = self.equivalent_runs(&mut staged, domain, profile, right, left)?;
+        let canonical = self.equivalent_runs(&mut staged, profile, right, left)?;
         align_theorem_conclusion(
             &mut staged,
             theorem,
@@ -557,19 +564,15 @@ impl RunContext {
         kernel: &mut Kernel,
         left_middle: Evidence,
         middle_right: Evidence,
-        domain: RunDomain,
         profile: Ref,
         left: Ref,
         middle: Ref,
         right: Ref,
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
-        self.require_domain(domain)?;
-        let expected_left_middle =
-            self.equivalent_runs(&mut staged, domain, profile, left, middle)?;
+        let expected_left_middle = self.equivalent_runs(&mut staged, profile, left, middle)?;
         let left_middle_theorem = align_evidence(&mut staged, left_middle, expected_left_middle)?;
-        let expected_middle_right =
-            self.equivalent_runs(&mut staged, domain, profile, middle, right)?;
+        let expected_middle_right = self.equivalent_runs(&mut staged, profile, middle, right)?;
         let middle_right_theorem =
             align_evidence(&mut staged, middle_right, expected_middle_right)?;
         let context_name = staged.fresh_name(&[
@@ -586,8 +589,7 @@ impl RunContext {
         let context = staged.tm_fv(context_name, self.context_ty)?;
 
         let left_middle_specialized = forall_elim(&mut staged, left_middle_theorem, context)?;
-        let left_middle_at =
-            self.same_runs_at(&mut staged, domain, profile, context, left, middle)?;
+        let left_middle_at = self.same_runs_at(&mut staged, profile, context, left, middle)?;
         align_theorem_conclusion(
             &mut staged,
             left_middle_specialized.theorem,
@@ -596,8 +598,7 @@ impl RunContext {
             "contextual run transitivity left specialization alignment",
         )?;
         let middle_right_specialized = forall_elim(&mut staged, middle_right_theorem, context)?;
-        let middle_right_at =
-            self.same_runs_at(&mut staged, domain, profile, context, middle, right)?;
+        let middle_right_at = self.same_runs_at(&mut staged, profile, context, middle, right)?;
         align_theorem_conclusion(
             &mut staged,
             middle_right_specialized.theorem,
@@ -637,12 +638,12 @@ impl RunContext {
             Some(true),
         )?;
 
-        let target = self.same_runs_at(&mut staged, domain, profile, context, left, right)?;
+        let target = self.same_runs_at(&mut staged, profile, context, left, right)?;
         let [target_admissibility, target_implication] = binary_children(&staged, target)?;
         let [target_both, target_runs] = binary_children(&staged, target_implication)?;
         let admissibility = equality_transitivity(
             &mut staged,
-            self.types.bool_ty,
+            self.domain.relation.types.bool_ty,
             left_middle_admissibility,
             middle_right_admissibility,
         )?;
@@ -729,7 +730,7 @@ impl RunContext {
         let left_closed = apply(&mut staged, self.plug, &[context, left])?;
         let middle_closed = apply(&mut staged, self.plug, &[context, middle])?;
         let right_closed = apply(&mut staged, self.plug, &[context, right])?;
-        let runs = domain.prove_same_runs_transitive(
+        let runs = self.domain.prove_same_runs_transitive(
             &mut staged,
             Evidence {
                 proposition: left_middle_runs,
@@ -756,9 +757,9 @@ impl RunContext {
         let preservation = staged.imp_right(runs.theorem, positive(target_implication))?;
         let body = staged.and_right(admissibility.theorem, preservation, positive(target))?;
         staged.contract_theorem(body)?;
-        let universal = staged.forall_tm(self.types.bool_ty, context, target)?;
+        let universal = staged.forall_tm(self.domain.relation.types.bool_ty, context, target)?;
         let theorem = staged.forall_intro_at(body, context, universal)?;
-        let canonical = self.equivalent_runs(&mut staged, domain, profile, left, right)?;
+        let canonical = self.equivalent_runs(&mut staged, profile, left, right)?;
         align_theorem_conclusion(
             &mut staged,
             theorem,
@@ -792,7 +793,6 @@ impl RunContext {
         self,
         kernel: &mut Kernel,
         equivalence: Evidence,
-        domain: RunDomain,
         observation: RunObservation,
         quantifier: BehaviorQuantifier,
         profile: Ref,
@@ -800,15 +800,8 @@ impl RunContext {
         right: Ref,
     ) -> Result<Evidence, RunProofError> {
         let mut staged = kernel.fork();
-        self.require_domain(domain)?;
-        self.require_domain(observation.domain)?;
-        if domain != observation.domain {
-            return Err(KernelError::InvalidTheoremRule {
-                rule: "contextual run preservation domain mismatch",
-            }
-            .into());
-        }
-        let expected = self.equivalent_runs(&mut staged, domain, profile, left, right)?;
+        self.require_observation(observation)?;
+        let expected = self.equivalent_runs(&mut staged, profile, left, right)?;
         let theorem = align_evidence(&mut staged, equivalence, expected)?;
         let contextual = self.observe_avoiding(
             &mut staged,
@@ -829,7 +822,7 @@ impl RunContext {
         ])?;
         let context = staged.tm_fv(context_name, self.context_ty)?;
         let specialized = forall_elim(&mut staged, theorem, context)?;
-        let source_at = self.same_runs_at(&mut staged, domain, profile, context, left, right)?;
+        let source_at = self.same_runs_at(&mut staged, profile, context, left, right)?;
         join_alpha_equivalent(&mut staged, specialized.proposition, source_at).map_err(|_| {
             KernelError::InvalidTheoremRule {
                 rule: "contextual run equivalence specialization alignment",
@@ -966,7 +959,7 @@ impl RunContext {
             positive(target_at),
         )?;
         staged.contract_theorem(at_context)?;
-        let universal = staged.forall_tm(self.types.bool_ty, context, target_at)?;
+        let universal = staged.forall_tm(self.domain.relation.types.bool_ty, context, target_at)?;
         let theorem = staged.forall_intro_at(at_context, context, universal)?;
         let target = contextual.equivalent(&mut staged, left, right)?;
         align_theorem_conclusion(
@@ -987,32 +980,35 @@ impl RunContext {
     fn same_runs_at(
         self,
         kernel: &mut Kernel,
-        domain: RunDomain,
         profile: Ref,
         context: Ref,
         left: Ref,
         right: Ref,
     ) -> Result<Ref, KernelError> {
-        self.require_domain(domain)?;
         require_classifier(kernel, context, self.context_ty)?;
         let left_admissible = apply(kernel, self.admissible, &[context, left])?;
         let right_admissible = apply(kernel, self.admissible, &[context, right])?;
-        let same_admissibility =
-            kernel.eq(self.types.bool_ty, left_admissible, right_admissible)?;
+        let same_admissibility = kernel.eq(
+            self.domain.relation.types.bool_ty,
+            left_admissible,
+            right_admissible,
+        )?;
         let both_admissible = kernel.op2(Op2::And, left_admissible, right_admissible)?;
         let left_closed = apply(kernel, self.plug, &[context, left])?;
         let right_closed = apply(kernel, self.plug, &[context, right])?;
-        let same_runs = domain.same_runs(kernel, profile, left_closed, right_closed)?;
+        let same_runs = self
+            .domain
+            .same_runs(kernel, profile, left_closed, right_closed)?;
         let preservation = kernel.op2(Op2::Imp, both_admissible, same_runs)?;
         kernel.op2(Op2::And, same_admissibility, preservation)
     }
 
-    fn require_domain(self, domain: RunDomain) -> Result<(), KernelError> {
-        if domain.relation.types == self.types {
+    fn require_observation(self, observation: RunObservation) -> Result<(), KernelError> {
+        if observation.domain == self.domain {
             Ok(())
         } else {
             Err(KernelError::InvalidTheoremRule {
-                rule: "run context/domain type mismatch",
+                rule: "run context/observation domain mismatch",
             })
         }
     }
@@ -1059,6 +1055,23 @@ impl RunDomain {
     #[must_use]
     pub const fn admissible(self) -> Ref {
         self.admissible
+    }
+
+    /// Validates and attaches a reusable linking-context schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `plug` has classifier
+    /// `context -> module -> module` and `admissible` has classifier
+    /// `context -> module -> bool`. `kernel` is unchanged on failure.
+    pub fn in_context(
+        self,
+        kernel: &mut Kernel,
+        context_ty: Ref,
+        plug: Ref,
+        admissible: Ref,
+    ) -> Result<RunContext, KernelError> {
+        RunContext::new(kernel, self, context_ty, plug, admissible)
     }
 
     /// Validates and attaches a predicate over traces and outcomes.
@@ -2210,8 +2223,7 @@ impl RunObservation {
         admissible: Ref,
     ) -> Result<ContextualObservation, KernelError> {
         let mut staged = kernel.fork();
-        let types = self.domain.relation.types;
-        let context = RunContext::new(&mut staged, types, context_ty, plug, admissible)?;
+        let context = RunContext::new(&mut staged, self.domain, context_ty, plug, admissible)?;
         let contextual = context.observe(&mut staged, self, quantifier, profile)?;
         *kernel = staged;
         Ok(contextual)
@@ -2512,7 +2524,7 @@ fn require_classifier(kernel: &mut Kernel, term: Ref, expected: Ref) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::{BehaviorQuantifier, RunContext, RunRelation, RunTypes};
+    use super::{BehaviorQuantifier, RunRelation, RunTypes};
     use crate::{Evidence, EvidenceScope};
     use covalence_logic_hol::Kernel;
 
@@ -2751,8 +2763,10 @@ mod tests {
                 contextual_admissible,
             )
             .unwrap();
-        let context =
-            RunContext::new(&mut kernel, types, context_ty, plug, contextual_admissible).unwrap();
+        let context = domain
+            .in_context(&mut kernel, context_ty, plug, contextual_admissible)
+            .unwrap();
+        assert_eq!(context.domain(), domain);
         assert_eq!(context.context_type(), context_ty);
         assert_eq!(context.plug(), plug);
         assert_eq!(context.admissible(), contextual_admissible);
@@ -2768,11 +2782,11 @@ mod tests {
         )
         .unwrap();
         let contextual_same_runs = context
-            .equivalent_runs(&mut kernel, domain, profile, module, other_module)
+            .equivalent_runs(&mut kernel, profile, module, other_module)
             .unwrap();
         assert_eq!(kernel.classifier(contextual_same_runs).unwrap(), bool_ty);
         let contextual_reflexive = context
-            .prove_equivalent_runs_reflexive(&mut kernel, domain, profile, module)
+            .prove_equivalent_runs_reflexive(&mut kernel, profile, module)
             .unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, contextual_reflexive)
@@ -2788,7 +2802,6 @@ mod tests {
             .prove_equivalent_runs_symmetric(
                 &mut kernel,
                 contextual_same_runs_evidence,
-                domain,
                 profile,
                 module,
                 other_module,
@@ -2798,7 +2811,7 @@ mod tests {
             .check(&kernel, contextual_symmetric)
             .unwrap();
         let contextual_middle_right = context
-            .equivalent_runs(&mut kernel, domain, profile, other_module, third_module)
+            .equivalent_runs(&mut kernel, profile, other_module, third_module)
             .unwrap();
         let contextual_middle_right_evidence = Evidence {
             proposition: contextual_middle_right,
@@ -2812,7 +2825,6 @@ mod tests {
                 &mut kernel,
                 contextual_same_runs_evidence,
                 contextual_middle_right_evidence,
-                domain,
                 profile,
                 module,
                 other_module,
@@ -2830,7 +2842,6 @@ mod tests {
                     &mut kernel,
                     contextual_same_runs_evidence,
                     contextual_same_runs_evidence,
-                    domain,
                     profile,
                     module,
                     other_module,
@@ -2850,7 +2861,6 @@ mod tests {
                 .prove_equivalent_runs_preserves(
                     &mut kernel,
                     contextual_same_runs_evidence,
-                    domain,
                     observation,
                     quantifier,
                     profile,
@@ -2876,7 +2886,6 @@ mod tests {
                 .prove_equivalent_runs_preserves(
                     &mut kernel,
                     denied_contextual_runs,
-                    domain,
                     observation,
                     BehaviorQuantifier::May,
                     profile,
@@ -2939,6 +2948,18 @@ mod tests {
             observation.and(&mut kernel, other_observation),
             Err(super::RunObservationError::DomainMismatch)
         ));
+        assert_eq!(kernel.arena(), &before);
+        let before = kernel.arena().clone();
+        assert!(
+            context
+                .observe(
+                    &mut kernel,
+                    other_observation,
+                    BehaviorQuantifier::May,
+                    profile,
+                )
+                .is_err()
+        );
         assert_eq!(kernel.arena(), &before);
 
         let before = kernel.arena().clone();

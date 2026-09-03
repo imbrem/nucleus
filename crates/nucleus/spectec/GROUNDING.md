@@ -23,8 +23,11 @@ two functions. Checked congruence therefore proves that `same_runs` preserves
 every `may`, `every`, `must`, and `never` observation, including a trace
 predicate for `callsAssert`, without trusting an evaluator or a special-purpose
 preservation axiom.
-`RunContext` separately validates a reusable linking operation and context
-admissibility predicate. Its `equivalent_runs` proposition quantifies complete
+`RunDomain::in_context` attaches and validates a reusable linking operation and
+context admissibility predicate. The resulting `RunContext` owns that domain,
+so mixing observations or equivalence evidence from another execution policy
+is rejected at the construction boundary rather than threaded through every
+method call. Its `equivalent_runs` proposition quantifies complete
 run equality over every admissible closing context, independently of any one
 observer. A checked elimination theorem maps that stronger contextual relation
 to ordinary contextual equivalence for any selected behavior observation.
