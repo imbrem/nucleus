@@ -7,7 +7,10 @@ adds an explicit profile- and module-sensitive admissibility policy, reusable
 across predicates over traces and outcomes. A `RunObservation` derives `may`,
 non-vacuous `must`, and `never` propositions from that one relation; calls,
 traps, returns, and compound trace properties are observation adapters rather
-than separate execution semantics. A domain also defines equality of complete
+than separate execution semantics. Unary trace and outcome predicates have
+checked adapters that explicitly ignore the other component, covering the
+common call/safety and return/trap cases without hand-built lambdas. A domain
+also defines equality of complete
 allowed run graphs and directional refinement: an implementation has the same
 admissible invocation domain and may remove, but not add, behaviors of its
 specification, but must retain some behavior whenever the specification has a

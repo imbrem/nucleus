@@ -179,6 +179,71 @@ impl RunDomain {
         })
     }
 
+    /// Adapts a predicate over traces into a behavior observation.
+    ///
+    /// The outcome argument is explicitly abstracted and ignored. This is the
+    /// usual adapter for imported calls and trace-safety monitors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `predicate` has classifier `trace -> bool`, or
+    /// if checked application or abstraction fails. `kernel` is unchanged on
+    /// failure.
+    pub fn observe_trace(
+        self,
+        kernel: &mut Kernel,
+        predicate: Ref,
+    ) -> Result<RunObservation, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.relation.types;
+        let predicate_ty = staged.ty_arr(types.trace, types.bool_ty)?;
+        require_classifier(&mut staged, predicate, predicate_ty)?;
+        let first = staged.fresh_name(&[types.trace, types.outcome, types.bool_ty, predicate])?;
+        let trace = staged.tm_fv(first, types.trace)?;
+        let outcome = staged.tm_fv(checked_name(first, 1)?, types.outcome)?;
+        let body = staged.app(predicate, trace)?;
+        let by_outcome_ty = staged.ty_arr(types.outcome, types.bool_ty)?;
+        let by_outcome = staged.lam_at(by_outcome_ty, outcome, body)?;
+        let observation_ty = staged.ty_arr(types.trace, by_outcome_ty)?;
+        let observation = staged.lam_at(observation_ty, trace, by_outcome)?;
+        let observation = self.observe(&mut staged, observation)?;
+        *kernel = staged;
+        Ok(observation)
+    }
+
+    /// Adapts a predicate over outcomes into a behavior observation.
+    ///
+    /// The trace argument is explicitly abstracted and ignored. This is the
+    /// usual adapter for successful return, trap, divergence, and reserved
+    /// failure outcomes in profiles that represent them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `predicate` has classifier `outcome -> bool`,
+    /// or if checked application or abstraction fails. `kernel` is unchanged
+    /// on failure.
+    pub fn observe_outcome(
+        self,
+        kernel: &mut Kernel,
+        predicate: Ref,
+    ) -> Result<RunObservation, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.relation.types;
+        let predicate_ty = staged.ty_arr(types.outcome, types.bool_ty)?;
+        require_classifier(&mut staged, predicate, predicate_ty)?;
+        let first = staged.fresh_name(&[types.trace, types.outcome, types.bool_ty, predicate])?;
+        let trace = staged.tm_fv(first, types.trace)?;
+        let outcome = staged.tm_fv(checked_name(first, 1)?, types.outcome)?;
+        let body = staged.app(predicate, outcome)?;
+        let by_outcome_ty = staged.ty_arr(types.outcome, types.bool_ty)?;
+        let by_outcome = staged.lam_at(by_outcome_ty, outcome, body)?;
+        let observation_ty = staged.ty_arr(types.trace, by_outcome_ty)?;
+        let observation = staged.lam_at(observation_ty, trace, by_outcome)?;
+        let observation = self.observe(&mut staged, observation)?;
+        *kernel = staged;
+        Ok(observation)
+    }
+
     /// Constructs equality of the complete allowed run graphs of two modules.
     ///
     /// The result universally quantifies entry, inputs, host behavior, trace,
@@ -979,6 +1044,10 @@ mod tests {
         let runs = kernel.tm_fv(20, run_ty).unwrap();
         let admissible = kernel.tm_fv(21, admissible_ty).unwrap();
         let observe = kernel.tm_fv(22, observe_ty).unwrap();
+        let trace_predicate_ty = kernel.ty_arr(types.trace, bool_ty).unwrap();
+        let outcome_predicate_ty = kernel.ty_arr(types.outcome, bool_ty).unwrap();
+        let trace_predicate = kernel.tm_fv(29, trace_predicate_ty).unwrap();
+        let outcome_predicate = kernel.tm_fv(30, outcome_predicate_ty).unwrap();
         let profile = kernel.tm_fv(23, types.profile).unwrap();
         let module = kernel.tm_fv(24, types.module).unwrap();
         let other_module = kernel.tm_fv(26, types.module).unwrap();
@@ -993,8 +1062,14 @@ mod tests {
         let relation = RunRelation::new(&mut kernel, types, runs).unwrap();
         let domain = relation.under(&mut kernel, admissible).unwrap();
         let observation = domain.observe(&mut kernel, observe).unwrap();
+        let trace_observation = domain.observe_trace(&mut kernel, trace_predicate).unwrap();
+        let outcome_observation = domain
+            .observe_outcome(&mut kernel, outcome_predicate)
+            .unwrap();
         assert_eq!(observation.domain(), domain);
         assert_eq!(observation.relation(), relation);
+        assert_eq!(trace_observation.domain(), domain);
+        assert_eq!(outcome_observation.domain(), domain);
 
         let may = observation.may(&mut kernel, profile, module).unwrap();
         let never = observation.never(&mut kernel, profile, module).unwrap();
@@ -1073,6 +1148,14 @@ mod tests {
 
         let before = kernel.arena().clone();
         assert!(domain.observe(&mut kernel, admissible).is_err());
+        assert_eq!(kernel.arena(), &before);
+
+        let before = kernel.arena().clone();
+        assert!(
+            domain
+                .observe_trace(&mut kernel, outcome_predicate)
+                .is_err()
+        );
         assert_eq!(kernel.arena(), &before);
 
         let before = kernel.arena().clone();
