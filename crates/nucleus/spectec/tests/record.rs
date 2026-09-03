@@ -1783,38 +1783,6 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     )
     .unwrap();
     assert_eq!(kernel.classifier(forwarding).unwrap(), value);
-    let forwarding_fields = builder
-        .match_case_fields(&kernel, "MODULE%%%%%%%%%%%", 11, forwarding)
-        .unwrap()
-        .unwrap();
-    let forwarding_exports = forwarding_fields[10];
-    let export_elements = builder
-        .match_list(&kernel, 1, forwarding_exports)
-        .unwrap()
-        .unwrap();
-    let export_membership = builder
-        .list_membership_law(&mut kernel, &export_elements)
-        .unwrap();
-    covalence_logic_hol_derived::join_same_syntax(
-        &mut kernel,
-        export_membership.list(),
-        forwarding_exports,
-    )
-    .unwrap();
-    let export_membership_fact = kernel
-        .identity(covalence_logic_hol::Lit::positive(
-            export_membership.proposition().get(),
-        ))
-        .unwrap();
-    let contains_export = builder
-        .sequence_algebra(&mut kernel)
-        .unwrap()
-        .prove_member_at(&mut kernel, &export_membership, export_membership_fact, 0)
-        .unwrap();
-    document
-        .evidence_scope(&[export_membership.proposition()])
-        .check(&kernel, contains_export)
-        .unwrap();
     assert_eq!(execution.state_ty, value);
     assert_eq!(execution.bool_ty, bool_ty);
     let steps_classifier = kernel.classifier(execution.steps).unwrap();
@@ -1943,6 +1911,52 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             .identity(covalence_logic_hol::Lit::positive(proposition.get()))
             .unwrap()
     });
+    let function_address = builder.case(&mut kernel, "FUNC%", start.function).unwrap();
+    let runtime_export = builder
+        .struct_value(
+            &mut kernel,
+            &["NAME", "ADDR"],
+            &[export_name, function_address],
+        )
+        .unwrap();
+    let runtime_exports = builder.list(&mut kernel, &[runtime_export]).unwrap();
+    let export_membership = builder
+        .list_membership_law(&mut kernel, &[runtime_export])
+        .unwrap();
+    covalence_logic_hol_derived::join_same_syntax(
+        &mut kernel,
+        export_membership.list(),
+        runtime_exports,
+    )
+    .unwrap();
+    let export_membership_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            export_membership.proposition().get(),
+        ))
+        .unwrap();
+    let contains_export = builder
+        .sequence_algebra(&mut kernel)
+        .unwrap()
+        .prove_member_at(&mut kernel, &export_membership, export_membership_fact, 0)
+        .unwrap();
+    document
+        .evidence_scope(&[export_membership.proposition()])
+        .check(&kernel, contains_export)
+        .unwrap();
+    let function_address_fact = builder
+        .prove_struct_case_field(
+            &mut kernel,
+            &["NAME", "ADDR"],
+            &[export_name, function_address],
+            "ADDR",
+            "FUNC%",
+            start.function,
+        )
+        .unwrap();
+    document
+        .evidence_scope(&[])
+        .check(&kernel, function_address_fact.evidence())
+        .unwrap();
     let moduleinst_witnesses = moduleinst_definition
         .match_production_witnesses(&mut kernel, 0, &[start.instantiation_start])
         .unwrap()
@@ -1995,18 +2009,14 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         configuration: start.instantiation_start,
         function: start.function,
         module_instance,
-        exports: forwarding_exports,
-        export_instance: export_elements[0],
+        exports: runtime_exports,
+        export_instance: runtime_export,
     };
     let exports_graph = kernel
         .app(export_view.exports, module_instance)
-        .and_then(|partial| kernel.app(partial, forwarding_exports))
+        .and_then(|partial| kernel.app(partial, runtime_exports))
         .unwrap();
-    let function_graph = kernel
-        .app(export_view.function_address, export_elements[0])
-        .and_then(|partial| kernel.app(partial, start.function))
-        .unwrap();
-    let export_graphs = [exports_graph, function_graph];
+    let export_graphs = [exports_graph];
     let export_graph_facts = export_graphs.map(|proposition| {
         kernel
             .identity(covalence_logic_hol::Lit::positive(proposition.get()))
@@ -2020,7 +2030,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
                 module_instance: moduleinst_fact.theorem,
                 exports: export_graph_facts[0],
                 member: contains_export.theorem,
-                function_address: export_graph_facts[1],
+                function_address: function_address_fact.evidence().theorem,
             },
         )
         .unwrap()

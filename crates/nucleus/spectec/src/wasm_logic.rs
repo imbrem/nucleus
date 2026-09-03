@@ -241,6 +241,38 @@ impl<'a> SpecTecValueBuilder<'a> {
         self.expression(kernel, "Tuple", fields)
     }
 
+    /// Constructs an exact structural record from named fields and values.
+    ///
+    /// Field order is semantic and must match the corresponding recorded
+    /// `SpecTec` struct constructor exactly.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the field/value lengths differ, the exact struct
+    /// operation was not recorded, or checked application fails. `kernel` is
+    /// unchanged on failure.
+    pub fn struct_value(
+        self,
+        kernel: &mut Kernel,
+        fields: &[&str],
+        values: &[Ref],
+    ) -> Result<Ref, WasmLogicError> {
+        if fields.len() != values.len() {
+            return Err(WasmLogicError::Operation {
+                label: Symbol::new("struct field/value arity"),
+            });
+        }
+        let mut staged = kernel.fork();
+        let constructor = self.structural_constructor(
+            &mut staged,
+            &format!("expression:Struct({fields:?})"),
+            fields.len(),
+        )?;
+        let value = apply(&mut staged, constructor.operation(), values)?;
+        *kernel = staged;
+        Ok(value)
+    }
+
     /// Constructs a numeric literal in an exact `SpecTec` family.
     ///
     /// # Errors
