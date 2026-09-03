@@ -7,7 +7,9 @@ use covalence_data_spectec::{
     IlExpression, IlExpressionView, IlIteration, IlKind, IlPremise, IlRuleSchema, IlSchemaError,
 };
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, Tag, TyTag, builtin::Op1, builtin::Op2};
+use covalence_logic_hol::{
+    Kernel, KernelError, Lit, Ref, Tag, ThmId, TyTag, builtin::Op1, builtin::Op2,
+};
 use covalence_logic_hol_derived::{
     EqualityError, ForallError, ModelError, SyntaxError, equality_symmetry, forall_elim,
     join_alpha_equivalent, substitute,
@@ -127,6 +129,197 @@ pub struct RelationalDefinition {
     pub equation: Ref,
     /// First unused deterministic free-variable name.
     pub next_name: u64,
+}
+
+/// One definition graph specialized at concrete inputs and a concrete result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelationalDefinitionInstance {
+    /// Source-ordered specialized cases.
+    pub cases: Vec<HolCase>,
+    /// Exact ordered disjunction of the specialized cases.
+    pub body: Ref,
+}
+
+impl RelationalDefinition {
+    /// Specializes every retained case at concrete graph inputs and result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for the wrong input arity or if checked substitution or
+    /// ordered-body reconstruction fails. `kernel` is unchanged on failure.
+    pub fn specialize(
+        &self,
+        kernel: &mut Kernel,
+        bool_ty: Ref,
+        inputs: &[Ref],
+        result: Ref,
+    ) -> Result<RelationalDefinitionInstance, DefinitionProofError> {
+        if inputs.len() != self.formal_inputs.len() {
+            return Err(DefinitionProofError::Arity {
+                expected: self.formal_inputs.len(),
+                actual: inputs.len(),
+            });
+        }
+        let mut staged = kernel.fork();
+        let substitutions = self
+            .formal_inputs
+            .iter()
+            .copied()
+            .zip(inputs.iter().copied())
+            .chain(std::iter::once((self.formal_result, result)))
+            .collect::<Vec<_>>();
+        let specialize =
+            |kernel: &mut Kernel, mut proposition: Ref| -> Result<Ref, DefinitionProofError> {
+                for &(variable, value) in &substitutions {
+                    proposition = substitute(kernel, variable, value, proposition)
+                        .map_err(|source| DefinitionProofError::Substitute { source })?
+                        .output;
+                }
+                Ok(proposition)
+            };
+        let cases = self
+            .cases
+            .iter()
+            .map(|case| {
+                Ok(HolCase {
+                    applicable: specialize(&mut staged, case.applicable)?,
+                    produces: specialize(&mut staged, case.produces)?,
+                    otherwise: case.otherwise,
+                })
+            })
+            .collect::<Result<Vec<_>, DefinitionProofError>>()?;
+        let body = crate::ordered_cases(&mut staged, bool_ty, &cases)
+            .map_err(|source| DefinitionProofError::Kernel { source })?;
+        *kernel = staged;
+        Ok(RelationalDefinitionInstance { cases, body })
+    }
+}
+
+impl RelationalDefinitionInstance {
+    /// Derives the complete ordered body from one checked case-branch fact.
+    ///
+    /// For an ordinary case the branch is `case.produces`. For an `otherwise`
+    /// case it is `not prior_applicability /\ case.produces`. The method then
+    /// injects that branch into the exact source-ordered disjunction. All input
+    /// theorem premises remain visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `index` is absent, `branch_fact` proves a different
+    /// proposition, or checked alignment or disjunction introduction fails.
+    /// `kernel` is unchanged on failure.
+    pub fn prove_body_case(
+        &self,
+        kernel: &mut Kernel,
+        bool_ty: Ref,
+        index: usize,
+        branch_fact: ThmId,
+    ) -> Result<Evidence, DefinitionProofError> {
+        if index >= self.cases.len() {
+            return Err(DefinitionProofError::MissingCase { index });
+        }
+        let mut staged = kernel.fork();
+        let mut prior = staged.bool(bool_ty, false)?;
+        let mut body = staged.bool(bool_ty, false)?;
+        let mut theorem = None;
+        for (case_index, case) in self.cases.iter().enumerate() {
+            let branch = if case.otherwise {
+                let no_prior = staged.op1(Op1::Not, prior)?;
+                staged.op2(Op2::And, no_prior, case.produces)?
+            } else {
+                case.produces
+            };
+            let next = staged.op2(Op2::Or, body, branch)?;
+            if case_index == index {
+                let source = definition_positive_conclusion(&staged, branch_fact)?;
+                join_alpha_equivalent(&mut staged, source, branch)?;
+                let selected = staged.copy_theorem(branch_fact)?;
+                staged.convert_conclusions(selected, source, branch)?;
+                staged.weaken(selected, &[], &[positive(body)])?;
+                theorem = Some(staged.or_right(selected, positive(next))?);
+            } else if let Some(selected) = theorem {
+                staged.weaken(selected, &[], &[positive(branch)])?;
+                theorem = Some(staged.or_right(selected, positive(next))?);
+            }
+            prior = staged.op2(Op2::Or, prior, case.applicable)?;
+            body = next;
+        }
+        join_alpha_equivalent(&mut staged, body, self.body)?;
+        let theorem = theorem.ok_or(DefinitionProofError::MissingCase { index })?;
+        staged.convert_conclusions(theorem, body, self.body)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: self.body,
+            theorem,
+            holds: true,
+        })
+    }
+}
+
+fn definition_positive_conclusion(
+    kernel: &Kernel,
+    theorem: ThmId,
+) -> Result<Ref, DefinitionProofError> {
+    let theorem = kernel
+        .thm()
+        .get(theorem)
+        .ok_or(KernelError::MissingTheorem { id: theorem })?;
+    let mut conclusions = theorem.rhs.rows();
+    let Some([literal]) = conclusions.next() else {
+        return Err(DefinitionProofError::BranchFact);
+    };
+    if conclusions.next().is_some() || !literal.is_positive() {
+        return Err(DefinitionProofError::BranchFact);
+    }
+    Ref::new(literal.magnitude().cast_signed()).ok_or(DefinitionProofError::BranchFact)
+}
+
+/// Why a retained definition case could not be specialized or proved.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+#[snafu(module)]
+pub enum DefinitionProofError {
+    /// Concrete inputs did not match the definition arity.
+    #[snafu(display("definition has {expected} inputs, found {actual}"))]
+    Arity {
+        /// Required input count.
+        expected: usize,
+        /// Supplied input count.
+        actual: usize,
+    },
+    /// The selected source case is absent.
+    #[snafu(display("definition has no case at index {index}"))]
+    MissingCase {
+        /// Requested source-order index.
+        index: usize,
+    },
+    /// The supplied theorem is not one positive case-branch fact.
+    #[snafu(display("theorem does not prove the selected definition branch"))]
+    BranchFact,
+    /// Checked capture-avoiding specialization failed.
+    #[snafu(display("could not specialize a retained definition case: {source}"))]
+    Substitute {
+        /// Underlying checked substitution failure.
+        source: ModelError,
+    },
+    /// Checked syntax alignment failed.
+    #[snafu(display("could not align a retained definition case: {source}"))]
+    Syntax {
+        /// Underlying checked syntax failure.
+        source: SyntaxError,
+    },
+    /// A checked HOL construction or theorem rule failed.
+    #[snafu(transparent)]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+}
+
+impl From<SyntaxError> for DefinitionProofError {
+    fn from(source: SyntaxError) -> Self {
+        Self::Syntax { source }
+    }
 }
 
 /// Minimal inputs for lowering one complete checked definition schema.

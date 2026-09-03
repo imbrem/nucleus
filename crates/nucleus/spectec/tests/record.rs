@@ -611,6 +611,19 @@ fn exact_source_definition_lowers_from_selector_and_schema() {
             .equivalent(kernel.classifier(definition.equation).unwrap(), bool_ty)
             .unwrap()
     );
+    let instance = definition
+        .specialize(&mut kernel, bool_ty, &[x], x)
+        .unwrap();
+    let selected = instance.cases[0].produces;
+    let selected_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(selected.get()))
+        .unwrap();
+    let body = instance
+        .prove_body_case(&mut kernel, bool_ty, 0, selected_fact)
+        .unwrap();
+    covalence_nucleus_spectec::EvidenceScope::positive(&[selected])
+        .check(&kernel, body)
+        .unwrap();
     let before = kernel.arena().len();
     assert!(
         relational_definition_declaration(

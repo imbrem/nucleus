@@ -51,12 +51,13 @@ pub use program_logic::{
     ReachabilityProofError,
 };
 pub use relational::{
-    RelationProofError, RelationalCall, RelationalCaseError, RelationalClause, RelationalCondition,
-    RelationalDefinition, RelationalDefinitionSchema, RelationalDefinitionSource,
-    RelationalExpressionAlgebra, RelationalRelation, RelationalRelationDefinition,
-    RelationalResolver, RelationalTerm, relational_definition, relational_definition_declaration,
-    relational_definition_schema, relational_hol_case, relational_hol_rule,
-    relational_relation_declaration, relational_relations, relational_relations_avoiding,
+    DefinitionProofError, RelationProofError, RelationalCall, RelationalCaseError,
+    RelationalClause, RelationalCondition, RelationalDefinition, RelationalDefinitionInstance,
+    RelationalDefinitionSchema, RelationalDefinitionSource, RelationalExpressionAlgebra,
+    RelationalRelation, RelationalRelationDefinition, RelationalResolver, RelationalTerm,
+    relational_definition, relational_definition_declaration, relational_definition_schema,
+    relational_hol_case, relational_hol_rule, relational_relation_declaration,
+    relational_relations, relational_relations_avoiding,
 };
 pub use schema::{
     HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,
