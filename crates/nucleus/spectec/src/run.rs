@@ -708,6 +708,9 @@ enum RunComparison {
 pub enum BehaviorQuantifier {
     /// At least one allowed execution has the observed behavior.
     May,
+    /// Every allowed execution has the observed behavior, without asserting
+    /// that an execution exists.
+    Every,
     /// Every admissible invocation has at least one execution, and every one
     /// of its executions has the observed behavior.
     Must,
@@ -747,7 +750,7 @@ impl RunObservation {
         self.observe
     }
 
-    /// Constructs a may, must, or never proposition for one profile and module.
+    /// Constructs a may, every, must, or never proposition for one profile and module.
     ///
     /// `Must` is deliberately non-vacuous per invocation: for every admissible
     /// entry/input/host choice, at least one matching execution must exist and
@@ -816,6 +819,11 @@ impl RunObservation {
                 } else {
                     staged.op1(Op1::Not, may)?
                 }
+            }
+            BehaviorQuantifier::Every => {
+                let eligible = staged.op2(Op2::And, allowed, runs)?;
+                let required = staged.op2(Op2::Imp, eligible, observed)?;
+                quantify_forall(&mut staged, types.bool_ty, &run_variables, required)?
             }
             BehaviorQuantifier::Must => {
                 let matching = staged.op2(Op2::And, runs, observed)?;
@@ -920,6 +928,19 @@ impl RunObservation {
     /// Returns an error under the same conditions as [`Self::proposition`].
     pub fn may(self, kernel: &mut Kernel, profile: Ref, module: Ref) -> Result<Ref, KernelError> {
         self.proposition(kernel, BehaviorQuantifier::May, profile, module)
+    }
+
+    /// Constructs the universal behavior proposition without asserting progress.
+    ///
+    /// This is the usual form for trace safety: executions that exist must
+    /// satisfy the observation, while totality remains a separate explicit
+    /// property.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as [`Self::proposition`].
+    pub fn every(self, kernel: &mut Kernel, profile: Ref, module: Ref) -> Result<Ref, KernelError> {
+        self.proposition(kernel, BehaviorQuantifier::Every, profile, module)
     }
 
     /// Constructs the non-vacuous universal behavior proposition.
@@ -1094,9 +1115,11 @@ mod tests {
         assert_eq!(outcome_observation.domain(), domain);
 
         let may = observation.may(&mut kernel, profile, module).unwrap();
+        let every = observation.every(&mut kernel, profile, module).unwrap();
         let never = observation.never(&mut kernel, profile, module).unwrap();
         let must = observation.must(&mut kernel, profile, module).unwrap();
         assert_eq!(kernel.classifier(may).unwrap(), bool_ty);
+        assert_eq!(kernel.classifier(every).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(never).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(must).unwrap(), bool_ty);
         assert_eq!(kernel.arena().tag(never), Some(Tag::Tm(TmTag::Op1)));
@@ -1143,6 +1166,7 @@ mod tests {
 
         for quantifier in [
             BehaviorQuantifier::May,
+            BehaviorQuantifier::Every,
             BehaviorQuantifier::Must,
             BehaviorQuantifier::Never,
         ] {

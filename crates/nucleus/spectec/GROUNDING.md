@@ -5,9 +5,11 @@ the checked HOL shape
 `Runs(profile, module, entry, inputs, host, trace, outcome)`. A `RunDomain`
 adds an explicit profile- and module-sensitive admissibility policy, reusable
 across predicates over traces and outcomes. A `RunObservation` derives `may`,
-per-invocation non-vacuous `must`, and `never` propositions from that one relation; calls,
-traps, returns, and compound trace properties are observation adapters rather
-than separate execution semantics. Unary trace and outcome predicates have
+vacuous-universal `every`, per-invocation non-vacuous `must`, and `never`
+propositions from that one relation. `every` states trace safety independently
+of progress, while `must` additionally requires an observed execution for each
+admissible invocation. Calls, traps, returns, and compound trace properties are
+observation adapters rather than separate execution semantics. Unary trace and outcome predicates have
 checked adapters that explicitly ignore the other component, covering the
 common call/safety and return/trap cases without hand-built lambdas. A domain
 also defines `same_runs`, equality of complete allowed run graphs, and
