@@ -193,6 +193,14 @@ that recognizes a `{NAME, ADDR}` record whose `ADDR` field is the exact unary
 `FUNC` case applied to the selected address. Syntax matching is only used to
 select the list witness, while the graph, membership, and existential
 conclusions come from kernel-checked rules and retain their input premises.
+`StructuralFieldPattern` retains the exact immutable constructor shape and
+binders behind such a graph. For an exact constructed record,
+`StructuralValueAlgebra::prove_field_pattern` allocates that descriptor fresh
+for the concrete values and derives its application premise-free through
+checked reflexivity, conjunction, existential introduction, and beta
+conversion. This is available for allocation proofs that expose the concrete
+runtime export record; it does not assume that the current syntax-level export
+is already that runtime record.
 
 Grounding therefore requires all of the following:
 

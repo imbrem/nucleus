@@ -13,8 +13,9 @@ use covalence_logic_hol_derived::{
 
 use crate::{
     AssertionReachability, ContextualObservation, Evidence, FiniteSequenceLaw, FunctionObservation,
-    ParameterizedDocument, StructuralConstructor, StructuralConstructorLaws,
-    StructuralSequenceAlgebra, StructuralValueAlgebra,
+    ParameterizedDocument, ProvedStructuralFieldPattern, StructuralConstructor,
+    StructuralConstructorLaws, StructuralSequenceAlgebra, StructuralValueAlgebra,
+    StructuralValueProofError,
 };
 
 fn application_spine(kernel: &Kernel, mut value: Ref) -> (Ref, Vec<Ref>) {
@@ -571,6 +572,57 @@ impl<'a> SpecTecValueBuilder<'a> {
             .map_err(|source| WasmLogicError::Kernel { source })?;
         *kernel = staged;
         Ok(graph)
+    }
+
+    /// Proves an exact structural record has one field matching a unary case.
+    ///
+    /// This is the proof-producing counterpart of
+    /// [`Self::struct_case_field_graph`]. It resolves the same recorded
+    /// constructors and delegates to the generic structural algebra; it does
+    /// not create an interpretation or new trusted fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the named constructors are unavailable, `values`
+    /// do not exactly match the record shape and selected case, or a checked
+    /// HOL proof step fails. `kernel` is unchanged on failure.
+    pub fn prove_struct_case_field(
+        self,
+        kernel: &mut Kernel,
+        fields: &[&str],
+        values: &[Ref],
+        selected: &str,
+        case: &str,
+        output: Ref,
+    ) -> Result<ProvedStructuralFieldPattern, WasmLogicError> {
+        let mut selected_indices = fields
+            .iter()
+            .enumerate()
+            .filter_map(|(index, field)| (*field == selected).then_some(index));
+        let selected_index = selected_indices
+            .next()
+            .ok_or_else(|| WasmLogicError::Operation {
+                label: Symbol::new(selected),
+            })?;
+        if selected_indices.next().is_some() {
+            return Err(WasmLogicError::Operation {
+                label: Symbol::new(selected),
+            });
+        }
+        let mut staged = kernel.fork();
+        let record = self.structural_constructor(
+            &mut staged,
+            &format!("expression:Struct({fields:?})"),
+            fields.len(),
+        )?;
+        let pattern =
+            self.structural_constructor(&mut staged, &format!("expression:Case({case:?})"), 1)?;
+        let proved = self
+            .algebra()
+            .prove_field_pattern(&mut staged, record, values, selected_index, pattern, output)
+            .map_err(|source| WasmLogicError::StructuralValue { source })?;
+        *kernel = staged;
+        Ok(proved)
     }
 
     fn expression(
@@ -2453,6 +2505,12 @@ pub enum WasmLogicError {
     /// A function replacement schema used a foreign carrier or operation type.
     #[snafu(display("invalid SpecTec function observation schema"))]
     FunctionObservation,
+    /// Checked structural-value proof construction failed.
+    #[snafu(transparent)]
+    StructuralValue {
+        /// Underlying generic structural proof failure.
+        source: StructuralValueProofError,
+    },
     /// A checked HOL construction failed.
     #[snafu(display("could not construct SpecTec program-logic adapter: {source}"))]
     Kernel {

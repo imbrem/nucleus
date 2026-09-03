@@ -10,12 +10,12 @@ use std::sync::Arc;
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    Kernel, KernelError, Lit, Ref, ThmId,
+    Kernel, KernelError, Lit, Ref, SynRel, ThmId,
     builtin::{Op1, Op2},
 };
 use covalence_logic_hol_derived::{
-    EqualityError, ForallError, SyntaxError, equality_symmetry, forall_elim, join_alpha_equivalent,
-    join_same_syntax,
+    EqualityError, ExistsError, ForallError, ModelError, SyntaxError, equality_symmetry,
+    forall_elim, introduce_exists, join_alpha_equivalent, join_same_syntax, substitute,
 };
 
 use crate::Evidence;
@@ -62,6 +62,27 @@ pub struct StructuralFieldPattern {
     pattern_constructor: StructuralConstructor,
     fields: Arc<[Ref]>,
     predicate: Ref,
+}
+
+/// A structural field pattern paired with its checked premise-free evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProvedStructuralFieldPattern {
+    pattern: StructuralFieldPattern,
+    evidence: Evidence,
+}
+
+impl ProvedStructuralFieldPattern {
+    /// Returns the exact immutable pattern proved by the evidence.
+    #[must_use]
+    pub const fn pattern(&self) -> &StructuralFieldPattern {
+        &self.pattern
+    }
+
+    /// Returns the checked application of the pattern to its concrete values.
+    #[must_use]
+    pub const fn evidence(&self) -> Evidence {
+        self.evidence
+    }
 }
 
 impl StructuralFieldPattern {
@@ -436,6 +457,18 @@ pub enum StructuralValueProofError {
         /// Underlying derived equality failure.
         source: EqualityError,
     },
+    /// Existential introduction failed.
+    #[snafu(transparent)]
+    Exists {
+        /// Underlying derived existential failure.
+        source: ExistsError,
+    },
+    /// Capture-avoiding substitution failed.
+    #[snafu(transparent)]
+    Model {
+        /// Underlying derived model operation failure.
+        source: ModelError,
+    },
     /// Checked formulas could not be aligned.
     #[snafu(transparent)]
     Syntax {
@@ -602,6 +635,121 @@ impl StructuralValueAlgebra {
         };
         *kernel = staged;
         Ok(pattern)
+    }
+
+    /// Proves an exact constructed value satisfies a structural field pattern.
+    ///
+    /// The returned descriptor is allocated fresh for `fields` and `output`.
+    /// Its evidence proves the descriptor's binary predicate applied to the
+    /// constructed record and `output`, with no premises.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `fields` exactly fill `record_constructor`, the
+    /// selected field is the unary `pattern_constructor` applied to `output`,
+    /// and every checked proof step succeeds. `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_lines)]
+    pub fn prove_field_pattern(
+        self,
+        kernel: &mut Kernel,
+        record_constructor: StructuralConstructor,
+        fields: &[Ref],
+        selected: usize,
+        pattern_constructor: StructuralConstructor,
+        output: Ref,
+    ) -> Result<ProvedStructuralFieldPattern, StructuralValueProofError> {
+        let mut staged = kernel.fork();
+        self.require_constructor(&mut staged, record_constructor)?;
+        self.require_constructor(&mut staged, pattern_constructor)?;
+        if fields.len() != record_constructor.arity || selected >= fields.len() {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "structural field pattern proof shape",
+            }
+            .into());
+        }
+        if pattern_constructor.arity != 1 {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "structural field pattern proof arity",
+            }
+            .into());
+        }
+        let record = apply(&mut staged, record_constructor.operation, fields)?;
+        let pattern_value = apply(&mut staged, pattern_constructor.operation, &[output])?;
+        join_same_syntax(&mut staged, fields[selected], pattern_value)?;
+        let mut avoid = vec![record, output, pattern_value];
+        avoid.extend_from_slice(fields);
+        let pattern = self.field_pattern_avoiding(
+            &mut staged,
+            record_constructor,
+            selected,
+            pattern_constructor,
+            &avoid,
+        )?;
+
+        let rebuilt_record = apply(&mut staged, record_constructor.operation, fields)?;
+        let record_equality = staged.eq(self.bool_ty, record, rebuilt_record)?;
+        let record_reflexive = staged.refl(self.bool_ty, record)?;
+        join_same_syntax(&mut staged, record_reflexive.equality, record_equality)?;
+        staged.convert_conclusions(
+            record_reflexive.theorem,
+            record_reflexive.equality,
+            record_equality,
+        )?;
+        let rebuilt_pattern = apply(&mut staged, pattern_constructor.operation, &[output])?;
+        let field_equality = staged.eq(self.bool_ty, fields[selected], rebuilt_pattern)?;
+        let field_reflexive = staged.refl(self.bool_ty, fields[selected])?;
+        join_same_syntax(&mut staged, field_reflexive.equality, field_equality)?;
+        staged.convert_conclusions(
+            field_reflexive.theorem,
+            field_reflexive.equality,
+            field_equality,
+        )?;
+        let concrete = staged.op2(Op2::And, record_equality, field_equality)?;
+        let mut theorem = staged.and_right(
+            record_reflexive.theorem,
+            field_reflexive.theorem,
+            positive(concrete),
+        )?;
+        let mut proposition = concrete;
+        for index in (0..fields.len()).rev() {
+            let arguments = fields[..index]
+                .iter()
+                .copied()
+                .chain(pattern.fields[index..].iter().copied())
+                .collect::<Vec<_>>();
+            let constructed = apply(&mut staged, record_constructor.operation, &arguments)?;
+            let record_equality = staged.eq(self.bool_ty, record, constructed)?;
+            let selected_pattern = apply(&mut staged, pattern_constructor.operation, &[output])?;
+            let field_equality = staged.eq(self.bool_ty, arguments[selected], selected_pattern)?;
+            let mut body = staged.op2(Op2::And, record_equality, field_equality)?;
+            for &later in pattern.fields[index + 1..].iter().rev() {
+                body = staged.exists_tm(later, body)?;
+            }
+            let introduced = introduce_exists(
+                &mut staged,
+                theorem,
+                pattern.fields[index],
+                body,
+                fields[index],
+            )?;
+            theorem = introduced.theorem;
+            proposition = introduced.proposition;
+        }
+        let (application, reduced) =
+            reduce_binary_application(&mut staged, pattern.predicate, record, output)?;
+        join_alpha_equivalent(&mut staged, proposition, reduced)?;
+        staged.convert_conclusions(theorem, proposition, reduced)?;
+        staged.convert_conclusions(theorem, reduced, application)?;
+        let proved = ProvedStructuralFieldPattern {
+            pattern,
+            evidence: Evidence {
+                proposition: application,
+                theorem,
+                holds: true,
+            },
+        };
+        *kernel = staged;
+        Ok(proved)
     }
 
     /// Constructs the complete constructor-separation obligations for a finite
@@ -783,6 +931,64 @@ fn apply(kernel: &mut Kernel, function: Ref, arguments: &[Ref]) -> Result<Ref, K
     })
 }
 
+fn reduce_binary_application(
+    kernel: &mut Kernel,
+    predicate: Ref,
+    left: Ref,
+    right: Ref,
+) -> Result<(Ref, Ref), StructuralValueProofError> {
+    let mut outer = kernel
+        .arena()
+        .children(predicate)
+        .ok_or(KernelError::InvalidTheoremRule {
+            rule: "structural field pattern outer lambda",
+        })?;
+    let left_binder = outer.next().ok_or(KernelError::InvalidTheoremRule {
+        rule: "structural field pattern left binder",
+    })?;
+    let outer_body = outer.next().ok_or(KernelError::InvalidTheoremRule {
+        rule: "structural field pattern outer body",
+    })?;
+    drop(outer);
+    let outer_application = kernel.app(predicate, left)?;
+    let outer_reduced = substitute(kernel, left_binder, left, outer_body)?;
+    let outer_beta = kernel.tm_beta_fact(None, outer_application, outer_reduced.fact)?;
+    kernel.union_syn_fact(outer_beta)?;
+    let application = kernel.app(outer_application, right)?;
+    let intermediate = kernel.app(outer_reduced.output, right)?;
+    let right_reflexive = kernel.syn_refl(None, SynRel::Syn, right)?;
+    let congruence = kernel.syn_congr(
+        None,
+        SynRel::Conv,
+        None,
+        None,
+        application,
+        intermediate,
+        &[outer_beta, right_reflexive],
+    )?;
+    kernel.union_syn_fact(congruence)?;
+    let mut inner =
+        kernel
+            .arena()
+            .children(outer_reduced.output)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "structural field pattern inner lambda",
+            })?;
+    let right_binder = inner.next().ok_or(KernelError::InvalidTheoremRule {
+        rule: "structural field pattern right binder",
+    })?;
+    let inner_body = inner.next().ok_or(KernelError::InvalidTheoremRule {
+        rule: "structural field pattern inner body",
+    })?;
+    drop(inner);
+    let reduced = substitute(kernel, right_binder, right, inner_body)?;
+    let inner_beta = kernel.tm_beta_fact(None, intermediate, reduced.fact)?;
+    kernel.union_syn_fact(inner_beta)?;
+    let conversion = kernel.syn_trans(None, congruence, inner_beta)?;
+    kernel.union_syn_fact(conversion)?;
+    Ok((application, reduced.output))
+}
+
 fn quantify(
     kernel: &mut Kernel,
     bool_ty: Ref,
@@ -932,11 +1138,27 @@ mod tests {
         let graph = pattern.predicate();
         let actual = kernel.classifier(graph).unwrap();
         covalence_logic_hol_derived::join_same_syntax(&mut kernel, actual, graph_ty).unwrap();
+        let output = kernel.tm_fv(12, value_ty).unwrap();
+        let other = kernel.tm_fv(13, value_ty).unwrap();
+        let patterned = apply(&mut kernel, unary.operation(), &[output]).unwrap();
+        let proved = algebra
+            .prove_field_pattern(&mut kernel, binary, &[other, patterned], 1, unary, output)
+            .unwrap();
+        assert_eq!(proved.pattern().selected(), 1);
+        EvidenceScope::positive(&[])
+            .check(&kernel, proved.evidence())
+            .unwrap();
 
         let before = kernel.arena().clone();
         assert!(
             algebra
                 .field_pattern_graph(&mut kernel, binary, 2, unary)
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert!(
+            algebra
+                .prove_field_pattern(&mut kernel, binary, &[other, other], 1, unary, output)
                 .is_err()
         );
         assert_eq!(kernel.arena(), &before);
