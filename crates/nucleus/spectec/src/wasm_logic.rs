@@ -5,7 +5,7 @@ use covalence_data_spectec::IlKind;
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref, builtin::Op2};
 
-use crate::{AssertionReachability, InterpretationKind, ParameterizedDocument};
+use crate::{AssertionReachability, ParameterizedDocument};
 
 /// Immutable view for composing structural `SpecTec` values in HOL.
 ///
@@ -621,19 +621,7 @@ pub fn spectec_execution(
     let invoke = unique_definition(document, "invoke")?;
     let store = unique_definition(document, "store")?;
     let moduleinst = unique_definition(document, "moduleinst")?;
-    let tuple = document
-        .operations()
-        .find(|operation| {
-            operation.kind() == InterpretationKind::Tuple
-                && operation.signature.label == "tuple:2"
-                && operation.signature.domains.as_ref()
-                    == [document.schema.value(), document.schema.value()]
-                && operation.signature.codomain == document.schema.value()
-        })
-        .ok_or_else(|| WasmLogicError::Operation {
-            label: Symbol::new("tuple:2"),
-        })?
-        .reference;
+    let tuple = steps_pair_operation(kernel, document, *id)?;
 
     let mut staged = kernel.fork();
     let roots = [
@@ -689,6 +677,50 @@ pub fn spectec_execution(
         store,
         moduleinst,
     })
+}
+
+fn steps_pair_operation(
+    kernel: &Kernel,
+    document: &ParameterizedDocument,
+    id: covalence_data_spectec::DeclarationId,
+) -> Result<Ref, WasmLogicError> {
+    let steps_definition =
+        document
+            .semantics
+            .relations()
+            .get(&id)
+            .ok_or(WasmLogicError::Declaration {
+                kind: IlKind::Relation,
+                name: "Steps",
+                count: 0,
+            })?;
+    let argument = *steps_definition
+        .rule_schemas
+        .first()
+        .and_then(|rule| rule.conclusion.first())
+        .ok_or_else(|| WasmLogicError::Operation {
+            label: Symbol::new("Steps pair"),
+        })?;
+    let mut outer_children =
+        kernel
+            .arena()
+            .children(argument)
+            .ok_or_else(|| WasmLogicError::Operation {
+                label: Symbol::new("Steps pair"),
+            })?;
+    let partial_pair = outer_children
+        .next()
+        .ok_or_else(|| WasmLogicError::Operation {
+            label: Symbol::new("Steps pair"),
+        })?;
+    drop(outer_children);
+    kernel
+        .arena()
+        .children(partial_pair)
+        .and_then(|mut children| children.next())
+        .ok_or_else(|| WasmLogicError::Operation {
+            label: Symbol::new("Steps pair"),
+        })
 }
 
 fn unique_definition(

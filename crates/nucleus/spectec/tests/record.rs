@@ -1555,6 +1555,8 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     assert_eq!(steps_definition.rule_schemas.len(), 2);
     assert!(!steps_definition.rule_schemas[0].binders.is_empty());
     assert!(!steps_definition.rule_schemas[0].premises.is_empty());
+    assert_eq!(steps_definition.rule_schemas[0].binders.len(), 4);
+    assert_eq!(steps_definition.rule_schemas[0].premises.len(), 2);
     for &rule in steps_definition.rules.iter() {
         assert_eq!(kernel.classifier(rule).unwrap(), bool_ty);
     }
@@ -1578,6 +1580,20 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         .check(&kernel, steps_constraint)
         .unwrap();
     let execution = spectec_execution(&mut kernel, &document).unwrap();
+    let rule_argument = steps_definition.rule_schemas[0].conclusion[0];
+    let partial_pair = kernel
+        .arena()
+        .children(rule_argument)
+        .unwrap()
+        .next()
+        .unwrap();
+    let exact_pair = kernel
+        .arena()
+        .children(partial_pair)
+        .unwrap()
+        .next()
+        .unwrap();
+    assert_eq!(execution.pair, exact_pair);
     let state_name = kernel
         .fresh_name(&[value, bool_ty, steps_constraint.proposition])
         .unwrap();
