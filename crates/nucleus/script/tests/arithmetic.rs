@@ -561,3 +561,44 @@ fn an_atomic_difference_normalizes_its_operands() {
         .expect("atomic differences collect");
     check_proved(&case, &proof);
 }
+
+#[test]
+fn comparison_and_choice_are_arithmetic() {
+    let (kernel, naturals, ring, subtraction) = subtraction_kernel();
+    let normalizer = NaturalNormalizer::with_subtraction(&naturals, ring, subtraction);
+
+    for (name, goal, expected) in [
+        ("3 <= 5", Expr::literal(3).at_most(Expr::literal(5)), 1),
+        ("5 <= 3", Expr::literal(5).at_most(Expr::literal(3)), 0),
+        ("4 <= 4", Expr::literal(4).at_most(Expr::literal(4)), 1),
+        ("3 < 5", Expr::literal(3).below(Expr::literal(5)), 1),
+        ("4 < 4", Expr::literal(4).below(Expr::literal(4)), 0),
+        ("4 == 4", Expr::literal(4).equals(Expr::literal(4)), 1),
+        ("4 == 5", Expr::literal(4).equals(Expr::literal(5)), 0),
+        (
+            "if 3 < 5 then 10 else 20",
+            Expr::select(
+                Expr::literal(3).below(Expr::literal(5)),
+                Expr::literal(10),
+                Expr::literal(20),
+            ),
+            10,
+        ),
+        (
+            "if 5 < 3 then 10 else 20",
+            Expr::select(
+                Expr::literal(5).below(Expr::literal(3)),
+                Expr::literal(10),
+                Expr::literal(20),
+            ),
+            20,
+        ),
+    ] {
+        let mut case = kernel.fork();
+        let (value, proof) = normalizer
+            .evaluate(&mut case, &goal)
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(value, expected, "{name}");
+        check_proved(&case, &proof);
+    }
+}

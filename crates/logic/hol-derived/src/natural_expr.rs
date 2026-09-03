@@ -47,6 +47,39 @@ impl Expr {
     pub(crate) fn node(&self) -> &Node {
         &self.0
     }
+
+    /// One when `self` is at most `other`, zero otherwise.
+    ///
+    /// Truncated subtraction already decides the order: `a - b` is zero exactly
+    /// when `a <= b`, and `1 - k` turns that into a flag. This is an encoding,
+    /// not a new constant, so it needs nothing the semiring does not have.
+    #[must_use]
+    pub fn at_most(self, other: Self) -> Self {
+        Self::literal(1) - (self - other)
+    }
+
+    /// One when `self` is below `other`, zero otherwise.
+    #[must_use]
+    pub fn below(self, other: Self) -> Self {
+        (self + 1).at_most(other)
+    }
+
+    /// One when `self` and `other` are equal, zero otherwise.
+    ///
+    /// Each side bounds the other, and truncated subtraction makes the two
+    /// differences vanish together only when the values agree.
+    #[must_use]
+    pub fn equals(self, other: Self) -> Self {
+        Self::literal(1) - ((self.clone() - other.clone()) + (other - self))
+    }
+
+    /// `then_branch` when `flag` is one, `else_branch` when it is zero.
+    ///
+    /// The flag must be zero or one; the encodings above always are.
+    #[must_use]
+    pub fn select(flag: Self, then_branch: Self, else_branch: Self) -> Self {
+        flag.clone() * then_branch + (Self::literal(1) - flag) * else_branch
+    }
 }
 
 impl From<u64> for Expr {
