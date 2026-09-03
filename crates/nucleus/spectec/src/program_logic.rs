@@ -477,6 +477,71 @@ pub struct Evidence {
     pub holds: bool,
 }
 
+/// Immutable allowlist for assumptions admitted by a semantic proof.
+///
+/// A checked theorem remains kernel authority; this scope additionally checks
+/// that its premises are unit literals drawn from an explicit semantic theory
+/// and grounding-law boundary. It cannot create theorem facts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EvidenceScope {
+    allowed: Arc<[Lit]>,
+}
+
+impl EvidenceScope {
+    /// Creates a scope containing positive semantic assumptions.
+    #[must_use]
+    pub fn positive(assumptions: &[Ref]) -> Self {
+        Self {
+            allowed: assumptions
+                .iter()
+                .map(|assumption| positive(*assumption))
+                .collect(),
+        }
+    }
+
+    /// Returns the exact allowed premise literals.
+    #[must_use]
+    pub fn allowed(&self) -> &[Lit] {
+        &self.allowed
+    }
+
+    /// Checks evidence against this exact premise boundary.
+    ///
+    /// Unused assumptions are permitted. Every premise actually present in
+    /// the theorem must be a unit literal in the allowlist, preventing an
+    /// evaluator observation or the desired conclusion from being silently
+    /// introduced as an extra premise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the theorem is absent, has the wrong conclusion, or
+    /// contains a non-unit or unlisted premise.
+    pub fn check(&self, kernel: &Kernel, evidence: Evidence) -> Result<Evidence, KernelError> {
+        require_conclusion(kernel, evidence)?;
+        let theorem =
+            kernel
+                .arena()
+                .theorems()
+                .get(evidence.theorem)
+                .ok_or(KernelError::MissingTheorem {
+                    id: evidence.theorem,
+                })?;
+        for row in theorem.lhs.rows() {
+            let [premise] = row else {
+                return Err(KernelError::InvalidTheoremRule {
+                    rule: "semantic evidence unit premise",
+                });
+            };
+            if !self.allowed.contains(premise) {
+                return Err(KernelError::InvalidTheoremRule {
+                    rule: "semantic evidence premise allowlist",
+                });
+            }
+        }
+        Ok(evidence)
+    }
+}
+
 impl From<Established> for Evidence {
     fn from(value: Established) -> Self {
         Self {
@@ -772,6 +837,38 @@ mod tests {
         let theorem = kernel.arena().theorems().get(result.theorem).unwrap();
         assert!(theorem.lhs.rows().next().is_some());
         assert!(result.holds);
+    }
+
+    #[test]
+    fn semantic_scope_rejects_smuggled_goal_assumptions() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let theory = kernel.tm_fv(1, bool_ty).unwrap();
+        let goal = kernel.tm_fv(2, bool_ty).unwrap();
+        let scope = EvidenceScope::positive(&[theory]);
+
+        let theory_evidence = Evidence {
+            proposition: theory,
+            theorem: kernel.identity(positive(theory)).unwrap(),
+            holds: true,
+        };
+        assert_eq!(
+            scope.check(&kernel, theory_evidence).unwrap(),
+            theory_evidence
+        );
+
+        let smuggled = Evidence {
+            proposition: goal,
+            theorem: kernel.identity(positive(goal)).unwrap(),
+            holds: true,
+        };
+        assert!(matches!(
+            scope.check(&kernel, smuggled),
+            Err(KernelError::InvalidTheoremRule {
+                rule: "semantic evidence premise allowlist"
+            })
+        ));
     }
 
     #[test]

@@ -11,10 +11,10 @@ use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref, Tag, TyTag};
 
 use crate::{
-    HolEmbedding, HolFamilyError, HolSchema, HolSchemaError, HolTheoryError, LeastPredicateError,
-    RelationalCall, RelationalCaseError, RelationalCondition, RelationalDocumentDefinition,
-    RelationalResolver, RelationalTerm, Source, declare_hol_schema, existential_case,
-    relational_document,
+    EvidenceScope, HolEmbedding, HolFamilyError, HolSchema, HolSchemaError, HolTheoryError,
+    LeastPredicateError, RelationalCall, RelationalCaseError, RelationalCondition,
+    RelationalDocumentDefinition, RelationalResolver, RelationalTerm, Source, declare_hol_schema,
+    existential_case, relational_document,
 };
 
 const LOCAL_NAME_BLOCK: u64 = 1 << 32;
@@ -134,6 +134,23 @@ impl ParameterizedDocument {
     #[must_use]
     pub fn has_no_missing_interpretations(&self) -> bool {
         self.interpretation.is_empty()
+    }
+
+    /// Creates the assumption boundary for proofs from this exact theory.
+    ///
+    /// The complete source-ordered theory and each of its declaration
+    /// constraints are admitted, so checked proof steps may either preserve or
+    /// decompose the conjunction. Callers must enumerate any additional
+    /// representation or byte-decoding laws; runtime observations are
+    /// deliberately not added implicitly.
+    #[must_use]
+    pub fn evidence_scope(&self, grounding_laws: &[Ref]) -> EvidenceScope {
+        let mut assumptions =
+            Vec::with_capacity(grounding_laws.len() + self.semantics.constraints().len() + 1);
+        assumptions.push(self.semantics.theory().proposition());
+        assumptions.extend(self.semantics.constraints().values().copied());
+        assumptions.extend_from_slice(grounding_laws);
+        EvidenceScope::positive(&assumptions)
     }
 }
 

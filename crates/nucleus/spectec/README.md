@@ -60,6 +60,12 @@ conditional on the complete `SpecTec` theory and explicit representation laws.
 `Established` is reserved for the stronger premise-free case; conversion to it
 rechecks that no assumptions remain.
 
+`ParameterizedDocument::evidence_scope` enforces that boundary mechanically.
+It accepts only unit premises naming the exact complete theory, one of its
+source-indexed declaration constraints, or a caller-enumerated grounding law.
+In particular, an interpreter observation or the desired goal cannot be
+silently smuggled into a purported semantic proof.
+
 `spectec_execution` extracts the exact lowered `instantiate`, `invoke`, and
 `Steps` declarations from the pinned source vocabulary. It adapts SpecTec's
 tuple-argument `Steps` relation to the curried predicate consumed by
