@@ -14,19 +14,23 @@ outcome predicates have checked adapters that explicitly ignore the other
 component, covering the common call/safety and return/trap cases without
 hand-built lambdas. Observations compose pointwise through immutable `and`,
 `or`, and negation operations; binary composition rejects different run domains
-so host policies cannot be mixed silently. A domain also defines `same_runs`,
-equality of complete allowed run graphs, and
-directional `refines_runs`: an implementation has the same
-admissible invocation domain and may remove, but not add, behaviors of its
-specification, but must retain some behavior whenever the specification has a
-run. Thus refinement cannot encode partiality merely by deleting every result.
+so host policies cannot be mixed silently. A domain also defines `same_runs`
+as equality of two immutable characteristic functions: the admissible
+invocations and the complete allowed run graph. This representation gives
+checked reflexivity, symmetry, and transitivity directly from HOL equality.
+The domain additionally defines directional `refines_runs`: an implementation
+has the same admissible invocation domain and may remove, but not add, behaviors
+of its specification, but must retain some behavior whenever the specification
+has a run. Thus refinement cannot encode partiality merely by deleting every
+result.
 The domain also derives explicit determinism and totality propositions.
 Totality here means that every admissible invocation has a modeled trace and
 outcome; the profile and outcome representation determine whether traps or
 divergence count. Premise-free checked reflexivity theorems establish the first
-laws of equivalence and refinement without assuming either property. The
-resulting module predicates compose with context-quantified observational
-equivalence through a checked adapter. Keeping `same_runs` distinct from
+laws of equivalence and refinement without assuming either property; checked
+symmetry and transitivity preserve the explicit premises of their input
+evidence. The resulting module predicates compose with context-quantified
+observational equivalence through a checked adapter. Keeping `same_runs` distinct from
 contextual equivalence prevents a closed run-graph claim from silently standing
 in for linking-context indistinguishability, while the existing individual-function
 replacement theorems apply to any selected may, must, or never behavior. This

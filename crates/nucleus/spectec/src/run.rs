@@ -10,7 +10,9 @@ use covalence_logic_hol::{
     Kernel, KernelError, Lit, Ref,
     builtin::{Op1, Op2},
 };
-use covalence_logic_hol_derived::join_same_syntax;
+use covalence_logic_hol_derived::{
+    EqualityError, equality_symmetry, equality_transitivity, join_same_syntax,
+};
 
 use crate::{ContextualObservation, Evidence};
 
@@ -107,10 +109,28 @@ impl RunRelation {
             self.types.bool_ty,
         )?;
         require_classifier(&mut staged, admissible, admissible_ty)?;
+        let domain_ty = curried_type(
+            &mut staged,
+            &[self.types.entry, self.types.inputs, self.types.host],
+            self.types.bool_ty,
+        )?;
+        let run_graph_ty = curried_type(
+            &mut staged,
+            &[
+                self.types.entry,
+                self.types.inputs,
+                self.types.host,
+                self.types.trace,
+                self.types.outcome,
+            ],
+            self.types.bool_ty,
+        )?;
         *kernel = staged;
         Ok(RunDomain {
             relation: self,
             admissible,
+            domain_ty,
+            run_graph_ty,
         })
     }
 
@@ -146,6 +166,26 @@ impl RunRelation {
 pub struct RunDomain {
     relation: RunRelation,
     admissible: Ref,
+    domain_ty: Ref,
+    run_graph_ty: Ref,
+}
+
+/// Failure to derive a checked law about run relations.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum RunProofError {
+    /// A checked kernel operation rejected the derivation.
+    #[snafu(transparent)]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+    /// A derived equality rule rejected one component.
+    #[snafu(transparent)]
+    Equality {
+        /// Underlying derived equality failure.
+        source: EqualityError,
+    },
 }
 
 impl RunDomain {
@@ -265,7 +305,28 @@ impl RunDomain {
         left: Ref,
         right: Ref,
     ) -> Result<Ref, KernelError> {
-        self.compare_runs(kernel, profile, left, right, RunComparison::Equivalent)
+        let mut staged = kernel.fork();
+        let left = self.run_graphs(&mut staged, profile, left)?;
+        let right = self.run_graphs(&mut staged, profile, right)?;
+        let left_domain_ty = staged.classifier(left.domain)?;
+        let right_domain_ty = staged.classifier(right.domain)?;
+        join_same_syntax(&mut staged, left_domain_ty, right_domain_ty).map_err(|_| {
+            KernelError::InvalidTheoremRule {
+                rule: "same-runs domain classifier",
+            }
+        })?;
+        let left_runs_ty = staged.classifier(left.runs)?;
+        let right_runs_ty = staged.classifier(right.runs)?;
+        join_same_syntax(&mut staged, left_runs_ty, right_runs_ty).map_err(|_| {
+            KernelError::InvalidTheoremRule {
+                rule: "same-runs graph classifier",
+            }
+        })?;
+        let same_domain = staged.eq(self.relation.types.bool_ty, left.domain, right.domain)?;
+        let same_behavior = staged.eq(self.relation.types.bool_ty, left.runs, right.runs)?;
+        let same = staged.op2(Op2::And, same_domain, same_behavior)?;
+        *kernel = staged;
+        Ok(same)
     }
 
     /// Constructs run refinement of an implementation by a specification.
@@ -288,13 +349,7 @@ impl RunDomain {
         implementation: Ref,
         specification: Ref,
     ) -> Result<Ref, KernelError> {
-        self.compare_runs(
-            kernel,
-            profile,
-            implementation,
-            specification,
-            RunComparison::Refines,
-        )
+        self.refinement(kernel, profile, implementation, specification)
     }
 
     /// Constructs totality under this domain and one selected profile.
@@ -459,7 +514,230 @@ impl RunDomain {
         profile: Ref,
         module: Ref,
     ) -> Result<Evidence, KernelError> {
-        self.prove_comparison_reflexive(kernel, profile, module, RunComparison::Equivalent)
+        let mut staged = kernel.fork();
+        let graph = self.run_graphs(&mut staged, profile, module)?;
+        let same_domain = staged.eq(self.relation.types.bool_ty, graph.domain, graph.domain)?;
+        let domain_reflexive = staged.refl(self.relation.types.bool_ty, graph.domain)?;
+        join_same_syntax(&mut staged, domain_reflexive.equality, same_domain).map_err(|_| {
+            KernelError::InvalidTheoremRule {
+                rule: "run-domain function reflexivity alignment",
+            }
+        })?;
+        staged.convert_conclusions(
+            domain_reflexive.theorem,
+            domain_reflexive.equality,
+            same_domain,
+        )?;
+        let same_behavior = staged.eq(self.relation.types.bool_ty, graph.runs, graph.runs)?;
+        let behavior_reflexive = staged.refl(self.relation.types.bool_ty, graph.runs)?;
+        join_same_syntax(&mut staged, behavior_reflexive.equality, same_behavior).map_err(
+            |_| KernelError::InvalidTheoremRule {
+                rule: "run-graph function reflexivity alignment",
+            },
+        )?;
+        staged.convert_conclusions(
+            behavior_reflexive.theorem,
+            behavior_reflexive.equality,
+            same_behavior,
+        )?;
+        let proposition = staged.op2(Op2::And, same_domain, same_behavior)?;
+        let theorem = staged.and_right(
+            domain_reflexive.theorem,
+            behavior_reflexive.theorem,
+            positive(proposition),
+        )?;
+        let canonical = self.same_runs(&mut staged, profile, module, module)?;
+        join_same_syntax(&mut staged, proposition, canonical).map_err(|_| {
+            KernelError::InvalidTheoremRule {
+                rule: "same-runs reflexivity alignment",
+            }
+        })?;
+        staged.convert_conclusions(theorem, proposition, canonical)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: canonical,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Reverses checked evidence that two modules have the same runs.
+    ///
+    /// Every premise of `evidence` remains visible. The derivation reverses
+    /// the admissibility-function and allowed-run-function equalities with the
+    /// standard checked equality rule.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `evidence` proves `same_runs(left, right)`, or a
+    /// checked equality, conjunction, alignment, or theorem operation fails.
+    /// `kernel` is unchanged on failure.
+    pub fn prove_same_runs_symmetric(
+        self,
+        kernel: &mut Kernel,
+        evidence: Evidence,
+        profile: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let forward = self.same_runs(&mut staged, profile, left, right)?;
+        let forward_theorem = align_evidence(&mut staged, evidence, forward)?;
+        let domain_fact =
+            staged.expand_conclusion(forward_theorem, positive(forward), Some(false))?;
+        let runs_fact = staged.expand_conclusion(forward_theorem, positive(forward), Some(true))?;
+        let flipped_domain =
+            equality_symmetry(&mut staged, self.relation.types.bool_ty, domain_fact)?;
+        let flipped_runs = equality_symmetry(&mut staged, self.relation.types.bool_ty, runs_fact)?;
+        let reverse = self.same_runs(&mut staged, profile, right, left)?;
+        let [reverse_domain, reverse_runs] = binary_children(&staged, reverse)?;
+        align_theorem_conclusion(
+            &mut staged,
+            flipped_domain.theorem,
+            flipped_domain.equality,
+            reverse_domain,
+            "same-runs symmetric domain alignment",
+        )?;
+        align_theorem_conclusion(
+            &mut staged,
+            flipped_runs.theorem,
+            flipped_runs.equality,
+            reverse_runs,
+            "same-runs symmetric behavior alignment",
+        )?;
+        let theorem = staged.and_right(
+            flipped_domain.theorem,
+            flipped_runs.theorem,
+            positive(reverse),
+        )?;
+        staged.contract_theorem(theorem)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: reverse,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Composes two checked same-runs facts.
+    ///
+    /// The result proves `same_runs(left, right)` from facts for
+    /// `same_runs(left, middle)` and `same_runs(middle, right)`, preserving all
+    /// premises of both inputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless both evidence values have the displayed positive
+    /// conclusions, or a checked equality, conjunction, alignment, or theorem
+    /// operation fails. `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_same_runs_transitive(
+        self,
+        kernel: &mut Kernel,
+        left_middle: Evidence,
+        middle_right: Evidence,
+        profile: Ref,
+        left: Ref,
+        middle: Ref,
+        right: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let expected_left_middle = self.same_runs(&mut staged, profile, left, middle)?;
+        let left_middle = align_evidence(&mut staged, left_middle, expected_left_middle)?;
+        let expected_middle_right = self.same_runs(&mut staged, profile, middle, right)?;
+        let middle_right = align_evidence(&mut staged, middle_right, expected_middle_right)?;
+        let left_domain_fact =
+            staged.expand_conclusion(left_middle, positive(expected_left_middle), Some(false))?;
+        let left_runs_fact =
+            staged.expand_conclusion(left_middle, positive(expected_left_middle), Some(true))?;
+        let right_domain_fact =
+            staged.expand_conclusion(middle_right, positive(expected_middle_right), Some(false))?;
+        let right_runs_fact =
+            staged.expand_conclusion(middle_right, positive(expected_middle_right), Some(true))?;
+        let domain = equality_transitivity(
+            &mut staged,
+            self.relation.types.bool_ty,
+            left_domain_fact,
+            right_domain_fact,
+        )?;
+        let runs = equality_transitivity(
+            &mut staged,
+            self.relation.types.bool_ty,
+            left_runs_fact,
+            right_runs_fact,
+        )?;
+        let target = self.same_runs(&mut staged, profile, left, right)?;
+        let [target_domain, target_runs] = binary_children(&staged, target)?;
+        align_theorem_conclusion(
+            &mut staged,
+            domain.theorem,
+            domain.equality,
+            target_domain,
+            "same-runs transitive domain alignment",
+        )?;
+        align_theorem_conclusion(
+            &mut staged,
+            runs.theorem,
+            runs.equality,
+            target_runs,
+            "same-runs transitive behavior alignment",
+        )?;
+        let theorem = staged.and_right(domain.theorem, runs.theorem, positive(target))?;
+        staged.contract_theorem(theorem)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: target,
+            theorem,
+            holds: true,
+        })
+    }
+
+    fn run_graphs(
+        self,
+        kernel: &mut Kernel,
+        profile: Ref,
+        module: Ref,
+    ) -> Result<RunGraphs, KernelError> {
+        let types = self.relation.types;
+        require_classifier(kernel, profile, types.profile)?;
+        require_classifier(kernel, module, types.module)?;
+        let first = kernel.fresh_name(&[
+            self.relation.runs,
+            self.admissible,
+            profile,
+            module,
+            types.entry,
+            types.inputs,
+            types.host,
+            types.trace,
+            types.outcome,
+            types.bool_ty,
+        ])?;
+        let entry = kernel.tm_fv(first, types.entry)?;
+        let inputs = kernel.tm_fv(checked_name(first, 1)?, types.inputs)?;
+        let host = kernel.tm_fv(checked_name(first, 2)?, types.host)?;
+        let trace = kernel.tm_fv(checked_name(first, 3)?, types.trace)?;
+        let outcome = kernel.tm_fv(checked_name(first, 4)?, types.outcome)?;
+        let allowed = apply(
+            kernel,
+            self.admissible,
+            &[profile, module, entry, inputs, host],
+        )?;
+        let domain =
+            abstract_variables_at(kernel, &[entry, inputs, host], allowed, self.domain_ty)?;
+        let run = apply(
+            kernel,
+            self.relation.runs,
+            &[profile, module, entry, inputs, host, trace, outcome],
+        )?;
+        let eligible = kernel.op2(Op2::And, allowed, run)?;
+        let runs = abstract_variables_at(
+            kernel,
+            &[entry, inputs, host, trace, outcome],
+            eligible,
+            self.run_graph_ty,
+        )?;
+        Ok(RunGraphs { domain, runs })
     }
 
     /// Proves that every module refines itself.
@@ -477,16 +755,15 @@ impl RunDomain {
         profile: Ref,
         module: Ref,
     ) -> Result<Evidence, KernelError> {
-        self.prove_comparison_reflexive(kernel, profile, module, RunComparison::Refines)
+        self.prove_refinement_reflexive(kernel, profile, module)
     }
 
     #[allow(clippy::too_many_lines)]
-    fn prove_comparison_reflexive(
+    fn prove_refinement_reflexive(
         self,
         kernel: &mut Kernel,
         profile: Ref,
         module: Ref,
-        comparison: RunComparison,
     ) -> Result<Evidence, KernelError> {
         let mut staged = kernel.fork();
         let types = self.relation.types;
@@ -543,25 +820,9 @@ impl RunDomain {
             self.relation.runs,
             &[profile, module, entry, inputs, host, trace, outcome],
         )?;
-        let (behavior, behavior_theorem) = match comparison {
-            RunComparison::Equivalent => {
-                let equality = staged.eq(types.bool_ty, run, run)?;
-                let reflexive = staged.refl(types.bool_ty, run)?;
-                join_same_syntax(&mut staged, reflexive.equality, equality).map_err(|_| {
-                    KernelError::InvalidTheoremRule {
-                        rule: "run behavior reflexivity alignment",
-                    }
-                })?;
-                staged.convert_conclusions(reflexive.theorem, reflexive.equality, equality)?;
-                (equality, reflexive.theorem)
-            }
-            RunComparison::Refines => {
-                let implication = staged.op2(Op2::Imp, run, run)?;
-                let identity = staged.identity(positive(run))?;
-                let theorem = staged.imp_right(identity, positive(implication))?;
-                (implication, theorem)
-            }
-        };
+        let behavior = staged.op2(Op2::Imp, run, run)?;
+        let identity = staged.identity(positive(run))?;
+        let behavior_theorem = staged.imp_right(identity, positive(behavior))?;
         let both_allowed = staged.op2(Op2::And, allowed, allowed)?;
         staged.weaken(behavior_theorem, &[positive(both_allowed)], &[])?;
         let guarded_behavior = staged.op2(Op2::Imp, both_allowed, behavior)?;
@@ -573,33 +834,29 @@ impl RunDomain {
             guarded_behavior,
             guarded_theorem,
         )?;
-        let (behavior, behavior_theorem) = if comparison == RunComparison::Refines {
-            let exists_run = quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], run)?;
-            let progress = staged.op2(Op2::Imp, exists_run, exists_run)?;
-            let assumed = staged.identity(positive(exists_run))?;
-            let progress_theorem = staged.imp_right(assumed, positive(progress))?;
-            staged.weaken(progress_theorem, &[positive(both_allowed)], &[])?;
-            let guarded_progress = staged.op2(Op2::Imp, both_allowed, progress)?;
-            let guarded_progress_theorem =
-                staged.imp_right(progress_theorem, positive(guarded_progress))?;
-            let (progress, progress_theorem) = introduce_forall(
-                &mut staged,
-                types.bool_ty,
-                &domain_variables,
-                guarded_progress,
-                guarded_progress_theorem,
-            )?;
-            let combined = staged.op2(Op2::And, behavior, progress)?;
-            let theorem =
-                staged.and_right(behavior_theorem, progress_theorem, positive(combined))?;
-            (combined, theorem)
-        } else {
-            (behavior, behavior_theorem)
-        };
+        let exists_run = quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], run)?;
+        let progress = staged.op2(Op2::Imp, exists_run, exists_run)?;
+        let assumed = staged.identity(positive(exists_run))?;
+        let progress_theorem = staged.imp_right(assumed, positive(progress))?;
+        staged.weaken(progress_theorem, &[positive(both_allowed)], &[])?;
+        let guarded_progress = staged.op2(Op2::Imp, both_allowed, progress)?;
+        let guarded_progress_theorem =
+            staged.imp_right(progress_theorem, positive(guarded_progress))?;
+        let (progress, progress_theorem) = introduce_forall(
+            &mut staged,
+            types.bool_ty,
+            &domain_variables,
+            guarded_progress,
+            guarded_progress_theorem,
+        )?;
+        let combined = staged.op2(Op2::And, behavior, progress)?;
+        let behavior_theorem =
+            staged.and_right(behavior_theorem, progress_theorem, positive(combined))?;
+        let behavior = combined;
         let proposition = staged.op2(Op2::And, same_domain, behavior)?;
         let theorem =
             staged.and_right(same_domain_theorem, behavior_theorem, positive(proposition))?;
-        let canonical = self.compare_runs(&mut staged, profile, module, module, comparison)?;
+        let canonical = self.refinement(&mut staged, profile, module, module)?;
         join_same_syntax(&mut staged, proposition, canonical).map_err(|_| {
             KernelError::InvalidTheoremRule {
                 rule: "run comparison reflexivity alignment",
@@ -614,13 +871,12 @@ impl RunDomain {
         })
     }
 
-    fn compare_runs(
+    fn refinement(
         self,
         kernel: &mut Kernel,
         profile: Ref,
         left: Ref,
         right: Ref,
-        comparison: RunComparison,
     ) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
         let types = self.relation.types;
@@ -673,35 +929,27 @@ impl RunDomain {
             &[profile, right, entry, inputs, host, trace, outcome],
         )?;
         let both_allowed = staged.op2(Op2::And, left_allowed, right_allowed)?;
-        let behavior = match comparison {
-            RunComparison::Equivalent => staged.eq(types.bool_ty, left_run, right_run)?,
-            RunComparison::Refines => staged.op2(Op2::Imp, left_run, right_run)?,
-        };
+        let behavior = staged.op2(Op2::Imp, left_run, right_run)?;
         let behavior = staged.op2(Op2::Imp, both_allowed, behavior)?;
         let behavior = quantify_forall(&mut staged, types.bool_ty, &run_variables, behavior)?;
-        let behavior = if comparison == RunComparison::Refines {
-            let implementation_runs =
-                quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], left_run)?;
-            let specification_runs =
-                quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], right_run)?;
-            let progress = staged.op2(Op2::Imp, specification_runs, implementation_runs)?;
-            let progress = staged.op2(Op2::Imp, both_allowed, progress)?;
-            let progress =
-                quantify_forall(&mut staged, types.bool_ty, &domain_variables, progress)?;
-            staged.op2(Op2::And, behavior, progress)?
-        } else {
-            behavior
-        };
+        let implementation_runs =
+            quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], left_run)?;
+        let specification_runs =
+            quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], right_run)?;
+        let progress = staged.op2(Op2::Imp, specification_runs, implementation_runs)?;
+        let progress = staged.op2(Op2::Imp, both_allowed, progress)?;
+        let progress = quantify_forall(&mut staged, types.bool_ty, &domain_variables, progress)?;
+        let behavior = staged.op2(Op2::And, behavior, progress)?;
         let proposition = staged.op2(Op2::And, same_domain, behavior)?;
         *kernel = staged;
         Ok(proposition)
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum RunComparison {
-    Equivalent,
-    Refines,
+#[derive(Clone, Copy)]
+struct RunGraphs {
+    domain: Ref,
+    runs: Ref,
 }
 
 /// Quantification mode for a behavior observation.
@@ -1091,6 +1339,89 @@ fn apply(kernel: &mut Kernel, function: Ref, arguments: &[Ref]) -> Result<Ref, K
         .try_fold(function, |applied, &argument| kernel.app(applied, argument))
 }
 
+fn abstract_variables_at(
+    kernel: &mut Kernel,
+    variables: &[Ref],
+    body: Ref,
+    classifier: Ref,
+) -> Result<Ref, KernelError> {
+    let mut function_types = Vec::with_capacity(variables.len());
+    let mut suffix = classifier;
+    for _ in variables {
+        function_types.push(suffix);
+        suffix = binary_children(kernel, suffix)?[1];
+    }
+    variables
+        .iter()
+        .zip(function_types)
+        .rev()
+        .try_fold(body, |body, (&variable, function_ty)| {
+            kernel.lam_at(function_ty, variable, body)
+        })
+}
+
+fn binary_children(kernel: &Kernel, proposition: Ref) -> Result<[Ref; 2], KernelError> {
+    kernel
+        .arena()
+        .children(proposition)
+        .ok_or(KernelError::InvalidTheoremRule {
+            rule: "run binary proposition",
+        })?
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|_| KernelError::InvalidTheoremRule {
+            rule: "run binary proposition operands",
+        })
+}
+
+fn align_evidence(
+    kernel: &mut Kernel,
+    evidence: Evidence,
+    target: Ref,
+) -> Result<covalence_logic_hol::ThmId, KernelError> {
+    if !evidence.holds {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "positive run evidence",
+        });
+    }
+    let expected = positive(evidence.proposition);
+    let exact_conclusion = {
+        let theorem = kernel
+            .thm()
+            .get(evidence.theorem)
+            .ok_or(KernelError::MissingTheorem {
+                id: evidence.theorem,
+            })?;
+        let mut conclusions = theorem.rhs.rows();
+        conclusions.next().is_some_and(|row| row == [expected]) && conclusions.next().is_none()
+    };
+    if !exact_conclusion {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "run evidence conclusion",
+        });
+    }
+    join_same_syntax(kernel, evidence.proposition, target).map_err(|_| {
+        KernelError::InvalidTheoremRule {
+            rule: "run evidence proposition alignment",
+        }
+    })?;
+    let aligned = kernel.copy_theorem(evidence.theorem)?;
+    kernel.convert_conclusions(aligned, evidence.proposition, target)?;
+    Ok(aligned)
+}
+
+fn align_theorem_conclusion(
+    kernel: &mut Kernel,
+    theorem: covalence_logic_hol::ThmId,
+    source: Ref,
+    target: Ref,
+    rule: &'static str,
+) -> Result<(), KernelError> {
+    join_same_syntax(kernel, source, target)
+        .map_err(|_| KernelError::InvalidTheoremRule { rule })?;
+    kernel.convert_conclusions(theorem, source, target)
+}
+
 fn quantify_exists(
     kernel: &mut Kernel,
     bool_ty: Ref,
@@ -1149,7 +1480,7 @@ fn require_classifier(kernel: &mut Kernel, term: Ref, expected: Ref) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::{BehaviorQuantifier, RunRelation, RunTypes};
-    use crate::EvidenceScope;
+    use crate::{Evidence, EvidenceScope};
     use covalence_logic_hol::{Kernel, Tag, TmTag};
 
     #[test]
@@ -1207,6 +1538,7 @@ mod tests {
         let profile = kernel.tm_fv(23, types.profile).unwrap();
         let module = kernel.tm_fv(24, types.module).unwrap();
         let other_module = kernel.tm_fv(26, types.module).unwrap();
+        let third_module = kernel.tm_fv(32, types.module).unwrap();
         let context_ty = kernel.ty_fv(8, star).unwrap();
         let plug_ty =
             super::curried_type(&mut kernel, &[context_ty, types.module], types.module).unwrap();
@@ -1273,6 +1605,63 @@ mod tests {
         EvidenceScope::positive(&[])
             .check(&kernel, equivalence_reflexive)
             .unwrap();
+        let left_middle = domain
+            .same_runs(&mut kernel, profile, module, other_module)
+            .unwrap();
+        let left_middle_evidence = Evidence {
+            proposition: left_middle,
+            theorem: kernel.identity(super::positive(left_middle)).unwrap(),
+            holds: true,
+        };
+        let symmetric = domain
+            .prove_same_runs_symmetric(
+                &mut kernel,
+                left_middle_evidence,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[left_middle])
+            .check(&kernel, symmetric)
+            .unwrap();
+        let middle_right = domain
+            .same_runs(&mut kernel, profile, other_module, third_module)
+            .unwrap();
+        let middle_right_evidence = Evidence {
+            proposition: middle_right,
+            theorem: kernel.identity(super::positive(middle_right)).unwrap(),
+            holds: true,
+        };
+        let transitive = domain
+            .prove_same_runs_transitive(
+                &mut kernel,
+                left_middle_evidence,
+                middle_right_evidence,
+                profile,
+                module,
+                other_module,
+                third_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[left_middle, middle_right])
+            .check(&kernel, transitive)
+            .unwrap();
+        let before = kernel.arena().clone();
+        let theorem_count = kernel.thm().live_theorems().count();
+        assert!(
+            domain
+                .prove_same_runs_symmetric(
+                    &mut kernel,
+                    equivalence_reflexive,
+                    profile,
+                    module,
+                    other_module,
+                )
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
         let refinement_reflexive = domain
             .prove_run_refinement_reflexive(&mut kernel, profile, module)
             .unwrap();
