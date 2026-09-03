@@ -1500,6 +1500,7 @@ fn generic_hol_schema_declares_every_wasm3_signature() {
 
 #[test]
 #[ignore = "exhaustive audit; run explicitly in the release profile"]
+#[allow(clippy::too_many_lines)] // Keeps one complete authority-boundary audit.
 fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let source = Source::wasm3().unwrap();
     let mut kernel = Kernel::new();
@@ -1513,6 +1514,14 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     assert_eq!(
         document.semantics.constraints().len(),
         source.declaration_count()
+    );
+    assert_eq!(
+        document.semantics.relations().len(),
+        source
+            .declarations()
+            .iter()
+            .filter(|declaration| declaration.kind() == IlKind::Relation)
+            .count()
     );
     assert!(!document.interpretation.is_empty());
     assert!(!document.has_no_missing_interpretations());
@@ -1541,6 +1550,17 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let [steps_id] = document.schema.named(IlKind::Relation, "Steps") else {
         panic!("expected one Steps relation")
     };
+    let steps_definition = document.semantics.relations().get(steps_id).unwrap();
+    assert_eq!(
+        kernel.classifier(steps_definition.least.closure).unwrap(),
+        bool_ty
+    );
+    assert_eq!(
+        kernel
+            .classifier(steps_definition.least.characterization)
+            .unwrap(),
+        bool_ty
+    );
     let steps_constraint = document
         .semantics
         .theory()

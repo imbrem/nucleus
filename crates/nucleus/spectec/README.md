@@ -79,6 +79,12 @@ function equalities used for least-closed relation families. The full audit
 specializes `Steps` at a symbolic configuration pair, scope-checks the point
 equation, and transactionally rejects a classifier-mismatched argument.
 
+`RelationalDocumentDefinition::relations` retains the checked least-family
+artifact for every source-indexed relation instead of discarding it after
+forming the theory equation. Rule-proof code can therefore address the exact
+candidate, closure, characterization, and predicate immutably. The full audit
+checks exact coverage and the `Steps` artifact's Boolean classifiers.
+
 `spectec_execution` extracts the exact lowered `instantiate`, `invoke`, and
 `Steps` declarations from the pinned source vocabulary. It adapts SpecTec's
 tuple-argument `Steps` relation to the curried predicate consumed by
