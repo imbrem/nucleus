@@ -2386,16 +2386,17 @@ fn empty_module_uses_exact_expression_constructor_vocabulary() {
     let module_constructor = builder
         .structural_constructor(&mut kernel, "expression:Case(\"MODULE%%%%%%%%%%%\")", 1)
         .unwrap();
-    let module_injective = builder
+    let constructor_laws = builder
         .algebra()
-        .injective(&mut kernel, module_constructor)
+        .constructor_laws(&mut kernel, &[empty_list_constructor, module_constructor])
         .unwrap();
-    let list_module_disjoint = builder
-        .algebra()
-        .disjoint(&mut kernel, empty_list_constructor, module_constructor)
-        .unwrap();
-    assert_eq!(kernel.classifier(module_injective).unwrap(), bool_ty);
-    assert_eq!(kernel.classifier(list_module_disjoint).unwrap(), bool_ty);
+    assert_eq!(constructor_laws.propositions().len(), 3);
+    assert!(
+        constructor_laws
+            .propositions()
+            .iter()
+            .all(|&law| kernel.classifier(law).unwrap() == bool_ty)
+    );
 
     assert_eq!(kernel.classifier(module).unwrap(), value);
     let module_fields = builder

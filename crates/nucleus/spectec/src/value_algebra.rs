@@ -6,6 +6,8 @@
 //! It constructs syntax only: callers must supply checked proofs or retain the
 //! propositions as explicit semantic premises.
 
+use std::sync::Arc;
+
 use covalence_logic_hol::{
     Kernel, KernelError, Ref,
     builtin::{Op1, Op2},
@@ -42,7 +44,83 @@ pub struct StructuralValueAlgebra {
     pub bool_ty: Ref,
 }
 
+/// Immutable obligations for one finite structural-constructor vocabulary.
+///
+/// The propositions contain every constructor's injectivity law followed by
+/// disjointness for every unordered pair, in input order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StructuralConstructorLaws {
+    constructors: Arc<[StructuralConstructor]>,
+    propositions: Arc<[Ref]>,
+}
+
+impl StructuralConstructorLaws {
+    /// Returns the exact constructor vocabulary covered by these laws.
+    #[must_use]
+    pub fn constructors(&self) -> &[StructuralConstructor] {
+        &self.constructors
+    }
+
+    /// Returns the injectivity and pairwise-disjointness propositions.
+    #[must_use]
+    pub fn propositions(&self) -> &[Ref] {
+        &self.propositions
+    }
+}
+
 impl StructuralValueAlgebra {
+    /// Constructs the complete constructor-separation obligations for a finite
+    /// vocabulary.
+    ///
+    /// The result contains one injectivity proposition per constructor and one
+    /// disjointness proposition per unordered constructor pair. It does not
+    /// claim exhaustiveness, sequence-operation laws, or that any proposition
+    /// has been proved.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a constructor is duplicated or invalid for this
+    /// algebra, or any checked proposition construction fails. `kernel` is
+    /// unchanged on failure.
+    pub fn constructor_laws(
+        self,
+        kernel: &mut Kernel,
+        constructors: &[StructuralConstructor],
+    ) -> Result<StructuralConstructorLaws, KernelError> {
+        let mut staged = kernel.fork();
+        for (index, &constructor) in constructors.iter().enumerate() {
+            self.require_constructor(&mut staged, constructor)?;
+            if constructors[..index].contains(&constructor) {
+                return Err(KernelError::InvalidTheoremRule {
+                    rule: "duplicate structural constructor law",
+                });
+            }
+        }
+        let pair_count = constructors
+            .len()
+            .checked_mul(constructors.len().saturating_sub(1))
+            .and_then(|count| count.checked_div(2))
+            .ok_or(KernelError::TooManyNames)?;
+        let mut propositions = Vec::with_capacity(
+            constructors
+                .len()
+                .checked_add(pair_count)
+                .ok_or(KernelError::TooManyNames)?,
+        );
+        for (index, &constructor) in constructors.iter().enumerate() {
+            propositions.push(self.injective(&mut staged, constructor)?);
+            for &other in &constructors[index + 1..] {
+                propositions.push(self.disjoint(&mut staged, constructor, other)?);
+            }
+        }
+        let laws = StructuralConstructorLaws {
+            constructors: Arc::from(constructors),
+            propositions: Arc::from(propositions),
+        };
+        *kernel = staged;
+        Ok(laws)
+    }
+
     /// Validates a curried `value^arity -> value` constructor.
     ///
     /// # Errors
@@ -207,6 +285,17 @@ mod tests {
         assert_eq!(kernel.classifier(injective).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(disjoint).unwrap(), bool_ty);
 
+        let laws = algebra
+            .constructor_laws(&mut kernel, &[unary, binary])
+            .unwrap();
+        assert_eq!(laws.constructors(), &[unary, binary]);
+        assert_eq!(laws.propositions().len(), 3);
+        assert!(
+            laws.propositions()
+                .iter()
+                .all(|&law| kernel.classifier(law).unwrap() == bool_ty)
+        );
+
         let value = kernel.tm_fv(12, value_ty).unwrap();
         let applied = apply(&mut kernel, unary.operation(), &[value]).unwrap();
         assert_eq!(kernel.classifier(applied).unwrap(), value_ty);
@@ -215,6 +304,12 @@ mod tests {
         assert!(
             algebra
                 .constructor(&mut kernel, unary.operation(), 2)
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert!(
+            algebra
+                .constructor_laws(&mut kernel, &[unary, unary])
                 .is_err()
         );
         assert_eq!(kernel.arena(), &before);

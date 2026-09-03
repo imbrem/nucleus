@@ -79,7 +79,7 @@ pub use theory::{
 };
 pub use type_definition::{RelationalTypeDefinition, relational_type_declaration};
 pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
-pub use value_algebra::{StructuralConstructor, StructuralValueAlgebra};
+pub use value_algebra::{StructuralConstructor, StructuralConstructorLaws, StructuralValueAlgebra};
 pub use wasm_logic::{
     AdmissibleStartFacts, AdmissibleStartWitness, ExportedFunctionView, SpecTecExecution,
     SpecTecValueBuilder, WasmLogicError, empty_wasm_module, forwarding_wasm_module,
