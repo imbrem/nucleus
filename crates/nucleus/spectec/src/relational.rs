@@ -8,7 +8,7 @@ use covalence_data_spectec::{
 };
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, Tag, TyTag, builtin::Op1, builtin::Op2};
-use covalence_logic_hol_derived::{ForallError, forall_elim};
+use covalence_logic_hol_derived::{ForallError, SyntaxError, forall_elim, join_alpha_equivalent};
 
 use crate::{
     Evidence, ExpressionAlgebra, HolCase, HolFamilyError, HolRule, HolSchema, HolTheoryError,
@@ -256,6 +256,74 @@ impl RelationalRelationDefinition {
         *kernel = staged;
         Ok(evidence)
     }
+
+    /// Applies a fully specialized member rule to its checked premise fact.
+    ///
+    /// `rule` is normally returned by [`Self::specialize_rule`] after passing
+    /// one argument for every retained [`HolRule::binders`] entry. Its theorem
+    /// must conclude `premises -> candidate conclusion` under the family
+    /// closure. The result concludes `candidate conclusion`, preserving both
+    /// the closure and all premises of `premises_fact` visibly.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `rule` is a positive implication and
+    /// `premises_fact` proves its exact antecedent, or a checked theorem step
+    /// fails. `kernel` is unchanged on failure.
+    pub fn apply_specialized_rule(
+        &self,
+        kernel: &mut Kernel,
+        rule: Evidence,
+        premises_fact: covalence_logic_hol::ThmId,
+    ) -> Result<Evidence, RelationProofError> {
+        if !rule.holds || kernel.arena().op2(rule.proposition) != Some(Op2::Imp) {
+            return Err(RelationProofError::NotImplication);
+        }
+        let mut operands = kernel
+            .arena()
+            .children(rule.proposition)
+            .ok_or(RelationProofError::NotImplication)?;
+        let antecedent = operands.next().ok_or(RelationProofError::NotImplication)?;
+        let consequent = operands.next().ok_or(RelationProofError::NotImplication)?;
+        drop(operands);
+        let mut staged = kernel.fork();
+        let premise_source = sole_positive_conclusion(&staged, premises_fact)?;
+        join_alpha_equivalent(&mut staged, premise_source, antecedent)
+            .map_err(|source| RelationProofError::Syntax { source })?;
+        let aligned_premises = staged.copy_theorem(premises_fact)?;
+        staged.convert_conclusions(aligned_premises, premise_source, antecedent)?;
+        let consequence_identity = staged.identity(positive(consequent))?;
+        let use_rule = staged.imp_left(
+            aligned_premises,
+            consequence_identity,
+            positive(rule.proposition),
+        )?;
+        let theorem = staged.cut(rule.theorem, use_rule, positive(rule.proposition))?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: consequent,
+            theorem,
+            holds: true,
+        })
+    }
+}
+
+fn sole_positive_conclusion(
+    kernel: &Kernel,
+    theorem: covalence_logic_hol::ThmId,
+) -> Result<Ref, RelationProofError> {
+    let theorem = kernel
+        .thm()
+        .get(theorem)
+        .ok_or(KernelError::MissingTheorem { id: theorem })?;
+    let mut conclusions = theorem.rhs.rows();
+    let Some([literal]) = conclusions.next() else {
+        return Err(RelationProofError::PremiseFact);
+    };
+    if conclusions.next().is_some() || !literal.is_positive() {
+        return Err(RelationProofError::PremiseFact);
+    }
+    Ref::new(literal.magnitude().cast_signed()).ok_or(RelationProofError::PremiseFact)
 }
 
 fn positive(reference: Ref) -> Lit {
@@ -276,6 +344,12 @@ pub enum RelationProofError {
     /// Retained member and family rule metadata disagree.
     #[snafu(display("retained SpecTec relation rules are inconsistent with their closure"))]
     Inconsistent,
+    /// The specialized rule is not a positive implication.
+    #[snafu(display("specialized SpecTec relation rule is not an implication"))]
+    NotImplication,
+    /// The supplied premise theorem is not one positive fact.
+    #[snafu(display("SpecTec relation rule premises are not one positive fact"))]
+    PremiseFact,
     /// A checked theorem step failed.
     #[snafu(transparent)]
     Kernel {
@@ -287,6 +361,12 @@ pub enum RelationProofError {
     Specialize {
         /// Underlying checked derived-rule failure.
         source: ForallError,
+    },
+    /// A supplied premise fact could not be aligned with the rule antecedent.
+    #[snafu(display("could not align SpecTec relation rule premises: {source}"))]
+    Syntax {
+        /// Underlying checked syntax failure.
+        source: SyntaxError,
     },
 }
 

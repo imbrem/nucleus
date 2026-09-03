@@ -1597,6 +1597,27 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         kernel.classifier(reflexive_rule.proposition).unwrap(),
         bool_ty
     );
+    let reflexive_instance = steps_definition
+        .specialize_rule(&mut kernel, 0, &steps_definition.rule_schemas[0].binders)
+        .unwrap();
+    let reflexive_antecedent = kernel
+        .arena()
+        .children(reflexive_instance.proposition)
+        .unwrap()
+        .next()
+        .unwrap();
+    let reflexive_premises = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            reflexive_antecedent.get(),
+        ))
+        .unwrap();
+    let reflexive_candidate = steps_definition
+        .apply_specialized_rule(&mut kernel, reflexive_instance, reflexive_premises)
+        .unwrap();
+    document
+        .evidence_scope(&[steps_definition.least.closure, reflexive_antecedent])
+        .check(&kernel, reflexive_candidate)
+        .unwrap();
     let specialized_steps = document
         .semantics
         .theory()
