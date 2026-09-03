@@ -76,3 +76,10 @@ the claim that its proof-validator module never calls `assert` on any purported
 derivation. Positive reachability, universal non-reachability, determinism, and
 output exclusion then become ordinary HOL properties of content-addressed
 program semantics rather than special kernel capabilities.
+
+Positive reachability now has an executable checked proof interface:
+`AssertionReachability::prove_calls_assert` accepts the three concrete witness
+facts (`starts`, `Steps`, and the pre-host-call observation) and introduces the
+two existential states. This isolates the remaining TRUE task precisely: derive
+those three witness facts from specialized SpecTec equations and grounding
+laws. Interpreter traces cannot be passed in place of theorem handles.

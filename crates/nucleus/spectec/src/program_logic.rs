@@ -10,9 +10,13 @@
 use std::{convert::Infallible, sync::Arc};
 
 use covalence_data_basic::Symbol;
+use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
     Kernel, KernelError, Lit, Ref, ThmId,
     builtin::{Op1, Op2},
+};
+use covalence_logic_hol_derived::{
+    ExistsError, SyntaxError, introduce_exists, join_alpha_equivalent,
 };
 
 /// A small, immutable, generic proposition schema.
@@ -183,7 +187,7 @@ impl AssertionReachability {
         let initial_name = staged.fresh_name(&roots)?;
         let final_name = initial_name
             .checked_add(1)
-            .ok_or(KernelError::TooManyNames)?;
+            .ok_or(KernelError::<Infallible>::TooManyNames)?;
         let initial = staged.tm_fv(initial_name, self.state_ty)?;
         let final_state = staged.tm_fv(final_name, self.state_ty)?;
 
@@ -251,6 +255,169 @@ impl AssertionReachability {
         *kernel = staged;
         Ok(negative)
     }
+
+    /// Proves `callsAssert` from one concrete checked execution witness.
+    ///
+    /// `starts_fact`, `steps_fact`, and `calls_fact` must respectively prove
+    /// `starts program initial`, `steps initial final_state`, and
+    /// `calls final_state assert_function`. Their premise matrices are
+    /// preserved, allowing [`EvidenceScope`] to enforce the semantic boundary
+    /// afterward. The result is converted to the canonical proposition emitted
+    /// by [`calls_assert`](Self::calls_assert).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a fact has the wrong conclusion, a witness has an
+    /// incompatible classifier, existential introduction or alpha conversion
+    /// fails, or any checked proof step is rejected. `kernel` is unchanged on
+    /// failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_calls_assert(
+        self,
+        kernel: &mut Kernel,
+        program: Ref,
+        assert_function: Ref,
+        initial: Ref,
+        final_state: Ref,
+        starts_fact: ThmId,
+        steps_fact: ThmId,
+        calls_fact: ThmId,
+    ) -> Result<Evidence, ReachabilityProofError> {
+        let mut staged = kernel.fork();
+        let starts = apply2(&mut staged, self.starts, program, initial)?;
+        let steps = apply2(&mut staged, self.steps, initial, final_state)?;
+        let calls = apply2(&mut staged, self.calls, final_state, assert_function)?;
+        let starts_fact = align_positive_fact(&mut staged, starts_fact, starts)?;
+        let steps_fact = align_positive_fact(&mut staged, steps_fact, steps)?;
+        let calls_fact = align_positive_fact(&mut staged, calls_fact, calls)?;
+        let reached = staged.op2(Op2::And, steps, calls)?;
+        let reached_fact = staged.and_right(steps_fact, calls_fact, positive(reached))?;
+        let concrete_body = staged.op2(Op2::And, starts, reached)?;
+        let concrete_fact = staged.and_right(starts_fact, reached_fact, positive(concrete_body))?;
+
+        let roots = [
+            self.program_ty,
+            self.state_ty,
+            self.bool_ty,
+            self.starts,
+            self.steps,
+            self.calls,
+            program,
+            assert_function,
+            initial,
+            final_state,
+        ];
+        let initial_name = staged.fresh_name(&roots)?;
+        let final_name = initial_name
+            .checked_add(1)
+            .ok_or(KernelError::TooManyNames)?;
+        let initial_binder = staged.tm_fv(initial_name, self.state_ty)?;
+        let final_binder = staged.tm_fv(final_name, self.state_ty)?;
+
+        let steps_at_final = apply2(&mut staged, self.steps, initial, final_binder)?;
+        let calls_at_final = apply2(&mut staged, self.calls, final_binder, assert_function)?;
+        let reached_at_final = staged.op2(Op2::And, steps_at_final, calls_at_final)?;
+        let body_at_final = staged.op2(Op2::And, starts, reached_at_final)?;
+        let final_exists = introduce_exists(
+            &mut staged,
+            concrete_fact,
+            final_binder,
+            body_at_final,
+            final_state,
+        )?;
+
+        let starts_at_initial = apply2(&mut staged, self.starts, program, initial_binder)?;
+        let steps_at_binders = apply2(&mut staged, self.steps, initial_binder, final_binder)?;
+        let reached_at_binders = staged.op2(Op2::And, steps_at_binders, calls_at_final)?;
+        let body_at_binders = staged.op2(Op2::And, starts_at_initial, reached_at_binders)?;
+        let final_exists_at_initial = staged.exists_tm(final_binder, body_at_binders)?;
+        let outer = introduce_exists(
+            &mut staged,
+            final_exists.theorem,
+            initial_binder,
+            final_exists_at_initial,
+            initial,
+        )?;
+
+        let canonical = self.calls_assert(&mut staged, program, assert_function)?;
+        join_alpha_equivalent(&mut staged, outer.proposition, canonical)?;
+        staged.convert_conclusions(outer.theorem, outer.proposition, canonical)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: canonical,
+            theorem: outer.theorem,
+            holds: true,
+        })
+    }
+}
+
+/// Why a concrete assertion-reachability witness could not be proved.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum ReachabilityProofError {
+    /// A checked HOL construction or theorem rule failed.
+    #[snafu(transparent)]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+    /// Existential introduction failed.
+    #[snafu(display("could not introduce an assertion-reachability witness: {source}"))]
+    Exists {
+        /// Underlying checked derived-rule failure.
+        source: ExistsError,
+    },
+    /// The proved existential could not be related to canonical syntax.
+    #[snafu(display("could not canonicalize an assertion-reachability proof: {source}"))]
+    Syntax {
+        /// Underlying checked alpha-equivalence failure.
+        source: SyntaxError,
+    },
+}
+
+impl From<ExistsError> for ReachabilityProofError {
+    fn from(source: ExistsError) -> Self {
+        Self::Exists { source }
+    }
+}
+
+impl From<SyntaxError> for ReachabilityProofError {
+    fn from(source: SyntaxError) -> Self {
+        Self::Syntax { source }
+    }
+}
+
+fn align_positive_fact(
+    kernel: &mut Kernel,
+    theorem: ThmId,
+    target: Ref,
+) -> Result<ThmId, ReachabilityProofError> {
+    let source = {
+        let theorem = kernel
+            .thm()
+            .get(theorem)
+            .ok_or(KernelError::MissingTheorem { id: theorem })?;
+        let mut conclusions = theorem.rhs.rows();
+        let Some([literal]) = conclusions.next() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "assertion witness unit conclusion",
+            }
+            .into());
+        };
+        if conclusions.next().is_some() || !literal.is_positive() {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "assertion witness positive conclusion",
+            }
+            .into());
+        }
+        Ref::new(literal.magnitude().cast_signed()).ok_or(KernelError::InvalidTheoremRule {
+            rule: "assertion witness conclusion reference",
+        })?
+    };
+    join_alpha_equivalent(kernel, source, target)?;
+    let aligned = kernel.copy_theorem(theorem)?;
+    kernel.convert_conclusions(aligned, source, target)?;
+    Ok(aligned)
 }
 
 /// Concrete program and linker terms used to state the Boolean laws.
@@ -909,6 +1076,8 @@ mod tests {
         let calls = kernel.tm_fv(12, calls_ty).unwrap();
         let program = kernel.tm_fv(13, program_ty).unwrap();
         let assert_function = kernel.tm_fv(14, function_ty).unwrap();
+        let initial = kernel.tm_fv(15, state_ty).unwrap();
+        let final_state = kernel.tm_fv(16, state_ty).unwrap();
         let schema = AssertionReachability {
             program_ty,
             state_ty,
@@ -932,6 +1101,51 @@ mod tests {
         );
         assert_eq!(kernel.classifier(negative).unwrap(), bool_ty);
         assert_ne!(negative, proposition);
+
+        let starts_proposition = apply2(&mut kernel, starts, program, initial).unwrap();
+        let steps_proposition = apply2(&mut kernel, steps, initial, final_state).unwrap();
+        let calls_proposition = apply2(&mut kernel, calls, final_state, assert_function).unwrap();
+        let starts_fact = kernel.identity(positive(starts_proposition)).unwrap();
+        let steps_fact = kernel.identity(positive(steps_proposition)).unwrap();
+        let calls_fact = kernel.identity(positive(calls_proposition)).unwrap();
+        let evidence = schema
+            .prove_calls_assert(
+                &mut kernel,
+                program,
+                assert_function,
+                initial,
+                final_state,
+                starts_fact,
+                steps_fact,
+                calls_fact,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[starts_proposition, steps_proposition, calls_proposition])
+            .check(&kernel, evidence)
+            .unwrap();
+        join_alpha_equivalent(&mut kernel, evidence.proposition, proposition).unwrap();
+        assert!(
+            kernel
+                .equivalent(evidence.proposition, proposition)
+                .unwrap()
+        );
+
+        let before = kernel.arena().clone();
+        assert!(
+            schema
+                .prove_calls_assert(
+                    &mut kernel,
+                    program,
+                    assert_function,
+                    initial,
+                    final_state,
+                    calls_fact,
+                    steps_fact,
+                    calls_fact,
+                )
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
 
         let before = kernel.arena().clone();
         assert!(

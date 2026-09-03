@@ -85,6 +85,12 @@ tuple-argument `Steps` relation to the curried predicate consumed by
 `AssertionReachability`; construction is classifier-checked and creates no
 theorem fact.
 
+`AssertionReachability::prove_calls_assert` is the positive trace-proof
+boundary. Given checked start, step, and pre-host-call facts for concrete
+witness states, it derives the nested existential `callsAssert` proposition,
+preserves every premise, and canonicalizes fresh binders through checked alpha
+equivalence. A mismatched witness fact is rejected transactionally.
+
 `SpecTecValueBuilder` is the corresponding generic structural API. It composes
 recorded number, list, optional, tuple, and tagged-case operations immutably and
 transactionally; `empty_wasm_module` and `forwarding_wasm_module` are
