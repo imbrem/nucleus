@@ -1855,6 +1855,10 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         panic!("expected one $store definition")
     };
     let store_definition = document.semantics.definitions().get(store_id).unwrap();
+    let [moduleinst_id] = document.schema.named(IlKind::Definition, "moduleinst") else {
+        panic!("expected one $moduleinst definition")
+    };
+    let moduleinst_definition = document.semantics.definitions().get(moduleinst_id).unwrap();
     let [invoke_id] = document.schema.named(IlKind::Definition, "invoke") else {
         panic!("expected one $invoke definition")
     };
@@ -1937,26 +1941,70 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             .identity(covalence_logic_hol::Lit::positive(proposition.get()))
             .unwrap()
     });
+    let moduleinst_witnesses = moduleinst_definition
+        .match_production_witnesses(&mut kernel, 0, &[start.instantiation_start])
+        .unwrap()
+        .unwrap();
+    let module_instance = moduleinst_definition
+        .production_result(
+            &mut kernel,
+            0,
+            &[start.instantiation_start],
+            &moduleinst_witnesses,
+        )
+        .unwrap();
+    let moduleinst_instance = moduleinst_definition
+        .specialize(
+            &mut kernel,
+            bool_ty,
+            &[start.instantiation_start],
+            module_instance,
+        )
+        .unwrap();
+    assert_eq!(moduleinst_instance.cases.len(), 1);
+    let moduleinst_conditions = moduleinst_instance
+        .production_obligations(&mut kernel, 0, &moduleinst_witnesses)
+        .unwrap();
+    let (moduleinst_condition_facts, moduleinst_remaining) =
+        elementary_condition_facts(&mut kernel, &moduleinst_conditions);
+    let moduleinst_branch = moduleinst_instance
+        .prove_production(
+            &mut kernel,
+            bool_ty,
+            0,
+            &moduleinst_witnesses,
+            &moduleinst_condition_facts,
+        )
+        .unwrap();
+    let moduleinst_body = moduleinst_instance
+        .prove_body_case(&mut kernel, bool_ty, 0, moduleinst_branch.theorem)
+        .unwrap();
+    let moduleinst_fact = document
+        .semantics
+        .theory()
+        .prove_specialized_from_body(
+            &mut kernel,
+            *moduleinst_id,
+            &[start.instantiation_start, module_instance],
+            moduleinst_body.theorem,
+        )
+        .unwrap();
     let export_witness = ExportedFunctionWitness {
         configuration: start.instantiation_start,
         function: start.function,
-        module_instance: witnesses[4],
+        module_instance,
         exports: forwarding_exports,
         export_instance: export_elements[0],
     };
-    let module_graph = kernel
-        .app(export_view.module_instance, start.instantiation_start)
-        .and_then(|partial| kernel.app(partial, witnesses[4]))
-        .unwrap();
     let exports_graph = kernel
-        .app(export_view.exports, witnesses[4])
+        .app(export_view.exports, module_instance)
         .and_then(|partial| kernel.app(partial, forwarding_exports))
         .unwrap();
     let function_graph = kernel
         .app(export_view.function_address, export_elements[0])
         .and_then(|partial| kernel.app(partial, start.function))
         .unwrap();
-    let export_graphs = [module_graph, exports_graph, function_graph];
+    let export_graphs = [exports_graph, function_graph];
     let export_graph_facts = export_graphs.map(|proposition| {
         kernel
             .identity(covalence_logic_hol::Lit::positive(proposition.get()))
@@ -1967,10 +2015,10 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             &mut kernel,
             export_witness,
             ExportedFunctionFacts {
-                module_instance: export_graph_facts[0],
-                exports: export_graph_facts[1],
+                module_instance: moduleinst_fact.theorem,
+                exports: export_graph_facts[0],
                 member: contains_export.theorem,
-                function_address: export_graph_facts[2],
+                function_address: export_graph_facts[1],
             },
         )
         .unwrap()
@@ -2300,6 +2348,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         .unwrap();
     let mut grounding = export_graphs.to_vec();
     grounding.extend(reflexive_remaining);
+    grounding.extend(moduleinst_remaining);
     grounding.extend(instantiate_remaining);
     grounding.extend(store_remaining);
     grounding.extend(invoke_remaining);
