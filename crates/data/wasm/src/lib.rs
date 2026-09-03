@@ -38,7 +38,15 @@ pub struct Section {
     /// Binary section identifier.
     pub id: u8,
     /// Payload byte range in the original module.
-    pub payload: Range<usize>,
+    payload: Range<usize>,
+}
+
+impl Section {
+    /// Returns the payload byte range in the exact module.
+    #[must_use]
+    pub fn range(&self) -> Range<usize> {
+        self.payload.clone()
+    }
 }
 
 /// One defined function body in function-index order after imports.
@@ -107,17 +115,24 @@ impl<'a> Module<'a> {
     ///
     /// The reader uses exactly the WebAssembly 3.0 feature profile. This is a
     /// compositional view over the retained bytes, not a second semantic AST.
-    #[must_use]
-    pub fn function_body(&self, function: &Function) -> FunctionBody<'a> {
-        let mut reader = BinaryReader::new(&self.bytes[function.body.clone()], function.body.start);
+    /// # Errors
+    ///
+    /// Returns an error if `function` did not originate from this module and
+    /// its retained range is outside the exact bytes.
+    pub fn function_body(&self, function: &Function) -> Result<FunctionBody<'a>, Error> {
+        let bytes = checked_range(self.bytes, &function.body, "function body")?;
+        let mut reader = BinaryReader::new(bytes, function.body.start);
         reader.set_features(WasmFeatures::WASM3);
-        FunctionBody::new(reader)
+        Ok(FunctionBody::new(reader))
     }
 
     /// Returns the exact payload bytes for a section from this module.
-    #[must_use]
-    pub fn payload(&self, section: &Section) -> &'a [u8] {
-        &self.bytes[section.payload.clone()]
+    /// # Errors
+    ///
+    /// Returns an error if `section` did not originate from this module and
+    /// its retained range is outside the exact bytes.
+    pub fn payload(&self, section: &Section) -> Result<&'a [u8], Error> {
+        checked_range(self.bytes, &section.payload, "section payload")
     }
 
     /// Copies the exact bytes into an immutable, shareable module artifact.
@@ -187,17 +202,24 @@ impl SharedModule {
     }
 
     /// Opens a typed reader for one retained function body.
-    #[must_use]
-    pub fn function_body(&self, function: &Function) -> FunctionBody<'_> {
-        let mut reader = BinaryReader::new(&self.bytes[function.body.clone()], function.body.start);
+    /// # Errors
+    ///
+    /// Returns an error if `function` did not originate from this module and
+    /// its retained range is outside the exact bytes.
+    pub fn function_body(&self, function: &Function) -> Result<FunctionBody<'_>, Error> {
+        let bytes = checked_range(&self.bytes, &function.body, "function body")?;
+        let mut reader = BinaryReader::new(bytes, function.body.start);
         reader.set_features(WasmFeatures::WASM3);
-        FunctionBody::new(reader)
+        Ok(FunctionBody::new(reader))
     }
 
     /// Returns the exact payload bytes for a retained section.
-    #[must_use]
-    pub fn payload(&self, section: &Section) -> &[u8] {
-        &self.bytes[section.payload.clone()]
+    /// # Errors
+    ///
+    /// Returns an error if `section` did not originate from this module and
+    /// its retained range is outside the exact bytes.
+    pub fn payload(&self, section: &Section) -> Result<&[u8], Error> {
+        checked_range(&self.bytes, &section.payload, "section payload")
     }
 }
 
@@ -225,6 +247,18 @@ pub enum Error {
         /// Configured limit.
         limit: usize,
     },
+    /// A retained view did not belong to the module on which it was used.
+    #[snafu(display("{kind} byte range {start}..{end} is outside module length {length}"))]
+    Range {
+        /// Kind of retained byte view.
+        kind: &'static str,
+        /// Inclusive start offset.
+        start: usize,
+        /// Exclusive end offset.
+        end: usize,
+        /// Exact module byte length.
+        length: usize,
+    },
     /// Input used a non-module binary encoding.
     #[snafu(display("WebAssembly binary is not a core module"))]
     NotModule,
@@ -234,6 +268,19 @@ pub enum Error {
         /// Parser or validator failure.
         source: covalence_lib_wasm::wasmparser::BinaryReaderError,
     },
+}
+
+fn checked_range<'a>(
+    bytes: &'a [u8],
+    range: &Range<usize>,
+    kind: &'static str,
+) -> Result<&'a [u8], Error> {
+    bytes.get(range.clone()).ok_or(Error::Range {
+        kind,
+        start: range.start,
+        end: range.end,
+        length: bytes.len(),
+    })
 }
 
 /// Recognizes and validates an exact WebAssembly 3.0 core module.
@@ -362,6 +409,47 @@ mod tests {
     }
 
     #[test]
+    fn rejects_views_from_other_modules_without_panicking() {
+        let module = parse(EMPTY_MODULE, Limits::default()).unwrap();
+        let foreign_section = super::Section {
+            id: 0,
+            payload: 100..101,
+        };
+        let foreign_function = super::Function { body: 100..101 };
+
+        assert!(matches!(
+            module.payload(&foreign_section),
+            Err(Error::Range {
+                kind: "section payload",
+                ..
+            })
+        ));
+        assert!(matches!(
+            module.function_body(&foreign_function),
+            Err(Error::Range {
+                kind: "function body",
+                ..
+            })
+        ));
+
+        let shared = module.into_shared();
+        assert!(matches!(
+            shared.payload(&foreign_section),
+            Err(Error::Range {
+                kind: "section payload",
+                ..
+            })
+        ));
+        assert!(matches!(
+            shared.function_body(&foreign_function),
+            Err(Error::Range {
+                kind: "function body",
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn retains_exact_bytes_and_ordered_section_payloads() {
         let bytes = b"\0asm\x01\0\0\0\0\x04\x01x\x01y\x01\x01\0";
         let module = parse(bytes, Limits::default()).expect("valid module");
@@ -373,9 +461,12 @@ mod tests {
         );
         assert_eq!(module.sections().len(), 2);
         assert_eq!(module.sections()[0].id, 0);
-        assert_eq!(module.payload(&module.sections()[0]), b"\x01x\x01y");
+        assert_eq!(
+            module.payload(&module.sections()[0]).unwrap(),
+            b"\x01x\x01y"
+        );
         assert_eq!(module.sections()[1].id, 1);
-        assert_eq!(module.payload(&module.sections()[1]), b"\0");
+        assert_eq!(module.payload(&module.sections()[1]).unwrap(), b"\0");
     }
 
     #[test]
@@ -410,7 +501,7 @@ mod tests {
         let [function] = module.functions() else {
             panic!("expected one function")
         };
-        let body = module.function_body(function);
+        let body = module.function_body(function).unwrap();
         assert_eq!(body.as_bytes(), b"\0\x0b");
         let mut operators = body.get_operators_reader().expect("locals decode");
         assert!(matches!(operators.read(), Ok(Operator::End)));
