@@ -64,6 +64,10 @@ the program and its transformed image. Given positive admissibility evidence
 for a selected linking context, a further checked elimination yields the
 actual observation equality on the two resulting closed modules; the bare
 program equation therefore requires an admissible identity context.
+That equality checkedly transports either positive or negative observation
+evidence from the original closed program to the transformed one. Negative
+transport is derived by equality symmetry and contradiction rather than by an
+unchecked polarity convention.
 Conversely, checked negative evidence for any one contextual observation
 refutes `equivalent`. Thus, once `callsAssert` is supplied as a trace
 observation, its distinction between `TRUE` and `FALSE` is sufficient to prove

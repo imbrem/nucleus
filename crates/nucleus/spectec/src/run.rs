@@ -1699,6 +1699,62 @@ impl SoundRunTransformation {
         Ok(preserved)
     }
 
+    /// Transports positive or negative property evidence from a program to its
+    /// soundly transformed image in one admissible linking context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`Self::prove_preserves_property_in_context`], or unless `behavior`
+    /// proves exactly the left-hand observation with the indicated sign.
+    /// `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn transport_property_in_context(
+        self,
+        kernel: &mut Kernel,
+        property: RunProperty,
+        module: Ref,
+        linking_context: Ref,
+        left_admissible: Evidence,
+        right_admissible: Evidence,
+        behavior: Evidence,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let equality = self.prove_preserves_property_in_context(
+            &mut staged,
+            property,
+            module,
+            linking_context,
+            left_admissible,
+            right_admissible,
+        )?;
+        let [left, right] = equality_operands(&staged, equality.proposition)?;
+        let behavior_theorem = align_signed_evidence(&mut staged, behavior, left, behavior.holds)?;
+        let theorem = if behavior.holds {
+            staged.eq_mp(equality.theorem, behavior_theorem)?
+        } else {
+            let reversed = equality_symmetry(
+                &mut staged,
+                self.transformation.context.domain.relation.types.bool_ty,
+                equality.theorem,
+            )?;
+            let assumed_right = staged.identity(positive(right))?;
+            let left_fact = staged.eq_mp(reversed.theorem, assumed_right)?;
+            staged.not_left(left_fact, positive(left))?;
+            let contradiction =
+                staged.cut(behavior_theorem, left_fact, positive(left).negated())?;
+            staged.not_right(contradiction, positive(right))?;
+            contradiction
+        };
+        staged.contract_theorem(theorem)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: right,
+            theorem,
+            holds: behavior.holds,
+        })
+    }
+
     /// Derives preservation of one quantified behavior observation.
     ///
     /// This is convenience syntax for constructing the observation's generic
@@ -1800,6 +1856,48 @@ impl SoundRunTransformation {
         )?;
         *kernel = staged;
         Ok(preserved)
+    }
+
+    /// Transports signed evidence for one behavior observation through this
+    /// sound transformation at a selected admissible context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`Self::transport_property_in_context`], or if `observation` belongs to
+    /// another run domain. `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn transport_in_context(
+        self,
+        kernel: &mut Kernel,
+        observation: RunObservation,
+        quantifier: BehaviorQuantifier,
+        module: Ref,
+        linking_context: Ref,
+        left_admissible: Evidence,
+        right_admissible: Evidence,
+        behavior: Evidence,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        self.transformation
+            .context
+            .require_observation(observation)?;
+        let property = observation.property_avoiding(
+            &mut staged,
+            quantifier,
+            &[module, linking_context, self.transformation.transform],
+        )?;
+        let transported = self.transport_property_in_context(
+            &mut staged,
+            property,
+            module,
+            linking_context,
+            left_admissible,
+            right_admissible,
+            behavior,
+        )?;
+        *kernel = staged;
+        Ok(transported)
     }
 
     /// Composes two proved-sound transformations and derives soundness of the
@@ -6387,6 +6485,55 @@ mod tests {
         EvidenceScope::positive(&[module_admissible])
             .check(&kernel, identity_preserves_in_context)
             .unwrap();
+        let [original_behavior, _transformed_behavior] =
+            super::equality_operands(&kernel, identity_preserves_in_context.proposition).unwrap();
+        let positive_behavior = Evidence {
+            proposition: original_behavior,
+            theorem: kernel.identity(super::positive(original_behavior)).unwrap(),
+            holds: true,
+        };
+        let transported_positive = sound_identity
+            .transport_in_context(
+                &mut kernel,
+                observation,
+                BehaviorQuantifier::May,
+                module,
+                linking_context,
+                module_admissible_evidence,
+                module_admissible_evidence,
+                positive_behavior,
+            )
+            .unwrap();
+        assert!(transported_positive.holds);
+        EvidenceScope::positive(&[module_admissible, original_behavior])
+            .check(&kernel, transported_positive)
+            .unwrap();
+        let negative_behavior = Evidence {
+            proposition: original_behavior,
+            theorem: kernel
+                .identity(super::positive(original_behavior).negated())
+                .unwrap(),
+            holds: false,
+        };
+        let transported_negative = sound_identity
+            .transport_in_context(
+                &mut kernel,
+                observation,
+                BehaviorQuantifier::May,
+                module,
+                linking_context,
+                module_admissible_evidence,
+                module_admissible_evidence,
+                negative_behavior,
+            )
+            .unwrap();
+        assert!(!transported_negative.holds);
+        EvidenceScope::signed(&[
+            super::positive(module_admissible),
+            super::positive(original_behavior).negated(),
+        ])
+        .check(&kernel, transported_negative)
+        .unwrap();
         let sound_identity_composition = sound_identity.then(&mut kernel, sound_identity).unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, sound_identity_composition.soundness())
