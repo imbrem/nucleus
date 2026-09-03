@@ -215,8 +215,24 @@ impl AssertionReachability {
     /// Returns an error if existential reachability or checked abstraction
     /// construction fails. `kernel` is unchanged on failure.
     pub fn predicate(self, kernel: &mut Kernel, assert_function: Ref) -> Result<Ref, KernelError> {
+        self.predicate_avoiding(kernel, assert_function, &[])
+    }
+
+    /// Constructs the assertion predicate while keeping its program binder
+    /// fresh for the supplied terms.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as [`Self::predicate`].
+    /// `kernel` is unchanged on failure.
+    pub fn predicate_avoiding(
+        self,
+        kernel: &mut Kernel,
+        assert_function: Ref,
+        avoiding: &[Ref],
+    ) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
-        let name = staged.fresh_name(&[
+        let mut roots = vec![
             self.program_ty,
             self.state_ty,
             self.bool_ty,
@@ -224,7 +240,9 @@ impl AssertionReachability {
             self.steps,
             self.calls,
             assert_function,
-        ])?;
+        ];
+        roots.extend_from_slice(avoiding);
+        let name = staged.fresh_name(&roots)?;
         let program = staged.tm_fv(name, self.program_ty)?;
         let body = self.calls_assert(&mut staged, program, assert_function)?;
         let predicate_ty = staged.ty_arr(self.program_ty, self.bool_ty)?;
@@ -250,9 +268,25 @@ impl AssertionReachability {
         kernel: &mut Kernel,
         assert_function: Ref,
     ) -> Result<ClosedProgramObservation, KernelError> {
+        self.closed_program_observation_avoiding(kernel, assert_function, &[])
+    }
+
+    /// Constructs the closed-program observation while keeping generated
+    /// binders fresh for terms that will later be plugged into it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`Self::closed_program_observation`]. `kernel` is unchanged on failure.
+    pub fn closed_program_observation_avoiding(
+        self,
+        kernel: &mut Kernel,
+        assert_function: Ref,
+        avoiding: &[Ref],
+    ) -> Result<ClosedProgramObservation, KernelError> {
         let mut staged = kernel.fork();
         require_classifier(&mut staged, assert_function, self.state_ty)?;
-        let first = staged.fresh_name(&[
+        let mut roots = vec![
             self.program_ty,
             self.state_ty,
             self.bool_ty,
@@ -260,7 +294,9 @@ impl AssertionReachability {
             self.steps,
             self.calls,
             assert_function,
-        ])?;
+        ];
+        roots.extend_from_slice(avoiding);
+        let first = staged.fresh_name(&roots)?;
         let context = staged.tm_fv(first, self.bool_ty)?;
         let program = staged.tm_fv(
             first.checked_add(1).ok_or(KernelError::TooManyNames)?,
@@ -276,7 +312,9 @@ impl AssertionReachability {
         let accepts_program = staged.lam_at(program_predicate_ty, program, truth)?;
         let admissible_ty = staged.ty_arr(self.bool_ty, program_predicate_ty)?;
         let admissible = staged.lam_at(admissible_ty, context, accepts_program)?;
-        let observe = self.predicate(&mut staged, assert_function)?;
+        roots.push(context);
+        roots.push(program);
+        let observe = self.predicate_avoiding(&mut staged, assert_function, &roots)?;
         let observation = ClosedProgramObservation {
             contextual: ContextualObservation {
                 subject_ty: self.program_ty,
@@ -598,6 +636,89 @@ impl ClosedProgramObservation {
         )?;
         *kernel = staged;
         Ok(distinct)
+    }
+
+    /// Transports positive or negative `callsAssert(program)` evidence through
+    /// a transformation proved sound for this exact observation.
+    ///
+    /// The returned proposition is the canonical
+    /// `callsAssert(transform(program))`, with the same sign and every premise
+    /// of both the behavior and transformation-soundness evidence preserved.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transformation belongs to another observation,
+    /// `behavior` has the wrong signed conclusion, or a checked equivalence,
+    /// admissibility, equality, or conversion step fails. `kernel` is unchanged
+    /// on failure.
+    pub fn transport(
+        self,
+        kernel: &mut Kernel,
+        sound: SoundObservationTransformation,
+        program: Ref,
+        behavior: Evidence,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        if sound.transformation.observation != self.contextual {
+            return Err(ObservationProofError::ObservationMismatch);
+        }
+        let transformed = sound.transformation.apply(&mut staged, program)?;
+        let equivalent = sound.prove_equivalent(&mut staged, program)?;
+        let left_ok = prove_identity_admissible(&mut staged, self, program)?;
+        let right_ok = prove_identity_admissible(&mut staged, self, transformed)?;
+        let same = self.contextual.prove_preservation(
+            &mut staged,
+            equivalent.theorem,
+            self.identity_context,
+            program,
+            transformed,
+            left_ok,
+            right_ok,
+        )?;
+        let equality_operands = staged
+            .arena()
+            .children(same.proposition)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "callsAssert preservation equality",
+            })?
+            .collect::<Vec<_>>();
+        let [_, left_observed, right_observed] = equality_operands.as_slice() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "callsAssert preservation equality operands",
+            }
+            .into());
+        };
+        let left_fact = align_identity_observation(
+            &mut staged,
+            self,
+            program,
+            behavior.theorem,
+            behavior.holds,
+        )?;
+        let left_fact =
+            align_observation_fact(&mut staged, left_fact, *left_observed, behavior.holds)?;
+        let theorem = if behavior.holds {
+            staged.eq_mp(same.theorem, left_fact)?
+        } else {
+            let reversed = equality_symmetry(&mut staged, self.contextual.bool_ty, same.theorem)?;
+            let assumed_right = staged.identity(positive(*right_observed))?;
+            let left_positive = staged.eq_mp(reversed.theorem, assumed_right)?;
+            staged.not_left(left_positive, positive(*left_observed))?;
+            let contradiction =
+                staged.cut(left_fact, left_positive, positive(*left_observed).negated())?;
+            staged.not_right(contradiction, positive(*right_observed))?;
+            contradiction
+        };
+        let (canonical, observed) =
+            identity_observation_conversion(&mut staged, self, transformed)?;
+        join_alpha_equivalent(&mut staged, observed, *right_observed)?;
+        staged.convert_conclusions(theorem, *right_observed, canonical)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: canonical,
+            theorem,
+            holds: behavior.holds,
+        })
     }
 }
 
@@ -1882,14 +2003,26 @@ fn align_identity_observation(
     theorem: ThmId,
     holds: bool,
 ) -> Result<ThmId, ObservationProofError> {
-    let canonical =
-        observation
-            .reachability
-            .calls_assert(kernel, program, observation.assert_function)?;
+    let (canonical, observed_plugged) =
+        identity_observation_conversion(kernel, observation, program)?;
     let source = sole_evidence_proposition(kernel, theorem, holds)?;
     join_alpha_equivalent(kernel, source, canonical)?;
     let aligned = kernel.copy_theorem(theorem)?;
     kernel.convert_conclusions(aligned, source, canonical)?;
+
+    kernel.convert_conclusions(aligned, canonical, observed_plugged)?;
+    Ok(aligned)
+}
+
+fn identity_observation_conversion(
+    kernel: &mut Kernel,
+    observation: ClosedProgramObservation,
+    program: Ref,
+) -> Result<(Ref, Ref), ObservationProofError> {
+    let canonical =
+        observation
+            .reachability
+            .calls_assert(kernel, program, observation.assert_function)?;
 
     let (plugged, reduced_program, plug_conversion) = reduce_checked_binary_lambda(
         kernel,
@@ -1923,8 +2056,7 @@ fn align_identity_observation(
     let conversion = kernel.syn_trans(None, conversion, observation_beta)?;
     let conversion = kernel.syn_trans(None, conversion, same_canonical)?;
     kernel.union_syn_fact(conversion)?;
-    kernel.convert_conclusions(aligned, canonical, observed_plugged)?;
-    Ok(aligned)
+    Ok((canonical, observed_plugged))
 }
 
 fn reduce_checked_unary_lambda(
@@ -2044,6 +2176,9 @@ fn sole_evidence_proposition(
 #[snafu(crate_root(covalence_lib_error::snafu))]
 #[snafu(module)]
 pub enum ObservationProofError {
+    /// A proof-carrying transformation belongs to another observation schema.
+    #[snafu(display("transformation and target observation differ"))]
+    ObservationMismatch,
     /// A checked HOL construction or theorem rule failed.
     #[snafu(transparent)]
     Kernel {
@@ -3260,7 +3395,11 @@ mod tests {
         let true_fact = kernel.identity(positive(true_calls)).unwrap();
         let false_fact = kernel.identity(positive(false_calls).negated()).unwrap();
         let observation = reachability
-            .closed_program_observation(&mut kernel, assert_function)
+            .closed_program_observation_avoiding(
+                &mut kernel,
+                assert_function,
+                &[true_program, false_program],
+            )
             .unwrap();
 
         let distinct = observation
@@ -3282,6 +3421,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn calls_assert_transformations_are_sound_exactly_when_observationally_equivalent() {
         let mut kernel = Kernel::new();
         let star = kernel.star().unwrap();
@@ -3305,7 +3445,11 @@ mod tests {
             calls,
         };
         let observation = reachability
-            .closed_program_observation(&mut kernel, assert_function)
+            .closed_program_observation_avoiding(
+                &mut kernel,
+                assert_function,
+                &[program, transform],
+            )
             .unwrap();
         let transformation = observation.transformation(&mut kernel, transform).unwrap();
 
@@ -3329,6 +3473,86 @@ mod tests {
             .unwrap();
         assert_eq!(checked.transformation(), transformation);
         assert!(checked.soundness().holds);
+
+        for holds in [true, false] {
+            let calls = reachability
+                .calls_assert(&mut kernel, program, assert_function)
+                .unwrap();
+            let behavior = kernel
+                .identity(if holds {
+                    positive(calls)
+                } else {
+                    positive(calls).negated()
+                })
+                .unwrap();
+            let transported = observation
+                .transport(
+                    &mut kernel,
+                    checked,
+                    program,
+                    Evidence {
+                        proposition: calls,
+                        theorem: behavior,
+                        holds,
+                    },
+                )
+                .unwrap();
+            let transformed = transformation.apply(&mut kernel, program).unwrap();
+            let expected = reachability
+                .calls_assert(&mut kernel, transformed, assert_function)
+                .unwrap();
+            join_alpha_equivalent(&mut kernel, transported.proposition, expected).unwrap();
+            assert_eq!(transported.holds, holds);
+            EvidenceScope::signed(&[
+                positive(sound),
+                if holds {
+                    positive(calls)
+                } else {
+                    positive(calls).negated()
+                },
+            ])
+            .check(&kernel, transported)
+            .unwrap();
+        }
+
+        let other_assert = kernel.tm_fv(40, value).unwrap();
+        let other_observation = reachability
+            .closed_program_observation_avoiding(&mut kernel, other_assert, &[program, transform])
+            .unwrap();
+        let other_transformation = other_observation
+            .transformation(&mut kernel, transform)
+            .unwrap();
+        let other_sound = other_transformation.sound(&mut kernel).unwrap();
+        let other_sound_fact = kernel.identity(positive(other_sound)).unwrap();
+        let other_checked = other_transformation
+            .with_soundness(
+                &mut kernel,
+                Evidence {
+                    proposition: other_sound,
+                    theorem: other_sound_fact,
+                    holds: true,
+                },
+            )
+            .unwrap();
+        let calls = reachability
+            .calls_assert(&mut kernel, program, assert_function)
+            .unwrap();
+        let calls_fact = kernel.identity(positive(calls)).unwrap();
+        let before = kernel.arena().clone();
+        assert!(matches!(
+            observation.transport(
+                &mut kernel,
+                other_checked,
+                program,
+                Evidence {
+                    proposition: calls,
+                    theorem: calls_fact,
+                    holds: true,
+                },
+            ),
+            Err(ObservationProofError::ObservationMismatch)
+        ));
+        assert_eq!(kernel.arena(), &before);
     }
 
     #[test]
