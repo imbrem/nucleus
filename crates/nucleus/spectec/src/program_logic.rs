@@ -449,9 +449,10 @@ impl ContextualObservation {
 
     /// Specializes checked contextual equivalence to one admissible context.
     ///
-    /// This is the function-replacement theorem: instantiate `subject_ty`
-    /// with function definitions and `context_ty` with well-formed modules
-    /// containing one function hole.
+    /// For function definitions this is the per-closing-context elimination
+    /// rule used by the stronger replacement congruence theorem. The latter
+    /// additionally requires closure of function contexts under composition
+    /// with enclosing module contexts.
     ///
     /// # Errors
     ///

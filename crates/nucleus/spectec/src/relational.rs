@@ -176,6 +176,8 @@ pub struct RelationalRelationDefinition {
     pub least: LeastPredicate,
     /// Source-ordered universally closed rule propositions for this member.
     pub rules: Arc<[Ref]>,
+    /// Source-ordered lowered rule ingredients before universal closure.
+    pub rule_schemas: Arc<[HolRule]>,
     /// Source-ordered rules for the complete mutually recursive family.
     pub family_rules: Arc<[Ref]>,
     /// Checked proposition `predicate = least.predicate`.
@@ -1029,6 +1031,7 @@ where
         begin_least_closed_family_avoiding(&mut staged, bool_ty, &predicate_types, &predicates)
             .map_err(|source| resolver.least_error(source))?;
     let mut relation_rules = Vec::with_capacity(relations.len());
+    let mut relation_rule_schemas = Vec::with_capacity(relations.len());
     let (closure, family_rules) = {
         let (staged, candidates) = builder.parts();
         let candidate_names = relations
@@ -1044,6 +1047,7 @@ where
         let mut closures = Vec::new();
         for (relation, &candidate) in relations.iter().zip(candidates) {
             let first_rule = closures.len();
+            let mut member_schemas = Vec::with_capacity(relation.rules.len());
             let mut preceding = None;
             for schema in relation.rules {
                 let rule_resolver = scoped.clause_scope();
@@ -1060,6 +1064,7 @@ where
                         .map_err(|source| resolver.kernel_error(source))?;
                     rule.premises.push(guard);
                 }
+                member_schemas.push(rule.clone());
                 closures.push(
                     close_hol_rule(staged, bool_ty, candidate, &rule)
                         .map_err(|source| resolver.kernel_error(source))?,
@@ -1071,6 +1076,7 @@ where
                 );
             }
             relation_rules.push(Arc::from(&closures[first_rule..]));
+            relation_rule_schemas.push(Arc::from(member_schemas));
         }
         let closure = close_hol_rules(staged, bool_ty, &closures)
             .map_err(|source| resolver.kernel_error(source))?;
@@ -1085,13 +1091,15 @@ where
         .iter()
         .zip(family)
         .zip(relation_rules)
-        .map(|((relation, least), rules)| {
+        .zip(relation_rule_schemas)
+        .map(|(((relation, least), rules), rule_schemas)| {
             staged
                 .eq(bool_ty, relation.predicate, least.predicate)
                 .map(|equation| RelationalRelationDefinition {
                     predicate: relation.predicate,
                     least,
                     rules,
+                    rule_schemas,
                     family_rules: Arc::clone(&family_rules),
                     equation,
                 })

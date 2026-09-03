@@ -1552,6 +1552,9 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     };
     let steps_definition = document.semantics.relations().get(steps_id).unwrap();
     assert_eq!(steps_definition.rules.len(), 2);
+    assert_eq!(steps_definition.rule_schemas.len(), 2);
+    assert!(!steps_definition.rule_schemas[0].binders.is_empty());
+    assert!(!steps_definition.rule_schemas[0].premises.is_empty());
     for &rule in steps_definition.rules.iter() {
         assert_eq!(kernel.classifier(rule).unwrap(), bool_ty);
     }
