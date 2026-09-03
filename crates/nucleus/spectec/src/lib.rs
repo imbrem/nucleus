@@ -26,6 +26,7 @@ mod type_definition;
 mod types;
 mod value_algebra;
 mod wasm_logic;
+mod wasm_theory;
 
 pub use add_slice::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSliceError, AddSlicePlan,
@@ -90,6 +91,7 @@ pub use wasm_logic::{
     empty_wasm_module, forwarding_wasm_module, prove_reflexive_binary_application,
     spectec_execution,
 };
+pub use wasm_theory::{WasmConfiguration, WasmFunction, WasmModule, WasmTheory};
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{

@@ -15,13 +15,13 @@ use covalence_nucleus_spectec::{
     RelationalCondition, RelationalDefinitionSchema, RelationalDefinitionSource,
     RelationalExpressionAlgebra, RelationalRelation, RelationalResolver, RelationalTerm,
     SelectedCompileError, SelectedCompiler, Source, SpecTecValueBuilder, TYPE_NAME,
-    TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family, close_family_definition,
-    close_graph_equation, close_hol_rule, close_hol_rules, close_hol_theory, declare_hol_schema,
-    empty_wasm_module, fold_expression, fold_grammar, fold_type, forwarding_wasm_module,
-    least_closed_family, least_closed_predicate, ordered_cases, parameterized_document,
-    parameterized_document_with, prove_reflexive_binary_application, relational_definition,
-    relational_definition_declaration, relational_definition_schema, relational_document,
-    relational_grammar_declaration, relational_hol_case, relational_hol_rule,
+    TranslationCase, TypeAlgebra, TypeChildren, WasmTheory, begin_least_closed_family,
+    close_family_definition, close_graph_equation, close_hol_rule, close_hol_rules,
+    close_hol_theory, declare_hol_schema, empty_wasm_module, fold_expression, fold_grammar,
+    fold_type, forwarding_wasm_module, least_closed_family, least_closed_predicate, ordered_cases,
+    parameterized_document, parameterized_document_with, prove_reflexive_binary_application,
+    relational_definition, relational_definition_declaration, relational_definition_schema,
+    relational_document, relational_grammar_declaration, relational_hol_case, relational_hol_rule,
     relational_relation_declaration, relational_relations, relational_type_declaration,
     spectec_execution,
 };
@@ -2285,7 +2285,12 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let reachability = execution
         .assertion_reachability(&mut kernel, exported, host_call)
         .unwrap();
+    let wasm = WasmTheory::open(&mut kernel, reachability, start.function).unwrap();
+    let true_module = wasm.module(&mut kernel, forwarding).unwrap();
+    let false_module = wasm.module(&mut kernel, empty_module).unwrap();
+    let true_initial = wasm.configuration(start.initial);
     let final_state = start.initial;
+    let true_final = wasm.configuration(final_state);
     let final_before_equality = kernel.eq(bool_ty, reflexive_before, start.initial).unwrap();
     let final_before_equality_fact = kernel
         .identity(covalence_logic_hol::Lit::positive(
@@ -2321,13 +2326,12 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let calls_fact =
         prove_reflexive_binary_application(&mut kernel, host_call, final_state, start.function)
             .unwrap();
-    let true_calls = reachability
+    let true_calls = wasm
         .prove_calls_assert(
             &mut kernel,
-            forwarding,
-            start.function,
-            start.initial,
-            final_state,
+            true_module,
+            true_initial,
+            true_final,
             starts.theorem,
             steps_fact.theorem,
             calls_fact.theorem,
@@ -2378,22 +2382,21 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             cannot_export.theorem,
         )
         .unwrap();
-    let false_does_not_call = reachability
-        .prove_never_calls_assert_from_no_start(
-            &mut kernel,
-            empty_module,
-            start.function,
-            no_false_start.theorem,
-        )
+    let false_does_not_call = wasm
+        .prove_never_calls_assert(&mut kernel, false_module, no_false_start.theorem)
         .unwrap();
-    let observation = reachability
-        .closed_program_observation(&mut kernel, start.function)
+    let preservation = wasm
+        .prove_calls_assert_preserved(&mut kernel, true_module, false_module)
         .unwrap();
-    let true_not_false = observation
+    document
+        .evidence_scope(&[])
+        .check(&kernel, preservation)
+        .unwrap();
+    let true_not_false = wasm
         .prove_distinct(
             &mut kernel,
-            forwarding,
-            empty_module,
+            true_module,
+            false_module,
             true_calls.theorem,
             false_does_not_call.theorem,
         )

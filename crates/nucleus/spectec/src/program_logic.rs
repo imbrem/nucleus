@@ -581,6 +581,91 @@ impl ClosedProgramObservation {
         self.contextual
     }
 
+    /// Constructs the contextual observational equivalence proposition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either program has an incompatible classifier or a
+    /// checked HOL constructor fails. `kernel` is unchanged on failure.
+    pub fn equivalent(
+        self,
+        kernel: &mut Kernel,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Ref, KernelError> {
+        self.contextual.equivalent(kernel, left, right)
+    }
+
+    /// Proves that contextual observational equivalence preserves
+    /// `callsAssert`.
+    ///
+    /// The premise-free result is the implication
+    /// `left ≈ right -> (callsAssert(left) = callsAssert(right))`. This is a
+    /// theorem about the contextual definition, not an evaluator result or a
+    /// new axiom.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either program has an incompatible classifier or a
+    /// checked admissibility, specialization, beta-conversion, equality, or
+    /// implication step fails. `kernel` is unchanged on failure.
+    pub fn prove_calls_assert_preserved(
+        self,
+        kernel: &mut Kernel,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        let equivalence = self.contextual.equivalent(&mut staged, left, right)?;
+        let assumed = staged.identity(positive(equivalence))?;
+        let left_ok = prove_identity_admissible(&mut staged, self, left)?;
+        let right_ok = prove_identity_admissible(&mut staged, self, right)?;
+        let preservation = self.contextual.prove_preservation(
+            &mut staged,
+            assumed,
+            self.identity_context,
+            left,
+            right,
+            left_ok,
+            right_ok,
+        )?;
+        let (left_calls, left_observed, left_conversion) =
+            identity_observation_conversion(&mut staged, self, left)?;
+        let (right_calls, right_observed, right_conversion) =
+            identity_observation_conversion(&mut staged, self, right)?;
+        let canonical_equality = staged.eq(self.contextual.bool_ty, left_calls, right_calls)?;
+        let [source_ty, source_left, source_right] =
+            binary_equality_children(&staged, preservation.proposition)?;
+        let same_left = join_same_syntax(&mut staged, source_left, left_observed)?;
+        let left_conversion = staged.syn_trans(None, same_left, left_conversion)?;
+        let same_right = join_same_syntax(&mut staged, source_right, right_observed)?;
+        let right_conversion = staged.syn_trans(None, same_right, right_conversion)?;
+        let type_conversion = join_same_syntax(&mut staged, source_ty, self.contextual.bool_ty)?;
+        let equality_conversion = staged.syn_congr(
+            None,
+            SynRel::Conv,
+            None,
+            None,
+            preservation.proposition,
+            canonical_equality,
+            &[type_conversion, left_conversion, right_conversion],
+        )?;
+        staged.union_syn_fact(equality_conversion)?;
+        staged.convert_conclusions(
+            preservation.theorem,
+            preservation.proposition,
+            canonical_equality,
+        )?;
+        let proposition = staged.op2(Op2::Imp, equivalence, canonical_equality)?;
+        let theorem = staged.imp_right(preservation.theorem, positive(proposition))?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition,
+            theorem,
+            holds: true,
+        })
+    }
+
     /// Validates a program transformation against this exact `callsAssert`
     /// observational semantics.
     ///
@@ -709,7 +794,7 @@ impl ClosedProgramObservation {
             staged.not_right(contradiction, positive(*right_observed))?;
             contradiction
         };
-        let (canonical, observed) =
+        let (canonical, observed, _) =
             identity_observation_conversion(&mut staged, self, transformed)?;
         join_alpha_equivalent(&mut staged, observed, *right_observed)?;
         staged.convert_conclusions(theorem, *right_observed, canonical)?;
@@ -2128,7 +2213,7 @@ fn align_identity_observation(
     theorem: ThmId,
     holds: bool,
 ) -> Result<ThmId, ObservationProofError> {
-    let (canonical, observed_plugged) =
+    let (canonical, observed_plugged, _) =
         identity_observation_conversion(kernel, observation, program)?;
     let source = sole_evidence_proposition(kernel, theorem, holds)?;
     join_alpha_equivalent(kernel, source, canonical)?;
@@ -2143,7 +2228,7 @@ fn identity_observation_conversion(
     kernel: &mut Kernel,
     observation: ClosedProgramObservation,
     program: Ref,
-) -> Result<(Ref, Ref), ObservationProofError> {
+) -> Result<(Ref, Ref, SynFactId), ObservationProofError> {
     let canonical =
         observation
             .reachability
@@ -2181,7 +2266,7 @@ fn identity_observation_conversion(
     let conversion = kernel.syn_trans(None, conversion, observation_beta)?;
     let conversion = kernel.syn_trans(None, conversion, same_canonical)?;
     kernel.union_syn_fact(conversion)?;
-    Ok((canonical, observed_plugged))
+    Ok((canonical, observed_plugged, conversion))
 }
 
 fn reduce_checked_unary_lambda(
@@ -2578,6 +2663,22 @@ fn binary_children(kernel: &Kernel, proposition: Ref) -> Result<[Ref; 2], Kernel
         .map_err(|_| KernelError::InvalidTheoremRule {
             rule: "contextual observation binary proposition operands",
         })
+}
+
+fn binary_equality_children(kernel: &Kernel, equality: Ref) -> Result<[Ref; 3], KernelError> {
+    let children = kernel
+        .arena()
+        .children(equality)
+        .ok_or(KernelError::InvalidTheoremRule {
+            rule: "Boolean equality children",
+        })?
+        .collect::<Vec<_>>();
+    let [ty, left, right] = children.as_slice() else {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "Boolean equality operands",
+        });
+    };
+    Ok([*ty, *left, *right])
 }
 
 fn theorem_proposition_roots(kernel: &Kernel, theorem: ThmId) -> Result<Vec<Ref>, KernelError> {
@@ -3525,6 +3626,13 @@ mod tests {
                 assert_function,
                 &[true_program, false_program],
             )
+            .unwrap();
+
+        let preservation = observation
+            .prove_calls_assert_preserved(&mut kernel, true_program, false_program)
+            .unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, preservation)
             .unwrap();
 
         let distinct = observation

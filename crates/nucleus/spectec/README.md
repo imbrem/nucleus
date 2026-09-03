@@ -119,6 +119,15 @@ admissibility. `ClosedProgramObservation::prove_distinct` consequently derives
 `callsAssert(FALSE)` evidence while retaining exactly their semantic premises;
 the identity-context and beta-transport steps introduce no assumptions.
 
+`WasmTheory` is the small immutable workface over that machinery. Its
+`WasmModule`, `WasmFunction`, and `WasmConfiguration` handles honestly refine
+the lowering's still-erased `SpecTec` value carrier rather than claiming new
+HOL base types. It constructs standard `calls_assert`, `never_calls_assert`,
+and contextual `sem_eqv` propositions, delegates concrete positive and negative
+proofs to the checked reachability rules, and proves the premise-free theorem
+`sem_eqv(P,Q) -> (calls_assert(P) = calls_assert(Q))` from the contextual
+definition. It neither evaluates Wasm nor decides equivalence.
+
 `SpecTecValueBuilder` is the corresponding generic structural API. It composes
 recorded number, list, optional, tuple, and tagged-case operations immutably and
 transactionally; `empty_wasm_module` and `forwarding_wasm_module` are
