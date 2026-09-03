@@ -17,7 +17,8 @@ use covalence_logic_hol::{
 };
 use covalence_logic_hol_derived::{
     EqualityError, ExistsError, ForallError, ModelError, SyntaxError, equality_symmetry,
-    forall_elim, introduce_exists, join_alpha_equivalent, open_exists, substitute,
+    equality_transitivity, forall_elim, introduce_exists, join_alpha_equivalent, open_exists,
+    substitute,
 };
 
 /// A small, immutable, generic proposition schema.
@@ -572,8 +573,9 @@ impl ClosedProgramObservation {
 /// A subject can be a complete Wasm module or one function definition. A
 /// context is respectively a module environment or a well-formed module with
 /// one function hole. `plug context subject` produces the closed object seen
-/// by `observe`; `admissible` keeps ill-formed linking contexts out of the
-/// quantification.
+/// by `observe`. `admissible` identifies well-formed linking contexts;
+/// equivalent subjects must agree on admissibility as well as on observations
+/// in admissible contexts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ContextualObservation {
     /// Classifier of modules or function definitions being compared.
@@ -596,8 +598,11 @@ impl ContextualObservation {
     /// Constructs contextual observational equivalence of two subjects.
     ///
     /// The result is
-    /// `forall context. admissible context left /\ admissible context right ->
-    /// observe (plug context left) = observe (plug context right)`.
+    /// `forall context. admissible context left = admissible context right /\
+    /// (admissible context left /\ admissible context right ->
+    /// observe (plug context left) = observe (plug context right))`.
+    /// Equal admissibility makes rejection by a context observable and is
+    /// necessary for contextual equivalence to be transitive.
     /// This is useful unchanged for whole programs and individual functions.
     ///
     /// # Errors
@@ -634,8 +639,8 @@ impl ContextualObservation {
 
     /// Proves contextual observational equivalence is reflexive.
     ///
-    /// The proof introduces an arbitrary admissible context and closes the
-    /// observation equality with checked equality reflexivity. It has no
+    /// The proof introduces an arbitrary context and closes both admissibility
+    /// and observation equality with checked equality reflexivity. It has no
     /// premises, so no semantic property of `plug`, `admissible`, or `observe`
     /// is assumed.
     ///
@@ -670,15 +675,40 @@ impl ContextualObservation {
                 rule: "contextual reflexivity implication",
             })?
             .collect::<Vec<_>>();
-        let [antecedent, equality] = operands.as_slice() else {
+        let [admissibility_equality, preservation] = operands.as_slice() else {
             return Err(KernelError::InvalidTheoremRule {
-                rule: "contextual reflexivity implication operands",
+                rule: "contextual reflexivity conjunction operands",
             }
             .into());
         };
+        let [antecedent, equality] = binary_children(&staged, *preservation)?;
+        let admissibility_operands = staged
+            .arena()
+            .children(*admissibility_equality)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "contextual reflexivity admissibility equality",
+            })?
+            .collect::<Vec<_>>();
+        let [_, admissible, _] = admissibility_operands.as_slice() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "contextual reflexivity admissibility equality operands",
+            }
+            .into());
+        };
+        let admissibility_reflexive = staged.refl(self.bool_ty, *admissible)?;
+        join_alpha_equivalent(
+            &mut staged,
+            admissibility_reflexive.equality,
+            *admissibility_equality,
+        )?;
+        staged.convert_conclusions(
+            admissibility_reflexive.theorem,
+            admissibility_reflexive.equality,
+            *admissibility_equality,
+        )?;
         let equality_operands = staged
             .arena()
-            .children(*equality)
+            .children(equality)
             .ok_or(KernelError::InvalidTheoremRule {
                 rule: "contextual reflexivity equality",
             })?
@@ -690,12 +720,17 @@ impl ContextualObservation {
             .into());
         };
         let reflexive = staged.refl(self.bool_ty, *observed)?;
-        join_alpha_equivalent(&mut staged, reflexive.equality, *equality)?;
-        staged.convert_conclusions(reflexive.theorem, reflexive.equality, *equality)?;
-        staged.weaken(reflexive.theorem, &[positive(*antecedent)], &[])?;
-        let implication = staged.imp_right(reflexive.theorem, positive(obligation))?;
+        join_alpha_equivalent(&mut staged, reflexive.equality, equality)?;
+        staged.convert_conclusions(reflexive.theorem, reflexive.equality, equality)?;
+        staged.weaken(reflexive.theorem, &[positive(antecedent)], &[])?;
+        let implication = staged.imp_right(reflexive.theorem, positive(*preservation))?;
+        let at_context = staged.and_right(
+            admissibility_reflexive.theorem,
+            implication,
+            positive(obligation),
+        )?;
         let universal = staged.forall_tm(self.bool_ty, context, obligation)?;
-        let theorem = staged.forall_intro_at(implication, context, universal)?;
+        let theorem = staged.forall_intro_at(at_context, context, universal)?;
         let equivalent = self.equivalent(&mut staged, subject, subject)?;
         join_alpha_equivalent(&mut staged, universal, equivalent)?;
         staged.convert_conclusions(theorem, universal, equivalent)?;
@@ -751,13 +786,33 @@ impl ContextualObservation {
         staged.convert_conclusions(specialized.theorem, specialized.proposition, forward)?;
         let reverse = self.at_context(&mut staged, context, right, left)?;
 
-        let [forward_antecedent, forward_equality] = binary_children(&staged, forward)?;
-        let [reverse_antecedent, reverse_equality] = binary_children(&staged, reverse)?;
+        let [_forward_admissibility, forward_preservation] = binary_children(&staged, forward)?;
+        let [reverse_admissibility, reverse_preservation] = binary_children(&staged, reverse)?;
+        let [forward_antecedent, forward_equality] =
+            binary_children(&staged, forward_preservation)?;
+        let [reverse_antecedent, reverse_equality] =
+            binary_children(&staged, reverse_preservation)?;
         let [forward_left_ok, forward_right_ok] = binary_children(&staged, forward_antecedent)?;
         let [reverse_right_ok, reverse_left_ok] = binary_children(&staged, reverse_antecedent)?;
         join_alpha_equivalent(&mut staged, forward_left_ok, reverse_left_ok)?;
         join_alpha_equivalent(&mut staged, forward_right_ok, reverse_right_ok)?;
 
+        let forward_admissibility_fact =
+            staged.expand_conclusion(specialized.theorem, positive(forward), Some(false))?;
+        let admissibility_symmetry =
+            equality_symmetry(&mut staged, self.bool_ty, forward_admissibility_fact)?;
+        join_alpha_equivalent(
+            &mut staged,
+            admissibility_symmetry.equality,
+            reverse_admissibility,
+        )?;
+        staged.convert_conclusions(
+            admissibility_symmetry.theorem,
+            admissibility_symmetry.equality,
+            reverse_admissibility,
+        )?;
+        let forward_preservation_fact =
+            staged.expand_conclusion(specialized.theorem, positive(forward), Some(true))?;
         let assumed_reverse = staged.identity(positive(reverse_antecedent))?;
         let right_ok =
             staged.expand_conclusion(assumed_reverse, positive(reverse_antecedent), Some(false))?;
@@ -767,22 +822,238 @@ impl ContextualObservation {
         staged.convert_conclusions(right_ok, reverse_right_ok, forward_right_ok)?;
         let forward_ok = staged.and_right(left_ok, right_ok, positive(forward_antecedent))?;
         let equality_identity = staged.identity(positive(forward_equality))?;
-        let use_forward = staged.imp_left(forward_ok, equality_identity, positive(forward))?;
-        let forward_equality_fact =
-            staged.cut(specialized.theorem, use_forward, positive(forward))?;
+        let use_forward = staged.imp_left(
+            forward_ok,
+            equality_identity,
+            positive(forward_preservation),
+        )?;
+        let forward_equality_fact = staged.cut(
+            forward_preservation_fact,
+            use_forward,
+            positive(forward_preservation),
+        )?;
         let reversed = equality_symmetry(&mut staged, self.bool_ty, forward_equality_fact)?;
         join_alpha_equivalent(&mut staged, reversed.equality, reverse_equality)?;
         staged.convert_conclusions(reversed.theorem, reversed.equality, reverse_equality)?;
         staged.contract_theorem(reversed.theorem)?;
-        let implication = staged.imp_right(reversed.theorem, positive(reverse))?;
+        let implication = staged.imp_right(reversed.theorem, positive(reverse_preservation))?;
+        let reversed_at_context = staged.and_right(
+            admissibility_symmetry.theorem,
+            implication,
+            positive(reverse),
+        )?;
+        staged.contract_theorem(reversed_at_context)?;
         let universal = staged.forall_tm(self.bool_ty, context, reverse)?;
-        let theorem = staged.forall_intro_at(implication, context, universal)?;
+        let theorem = staged.forall_intro_at(reversed_at_context, context, universal)?;
         let reverse_equivalence = self.equivalent(&mut staged, right, left)?;
         join_alpha_equivalent(&mut staged, universal, reverse_equivalence)?;
         staged.convert_conclusions(theorem, universal, reverse_equivalence)?;
         *kernel = staged;
         Ok(Evidence {
             proposition: reverse_equivalence,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Composes two checked contextual observational equivalence theorems.
+    ///
+    /// Equal admissibility transports admissibility of the middle subject at
+    /// each arbitrary context. The two observation equalities can therefore be
+    /// specialized and composed with checked equality transitivity. Every
+    /// premise of both input theorems is preserved.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the first theorem proves `left` equivalent to
+    /// `middle` and the second proves `middle` equivalent to `right`, or a
+    /// checked specialization, propositional, equality, universal, or
+    /// formula-alignment step fails. `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_lines)]
+    pub fn prove_transitive(
+        self,
+        kernel: &mut Kernel,
+        left_middle: ThmId,
+        middle_right: ThmId,
+        left: Ref,
+        middle: Ref,
+        right: Ref,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        let expected_left_middle = self.equivalent(&mut staged, left, middle)?;
+        let source_left_middle = sole_evidence_proposition(&staged, left_middle, true)?;
+        join_alpha_equivalent(&mut staged, source_left_middle, expected_left_middle)?;
+        let left_middle = staged.copy_theorem(left_middle)?;
+        staged.convert_conclusions(left_middle, source_left_middle, expected_left_middle)?;
+        let expected_middle_right = self.equivalent(&mut staged, middle, right)?;
+        let source_middle_right = sole_evidence_proposition(&staged, middle_right, true)?;
+        join_alpha_equivalent(&mut staged, source_middle_right, expected_middle_right)?;
+        let middle_right = staged.copy_theorem(middle_right)?;
+        staged.convert_conclusions(middle_right, source_middle_right, expected_middle_right)?;
+
+        let mut roots = theorem_proposition_roots(&staged, left_middle)?;
+        roots.extend(theorem_proposition_roots(&staged, middle_right)?);
+        roots.extend([
+            self.subject_ty,
+            self.context_ty,
+            self.observed_ty,
+            self.bool_ty,
+            self.plug,
+            self.admissible,
+            self.observe,
+            left,
+            middle,
+            right,
+        ]);
+        let context = staged.tm_fv(staged.fresh_name(&roots)?, self.context_ty)?;
+        let left_middle_at = forall_elim(&mut staged, left_middle, context)?;
+        let middle_right_at = forall_elim(&mut staged, middle_right, context)?;
+        let left_middle_formula = self.at_context(&mut staged, context, left, middle)?;
+        let middle_right_formula = self.at_context(&mut staged, context, middle, right)?;
+        let target = self.at_context(&mut staged, context, left, right)?;
+        join_alpha_equivalent(&mut staged, left_middle_at.proposition, left_middle_formula)?;
+        staged.convert_conclusions(
+            left_middle_at.theorem,
+            left_middle_at.proposition,
+            left_middle_formula,
+        )?;
+        join_alpha_equivalent(
+            &mut staged,
+            middle_right_at.proposition,
+            middle_right_formula,
+        )?;
+        staged.convert_conclusions(
+            middle_right_at.theorem,
+            middle_right_at.proposition,
+            middle_right_formula,
+        )?;
+
+        let [left_middle_admissibility, left_middle_preservation] =
+            binary_children(&staged, left_middle_formula)?;
+        let [_middle_right_admissibility, middle_right_preservation] =
+            binary_children(&staged, middle_right_formula)?;
+        let [target_admissibility, target_preservation] = binary_children(&staged, target)?;
+        let left_middle_admissibility_fact = staged.expand_conclusion(
+            left_middle_at.theorem,
+            positive(left_middle_formula),
+            Some(false),
+        )?;
+        let middle_right_admissibility_fact = staged.expand_conclusion(
+            middle_right_at.theorem,
+            positive(middle_right_formula),
+            Some(false),
+        )?;
+        let admissibility = equality_transitivity(
+            &mut staged,
+            self.bool_ty,
+            left_middle_admissibility_fact,
+            middle_right_admissibility_fact,
+        )?;
+        join_alpha_equivalent(&mut staged, admissibility.equality, target_admissibility)?;
+        staged.convert_conclusions(
+            admissibility.theorem,
+            admissibility.equality,
+            target_admissibility,
+        )?;
+
+        let left_middle_preservation_fact = staged.expand_conclusion(
+            left_middle_at.theorem,
+            positive(left_middle_formula),
+            Some(true),
+        )?;
+        let middle_right_preservation_fact = staged.expand_conclusion(
+            middle_right_at.theorem,
+            positive(middle_right_formula),
+            Some(true),
+        )?;
+        let [left_middle_antecedent, left_middle_equality] =
+            binary_children(&staged, left_middle_preservation)?;
+        let [middle_right_antecedent, middle_right_equality] =
+            binary_children(&staged, middle_right_preservation)?;
+        let [target_antecedent, target_equality] = binary_children(&staged, target_preservation)?;
+        let assumed_target = staged.identity(positive(target_antecedent))?;
+        let left_ok =
+            staged.expand_conclusion(assumed_target, positive(target_antecedent), Some(false))?;
+        let right_ok =
+            staged.expand_conclusion(assumed_target, positive(target_antecedent), Some(true))?;
+        let admissibility_equality_operands = staged
+            .arena()
+            .children(left_middle_admissibility)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "contextual transitivity admissibility equality",
+            })?
+            .collect::<Vec<_>>();
+        let [_, equality_left_ok, _] = admissibility_equality_operands.as_slice() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "contextual transitivity admissibility equality operands",
+            }
+            .into());
+        };
+        let aligned_left_ok = align_positive_fact(&mut staged, left_ok, *equality_left_ok)?;
+        let middle_ok = staged.eq_mp(left_middle_admissibility_fact, aligned_left_ok)?;
+        let [left_middle_left_ok, left_middle_middle_ok] =
+            binary_children(&staged, left_middle_antecedent)?;
+        let [middle_right_middle_ok, middle_right_right_ok] =
+            binary_children(&staged, middle_right_antecedent)?;
+        let left_for_left_middle = align_positive_fact(&mut staged, left_ok, left_middle_left_ok)?;
+        let middle_for_left_middle =
+            align_positive_fact(&mut staged, middle_ok, left_middle_middle_ok)?;
+        let middle_for_middle_right =
+            align_positive_fact(&mut staged, middle_ok, middle_right_middle_ok)?;
+        let right_for_middle_right =
+            align_positive_fact(&mut staged, right_ok, middle_right_right_ok)?;
+        let left_middle_ok = staged.and_right(
+            left_for_left_middle,
+            middle_for_left_middle,
+            positive(left_middle_antecedent),
+        )?;
+        let middle_right_ok = staged.and_right(
+            middle_for_middle_right,
+            right_for_middle_right,
+            positive(middle_right_antecedent),
+        )?;
+        let left_middle_identity = staged.identity(positive(left_middle_equality))?;
+        let use_left_middle = staged.imp_left(
+            left_middle_ok,
+            left_middle_identity,
+            positive(left_middle_preservation),
+        )?;
+        let left_middle_observation = staged.cut(
+            left_middle_preservation_fact,
+            use_left_middle,
+            positive(left_middle_preservation),
+        )?;
+        let middle_right_identity = staged.identity(positive(middle_right_equality))?;
+        let use_middle_right = staged.imp_left(
+            middle_right_ok,
+            middle_right_identity,
+            positive(middle_right_preservation),
+        )?;
+        let middle_right_observation = staged.cut(
+            middle_right_preservation_fact,
+            use_middle_right,
+            positive(middle_right_preservation),
+        )?;
+        let observation = equality_transitivity(
+            &mut staged,
+            self.bool_ty,
+            left_middle_observation,
+            middle_right_observation,
+        )?;
+        join_alpha_equivalent(&mut staged, observation.equality, target_equality)?;
+        staged.convert_conclusions(observation.theorem, observation.equality, target_equality)?;
+        staged.contract_theorem(observation.theorem)?;
+        let preservation = staged.imp_right(observation.theorem, positive(target_preservation))?;
+        let at_context = staged.and_right(admissibility.theorem, preservation, positive(target))?;
+        staged.contract_theorem(at_context)?;
+        let universal = staged.forall_tm(self.bool_ty, context, target)?;
+        let theorem = staged.forall_intro_at(at_context, context, universal)?;
+        let equivalence = self.equivalent(&mut staged, left, right)?;
+        join_alpha_equivalent(&mut staged, universal, equivalence)?;
+        staged.convert_conclusions(theorem, universal, equivalence)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: equivalence,
             theorem,
             holds: true,
         })
@@ -806,6 +1077,7 @@ impl ContextualObservation {
         require_classifier(kernel, right, self.subject_ty)?;
         let left_admissible = apply2(kernel, self.admissible, context, left)?;
         let right_admissible = apply2(kernel, self.admissible, context, right)?;
+        let same_admissibility = kernel.eq(self.bool_ty, left_admissible, right_admissible)?;
         let admissible = kernel.op2(Op2::And, left_admissible, right_admissible)?;
         let left_closed = apply2(kernel, self.plug, context, left)?;
         let right_closed = apply2(kernel, self.plug, context, right)?;
@@ -816,7 +1088,8 @@ impl ContextualObservation {
         require_bool(kernel, self.bool_ty, left_observation)?;
         require_bool(kernel, self.bool_ty, right_observation)?;
         let same = kernel.eq(self.bool_ty, left_observation, right_observation)?;
-        kernel.op2(Op2::Imp, admissible, same)
+        let same_when_admissible = kernel.op2(Op2::Imp, admissible, same)?;
+        kernel.op2(Op2::And, same_admissibility, same_when_admissible)
     }
 
     /// Specializes checked contextual equivalence to one admissible context.
@@ -848,9 +1121,22 @@ impl ContextualObservation {
         join_alpha_equivalent(&mut staged, specialized.proposition, expected)?;
         let specialized_theorem = staged.copy_theorem(specialized.theorem)?;
         staged.convert_conclusions(specialized_theorem, specialized.proposition, expected)?;
-        let implication_operands = staged
+        let contextual_operands = staged
             .arena()
             .children(expected)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "contextual observation conjunction",
+            })?
+            .collect::<Vec<_>>();
+        let [_, preservation] = contextual_operands.as_slice() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "contextual observation conjunction operands",
+            }
+            .into());
+        };
+        let implication_operands = staged
+            .arena()
+            .children(*preservation)
             .ok_or(KernelError::InvalidTheoremRule {
                 rule: "contextual observation implication",
             })?
@@ -879,8 +1165,10 @@ impl ContextualObservation {
         let antecedent_fact = staged.and_right(left_fact, right_fact, positive(*antecedent))?;
         let same_identity = staged.identity(positive(*same))?;
         let use_implication =
-            staged.imp_left(antecedent_fact, same_identity, positive(expected))?;
-        let theorem = staged.cut(specialized_theorem, use_implication, positive(expected))?;
+            staged.imp_left(antecedent_fact, same_identity, positive(*preservation))?;
+        let preservation_fact =
+            staged.expand_conclusion(specialized_theorem, positive(expected), Some(true))?;
+        let theorem = staged.cut(preservation_fact, use_implication, positive(*preservation))?;
         *kernel = staged;
         Ok(Evidence {
             proposition: *same,
@@ -1128,6 +1416,76 @@ impl FunctionObservation {
         *kernel = staged;
         Ok(Evidence {
             proposition: reverse_equivalence,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Composes two checked function observational-equivalence theorems.
+    ///
+    /// The proof specializes both inputs at an arbitrary function-replacement
+    /// context, composes the resulting module equivalences, and generalizes
+    /// over the replacement context. Every premise of both inputs is retained.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the inputs prove `left` equivalent to `middle`
+    /// and `middle` equivalent to `right`, respectively, or a checked
+    /// specialization, transitivity, generalization, or alignment step fails.
+    /// `kernel` is unchanged on failure.
+    pub fn prove_transitive(
+        self,
+        kernel: &mut Kernel,
+        left_middle: ThmId,
+        middle_right: ThmId,
+        left: Ref,
+        middle: Ref,
+        right: Ref,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        let expected_left_middle = self.equivalent(&mut staged, left, middle)?;
+        let source_left_middle = sole_evidence_proposition(&staged, left_middle, true)?;
+        join_alpha_equivalent(&mut staged, source_left_middle, expected_left_middle)?;
+        let left_middle = staged.copy_theorem(left_middle)?;
+        staged.convert_conclusions(left_middle, source_left_middle, expected_left_middle)?;
+        let expected_middle_right = self.equivalent(&mut staged, middle, right)?;
+        let source_middle_right = sole_evidence_proposition(&staged, middle_right, true)?;
+        join_alpha_equivalent(&mut staged, source_middle_right, expected_middle_right)?;
+        let middle_right = staged.copy_theorem(middle_right)?;
+        staged.convert_conclusions(middle_right, source_middle_right, expected_middle_right)?;
+        let mut roots = theorem_proposition_roots(&staged, left_middle)?;
+        roots.extend(theorem_proposition_roots(&staged, middle_right)?);
+        roots.extend([
+            self.function_ty,
+            self.replacement_context_ty,
+            self.replace,
+            left,
+            middle,
+            right,
+        ]);
+        let replacement = staged.tm_fv(staged.fresh_name(&roots)?, self.replacement_context_ty)?;
+        let left_middle_at = forall_elim(&mut staged, left_middle, replacement)?;
+        let middle_right_at = forall_elim(&mut staged, middle_right, replacement)?;
+        let left_module = apply2(&mut staged, self.replace, replacement, left)?;
+        let middle_module = apply2(&mut staged, self.replace, replacement, middle)?;
+        let right_module = apply2(&mut staged, self.replace, replacement, right)?;
+        let composed = self.modules.prove_transitive(
+            &mut staged,
+            left_middle_at.theorem,
+            middle_right_at.theorem,
+            left_module,
+            middle_module,
+            right_module,
+        )?;
+        let universal =
+            staged.forall_tm(self.modules.bool_ty, replacement, composed.proposition)?;
+        let theorem = staged.forall_intro_at(composed.theorem, replacement, universal)?;
+        let equivalence = self.equivalent(&mut staged, left, right)?;
+        join_alpha_equivalent(&mut staged, universal, equivalence)?;
+        staged.convert_conclusions(theorem, universal, equivalence)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: equivalence,
             theorem,
             holds: true,
         })
@@ -2577,6 +2935,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn contextual_function_replacement_preserves_module_equivalence() {
         let mut kernel = Kernel::new();
         let star = kernel.star().unwrap();
@@ -2600,6 +2959,7 @@ mod tests {
         let left = kernel.tm_fv(14, function_ty).unwrap();
         let right = kernel.tm_fv(15, function_ty).unwrap();
         let replacement = kernel.tm_fv(16, replacement_ty).unwrap();
+        let third = kernel.tm_fv(17, function_ty).unwrap();
         let functions = FunctionObservation {
             function_ty,
             replacement_context_ty: replacement_ty,
@@ -2660,5 +3020,42 @@ mod tests {
         EvidenceScope::positive(&[equivalence])
             .check(&kernel, reverse_sound)
             .unwrap();
+
+        let right_third = functions.equivalent(&mut kernel, right, third).unwrap();
+        let right_third_fact = kernel.identity(positive(right_third)).unwrap();
+        let transitive = functions
+            .prove_transitive(
+                &mut kernel,
+                equivalence_fact,
+                right_third_fact,
+                left,
+                right,
+                third,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[equivalence, right_third])
+            .check(&kernel, transitive)
+            .unwrap();
+        let transitive_sound = functions
+            .prove_replacement_congruence(&mut kernel, transitive.theorem, replacement, left, third)
+            .unwrap();
+        EvidenceScope::positive(&[equivalence, right_third])
+            .check(&kernel, transitive_sound)
+            .unwrap();
+
+        let before = kernel.arena().clone();
+        assert!(
+            functions
+                .prove_transitive(
+                    &mut kernel,
+                    equivalence_fact,
+                    right_third_fact,
+                    left,
+                    third,
+                    right,
+                )
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
     }
 }

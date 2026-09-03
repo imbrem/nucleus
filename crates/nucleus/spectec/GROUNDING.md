@@ -105,8 +105,12 @@ nine-field module-instance constructor, while membership is the exact
 still premises; they are no longer aliases for `not callsAssert(FALSE)`.
 
 Individual-function equivalence is contextual observational equivalence: it
-quantifies every function-hole replacement context and then every admissible
-outer module-observation context. The checked replacement theorem proves that
-replacing a function by an equivalent function preserves module contextual
-equivalence. This theorem is structural and premise-free; it does not depend on
-an evaluator or on the pending concrete representation laws.
+quantifies every function-hole replacement context and then every outer
+module-observation context. It requires both sides to agree whether each
+context is admissible and, when admissible, to agree on the observation. Thus
+contextual rejection is observable and the relation is transitive. Checked
+reflexivity, symmetry, and transitivity theorems establish the equivalence
+laws. The checked replacement theorem proves that replacing a function by an
+equivalent function preserves module contextual equivalence. This theorem is
+structural and premise-free; it does not depend on an evaluator or on the
+pending concrete representation laws.
