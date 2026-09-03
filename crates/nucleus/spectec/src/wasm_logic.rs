@@ -2,9 +2,9 @@
 
 use covalence_data_spectec::IlKind;
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref};
+use covalence_logic_hol::{Kernel, KernelError, Ref, builtin::Op2};
 
-use crate::{InterpretationKind, ParameterizedDocument};
+use crate::{AssertionReachability, InterpretationKind, ParameterizedDocument};
 
 /// The execution predicates extracted from one lowered `SpecTec` document.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -21,6 +21,155 @@ pub struct SpecTecExecution {
     pub instantiate: Ref,
     /// Exact lowered graph predicate for `$invoke`.
     pub invoke: Ref,
+    /// Exact lowered graph predicate for `$store`.
+    pub store: Ref,
+}
+
+impl SpecTecExecution {
+    /// Builds the generic assertion-reachability schema from this exact
+    /// `SpecTec` execution adapter and the two remaining structural views.
+    ///
+    /// `exported` recognizes exported function addresses in an initialized
+    /// configuration. `host_call` recognizes configurations immediately before
+    /// calling a particular host-function address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when constructing the admissible-start predicate fails.
+    /// `kernel` is unchanged on failure.
+    pub fn assertion_reachability(
+        self,
+        kernel: &mut Kernel,
+        exported: Ref,
+        host_call: Ref,
+    ) -> Result<AssertionReachability, WasmLogicError> {
+        let starts = self.admissible_starts(kernel, exported)?;
+        Ok(AssertionReachability {
+            state_ty: self.state_ty,
+            bool_ty: self.bool_ty,
+            starts,
+            steps: self.steps,
+            calls: host_call,
+        })
+    }
+
+    /// Constructs the curried predicate of admissible initial invocations.
+    ///
+    /// `exported` must classify as `state -> function-address -> bool`. The
+    /// result existentially chooses a store, imports, initial and completed
+    /// instantiation configurations, exported function address, arguments, and
+    /// completed store. It conjoins the exact lowered `instantiate`, `Steps`,
+    /// `store`, and `invoke` graph predicates with `exported`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an incompatible adapter, name exhaustion, or a
+    /// rejected checked HOL construction. `kernel` is unchanged on failure.
+    pub fn admissible_starts(
+        self,
+        kernel: &mut Kernel,
+        exported: Ref,
+    ) -> Result<Ref, WasmLogicError> {
+        let mut staged = kernel.fork();
+        let roots = [
+            self.state_ty,
+            self.bool_ty,
+            self.instantiate,
+            self.invoke,
+            self.store,
+            exported,
+        ];
+        let first = staged
+            .fresh_name(&roots)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        let mut witnesses = Vec::with_capacity(7);
+        for offset in 0..7 {
+            let name = first.checked_add(offset).ok_or(WasmLogicError::Kernel {
+                source: KernelError::TooManyNames,
+            })?;
+            witnesses.push(
+                staged
+                    .tm_fv(name, self.state_ty)
+                    .map_err(|source| WasmLogicError::Kernel { source })?,
+            );
+        }
+        let [
+            store,
+            externs,
+            instantiation_start,
+            initialized,
+            function,
+            arguments,
+            initialized_store,
+        ] = witnesses.as_slice()
+        else {
+            unreachable!()
+        };
+        let program_name = first.checked_add(7).ok_or(WasmLogicError::Kernel {
+            source: KernelError::TooManyNames,
+        })?;
+        let initial_name = first.checked_add(8).ok_or(WasmLogicError::Kernel {
+            source: KernelError::TooManyNames,
+        })?;
+        let program = staged
+            .tm_fv(program_name, self.state_ty)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        let initial = staged
+            .tm_fv(initial_name, self.state_ty)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+
+        let instantiated_by = apply(
+            &mut staged,
+            self.instantiate,
+            &[*store, program, *externs, *instantiation_start],
+        )?;
+        let initialized_by = apply(
+            &mut staged,
+            self.steps,
+            &[*instantiation_start, *initialized],
+        )?;
+        let is_exported = apply(&mut staged, exported, &[*initialized, *function])?;
+        let has_store = apply(&mut staged, self.store, &[*initialized, *initialized_store])?;
+        let invoked = apply(
+            &mut staged,
+            self.invoke,
+            &[*initialized_store, *function, *arguments, initial],
+        )?;
+        let mut body = staged
+            .op2(Op2::And, instantiated_by, initialized_by)
+            .and_then(|body| staged.op2(Op2::And, body, is_exported))
+            .and_then(|body| staged.op2(Op2::And, body, has_store))
+            .and_then(|body| staged.op2(Op2::And, body, invoked))
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        for &witness in witnesses.iter().rev() {
+            body = staged
+                .exists_tm(witness, body)
+                .map_err(|source| WasmLogicError::Kernel { source })?;
+        }
+        let predicate_ty = staged
+            .ty_arr(self.state_ty, self.bool_ty)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        let initial_predicate = staged
+            .lam_at(predicate_ty, initial, body)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        let starts_ty = staged
+            .ty_arr(self.state_ty, predicate_ty)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        let starts = staged
+            .lam_at(starts_ty, program, initial_predicate)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        *kernel = staged;
+        Ok(starts)
+    }
+}
+
+fn apply(kernel: &mut Kernel, function: Ref, arguments: &[Ref]) -> Result<Ref, WasmLogicError> {
+    arguments
+        .iter()
+        .try_fold(function, |function, &argument| {
+            kernel.app(function, argument)
+        })
+        .map_err(|source| WasmLogicError::Kernel { source })
 }
 
 /// Why the WebAssembly program-logic adapter could not be constructed.
@@ -87,6 +236,7 @@ pub fn spectec_execution(
         .reference();
     let instantiate = unique_definition(document, "instantiate")?;
     let invoke = unique_definition(document, "invoke")?;
+    let store = unique_definition(document, "store")?;
     let tuple = document
         .operations()
         .find(|operation| {
@@ -104,6 +254,7 @@ pub fn spectec_execution(
         relation,
         instantiate,
         invoke,
+        store,
         tuple,
         document.schema.value(),
         document.schema.bool_ty(),
@@ -147,6 +298,7 @@ pub fn spectec_execution(
         steps_ty: curried_ty,
         instantiate,
         invoke,
+        store,
     })
 }
 
@@ -171,4 +323,49 @@ fn unique_definition(
             name,
             count: 0,
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn predicate(kernel: &mut Kernel, value: Ref, bool_ty: Ref, arity: usize, name: u64) -> Ref {
+        let classifier = (0..arity)
+            .try_fold(bool_ty, |tail, _| kernel.ty_arr(value, tail))
+            .unwrap();
+        kernel.tm_fv(name, classifier).unwrap()
+    }
+
+    #[test]
+    fn spectec_graphs_compose_into_calls_assert_syntax() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let value = kernel.ty_fv(0, star).unwrap();
+        let steps_ty = (0..2)
+            .try_fold(bool_ty, |tail, _| kernel.ty_arr(value, tail))
+            .unwrap();
+        let execution = SpecTecExecution {
+            state_ty: value,
+            bool_ty,
+            steps: predicate(&mut kernel, value, bool_ty, 2, 10),
+            steps_ty,
+            instantiate: predicate(&mut kernel, value, bool_ty, 4, 11),
+            invoke: predicate(&mut kernel, value, bool_ty, 4, 12),
+            store: predicate(&mut kernel, value, bool_ty, 2, 13),
+        };
+        let exported = predicate(&mut kernel, value, bool_ty, 2, 14);
+        let host_call = predicate(&mut kernel, value, bool_ty, 2, 15);
+        let program = kernel.tm_fv(16, value).unwrap();
+        let assert_function = kernel.tm_fv(17, value).unwrap();
+
+        let reachability = execution
+            .assertion_reachability(&mut kernel, exported, host_call)
+            .unwrap();
+        let proposition = reachability
+            .calls_assert(&mut kernel, program, assert_function)
+            .unwrap();
+
+        assert_eq!(kernel.classifier(proposition).unwrap(), bool_ty);
+    }
 }
