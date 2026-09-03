@@ -1385,6 +1385,45 @@ impl RunTransformation {
         Ok(sound)
     }
 
+    /// Constructs the proposition that this transformation preserves one run
+    /// property in every admissible linking context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `property` belongs to another run domain or checked
+    /// contextual-observation construction fails. `kernel` is unchanged on
+    /// failure.
+    pub fn preserves_property(
+        self,
+        kernel: &mut Kernel,
+        property: RunProperty,
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        self.context.require_property(property)?;
+        let types = self.context.domain.relation.types;
+        let observed = self.context.observe_property_avoiding(
+            &mut staged,
+            property,
+            self.profile,
+            &[self.transform],
+        )?;
+        let module = staged.tm_fv(
+            staged.fresh_name(&[
+                observed.observe,
+                self.transform,
+                self.profile,
+                types.module,
+                types.bool_ty,
+            ])?,
+            types.module,
+        )?;
+        let transformed = self.sound_application(&mut staged, module)?;
+        let preserved = observed.equivalent(&mut staged, module, transformed)?;
+        let proposition = staged.forall_tm(types.bool_ty, module, preserved)?;
+        *kernel = staged;
+        Ok(proposition)
+    }
+
     fn sound_application(self, kernel: &mut Kernel, module: Ref) -> Result<Ref, KernelError> {
         let mut transformed = self.apply(kernel, module)?;
         loop {
@@ -1483,6 +1522,112 @@ impl SoundRunTransformation {
     #[must_use]
     pub const fn soundness(self) -> Evidence {
         self.soundness
+    }
+
+    /// Derives that this sound transformation preserves an arbitrary run
+    /// property in every admissible linking context.
+    ///
+    /// All premises of the transformation's soundness theorem remain visible.
+    /// The property is handled parametrically; this proof does not inspect or
+    /// execute it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `property` belongs to the transformation's run
+    /// domain and every checked soundness specialization, contextual
+    /// preservation, conversion, or universal step succeeds. `kernel` is
+    /// unchanged on failure.
+    pub fn prove_preserves_property(
+        self,
+        kernel: &mut Kernel,
+        property: RunProperty,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let transformation = self.transformation;
+        let context = transformation.context;
+        context.require_property(property)?;
+        let sound = transformation.sound(&mut staged)?;
+        let sound_theorem = align_evidence(&mut staged, self.soundness, sound)?;
+        let types = context.domain.relation.types;
+        let module = staged.tm_fv(
+            staged.fresh_name(&[
+                sound,
+                transformation.transform,
+                property.property,
+                types.module,
+                types.bool_ty,
+            ])?,
+            types.module,
+        )?;
+        let transformed = transformation.sound_application(&mut staged, module)?;
+        let specialized = forall_elim(&mut staged, sound_theorem, module)?;
+        let equivalent =
+            context.equivalent(&mut staged, transformation.profile, module, transformed)?;
+        join_alpha_equivalent(&mut staged, specialized.proposition, equivalent).map_err(|_| {
+            KernelError::InvalidTheoremRule {
+                rule: "transformation property soundness specialization",
+            }
+        })?;
+        staged.convert_conclusions(specialized.theorem, specialized.proposition, equivalent)?;
+        let preserved = context.prove_property_preserves(
+            &mut staged,
+            Evidence {
+                proposition: equivalent,
+                theorem: specialized.theorem,
+                holds: true,
+            },
+            property,
+            transformation.profile,
+            module,
+            transformed,
+        )?;
+        staged.contract_theorem(preserved.theorem)?;
+        let direct = staged.forall_tm(types.bool_ty, module, preserved.proposition)?;
+        let theorem = staged.forall_intro_at(preserved.theorem, module, direct)?;
+        let canonical = transformation.preserves_property(&mut staged, property)?;
+        align_theorem_conclusion(
+            &mut staged,
+            theorem,
+            direct,
+            canonical,
+            "transformation property preservation alignment",
+        )?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: canonical,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Derives preservation of one quantified behavior observation.
+    ///
+    /// This is convenience syntax for constructing the observation's generic
+    /// [`RunProperty`] and applying [`Self::prove_preserves_property`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `observation` belongs to this transformation's
+    /// run domain and the generic checked preservation derivation succeeds.
+    /// `kernel` is unchanged on failure.
+    pub fn prove_preserves(
+        self,
+        kernel: &mut Kernel,
+        observation: RunObservation,
+        quantifier: BehaviorQuantifier,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        self.transformation
+            .context
+            .require_observation(observation)?;
+        let property = observation.property_avoiding(
+            &mut staged,
+            quantifier,
+            &[self.transformation.transform],
+        )?;
+        let preserved = self.prove_preserves_property(&mut staged, property)?;
+        *kernel = staged;
+        Ok(preserved)
     }
 
     /// Composes two proved-sound transformations and derives soundness of the
@@ -6020,6 +6165,18 @@ mod tests {
         EvidenceScope::positive(&[])
             .check(&kernel, sound_identity.soundness())
             .unwrap();
+        let identity_preserves_may = sound_identity
+            .prove_preserves_property(&mut kernel, may_property)
+            .unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, identity_preserves_may)
+            .unwrap();
+        let identity_preserves_observation = sound_identity
+            .prove_preserves(&mut kernel, observation, BehaviorQuantifier::May)
+            .unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, identity_preserves_observation)
+            .unwrap();
         let sound_identity_composition = sound_identity.then(&mut kernel, sound_identity).unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, sound_identity_composition.soundness())
@@ -6053,6 +6210,12 @@ mod tests {
         assert_eq!(sound_transformation.transformation(), transformation);
         EvidenceScope::positive(&[transformation_sound])
             .check(&kernel, sound_transformation.soundness())
+            .unwrap();
+        let transformation_preserves_contract = sound_transformation
+            .prove_preserves_property(&mut kernel, contract_property)
+            .unwrap();
+        EvidenceScope::positive(&[transformation_sound])
+            .check(&kernel, transformation_preserves_contract)
             .unwrap();
         let rejected_soundness = Evidence {
             proposition: transformation_sound,

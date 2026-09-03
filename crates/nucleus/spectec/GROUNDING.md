@@ -55,6 +55,10 @@ providing the neutral proof-carrying transformation without any semantic
 assumption. Proof-carrying transformations compose by checked universal
 specialization and transitivity of contextual observational equivalence, while
 retaining the premises of both component proofs.
+Any proof-carrying sound transformation also generically preserves every
+`RunProperty` in all admissible linking contexts. This includes composed
+contracts and `callsAssert` observations without adding transformation- or
+property-specific proof rules.
 Conversely, checked negative evidence for any one contextual observation
 refutes `equivalent`. Thus, once `callsAssert` is supplied as a trace
 observation, its distinction between `TRUE` and `FALSE` is sufficient to prove
