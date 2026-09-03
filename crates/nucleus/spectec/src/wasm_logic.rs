@@ -125,6 +125,137 @@ impl<'a> SpecTecValueBuilder<'a> {
         Ok(value)
     }
 
+    /// Selects one named record field through the exact operation recorded by
+    /// the lowering.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the field operation was not recorded, the input has
+    /// an incompatible classifier, or checked application fails.
+    pub fn field(
+        self,
+        kernel: &mut Kernel,
+        record: Ref,
+        name: &str,
+    ) -> Result<Ref, WasmLogicError> {
+        let label = format!("expression:Dot({name:?})");
+        self.construct(kernel, &label, &[record])
+    }
+
+    /// Returns the exact lowered sequence-membership predicate.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the lowering recorded the binary structural
+    /// membership operation with Boolean codomain.
+    pub fn membership_predicate(self) -> Result<Ref, WasmLogicError> {
+        operation(
+            self.document,
+            "expression:Membership",
+            &[self.value_ty(), self.value_ty()],
+            self.document.schema.bool_ty(),
+        )
+    }
+
+    /// Constructs a relational graph for one exact record-field operation.
+    ///
+    /// The result is `lambda record output. field(record) = output`; it creates
+    /// syntax only and introduces no theorem fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the operation is absent or checked name, equality,
+    /// application, or abstraction construction fails. `kernel` is unchanged
+    /// on failure.
+    pub fn field_graph(self, kernel: &mut Kernel, name: &str) -> Result<Ref, WasmLogicError> {
+        let mut staged = kernel.fork();
+        let value_ty = self.value_ty();
+        let bool_ty = self.document.schema.bool_ty();
+        let first = staged.fresh_name(&[value_ty, bool_ty])?;
+        let record = staged.tm_fv(first, value_ty)?;
+        let output = staged.tm_fv(
+            first.checked_add(1).ok_or(KernelError::TooManyNames)?,
+            value_ty,
+        )?;
+        let selected = self.field(&mut staged, record, name)?;
+        let equality = staged.eq(bool_ty, selected, output)?;
+        let output_predicate_ty = staged.ty_arr(value_ty, bool_ty)?;
+        let by_output = staged.lam_at(output_predicate_ty, output, equality)?;
+        let graph_ty = staged.ty_arr(value_ty, output_predicate_ty)?;
+        let graph = staged.lam_at(graph_ty, record, by_output)?;
+        *kernel = staged;
+        Ok(graph)
+    }
+
+    /// Constructs a relational view of one field in an exact structural record.
+    ///
+    /// The graph existentially reconstructs the record with the recorded
+    /// `Struct` operation and equates the selected field with its output. This
+    /// does not require the source document to use a `Dot` operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `selected` is absent or ambiguous, the exact struct
+    /// operation was not recorded, or checked construction fails. `kernel` is
+    /// unchanged on failure.
+    #[allow(clippy::too_many_lines)]
+    pub fn struct_field_graph(
+        self,
+        kernel: &mut Kernel,
+        fields: &[&str],
+        selected: &str,
+    ) -> Result<Ref, WasmLogicError> {
+        let mut selected_indices = fields
+            .iter()
+            .enumerate()
+            .filter_map(|(index, field)| (*field == selected).then_some(index));
+        let selected_index = selected_indices
+            .next()
+            .ok_or_else(|| WasmLogicError::Operation {
+                label: Symbol::new(selected),
+            })?;
+        if selected_indices.next().is_some() {
+            return Err(WasmLogicError::Operation {
+                label: Symbol::new(selected),
+            });
+        }
+        let mut staged = kernel.fork();
+        let value_ty = self.value_ty();
+        let bool_ty = self.document.schema.bool_ty();
+        let label = format!("expression:Struct({fields:?})");
+        let domains = vec![value_ty; fields.len()];
+        let constructor = operation(self.document, &label, &domains, value_ty)?;
+        let first = staged.fresh_name(&[value_ty, bool_ty, constructor])?;
+        let record = staged.tm_fv(first, value_ty)?;
+        let output = staged.tm_fv(
+            first.checked_add(1).ok_or(KernelError::TooManyNames)?,
+            value_ty,
+        )?;
+        let field_values = (0..fields.len())
+            .map(|offset| {
+                let offset = u64::try_from(offset).map_err(|_| KernelError::TooManyNames)?;
+                let name = first
+                    .checked_add(2)
+                    .and_then(|name| name.checked_add(offset))
+                    .ok_or(KernelError::TooManyNames)?;
+                staged.tm_fv(name, value_ty)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let constructed = apply(&mut staged, constructor, &field_values)?;
+        let record_equality = staged.eq(bool_ty, record, constructed)?;
+        let output_equality = staged.eq(bool_ty, field_values[selected_index], output)?;
+        let mut body = staged.op2(Op2::And, record_equality, output_equality)?;
+        for &field_value in field_values.iter().rev() {
+            body = staged.exists_tm(field_value, body)?;
+        }
+        let output_predicate_ty = staged.ty_arr(value_ty, bool_ty)?;
+        let by_output = staged.lam_at(output_predicate_ty, output, body)?;
+        let graph_ty = staged.ty_arr(value_ty, output_predicate_ty)?;
+        let graph = staged.lam_at(graph_ty, record, by_output)?;
+        *kernel = staged;
+        Ok(graph)
+    }
+
     fn expression(
         self,
         kernel: &mut Kernel,

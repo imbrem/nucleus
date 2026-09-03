@@ -1791,12 +1791,21 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         value_ty: value,
         bool_ty,
         module_instance: execution.moduleinst,
-        exports: kernel.tm_fv(name_base + 3, binary_ty).unwrap(),
-        member: kernel.tm_fv(name_base + 4, binary_ty).unwrap(),
-        function_address: kernel.tm_fv(name_base + 5, binary_ty).unwrap(),
+        exports: builder
+            .struct_field_graph(
+                &mut kernel,
+                &[
+                    "TYPES", "TAGS", "GLOBALS", "MEMS", "TABLES", "FUNCS", "DATAS", "ELEMS",
+                    "EXPORTS",
+                ],
+                "EXPORTS",
+            )
+            .unwrap(),
+        member: builder.membership_predicate().unwrap(),
+        function_address: kernel.tm_fv(name_base + 3, binary_ty).unwrap(),
     };
     let exported = export_view.predicate(&mut kernel).unwrap();
-    let host_call = kernel.tm_fv(name_base + 6, binary_ty).unwrap();
+    let host_call = kernel.tm_fv(name_base + 4, binary_ty).unwrap();
     let [store_id] = document.schema.named(IlKind::Definition, "store") else {
         panic!("expected one $store definition")
     };
@@ -1805,7 +1814,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         panic!("expected one $invoke definition")
     };
     let invoke_definition = document.semantics.definitions().get(invoke_id).unwrap();
-    let witnesses = (name_base + 7..name_base + 16)
+    let witnesses = (name_base + 5..name_base + 14)
         .map(|name| kernel.tm_fv(name, value).unwrap())
         .collect::<Vec<_>>();
     let initialized = builder
