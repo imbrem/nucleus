@@ -28,9 +28,9 @@ admissibility predicate. Its `equivalent_runs` proposition quantifies complete
 run equality over every admissible closing context, independently of any one
 observer. A checked elimination theorem maps that stronger contextual relation
 to ordinary contextual equivalence for any selected behavior observation.
-Premise-free reflexivity and premise-preserving symmetry are themselves
-checked derivations, rather than frontend declarations that the relation is an
-equivalence.
+Premise-free reflexivity and premise-preserving symmetry and transitivity are
+themselves checked derivations, rather than frontend declarations that the
+relation is an equivalence.
 The domain additionally defines directional `refines_runs`: an implementation
 has the same admissible invocation domain and may remove, but not add, behaviors
 of its specification, but must retain some behavior whenever the specification

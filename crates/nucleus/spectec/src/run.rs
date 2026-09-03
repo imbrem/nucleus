@@ -538,6 +538,242 @@ impl RunContext {
         })
     }
 
+    /// Composes two checked contextual run-equivalence facts.
+    ///
+    /// Context admissibility equality supplies the middle subject's
+    /// admissibility. The two resulting closed-run facts then compose through
+    /// [`RunDomain::prove_same_runs_transitive`]. Both input premise sets remain
+    /// visible in the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the inputs positively prove equivalence from
+    /// `left` to `middle` and from `middle` to `right`, or a checked
+    /// specialization, equality, propositional, universal, or alignment step
+    /// fails. `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    pub fn prove_equivalent_runs_transitive(
+        self,
+        kernel: &mut Kernel,
+        left_middle: Evidence,
+        middle_right: Evidence,
+        domain: RunDomain,
+        profile: Ref,
+        left: Ref,
+        middle: Ref,
+        right: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        self.require_domain(domain)?;
+        let expected_left_middle =
+            self.equivalent_runs(&mut staged, domain, profile, left, middle)?;
+        let left_middle_theorem = align_evidence(&mut staged, left_middle, expected_left_middle)?;
+        let expected_middle_right =
+            self.equivalent_runs(&mut staged, domain, profile, middle, right)?;
+        let middle_right_theorem =
+            align_evidence(&mut staged, middle_right, expected_middle_right)?;
+        let context_name = staged.fresh_name(&[
+            expected_left_middle,
+            expected_middle_right,
+            self.context_ty,
+            self.plug,
+            self.admissible,
+            profile,
+            left,
+            middle,
+            right,
+        ])?;
+        let context = staged.tm_fv(context_name, self.context_ty)?;
+
+        let left_middle_specialized = forall_elim(&mut staged, left_middle_theorem, context)?;
+        let left_middle_at =
+            self.same_runs_at(&mut staged, domain, profile, context, left, middle)?;
+        align_theorem_conclusion(
+            &mut staged,
+            left_middle_specialized.theorem,
+            left_middle_specialized.proposition,
+            left_middle_at,
+            "contextual run transitivity left specialization alignment",
+        )?;
+        let middle_right_specialized = forall_elim(&mut staged, middle_right_theorem, context)?;
+        let middle_right_at =
+            self.same_runs_at(&mut staged, domain, profile, context, middle, right)?;
+        align_theorem_conclusion(
+            &mut staged,
+            middle_right_specialized.theorem,
+            middle_right_specialized.proposition,
+            middle_right_at,
+            "contextual run transitivity right specialization alignment",
+        )?;
+
+        let [left_middle_admissibility_formula, left_middle_implication] =
+            binary_children(&staged, left_middle_at)?;
+        let [left_middle_both, left_middle_runs] =
+            binary_children(&staged, left_middle_implication)?;
+        let left_middle_admissibility = staged.expand_conclusion(
+            left_middle_specialized.theorem,
+            positive(left_middle_at),
+            Some(false),
+        )?;
+        let left_middle_preservation = staged.expand_conclusion(
+            left_middle_specialized.theorem,
+            positive(left_middle_at),
+            Some(true),
+        )?;
+        let [
+            _middle_right_admissibility_formula,
+            middle_right_implication,
+        ] = binary_children(&staged, middle_right_at)?;
+        let [middle_right_both, middle_right_runs] =
+            binary_children(&staged, middle_right_implication)?;
+        let middle_right_admissibility = staged.expand_conclusion(
+            middle_right_specialized.theorem,
+            positive(middle_right_at),
+            Some(false),
+        )?;
+        let middle_right_preservation = staged.expand_conclusion(
+            middle_right_specialized.theorem,
+            positive(middle_right_at),
+            Some(true),
+        )?;
+
+        let target = self.same_runs_at(&mut staged, domain, profile, context, left, right)?;
+        let [target_admissibility, target_implication] = binary_children(&staged, target)?;
+        let [target_both, target_runs] = binary_children(&staged, target_implication)?;
+        let admissibility = equality_transitivity(
+            &mut staged,
+            self.types.bool_ty,
+            left_middle_admissibility,
+            middle_right_admissibility,
+        )?;
+        align_theorem_conclusion(
+            &mut staged,
+            admissibility.theorem,
+            admissibility.equality,
+            target_admissibility,
+            "contextual run transitivity admissibility alignment",
+        )?;
+
+        let assumed_target = staged.identity(positive(target_both))?;
+        let target_left =
+            staged.expand_conclusion(assumed_target, positive(target_both), Some(false))?;
+        let target_right =
+            staged.expand_conclusion(assumed_target, positive(target_both), Some(true))?;
+        let left_middle_admissibility_operands =
+            equality_operands(&staged, left_middle_admissibility_formula)?;
+        let target_both_children = binary_children(&staged, target_both)?;
+        let left_for_middle = aligned_theorem_conclusion(
+            &mut staged,
+            target_left,
+            target_both_children[0],
+            left_middle_admissibility_operands[0],
+            "contextual run transitivity left admissibility alignment",
+        )?;
+        let middle_fact = staged.eq_mp(left_middle_admissibility, left_for_middle)?;
+
+        let [left_middle_left, left_middle_middle] = binary_children(&staged, left_middle_both)?;
+        let [middle_right_middle, middle_right_right] =
+            binary_children(&staged, middle_right_both)?;
+        let left_fact = aligned_theorem_conclusion(
+            &mut staged,
+            target_left,
+            target_both_children[0],
+            left_middle_left,
+            "contextual run transitivity left conjunction alignment",
+        )?;
+        let middle_for_left = aligned_theorem_conclusion(
+            &mut staged,
+            middle_fact,
+            left_middle_admissibility_operands[1],
+            left_middle_middle,
+            "contextual run transitivity first middle alignment",
+        )?;
+        let middle_for_right = aligned_theorem_conclusion(
+            &mut staged,
+            middle_fact,
+            left_middle_admissibility_operands[1],
+            middle_right_middle,
+            "contextual run transitivity second middle alignment",
+        )?;
+        let right_fact = aligned_theorem_conclusion(
+            &mut staged,
+            target_right,
+            target_both_children[1],
+            middle_right_right,
+            "contextual run transitivity right conjunction alignment",
+        )?;
+        let left_middle_both_theorem =
+            staged.and_right(left_fact, middle_for_left, positive(left_middle_both))?;
+        let middle_right_both_theorem =
+            staged.and_right(middle_for_right, right_fact, positive(middle_right_both))?;
+        let left_middle_expanded = staged.expand_conclusion(
+            left_middle_preservation,
+            positive(left_middle_implication),
+            None,
+        )?;
+        let left_middle_runs_theorem = staged.resolve(
+            left_middle_expanded,
+            left_middle_both_theorem,
+            positive(left_middle_both).negated(),
+        )?;
+        let middle_right_expanded = staged.expand_conclusion(
+            middle_right_preservation,
+            positive(middle_right_implication),
+            None,
+        )?;
+        let middle_right_runs_theorem = staged.resolve(
+            middle_right_expanded,
+            middle_right_both_theorem,
+            positive(middle_right_both).negated(),
+        )?;
+        let left_closed = apply(&mut staged, self.plug, &[context, left])?;
+        let middle_closed = apply(&mut staged, self.plug, &[context, middle])?;
+        let right_closed = apply(&mut staged, self.plug, &[context, right])?;
+        let runs = domain.prove_same_runs_transitive(
+            &mut staged,
+            Evidence {
+                proposition: left_middle_runs,
+                theorem: left_middle_runs_theorem,
+                holds: true,
+            },
+            Evidence {
+                proposition: middle_right_runs,
+                theorem: middle_right_runs_theorem,
+                holds: true,
+            },
+            profile,
+            left_closed,
+            middle_closed,
+            right_closed,
+        )?;
+        align_theorem_conclusion(
+            &mut staged,
+            runs.theorem,
+            runs.proposition,
+            target_runs,
+            "contextual run transitivity graph alignment",
+        )?;
+        let preservation = staged.imp_right(runs.theorem, positive(target_implication))?;
+        let body = staged.and_right(admissibility.theorem, preservation, positive(target))?;
+        staged.contract_theorem(body)?;
+        let universal = staged.forall_tm(self.types.bool_ty, context, target)?;
+        let theorem = staged.forall_intro_at(body, context, universal)?;
+        let canonical = self.equivalent_runs(&mut staged, domain, profile, left, right)?;
+        align_theorem_conclusion(
+            &mut staged,
+            theorem,
+            universal,
+            canonical,
+            "contextual run transitivity alignment",
+        )?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: canonical,
+            theorem,
+            holds: true,
+        })
+    }
+
     /// Proves that contextual run equivalence preserves one observation.
     ///
     /// The result is the ordinary [`ContextualObservation::equivalent`]
@@ -2107,6 +2343,22 @@ fn binary_children(kernel: &Kernel, proposition: Ref) -> Result<[Ref; 2], Kernel
         })
 }
 
+fn equality_operands(kernel: &Kernel, equality: Ref) -> Result<[Ref; 2], KernelError> {
+    let children = kernel
+        .arena()
+        .children(equality)
+        .ok_or(KernelError::InvalidTheoremRule {
+            rule: "run equality proposition",
+        })?
+        .collect::<Vec<_>>();
+    let [_, left, right] = children.as_slice() else {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "run equality proposition operands",
+        });
+    };
+    Ok([*left, *right])
+}
+
 fn align_evidence(
     kernel: &mut Kernel,
     evidence: Evidence,
@@ -2153,6 +2405,18 @@ fn align_theorem_conclusion(
     join_alpha_equivalent(kernel, source, target)
         .map_err(|_| KernelError::InvalidTheoremRule { rule })?;
     kernel.convert_conclusions(theorem, source, target)
+}
+
+fn aligned_theorem_conclusion(
+    kernel: &mut Kernel,
+    theorem: covalence_logic_hol::ThmId,
+    source: Ref,
+    target: Ref,
+    rule: &'static str,
+) -> Result<covalence_logic_hol::ThmId, KernelError> {
+    let aligned = kernel.copy_theorem(theorem)?;
+    align_theorem_conclusion(kernel, aligned, source, target, rule)?;
+    Ok(aligned)
 }
 
 fn certify_beta_application(
@@ -2533,6 +2797,49 @@ mod tests {
         EvidenceScope::positive(&[contextual_same_runs])
             .check(&kernel, contextual_symmetric)
             .unwrap();
+        let contextual_middle_right = context
+            .equivalent_runs(&mut kernel, domain, profile, other_module, third_module)
+            .unwrap();
+        let contextual_middle_right_evidence = Evidence {
+            proposition: contextual_middle_right,
+            theorem: kernel
+                .identity(super::positive(contextual_middle_right))
+                .unwrap(),
+            holds: true,
+        };
+        let contextual_transitive = context
+            .prove_equivalent_runs_transitive(
+                &mut kernel,
+                contextual_same_runs_evidence,
+                contextual_middle_right_evidence,
+                domain,
+                profile,
+                module,
+                other_module,
+                third_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[contextual_same_runs, contextual_middle_right])
+            .check(&kernel, contextual_transitive)
+            .unwrap();
+        let before = kernel.arena().clone();
+        let theorem_count = kernel.thm().live_theorems().count();
+        assert!(
+            context
+                .prove_equivalent_runs_transitive(
+                    &mut kernel,
+                    contextual_same_runs_evidence,
+                    contextual_same_runs_evidence,
+                    domain,
+                    profile,
+                    module,
+                    other_module,
+                    third_module,
+                )
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
         for quantifier in [
             BehaviorQuantifier::May,
             BehaviorQuantifier::Every,
