@@ -5,7 +5,8 @@ use covalence_data_spectec::IlKind;
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref, SynRel, builtin::Op2};
 use covalence_logic_hol_derived::{
-    ExistsError, ModelError, SyntaxError, introduce_exists, join_alpha_equivalent, substitute,
+    ExistsError, ForallError, ModelError, SyntaxError, forall_elim, introduce_exists,
+    join_alpha_equivalent, open_exists, substitute,
 };
 
 use crate::{AssertionReachability, Evidence, ParameterizedDocument};
@@ -615,6 +616,128 @@ impl SpecTecExecution {
         *kernel = staged;
         Ok(result)
     }
+
+    /// Constructs the claim that an initialized configuration exports no
+    /// function address recognized by `exported`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for fresh-name exhaustion or an ill-typed predicate.
+    /// `kernel` is unchanged on failure.
+    pub fn no_exported_functions(
+        self,
+        kernel: &mut Kernel,
+        exported: Ref,
+    ) -> Result<Ref, WasmLogicError> {
+        no_exported_functions_avoiding(kernel, self, exported, &[])
+    }
+
+    /// Proves that a program has no admissible start when no initialized
+    /// configuration exports a function.
+    ///
+    /// `no_exports_fact` must prove [`Self::no_exported_functions`]. The proof
+    /// opens the seven witnesses of an assumed admissible start, extracts its
+    /// exported-function conjunct, specializes the universal negative fact,
+    /// and closes the contradiction under the initial-state quantifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a mismatched theorem, existential or universal
+    /// elimination failure, or any rejected checked proof/syntax step.
+    /// `kernel` is unchanged on failure.
+    pub fn prove_no_admissible_start_from_no_exports(
+        self,
+        kernel: &mut Kernel,
+        exported: Ref,
+        program: Ref,
+        no_exports_fact: covalence_logic_hol::ThmId,
+    ) -> Result<Evidence, WasmLogicError> {
+        let mut staged = kernel.fork();
+        let no_exports = no_exported_functions_avoiding(&mut staged, self, exported, &[program])?;
+        let no_exports_fact = align_positive_fact(&mut staged, no_exports_fact, no_exports)?;
+        let starts =
+            self.admissible_starts_avoiding(&mut staged, exported, &[program, no_exports])?;
+        let initial_name = staged.fresh_name(&[program, no_exports, starts])?;
+        let initial = staged.tm_fv(initial_name, self.state_ty)?;
+        let (starts_at, mut opened) =
+            reduce_binary_application(&mut staged, starts, program, initial)?;
+        let assumed_start = staged.identity(positive(starts_at))?;
+        staged.convert_conclusions(assumed_start, starts_at, opened)?;
+        let mut witnesses = Vec::with_capacity(7);
+        for _ in 0..7 {
+            let exists = open_exists(&mut staged, opened)
+                .map_err(|source| WasmLogicError::Exists { source })?;
+            staged.convert_conclusions(assumed_start, opened, exists.body)?;
+            witnesses.push(exists.witness);
+            opened = exists.body;
+        }
+        let mut export_fact =
+            staged.expand_conclusion(assumed_start, positive(opened), Some(false))?;
+        let first_four = sole_positive_conclusion_ref(&staged, export_fact)?;
+        export_fact = staged.expand_conclusion(export_fact, positive(first_four), Some(false))?;
+        let first_three = sole_positive_conclusion_ref(&staged, export_fact)?;
+        export_fact = staged.expand_conclusion(export_fact, positive(first_three), Some(true))?;
+        let export_proposition = sole_positive_conclusion_ref(&staged, export_fact)?;
+
+        let denied_initialized = forall_elim(&mut staged, no_exports_fact, witnesses[3])
+            .map_err(|source| WasmLogicError::Forall { source })?;
+        let denied_function = forall_elim(&mut staged, denied_initialized.theorem, witnesses[4])
+            .map_err(|source| WasmLogicError::Forall { source })?;
+        let denied_export = staged
+            .arena()
+            .children(denied_function.proposition)
+            .and_then(|mut children| children.next())
+            .ok_or(WasmLogicError::StartFact)?;
+        join_alpha_equivalent(&mut staged, denied_export, export_proposition)
+            .map_err(|source| WasmLogicError::Syntax { source })?;
+        let denied_fact = staged.flatten_conclusion(
+            denied_function.theorem,
+            positive(denied_function.proposition),
+        )?;
+        staged.convert_conclusions(denied_fact, denied_export, export_proposition)?;
+        staged.not_left(export_fact, positive(export_proposition))?;
+        let contradiction = staged.cut(
+            denied_fact,
+            export_fact,
+            positive(export_proposition).negated(),
+        )?;
+        staged.not_right(contradiction, positive(starts_at))?;
+        let does_not_start = staged.op1(covalence_logic_hol::builtin::Op1::Not, starts_at)?;
+        let negative_start = staged.fold_conclusion(contradiction, positive(does_not_start))?;
+        let no_start = staged.forall_tm(self.bool_ty, initial, does_not_start)?;
+        let theorem = staged.forall_intro_at(negative_start, initial, no_start)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: no_start,
+            theorem,
+            holds: true,
+        })
+    }
+}
+
+fn no_exported_functions_avoiding(
+    kernel: &mut Kernel,
+    execution: SpecTecExecution,
+    exported: Ref,
+    avoid: &[Ref],
+) -> Result<Ref, WasmLogicError> {
+    let mut staged = kernel.fork();
+    let roots = [execution.state_ty, execution.bool_ty, exported]
+        .into_iter()
+        .chain(avoid.iter().copied())
+        .collect::<Vec<_>>();
+    let initialized_name = staged.fresh_name(&roots)?;
+    let function_name = initialized_name
+        .checked_add(1)
+        .ok_or(KernelError::TooManyNames)?;
+    let initialized = staged.tm_fv(initialized_name, execution.state_ty)?;
+    let function = staged.tm_fv(function_name, execution.state_ty)?;
+    let is_exported = apply(&mut staged, exported, &[initialized, function])?;
+    let denied = staged.op1(covalence_logic_hol::builtin::Op1::Not, is_exported)?;
+    let denied_function = staged.forall_tm(execution.bool_ty, function, denied)?;
+    let proposition = staged.forall_tm(execution.bool_ty, initialized, denied_function)?;
+    *kernel = staged;
+    Ok(proposition)
 }
 
 fn start_existentials(witness: AdmissibleStartWitness) -> [Ref; 7] {
@@ -712,44 +835,8 @@ fn curry_binary_fact(
         return Err(WasmLogicError::StepFact);
     }
     let mut staged = kernel.fork();
-    let mut outer_lambda = staged
-        .arena()
-        .children(predicate)
-        .ok_or(WasmLogicError::StepFact)?;
-    let left_binder = outer_lambda.next().ok_or(WasmLogicError::StepFact)?;
-    let outer_body = outer_lambda.next().ok_or(WasmLogicError::StepFact)?;
-    drop(outer_lambda);
-    let outer_application = staged.app(predicate, left)?;
-    let outer_reduced = substitute(&mut staged, left_binder, left, outer_body)
-        .map_err(|source| WasmLogicError::Substitute { source })?;
-    let outer_beta = staged.tm_beta_fact(None, outer_application, outer_reduced.fact)?;
-    staged.union_syn_fact(outer_beta)?;
-
-    let curried = staged.app(outer_application, right)?;
-    let reduced_application = staged.app(outer_reduced.output, right)?;
-    let right_refl = staged.syn_refl(None, SynRel::Syn, right)?;
-    let lifted_outer_beta = staged.syn_congr(
-        None,
-        SynRel::Conv,
-        None,
-        None,
-        curried,
-        reduced_application,
-        &[outer_beta, right_refl],
-    )?;
-    staged.union_syn_fact(lifted_outer_beta)?;
-    let mut inner_lambda = staged
-        .arena()
-        .children(outer_reduced.output)
-        .ok_or(WasmLogicError::StepFact)?;
-    let right_binder = inner_lambda.next().ok_or(WasmLogicError::StepFact)?;
-    let inner_body = inner_lambda.next().ok_or(WasmLogicError::StepFact)?;
-    drop(inner_lambda);
-    let inner_reduced = substitute(&mut staged, right_binder, right, inner_body)
-        .map_err(|source| WasmLogicError::Substitute { source })?;
-    let inner_beta = staged.tm_beta_fact(None, reduced_application, inner_reduced.fact)?;
-    staged.union_syn_fact(inner_beta)?;
-    join_alpha_equivalent(&mut staged, fact.proposition, inner_reduced.output)
+    let (curried, reduced) = reduce_binary_application(&mut staged, predicate, left, right)?;
+    join_alpha_equivalent(&mut staged, fact.proposition, reduced)
         .map_err(|source| WasmLogicError::Syntax { source })?;
     let theorem = staged.copy_theorem(fact.theorem)?;
     staged.convert_conclusions(theorem, fact.proposition, curried)?;
@@ -759,6 +846,52 @@ fn curry_binary_fact(
         theorem,
         holds: true,
     })
+}
+
+fn reduce_binary_application(
+    kernel: &mut Kernel,
+    predicate: Ref,
+    left: Ref,
+    right: Ref,
+) -> Result<(Ref, Ref), WasmLogicError> {
+    let mut outer_lambda = kernel
+        .arena()
+        .children(predicate)
+        .ok_or(WasmLogicError::StepFact)?;
+    let left_binder = outer_lambda.next().ok_or(WasmLogicError::StepFact)?;
+    let outer_body = outer_lambda.next().ok_or(WasmLogicError::StepFact)?;
+    drop(outer_lambda);
+    let outer_application = kernel.app(predicate, left)?;
+    let outer_reduced = substitute(kernel, left_binder, left, outer_body)
+        .map_err(|source| WasmLogicError::Substitute { source })?;
+    let outer_beta = kernel.tm_beta_fact(None, outer_application, outer_reduced.fact)?;
+    kernel.union_syn_fact(outer_beta)?;
+
+    let curried = kernel.app(outer_application, right)?;
+    let reduced_application = kernel.app(outer_reduced.output, right)?;
+    let right_refl = kernel.syn_refl(None, SynRel::Syn, right)?;
+    let lifted_outer_beta = kernel.syn_congr(
+        None,
+        SynRel::Conv,
+        None,
+        None,
+        curried,
+        reduced_application,
+        &[outer_beta, right_refl],
+    )?;
+    kernel.union_syn_fact(lifted_outer_beta)?;
+    let mut inner_lambda = kernel
+        .arena()
+        .children(outer_reduced.output)
+        .ok_or(WasmLogicError::StepFact)?;
+    let right_binder = inner_lambda.next().ok_or(WasmLogicError::StepFact)?;
+    let inner_body = inner_lambda.next().ok_or(WasmLogicError::StepFact)?;
+    drop(inner_lambda);
+    let inner_reduced = substitute(kernel, right_binder, right, inner_body)
+        .map_err(|source| WasmLogicError::Substitute { source })?;
+    let inner_beta = kernel.tm_beta_fact(None, reduced_application, inner_reduced.fact)?;
+    kernel.union_syn_fact(inner_beta)?;
+    Ok((curried, inner_reduced.output))
 }
 
 fn align_positive_fact(
@@ -785,6 +918,24 @@ fn align_positive_fact(
     let aligned = kernel.copy_theorem(theorem)?;
     kernel.convert_conclusions(aligned, source, target)?;
     Ok(aligned)
+}
+
+fn sole_positive_conclusion_ref(
+    kernel: &Kernel,
+    theorem: covalence_logic_hol::ThmId,
+) -> Result<Ref, WasmLogicError> {
+    let theorem = kernel
+        .thm()
+        .get(theorem)
+        .ok_or(KernelError::MissingTheorem { id: theorem })?;
+    let mut conclusions = theorem.rhs.rows();
+    let Some([literal]) = conclusions.next() else {
+        return Err(WasmLogicError::StartFact);
+    };
+    if conclusions.next().is_some() || !literal.is_positive() {
+        return Err(WasmLogicError::StartFact);
+    }
+    Ref::new(literal.magnitude().cast_signed()).ok_or(WasmLogicError::StartFact)
 }
 
 fn positive(reference: Ref) -> covalence_logic_hol::Lit {
@@ -849,6 +1000,12 @@ pub enum WasmLogicError {
     Exists {
         /// Underlying derived existential failure.
         source: ExistsError,
+    },
+    /// Equality-encoded universal specialization failed.
+    #[snafu(display("could not specialize absence of exported functions: {source}"))]
+    Forall {
+        /// Underlying derived universal failure.
+        source: ForallError,
     },
 }
 
@@ -1248,6 +1405,65 @@ mod tests {
 
         crate::EvidenceScope::positive(&propositions)
             .check(&kernel, proved)
+            .unwrap();
+    }
+
+    #[test]
+    fn absence_of_exports_proves_absence_of_admissible_starts() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let value = kernel.ty_fv(0, star).unwrap();
+        let steps_ty = (0..2)
+            .try_fold(bool_ty, |tail, _| kernel.ty_arr(value, tail))
+            .unwrap();
+        let pair_tail = kernel.ty_arr(value, value).unwrap();
+        let pair_ty = kernel.ty_arr(value, pair_tail).unwrap();
+        let execution = SpecTecExecution {
+            state_ty: value,
+            bool_ty,
+            steps: predicate(&mut kernel, value, bool_ty, 2, 10),
+            pair: kernel.tm_fv(11, pair_ty).unwrap(),
+            steps_ty,
+            instantiate: predicate(&mut kernel, value, bool_ty, 4, 12),
+            invoke: predicate(&mut kernel, value, bool_ty, 4, 13),
+            store: predicate(&mut kernel, value, bool_ty, 2, 14),
+            moduleinst: predicate(&mut kernel, value, bool_ty, 2, 15),
+        };
+        let exported = predicate(&mut kernel, value, bool_ty, 2, 16);
+        let program = kernel.tm_fv(17, value).unwrap();
+        let no_exports = execution
+            .no_exported_functions(&mut kernel, exported)
+            .unwrap();
+        let no_exports_fact = kernel.identity(positive(no_exports)).unwrap();
+
+        let no_start = execution
+            .prove_no_admissible_start_from_no_exports(
+                &mut kernel,
+                exported,
+                program,
+                no_exports_fact,
+            )
+            .unwrap();
+
+        crate::EvidenceScope::positive(&[no_exports])
+            .check(&kernel, no_start)
+            .unwrap();
+        let host_call = predicate(&mut kernel, value, bool_ty, 2, 18);
+        let assert_function = kernel.tm_fv(19, value).unwrap();
+        let reachability = execution
+            .assertion_reachability(&mut kernel, exported, host_call)
+            .unwrap();
+        let never_calls = reachability
+            .prove_never_calls_assert_from_no_start(
+                &mut kernel,
+                program,
+                assert_function,
+                no_start.theorem,
+            )
+            .unwrap();
+        crate::EvidenceScope::positive(&[no_exports])
+            .check(&kernel, never_calls)
             .unwrap();
     }
 }
