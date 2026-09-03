@@ -6,10 +6,13 @@ use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref, SynRel, builtin::Op2};
 use covalence_logic_hol_derived::{
     ExistsError, ForallError, ModelError, SyntaxError, forall_elim, introduce_exists,
-    join_alpha_equivalent, open_exists, substitute,
+    join_alpha_equivalent, join_same_syntax, open_exists, substitute,
 };
 
-use crate::{AssertionReachability, Evidence, ParameterizedDocument};
+use crate::{
+    AssertionReachability, ContextualObservation, Evidence, FunctionObservation,
+    ParameterizedDocument,
+};
 
 /// Immutable view for composing structural `SpecTec` values in HOL.
 ///
@@ -320,6 +323,45 @@ impl ExportedFunctionView {
 }
 
 impl SpecTecExecution {
+    /// Constructs contextual equivalence for individual erased Wasm functions.
+    ///
+    /// The complete `SpecTec` lowering uses `state_ty` as its shared structural
+    /// value carrier. `replace` must have classifier
+    /// `replacement_context_ty -> state_ty -> modules.subject_ty`. The returned
+    /// schema quantifies every function-hole replacement context and then every
+    /// admissible outer module observation context, so its replacement theorem
+    /// preserves full observational equivalence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the module carrier is this exact `SpecTec` value
+    /// carrier and `replace` has the required checked classifier. No theorem
+    /// fact is created, and `kernel` is unchanged on failure.
+    pub fn function_observation(
+        self,
+        kernel: &mut Kernel,
+        replacement_context_ty: Ref,
+        replace: Ref,
+        modules: ContextualObservation,
+    ) -> Result<FunctionObservation, WasmLogicError> {
+        let mut staged = kernel.fork();
+        join_same_syntax(&mut staged, modules.subject_ty, self.state_ty)
+            .map_err(|_| WasmLogicError::FunctionObservation)?;
+        let replacement_tail = staged.ty_arr(self.state_ty, modules.subject_ty)?;
+        let expected = staged.ty_arr(replacement_context_ty, replacement_tail)?;
+        let actual = staged.classifier(replace)?;
+        join_same_syntax(&mut staged, actual, expected)
+            .map_err(|_| WasmLogicError::FunctionObservation)?;
+        let observation = FunctionObservation {
+            function_ty: self.state_ty,
+            replacement_context_ty,
+            replace,
+            modules,
+        };
+        *kernel = staged;
+        Ok(observation)
+    }
+
     /// Constructs the exact erased pair consumed by the `Steps` relation.
     ///
     /// # Errors
@@ -1020,6 +1062,9 @@ pub enum WasmLogicError {
     /// A supplied admissible-start theorem is not one positive fact.
     #[snafu(display("supplied SpecTec admissible-start fact has the wrong shape"))]
     StartFact,
+    /// A function replacement schema used a foreign carrier or operation type.
+    #[snafu(display("invalid SpecTec function observation schema"))]
+    FunctionObservation,
     /// A checked HOL construction failed.
     #[snafu(display("could not construct SpecTec program-logic adapter: {source}"))]
     Kernel {
@@ -1392,6 +1437,63 @@ mod tests {
             .unwrap();
 
         assert_eq!(kernel.classifier(proposition).unwrap(), bool_ty);
+    }
+
+    #[test]
+    fn spectec_function_observation_uses_the_erased_wasm_carrier() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let value = kernel.ty_fv(0, star).unwrap();
+        let replacement_ty = kernel.ty_fv(1, star).unwrap();
+        let outer_ty = kernel.ty_fv(2, star).unwrap();
+        let pair_tail = kernel.ty_arr(value, value).unwrap();
+        let pair_ty = kernel.ty_arr(value, pair_tail).unwrap();
+        let steps_tail = kernel.ty_arr(value, bool_ty).unwrap();
+        let steps_ty = kernel.ty_arr(value, steps_tail).unwrap();
+        let execution = SpecTecExecution {
+            state_ty: value,
+            bool_ty,
+            steps: predicate(&mut kernel, value, bool_ty, 2, 10),
+            pair: kernel.tm_fv(11, pair_ty).unwrap(),
+            steps_ty,
+            instantiate: predicate(&mut kernel, value, bool_ty, 4, 12),
+            invoke: predicate(&mut kernel, value, bool_ty, 4, 13),
+            store: predicate(&mut kernel, value, bool_ty, 2, 14),
+            moduleinst: predicate(&mut kernel, value, bool_ty, 2, 15),
+        };
+        let replace_tail = kernel.ty_arr(value, value).unwrap();
+        let replace_ty = kernel.ty_arr(replacement_ty, replace_tail).unwrap();
+        let replace = kernel.tm_fv(16, replace_ty).unwrap();
+        let plug_tail = kernel.ty_arr(value, value).unwrap();
+        let plug_ty = kernel.ty_arr(outer_ty, plug_tail).unwrap();
+        let admissible_tail = kernel.ty_arr(value, bool_ty).unwrap();
+        let admissible_ty = kernel.ty_arr(outer_ty, admissible_tail).unwrap();
+        let observe_ty = kernel.ty_arr(value, bool_ty).unwrap();
+        let modules = ContextualObservation {
+            subject_ty: value,
+            context_ty: outer_ty,
+            observed_ty: value,
+            bool_ty,
+            plug: kernel.tm_fv(17, plug_ty).unwrap(),
+            admissible: kernel.tm_fv(18, admissible_ty).unwrap(),
+            observe: kernel.tm_fv(19, observe_ty).unwrap(),
+        };
+
+        let functions = execution
+            .function_observation(&mut kernel, replacement_ty, replace, modules)
+            .unwrap();
+
+        assert_eq!(functions.function_ty, value);
+        assert_eq!(functions.modules, modules);
+        let wrong = kernel.tm_fv(20, bool_ty).unwrap();
+        let before = kernel.arena().clone();
+        assert!(
+            execution
+                .function_observation(&mut kernel, replacement_ty, wrong, modules)
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
     }
 
     #[test]
