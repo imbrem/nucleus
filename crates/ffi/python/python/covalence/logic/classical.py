@@ -5,18 +5,36 @@ from typing import TypeVar
 
 from .._covalence import (
     ClassicalArena as Arena,
+)
+from .._covalence import (
     ClassicalCheckedArena as CheckedArena,
+)
+from .._covalence import (
     ClassicalFormula as Formula,
+)
+from .._covalence import (
     ClassicalFormulaView as FormulaView,
+)
+from .._covalence import (
     ClassicalKernel,
-    ClassicalModelWitness as ModelWitness,
-    ClassicalPath as Path,
-    ClassicalSequent as Sequent,
-    ClassicalSequentView as SequentView,
-    ClassicalTheorem as Theorem,
     Cnf,
     Dnf,
     Refutation,
+)
+from .._covalence import (
+    ClassicalModelWitness as ModelWitness,
+)
+from .._covalence import (
+    ClassicalPath as Path,
+)
+from .._covalence import (
+    ClassicalSequent as Sequent,
+)
+from .._covalence import (
+    ClassicalSequentView as SequentView,
+)
+from .._covalence import (
+    ClassicalTheorem as Theorem,
 )
 
 __all__ = [

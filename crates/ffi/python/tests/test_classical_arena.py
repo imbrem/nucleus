@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import pytest
-
 from covalence.logic.classical import (
     Arena,
-    CheckedArena,
     Cnf,
     Formula,
     ModelWitness,
@@ -12,9 +10,11 @@ from covalence.logic.classical import (
     Refutation,
     Sequent,
     Theorem,
-    contradiction as rewrite_contradiction,
     dedup,
     sort_by_key,
+)
+from covalence.logic.classical import (
+    contradiction as rewrite_contradiction,
 )
 
 
