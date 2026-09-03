@@ -84,7 +84,7 @@ pub fn load_cnf(formula: &Formula) -> Result<Matrix, Error> {
                 .map(|literal| {
                     i32::try_from(literal.get())
                         .ok()
-                        .and_then(|value| Lit::try_new(value).ok())
+                        .and_then(|value| Lit::try_from_signed(value).ok())
                         .ok_or(Error::InvalidLiteral {
                             literal: literal.get(),
                         })
@@ -1162,6 +1162,9 @@ mod tests {
 #[test]
 fn standalone_text_and_binary_replay_produce_the_same_refutation() {
     let formula = Formula::from_signed([vec![1], vec![-1]]).unwrap();
+    let rows = load_cnf(&formula).unwrap().to_rows();
+    assert!(rows[0][0].is_positive());
+    assert!(!rows[1][0].is_positive());
     let text = crate::parse::parse_text("3 0 1 2 0\n").unwrap();
     let binary = crate::parse::parse_binary(&[b'a', 6, 0, 2, 4, 0]).unwrap();
     let text = replay(&formula, &text).unwrap();

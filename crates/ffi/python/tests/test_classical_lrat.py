@@ -53,14 +53,14 @@ def test_refutations_copy_into_all_three_checked_targets() -> None:
     hol = Kernel()
     assert hol.copy_refutation_to_syllogisms(refutation) == 1
     theorem = hol.copy_refutation_to_theorems(refutation)
-    assert hol.theorem(theorem) == ([[1], [-1]], [])
+    assert hol.theorem(theorem) == ([[-1], [1]], [])
 
     problem = Cnf.from_dimacs(DIMACS)
     assert_refutation_sequent(replay_into_classical(problem, TEXT_LRAT).theorem(1))
     hol = Kernel()
     assert replay_into_syllogisms(hol, problem, BINARY_LRAT, binary=True) == 1
     theorem = replay_into_theorems(hol, problem, TEXT_LRAT)
-    assert hol.theorem(theorem) == ([[1], [-1]], [])
+    assert hol.theorem(theorem) == ([[-1], [1]], [])
 
 
 @pytest.mark.skipif(shutil.which("cadical") is None, reason="CaDiCaL is unavailable")

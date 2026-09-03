@@ -33,7 +33,7 @@ fn rows(rows: Vec<Vec<i32>>) -> PyResult<Vec<LitVec>> {
     rows.into_iter()
         .map(|row| {
             row.into_iter()
-                .map(|literal| Lit::try_new(literal).map_err(rejection))
+                .map(|literal| Lit::try_from_signed(literal).map_err(rejection))
                 .collect()
         })
         .collect()
@@ -42,7 +42,7 @@ fn rows(rows: Vec<Vec<i32>>) -> PyResult<Vec<LitVec>> {
 fn formula(cnf: &Matrix) -> PyResult<Formula> {
     Formula::from_signed(
         cnf.rows()
-            .map(|row| row.iter().map(|literal| i64::from(literal.get()))),
+            .map(|row| row.iter().map(|literal| i64::from(literal.signed()))),
     )
     .map_err(rejection)
 }
@@ -77,7 +77,7 @@ impl PyCnf {
     fn rows(&self) -> Vec<Vec<i32>> {
         self.0
             .rows()
-            .map(|row| row.iter().map(|literal| literal.get()).collect())
+            .map(|row| row.iter().map(|literal| literal.signed()).collect())
             .collect()
     }
 
@@ -95,7 +95,7 @@ impl PyCnf {
         );
         for row in self.0.rows() {
             for literal in row {
-                write!(text, "{} ", literal.get()).expect("writing to a string is infallible");
+                write!(text, "{} ", literal.signed()).expect("writing to a string is infallible");
             }
             text.push_str("0\n");
         }
@@ -123,7 +123,7 @@ impl PyDnf {
     fn rows(&self) -> Vec<Vec<i32>> {
         self.0
             .rows()
-            .map(|row| row.iter().map(|literal| literal.get()).collect())
+            .map(|row| row.iter().map(|literal| literal.signed()).collect())
             .collect()
     }
 

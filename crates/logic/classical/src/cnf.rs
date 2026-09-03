@@ -66,10 +66,29 @@ impl Lit {
         Self::new(-magnitude.abs())
     }
 
+    /// Converts a conventional signed literal into the kernel encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the literal is nonzero and its magnitude is
+    /// below `i32::MAX`.
+    pub const fn try_from_signed(value: i32) -> Result<Self, LitError> {
+        match Self::try_new(value) {
+            Ok(value) => Ok(value.negated()),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Returns the signed integer representation.
     #[must_use]
     pub const fn get(self) -> i32 {
         self.0.get()
+    }
+
+    /// Returns the conventional signed-literal representation.
+    #[must_use]
+    pub const fn signed(self) -> i32 {
+        -self.get()
     }
 
     /// Returns the complementary literal.
@@ -168,10 +187,14 @@ impl Matrix {
     pub fn normalize(&mut self) {
         let mut rows = self.0.drain(..).flatten().collect::<Vec<_>>();
         for row in &mut rows {
-            row.sort_unstable();
+            row.sort_unstable_by_key(|literal| literal.signed());
             row.dedup();
         }
-        rows.sort_unstable();
+        rows.sort_unstable_by(|left, right| {
+            left.iter()
+                .map(|literal| literal.signed())
+                .cmp(right.iter().map(|literal| literal.signed()))
+        });
         rows.dedup();
         self.0 = rows.into_iter().map(Some).collect();
     }

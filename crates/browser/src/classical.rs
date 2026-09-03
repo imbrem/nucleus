@@ -21,7 +21,7 @@ fn parse_rows(text: &str) -> Result<Vec<LitVec>, JsError> {
         .into_iter()
         .map(|row| {
             row.into_iter()
-                .map(|literal| Lit::try_new(literal).map_err(error))
+                .map(|literal| Lit::try_from_signed(literal).map_err(error))
                 .collect()
         })
         .collect()
@@ -34,7 +34,7 @@ fn rows_json(rows: impl Iterator<Item = Vec<i32>>) -> Result<String, JsError> {
 fn formula(cnf: &NativeMatrix) -> Result<Formula, JsError> {
     Formula::from_signed(
         cnf.rows()
-            .map(|row| row.iter().map(|literal| i64::from(literal.get()))),
+            .map(|row| row.iter().map(|literal| i64::from(literal.signed()))),
     )
     .map_err(error)
 }
@@ -89,7 +89,7 @@ impl Cnf {
         rows_json(
             self.0
                 .rows()
-                .map(|row| row.iter().map(|literal| literal.get()).collect()),
+                .map(|row| row.iter().map(|literal| literal.signed()).collect()),
         )
     }
 
@@ -125,7 +125,7 @@ impl Dnf {
         rows_json(
             self.0
                 .rows()
-                .map(|row| row.iter().map(|literal| literal.get()).collect()),
+                .map(|row| row.iter().map(|literal| literal.signed()).collect()),
         )
     }
 
@@ -177,7 +177,7 @@ impl Refutation {
                 .theorem()
                 .lhs
                 .rows()
-                .map(|row| row.iter().map(|literal| literal.get()).collect()),
+                .map(|row| row.iter().map(|literal| literal.signed()).collect()),
         )
     }
 }
@@ -230,12 +230,20 @@ impl ClassicalKernel {
         let lhs = theorem
             .lhs
             .rows()
-            .map(|row| row.iter().map(|literal| literal.get()).collect::<Vec<_>>())
+            .map(|row| {
+                row.iter()
+                    .map(|literal| literal.signed())
+                    .collect::<Vec<_>>()
+            })
             .collect::<Vec<_>>();
         let rhs = theorem
             .rhs
             .rows()
-            .map(|row| row.iter().map(|literal| literal.get()).collect::<Vec<_>>())
+            .map(|row| {
+                row.iter()
+                    .map(|literal| literal.signed())
+                    .collect::<Vec<_>>()
+            })
             .collect::<Vec<_>>();
         covalence_lib_json::to_string(&(lhs, rhs)).map_err(error)
     }
