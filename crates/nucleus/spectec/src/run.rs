@@ -7,7 +7,7 @@
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    Kernel, KernelError, Lit, Ref, SynRel,
+    Kernel, KernelError, Lit, Ref, SynRel, Tag, TmTag,
     builtin::{Op1, Op2},
 };
 use covalence_logic_hol_derived::{
@@ -286,6 +286,88 @@ impl RunContext {
             profile,
             transform,
         })
+    }
+
+    /// Constructs the identity module transformation for one semantic profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an incompatible profile or if checked abstraction
+    /// fails. `kernel` is unchanged on failure.
+    pub fn identity_transformation(
+        self,
+        kernel: &mut Kernel,
+        profile: Ref,
+    ) -> Result<RunTransformation, KernelError> {
+        let mut staged = kernel.fork();
+        let module_ty = self.domain.relation.types.module;
+        let module = staged.tm_fv(
+            staged.fresh_name(&[
+                self.context_ty,
+                self.plug,
+                self.admissible,
+                profile,
+                module_ty,
+            ])?,
+            module_ty,
+        )?;
+        let transform_ty = staged.ty_arr(module_ty, module_ty)?;
+        let transform = staged.lam_at(transform_ty, module, module)?;
+        let transformation = self.transformation(&mut staged, profile, transform)?;
+        *kernel = staged;
+        Ok(transformation)
+    }
+
+    /// Derives premise-free soundness of the identity transformation.
+    ///
+    /// The proof uses only checked contextual-equivalence reflexivity,
+    /// universal introduction, and beta conversion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if identity construction or any checked equivalence,
+    /// universal, or alignment step fails. `kernel` is unchanged on failure.
+    pub fn prove_identity_transformation_sound(
+        self,
+        kernel: &mut Kernel,
+        profile: Ref,
+    ) -> Result<SoundRunTransformation, RunProofError> {
+        let mut staged = kernel.fork();
+        let transformation = self.identity_transformation(&mut staged, profile)?;
+        let types = self.domain.relation.types;
+        let module = staged.tm_fv(
+            staged.fresh_name(&[
+                self.context_ty,
+                self.plug,
+                self.admissible,
+                profile,
+                transformation.transform,
+                types.module,
+                types.bool_ty,
+            ])?,
+            types.module,
+        )?;
+        let reflexive = self.prove_reflexive(&mut staged, profile, module)?;
+        let direct = staged.forall_tm(types.bool_ty, module, reflexive.proposition)?;
+        let theorem = staged.forall_intro_at(reflexive.theorem, module, direct)?;
+        let canonical = transformation.sound(&mut staged)?;
+        align_theorem_conclusion(
+            &mut staged,
+            theorem,
+            direct,
+            canonical,
+            "identity transformation soundness alignment",
+        )?;
+        let sound = transformation.with_soundness(
+            &mut staged,
+            Evidence {
+                proposition: canonical,
+                theorem,
+                holds: true,
+            },
+        )?;
+        *kernel = staged;
+        Ok(sound)
     }
 
     /// Selects one behavior observation for this reusable context schema.
@@ -1295,6 +1377,15 @@ impl RunTransformation {
             types.module,
         )?;
         let transformed = self.apply(&mut staged, module)?;
+        let transformed = if staged.arena().tag(self.transform) == Some(Tag::Tm(TmTag::Lam)) {
+            certify_beta_application(&mut staged, transformed)
+                .map_err(|_| KernelError::InvalidTheoremRule {
+                    rule: "transformation soundness beta reduction",
+                })?
+                .0
+        } else {
+            transformed
+        };
         let equivalent = self
             .context
             .equivalent(&mut staged, self.profile, module, transformed)?;
@@ -5770,6 +5861,21 @@ mod tests {
         assert_eq!(context.context_type(), context_ty);
         assert_eq!(context.plug(), plug);
         assert_eq!(context.admissible(), contextual_admissible);
+        let identity_transformation = context
+            .identity_transformation(&mut kernel, profile)
+            .unwrap();
+        let identity_at_module = identity_transformation.apply(&mut kernel, module).unwrap();
+        assert_eq!(kernel.classifier(identity_at_module).unwrap(), types.module);
+        let sound_identity = context
+            .prove_identity_transformation_sound(&mut kernel, profile)
+            .unwrap();
+        assert_eq!(
+            sound_identity.transformation().context(),
+            identity_transformation.context()
+        );
+        EvidenceScope::positive(&[])
+            .check(&kernel, sound_identity.soundness())
+            .unwrap();
         let transform_ty = kernel.ty_arr(types.module, types.module).unwrap();
         let transform = kernel.tm_fv(34, transform_ty).unwrap();
         let next_transform = kernel.tm_fv(35, transform_ty).unwrap();

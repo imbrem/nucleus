@@ -50,6 +50,9 @@ schemas or profiles are rejected before composition. `SoundRunTransformation`
 is the proof-carrying form: it can only be constructed by checking positive
 kernel evidence against that exact soundness proposition, and it retains every
 premise of the supplied theorem.
+The identity transformation has a premise-free checked soundness derivation,
+providing the neutral proof-carrying transformation without any semantic
+assumption.
 Conversely, checked negative evidence for any one contextual observation
 refutes `equivalent`. Thus, once `callsAssert` is supplied as a trace
 observation, its distinction between `TRUE` and `FALSE` is sufficient to prove
