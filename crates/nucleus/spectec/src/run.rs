@@ -176,6 +176,132 @@ impl RunDomain {
             observe,
         })
     }
+
+    /// Constructs equality of the complete allowed run graphs of two modules.
+    ///
+    /// The result universally quantifies entry, inputs, host behavior, trace,
+    /// and outcome. It requires both modules to agree on admissibility and,
+    /// when admissible, on membership in `Runs`. Consequently every predicate
+    /// over traces and outcomes observes the same may, must, and never behavior.
+    /// This constructs checked syntax only.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for incompatible profile/module terms, fresh-name
+    /// exhaustion, or a rejected checked HOL construction. `kernel` is
+    /// unchanged on failure.
+    pub fn equivalent(
+        self,
+        kernel: &mut Kernel,
+        profile: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Ref, KernelError> {
+        self.compare_runs(kernel, profile, left, right, RunComparison::Equivalent)
+    }
+
+    /// Constructs behavioral refinement of an implementation by a specification.
+    ///
+    /// `implementation refines specification` means the modules have the same
+    /// admissible entry/input/host domain and every allowed implementation run
+    /// is a specification run with the identical trace and outcome. The
+    /// implementation may therefore remove nondeterministic behaviors but may
+    /// not silently reject an invocation. This constructs checked syntax only.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as [`Self::equivalent`].
+    pub fn refines(
+        self,
+        kernel: &mut Kernel,
+        profile: Ref,
+        implementation: Ref,
+        specification: Ref,
+    ) -> Result<Ref, KernelError> {
+        self.compare_runs(
+            kernel,
+            profile,
+            implementation,
+            specification,
+            RunComparison::Refines,
+        )
+    }
+
+    fn compare_runs(
+        self,
+        kernel: &mut Kernel,
+        profile: Ref,
+        left: Ref,
+        right: Ref,
+        comparison: RunComparison,
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.relation.types;
+        require_classifier(&mut staged, profile, types.profile)?;
+        require_classifier(&mut staged, left, types.module)?;
+        require_classifier(&mut staged, right, types.module)?;
+        let first = staged.fresh_name(&[
+            types.profile,
+            types.module,
+            types.entry,
+            types.inputs,
+            types.host,
+            types.trace,
+            types.outcome,
+            types.bool_ty,
+            self.relation.runs,
+            self.admissible,
+            profile,
+            left,
+            right,
+        ])?;
+        let entry = staged.tm_fv(first, types.entry)?;
+        let inputs = staged.tm_fv(checked_name(first, 1)?, types.inputs)?;
+        let host = staged.tm_fv(checked_name(first, 2)?, types.host)?;
+        let trace = staged.tm_fv(checked_name(first, 3)?, types.trace)?;
+        let outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
+        let domain_variables = [entry, inputs, host];
+        let run_variables = [entry, inputs, host, trace, outcome];
+        let left_allowed = apply(
+            &mut staged,
+            self.admissible,
+            &[profile, left, entry, inputs, host],
+        )?;
+        let right_allowed = apply(
+            &mut staged,
+            self.admissible,
+            &[profile, right, entry, inputs, host],
+        )?;
+        let same_domain = staged.eq(types.bool_ty, left_allowed, right_allowed)?;
+        let same_domain =
+            quantify_forall(&mut staged, types.bool_ty, &domain_variables, same_domain)?;
+        let left_run = apply(
+            &mut staged,
+            self.relation.runs,
+            &[profile, left, entry, inputs, host, trace, outcome],
+        )?;
+        let right_run = apply(
+            &mut staged,
+            self.relation.runs,
+            &[profile, right, entry, inputs, host, trace, outcome],
+        )?;
+        let both_allowed = staged.op2(Op2::And, left_allowed, right_allowed)?;
+        let behavior = match comparison {
+            RunComparison::Equivalent => staged.eq(types.bool_ty, left_run, right_run)?,
+            RunComparison::Refines => staged.op2(Op2::Imp, left_run, right_run)?,
+        };
+        let behavior = staged.op2(Op2::Imp, both_allowed, behavior)?;
+        let behavior = quantify_forall(&mut staged, types.bool_ty, &run_variables, behavior)?;
+        let proposition = staged.op2(Op2::And, same_domain, behavior)?;
+        *kernel = staged;
+        Ok(proposition)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RunComparison {
+    Equivalent,
+    Refines,
 }
 
 /// Quantification mode for a behavior observation.
@@ -413,6 +539,7 @@ mod tests {
     use covalence_logic_hol::{Kernel, Tag, TmTag};
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn eventful_run_observations_are_generic_checked_and_transactional() {
         let mut kernel = Kernel::new();
         let star = kernel.star().unwrap();
@@ -460,6 +587,8 @@ mod tests {
         let observe = kernel.tm_fv(22, observe_ty).unwrap();
         let profile = kernel.tm_fv(23, types.profile).unwrap();
         let module = kernel.tm_fv(24, types.module).unwrap();
+        let other_module = kernel.tm_fv(26, types.module).unwrap();
+        let theorem_count = kernel.thm().live_theorems().count();
         let relation = RunRelation::new(&mut kernel, types, runs).unwrap();
         let domain = relation.under(&mut kernel, admissible).unwrap();
         let observation = domain.observe(&mut kernel, observe).unwrap();
@@ -474,6 +603,14 @@ mod tests {
         assert_eq!(kernel.classifier(must).unwrap(), bool_ty);
         assert_eq!(kernel.arena().tag(never), Some(Tag::Tm(TmTag::Op1)));
         assert_eq!(kernel.arena().tag(must), Some(Tag::Tm(TmTag::Op2)));
+        let equivalent = domain
+            .equivalent(&mut kernel, profile, module, other_module)
+            .unwrap();
+        let refinement = domain
+            .refines(&mut kernel, profile, module, other_module)
+            .unwrap();
+        assert_eq!(kernel.classifier(equivalent).unwrap(), bool_ty);
+        assert_eq!(kernel.classifier(refinement).unwrap(), bool_ty);
 
         for quantifier in [
             BehaviorQuantifier::May,
@@ -505,5 +642,14 @@ mod tests {
         let before = kernel.arena().clone();
         assert!(domain.observe(&mut kernel, admissible).is_err());
         assert_eq!(kernel.arena(), &before);
+
+        let before = kernel.arena().clone();
+        assert!(
+            domain
+                .refines(&mut kernel, profile, profile, other_module)
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
     }
 }
