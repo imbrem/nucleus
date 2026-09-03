@@ -7,11 +7,12 @@
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    Kernel, KernelError, Lit, Ref,
+    Kernel, KernelError, Lit, Ref, SynRel,
     builtin::{Op1, Op2},
 };
 use covalence_logic_hol_derived::{
-    EqualityError, equality_symmetry, equality_transitivity, join_same_syntax,
+    EqualityError, ForallError, ModelError, equality_symmetry, equality_transitivity, forall_elim,
+    join_alpha_equivalent, join_same_syntax, substitute,
 };
 
 use crate::{ContextualObservation, Evidence};
@@ -170,6 +171,393 @@ pub struct RunDomain {
     run_graph_ty: Ref,
 }
 
+/// Immutable schema for closing a module inside a linking context.
+///
+/// `plug(context, module)` produces the closed module whose runs are observed.
+/// `admissible(context, module)` makes context well-formedness and linkability
+/// explicit rather than hiding either condition in execution.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RunContext {
+    types: RunTypes,
+    context_ty: Ref,
+    plug: Ref,
+    admissible: Ref,
+}
+
+impl RunContext {
+    /// Validates a reusable context schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `plug` has classifier
+    /// `context -> module -> module` and `admissible` has classifier
+    /// `context -> module -> bool`. `kernel` is unchanged on failure.
+    pub fn new(
+        kernel: &mut Kernel,
+        types: RunTypes,
+        context_ty: Ref,
+        plug: Ref,
+        admissible: Ref,
+    ) -> Result<Self, KernelError> {
+        let mut staged = kernel.fork();
+        let plug_ty = curried_type(&mut staged, &[context_ty, types.module], types.module)?;
+        require_classifier(&mut staged, plug, plug_ty)?;
+        let admissible_ty = curried_type(&mut staged, &[context_ty, types.module], types.bool_ty)?;
+        require_classifier(&mut staged, admissible, admissible_ty)?;
+        *kernel = staged;
+        Ok(Self {
+            types,
+            context_ty,
+            plug,
+            admissible,
+        })
+    }
+
+    /// Returns the classifier of linking contexts.
+    #[must_use]
+    pub const fn context_type(self) -> Ref {
+        self.context_ty
+    }
+
+    /// Returns `context -> module -> module`.
+    #[must_use]
+    pub const fn plug(self) -> Ref {
+        self.plug
+    }
+
+    /// Returns `context -> module -> bool`.
+    #[must_use]
+    pub const fn admissible(self) -> Ref {
+        self.admissible
+    }
+
+    /// Selects one behavior observation for this reusable context schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the observation uses different run types, the
+    /// profile is incompatible, or checked predicate construction fails.
+    /// `kernel` is unchanged on failure.
+    pub fn observe(
+        self,
+        kernel: &mut Kernel,
+        observation: RunObservation,
+        quantifier: BehaviorQuantifier,
+        profile: Ref,
+    ) -> Result<ContextualObservation, KernelError> {
+        self.observe_avoiding(kernel, observation, quantifier, profile, &[])
+    }
+
+    fn observe_avoiding(
+        self,
+        kernel: &mut Kernel,
+        observation: RunObservation,
+        quantifier: BehaviorQuantifier,
+        profile: Ref,
+        avoiding: &[Ref],
+    ) -> Result<ContextualObservation, KernelError> {
+        let mut staged = kernel.fork();
+        self.require_domain(observation.domain)?;
+        let observe = observation.predicate_avoiding(&mut staged, quantifier, profile, avoiding)?;
+        let contextual = ContextualObservation {
+            subject_ty: self.types.module,
+            context_ty: self.context_ty,
+            observed_ty: self.types.module,
+            bool_ty: self.types.bool_ty,
+            plug: self.plug,
+            admissible: self.admissible,
+            observe,
+        }
+        .checked(&mut staged)?;
+        *kernel = staged;
+        Ok(contextual)
+    }
+
+    /// Constructs contextual equality of complete allowed run graphs.
+    ///
+    /// The proposition quantifies over every context, requires both subjects
+    /// to agree on context admissibility, and requires `same_runs` whenever
+    /// that context admits both subjects. It is independent of any selected
+    /// trace or outcome observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for incompatible modules/profile/domain or a rejected
+    /// checked HOL construction. `kernel` is unchanged on failure.
+    pub fn equivalent_runs(
+        self,
+        kernel: &mut Kernel,
+        domain: RunDomain,
+        profile: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        self.require_domain(domain)?;
+        require_classifier(&mut staged, profile, self.types.profile)?;
+        require_classifier(&mut staged, left, self.types.module)?;
+        require_classifier(&mut staged, right, self.types.module)?;
+        let context = staged.tm_fv(
+            staged.fresh_name(&[
+                self.context_ty,
+                self.plug,
+                self.admissible,
+                profile,
+                left,
+                right,
+            ])?,
+            self.context_ty,
+        )?;
+        let at_context = self.same_runs_at(&mut staged, domain, profile, context, left, right)?;
+        let proposition = staged.forall_tm(self.types.bool_ty, context, at_context)?;
+        *kernel = staged;
+        Ok(proposition)
+    }
+
+    /// Proves that contextual run equivalence preserves one observation.
+    ///
+    /// The result is the ordinary [`ContextualObservation::equivalent`]
+    /// proposition for the selected behavior quantifier. Thus complete run
+    /// equivalence is observation-independent, while callers can recover
+    /// indistinguishability for `callsAssert`, traps, returns, or any composed
+    /// trace/outcome predicate without another semantic assumption.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `equivalence` positively proves this schema's
+    /// contextual run equivalence, or a checked specialization, propositional,
+    /// congruence, or alignment step fails. `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    pub fn prove_equivalent_runs_preserves(
+        self,
+        kernel: &mut Kernel,
+        equivalence: Evidence,
+        domain: RunDomain,
+        observation: RunObservation,
+        quantifier: BehaviorQuantifier,
+        profile: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        self.require_domain(domain)?;
+        self.require_domain(observation.domain)?;
+        if domain != observation.domain {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "contextual run preservation domain mismatch",
+            }
+            .into());
+        }
+        let expected = self.equivalent_runs(&mut staged, domain, profile, left, right)?;
+        let theorem = align_evidence(&mut staged, equivalence, expected)?;
+        let contextual = self.observe_avoiding(
+            &mut staged,
+            observation,
+            quantifier,
+            profile,
+            &[left, right],
+        )?;
+        let context_name = staged.fresh_name(&[
+            expected,
+            self.context_ty,
+            self.plug,
+            self.admissible,
+            contextual.observe,
+            profile,
+            left,
+            right,
+        ])?;
+        let context = staged.tm_fv(context_name, self.context_ty)?;
+        let specialized = forall_elim(&mut staged, theorem, context)?;
+        let source_at = self.same_runs_at(&mut staged, domain, profile, context, left, right)?;
+        join_alpha_equivalent(&mut staged, specialized.proposition, source_at).map_err(|_| {
+            KernelError::InvalidTheoremRule {
+                rule: "contextual run equivalence specialization alignment",
+            }
+        })?;
+        staged.convert_conclusions(specialized.theorem, specialized.proposition, source_at)?;
+        let source_admissibility =
+            staged.expand_conclusion(specialized.theorem, positive(source_at), Some(false))?;
+        let source_preservation =
+            staged.expand_conclusion(specialized.theorem, positive(source_at), Some(true))?;
+        let [source_admissibility_formula, source_implication] =
+            binary_children(&staged, source_at)?;
+        let [source_both_admissible, source_same_runs] =
+            binary_children(&staged, source_implication)?;
+
+        let target_at = contextual.at_context(&mut staged, context, left, right)?;
+        let [target_admissibility, target_implication] = binary_children(&staged, target_at)?;
+        let [target_both_admissible, target_observation] =
+            binary_children(&staged, target_implication)?;
+        align_theorem_conclusion(
+            &mut staged,
+            source_admissibility,
+            source_admissibility_formula,
+            target_admissibility,
+            "contextual admissibility preservation alignment",
+        )?;
+
+        let assumed_admissible = staged.identity(positive(target_both_admissible))?;
+        join_same_syntax(&mut staged, target_both_admissible, source_both_admissible).map_err(
+            |_| KernelError::InvalidTheoremRule {
+                rule: "contextual run preservation antecedent alignment",
+            },
+        )?;
+        staged.convert_conclusions(
+            assumed_admissible,
+            target_both_admissible,
+            source_both_admissible,
+        )?;
+        let expanded_implication =
+            staged.expand_conclusion(source_preservation, positive(source_implication), None)?;
+        let same_runs_theorem = staged.resolve(
+            expanded_implication,
+            assumed_admissible,
+            positive(source_both_admissible).negated(),
+        )?;
+        let left_closed = apply(&mut staged, self.plug, &[context, left])?;
+        let right_closed = apply(&mut staged, self.plug, &[context, right])?;
+        let observed = observation.prove_same_runs_preserves(
+            &mut staged,
+            Evidence {
+                proposition: source_same_runs,
+                theorem: same_runs_theorem,
+                holds: true,
+            },
+            quantifier,
+            profile,
+            left_closed,
+            right_closed,
+        )?;
+        let target_observation_operands = staged
+            .arena()
+            .children(target_observation)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "contextual observation equality",
+            })?
+            .collect::<Vec<_>>();
+        let [_, left_application, right_application] = target_observation_operands.as_slice()
+        else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "contextual observation equality operands",
+            }
+            .into());
+        };
+        let (left_beta, left_beta_fact) = certify_beta_application(&mut staged, *left_application)?;
+        let (right_beta, right_beta_fact) =
+            certify_beta_application(&mut staged, *right_application)?;
+        let observed_operands = staged
+            .arena()
+            .children(observed.proposition)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "preserved observation equality",
+            })?
+            .collect::<Vec<_>>();
+        let [_, observed_left, observed_right] = observed_operands.as_slice() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "preserved observation equality operands",
+            }
+            .into());
+        };
+        let left_alpha =
+            join_alpha_equivalent(&mut staged, left_beta, *observed_left).map_err(|_| {
+                KernelError::InvalidTheoremRule {
+                    rule: "left contextual observation beta alignment",
+                }
+            })?;
+        let right_alpha =
+            join_alpha_equivalent(&mut staged, right_beta, *observed_right).map_err(|_| {
+                KernelError::InvalidTheoremRule {
+                    rule: "right contextual observation beta alignment",
+                }
+            })?;
+        let observed_to_left_beta = staged.syn_symm(None, left_alpha)?;
+        let left_beta_to_application = staged.syn_symm(None, left_beta_fact)?;
+        let left_conversion =
+            staged.syn_trans(None, observed_to_left_beta, left_beta_to_application)?;
+        let observed_to_right_beta = staged.syn_symm(None, right_alpha)?;
+        let right_beta_to_application = staged.syn_symm(None, right_beta_fact)?;
+        let right_conversion =
+            staged.syn_trans(None, observed_to_right_beta, right_beta_to_application)?;
+        let observed_classifier = observed_operands[0];
+        let target_classifier = target_observation_operands[0];
+        let classifier_conversion =
+            join_alpha_equivalent(&mut staged, observed_classifier, target_classifier).map_err(
+                |_| KernelError::InvalidTheoremRule {
+                    rule: "contextual observation equality classifier alignment",
+                },
+            )?;
+        let equality_conversion = staged.syn_congr(
+            None,
+            SynRel::Conv,
+            None,
+            None,
+            observed.proposition,
+            target_observation,
+            &[classifier_conversion, left_conversion, right_conversion],
+        )?;
+        staged.union_syn_fact(equality_conversion)?;
+        staged.convert_conclusions(observed.theorem, observed.proposition, target_observation)?;
+        let target_preservation =
+            staged.imp_right(observed.theorem, positive(target_implication))?;
+        let at_context = staged.and_right(
+            source_admissibility,
+            target_preservation,
+            positive(target_at),
+        )?;
+        staged.contract_theorem(at_context)?;
+        let universal = staged.forall_tm(self.types.bool_ty, context, target_at)?;
+        let theorem = staged.forall_intro_at(at_context, context, universal)?;
+        let target = contextual.equivalent(&mut staged, left, right)?;
+        align_theorem_conclusion(
+            &mut staged,
+            theorem,
+            universal,
+            target,
+            "contextual observation equivalence alignment",
+        )?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: target,
+            theorem,
+            holds: true,
+        })
+    }
+
+    fn same_runs_at(
+        self,
+        kernel: &mut Kernel,
+        domain: RunDomain,
+        profile: Ref,
+        context: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Ref, KernelError> {
+        self.require_domain(domain)?;
+        require_classifier(kernel, context, self.context_ty)?;
+        let left_admissible = apply(kernel, self.admissible, &[context, left])?;
+        let right_admissible = apply(kernel, self.admissible, &[context, right])?;
+        let same_admissibility =
+            kernel.eq(self.types.bool_ty, left_admissible, right_admissible)?;
+        let both_admissible = kernel.op2(Op2::And, left_admissible, right_admissible)?;
+        let left_closed = apply(kernel, self.plug, &[context, left])?;
+        let right_closed = apply(kernel, self.plug, &[context, right])?;
+        let same_runs = domain.same_runs(kernel, profile, left_closed, right_closed)?;
+        let preservation = kernel.op2(Op2::Imp, both_admissible, same_runs)?;
+        kernel.op2(Op2::And, same_admissibility, preservation)
+    }
+
+    fn require_domain(self, domain: RunDomain) -> Result<(), KernelError> {
+        if domain.relation.types == self.types {
+            Ok(())
+        } else {
+            Err(KernelError::InvalidTheoremRule {
+                rule: "run context/domain type mismatch",
+            })
+        }
+    }
+}
+
 /// Failure to derive a checked law about run relations.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
@@ -185,6 +573,18 @@ pub enum RunProofError {
     Equality {
         /// Underlying derived equality failure.
         source: EqualityError,
+    },
+    /// Universal specialization rejected the contextual evidence.
+    #[snafu(transparent)]
+    Forall {
+        /// Underlying derived universal-elimination failure.
+        source: ForallError,
+    },
+    /// Capture-avoiding beta substitution failed.
+    #[snafu(transparent)]
+    Model {
+        /// Underlying derived substitution failure.
+        source: ModelError,
     },
 }
 
@@ -1097,12 +1497,23 @@ impl RunObservation {
         profile: Ref,
         module: Ref,
     ) -> Result<Ref, KernelError> {
+        self.proposition_avoiding(kernel, quantifier, profile, module, &[])
+    }
+
+    fn proposition_avoiding(
+        self,
+        kernel: &mut Kernel,
+        quantifier: BehaviorQuantifier,
+        profile: Ref,
+        module: Ref,
+        avoiding: &[Ref],
+    ) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
         let types = self.domain.relation.types;
         require_classifier(&mut staged, profile, types.profile)?;
         require_classifier(&mut staged, module, types.module)?;
         let graphs = self.domain.run_graphs(&mut staged, profile, module)?;
-        let observer = self.graph_observer(&mut staged, quantifier)?;
+        let observer = self.graph_observer(&mut staged, quantifier, avoiding)?;
         let proposition = apply(&mut staged, observer, &[graphs.domain, graphs.runs])?;
         *kernel = staged;
         Ok(proposition)
@@ -1112,16 +1523,19 @@ impl RunObservation {
         self,
         kernel: &mut Kernel,
         quantifier: BehaviorQuantifier,
+        avoiding: &[Ref],
     ) -> Result<Ref, KernelError> {
-        let name = kernel.fresh_name(&[
+        let mut roots = vec![
             self.domain.domain_ty,
             self.domain.run_graph_ty,
             self.domain.relation.types.bool_ty,
             self.observe,
-        ])?;
+        ];
+        roots.extend_from_slice(avoiding);
+        let name = kernel.fresh_name(&roots)?;
         let domain = kernel.tm_fv(name, self.domain.domain_ty)?;
         let runs = kernel.tm_fv(checked_name(name, 1)?, self.domain.run_graph_ty)?;
-        let body = self.graph_proposition(kernel, quantifier, domain, runs)?;
+        let body = self.graph_proposition(kernel, quantifier, domain, runs, avoiding)?;
         let by_runs_ty =
             kernel.ty_arr(self.domain.run_graph_ty, self.domain.relation.types.bool_ty)?;
         let by_runs = kernel.lam_at(by_runs_ty, runs, body)?;
@@ -1135,19 +1549,23 @@ impl RunObservation {
         quantifier: BehaviorQuantifier,
         domain: Ref,
         runs: Ref,
+        avoiding: &[Ref],
     ) -> Result<Ref, KernelError> {
         let types = self.domain.relation.types;
         require_classifier(kernel, domain, self.domain.domain_ty)?;
         require_classifier(kernel, runs, self.domain.run_graph_ty)?;
-        let roots = [
+        let mut roots = vec![
             types.entry,
             types.inputs,
             types.host,
             types.trace,
             types.outcome,
             types.bool_ty,
+            domain,
+            runs,
             self.observe,
         ];
+        roots.extend_from_slice(avoiding);
         let first = kernel.fresh_name(&roots)?;
         let entry = kernel.tm_fv(first, types.entry)?;
         let inputs = kernel.tm_fv(checked_name(first, 1)?, types.inputs)?;
@@ -1227,7 +1645,7 @@ impl RunObservation {
         let left_graphs = self.domain.run_graphs(&mut staged, profile, left)?;
         let right_graphs = self.domain.run_graphs(&mut staged, profile, right)?;
 
-        let observer = self.graph_observer(&mut staged, quantifier)?;
+        let observer = self.graph_observer(&mut staged, quantifier, &[])?;
         let by_domain_function = staged.ap_term(domain_fact, observer)?;
         let by_domain = staged.ap_thm(by_domain_function.theorem, left_graphs.runs)?;
         let right_domain_observer = staged.app(observer, right_graphs.domain)?;
@@ -1275,19 +1693,35 @@ impl RunObservation {
         quantifier: BehaviorQuantifier,
         profile: Ref,
     ) -> Result<Ref, KernelError> {
+        self.predicate_avoiding(kernel, quantifier, profile, &[])
+    }
+
+    fn predicate_avoiding(
+        self,
+        kernel: &mut Kernel,
+        quantifier: BehaviorQuantifier,
+        profile: Ref,
+        avoiding: &[Ref],
+    ) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
         let types = self.domain.relation.types;
         require_classifier(&mut staged, profile, types.profile)?;
-        let name = staged.fresh_name(&[
+        let mut roots = vec![
             types.module,
             types.bool_ty,
             self.domain.relation.runs,
             self.domain.admissible,
             self.observe,
             profile,
-        ])?;
+        ];
+        roots.extend_from_slice(avoiding);
+        let name = staged.fresh_name(&roots)?;
         let module = staged.tm_fv(name, types.module)?;
-        let body = self.proposition(&mut staged, quantifier, profile, module)?;
+        let mut body_avoiding = Vec::with_capacity(avoiding.len() + 1);
+        body_avoiding.push(module);
+        body_avoiding.extend_from_slice(avoiding);
+        let body =
+            self.proposition_avoiding(&mut staged, quantifier, profile, module, &body_avoiding)?;
         let predicate_ty = staged.ty_arr(types.module, types.bool_ty)?;
         let predicate = staged.lam_at(predicate_ty, module, body)?;
         *kernel = staged;
@@ -1317,17 +1751,8 @@ impl RunObservation {
     ) -> Result<ContextualObservation, KernelError> {
         let mut staged = kernel.fork();
         let types = self.domain.relation.types;
-        let observe = self.predicate(&mut staged, quantifier, profile)?;
-        let contextual = ContextualObservation {
-            subject_ty: types.module,
-            context_ty,
-            observed_ty: types.module,
-            bool_ty: types.bool_ty,
-            plug,
-            admissible,
-            observe,
-        }
-        .checked(&mut staged)?;
+        let context = RunContext::new(&mut staged, types, context_ty, plug, admissible)?;
+        let contextual = context.observe(&mut staged, self, quantifier, profile)?;
         *kernel = staged;
         Ok(contextual)
     }
@@ -1501,9 +1926,45 @@ fn align_theorem_conclusion(
     target: Ref,
     rule: &'static str,
 ) -> Result<(), KernelError> {
-    join_same_syntax(kernel, source, target)
+    join_alpha_equivalent(kernel, source, target)
         .map_err(|_| KernelError::InvalidTheoremRule { rule })?;
     kernel.convert_conclusions(theorem, source, target)
+}
+
+fn certify_beta_application(
+    kernel: &mut Kernel,
+    application: Ref,
+) -> Result<(Ref, covalence_logic_hol::SynFactId), RunProofError> {
+    let application_children = kernel
+        .arena()
+        .children(application)
+        .ok_or(KernelError::InvalidTheoremRule {
+            rule: "run observation beta application",
+        })?
+        .collect::<Vec<_>>();
+    let [function, argument] = application_children.as_slice() else {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "run observation beta application operands",
+        }
+        .into());
+    };
+    let function_children = kernel
+        .arena()
+        .children(*function)
+        .ok_or(KernelError::InvalidTheoremRule {
+            rule: "run observation beta function",
+        })?
+        .collect::<Vec<_>>();
+    let [binder, body] = function_children.as_slice() else {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "run observation beta function operands",
+        }
+        .into());
+    };
+    let substitution = substitute(kernel, *binder, *argument, *body)?;
+    let fact = kernel.tm_beta_fact(None, application, substitution.fact)?;
+    kernel.union_syn_fact(fact)?;
+    Ok((substitution.output, fact))
 }
 
 fn quantify_exists(
@@ -1563,7 +2024,7 @@ fn require_classifier(kernel: &mut Kernel, term: Ref, expected: Ref) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::{BehaviorQuantifier, RunRelation, RunTypes};
+    use super::{BehaviorQuantifier, RunContext, RunRelation, RunTypes};
     use crate::{Evidence, EvidenceScope};
     use covalence_logic_hol::Kernel;
 
@@ -1802,6 +2263,80 @@ mod tests {
                 contextual_admissible,
             )
             .unwrap();
+        let context =
+            RunContext::new(&mut kernel, types, context_ty, plug, contextual_admissible).unwrap();
+        assert_eq!(context.context_type(), context_ty);
+        assert_eq!(context.plug(), plug);
+        assert_eq!(context.admissible(), contextual_admissible);
+        let contextual_from_schema = context
+            .observe(&mut kernel, observation, BehaviorQuantifier::May, profile)
+            .unwrap();
+        assert_eq!(contextual_from_schema.plug, contextual.plug);
+        assert_eq!(contextual_from_schema.admissible, contextual.admissible);
+        covalence_logic_hol_derived::join_same_syntax(
+            &mut kernel,
+            contextual_from_schema.observe,
+            contextual.observe,
+        )
+        .unwrap();
+        let contextual_same_runs = context
+            .equivalent_runs(&mut kernel, domain, profile, module, other_module)
+            .unwrap();
+        assert_eq!(kernel.classifier(contextual_same_runs).unwrap(), bool_ty);
+        let contextual_same_runs_evidence = Evidence {
+            proposition: contextual_same_runs,
+            theorem: kernel
+                .identity(super::positive(contextual_same_runs))
+                .unwrap(),
+            holds: true,
+        };
+        for quantifier in [
+            BehaviorQuantifier::May,
+            BehaviorQuantifier::Every,
+            BehaviorQuantifier::Must,
+            BehaviorQuantifier::Never,
+        ] {
+            let contextual_preservation = context
+                .prove_equivalent_runs_preserves(
+                    &mut kernel,
+                    contextual_same_runs_evidence,
+                    domain,
+                    observation,
+                    quantifier,
+                    profile,
+                    module,
+                    other_module,
+                )
+                .unwrap();
+            EvidenceScope::positive(&[contextual_same_runs])
+                .check(&kernel, contextual_preservation)
+                .unwrap();
+        }
+        let denied_contextual_runs = Evidence {
+            proposition: contextual_same_runs,
+            theorem: kernel
+                .identity(super::positive(contextual_same_runs).negated())
+                .unwrap(),
+            holds: false,
+        };
+        let before = kernel.arena().clone();
+        let theorem_count = kernel.thm().live_theorems().count();
+        assert!(
+            context
+                .prove_equivalent_runs_preserves(
+                    &mut kernel,
+                    denied_contextual_runs,
+                    domain,
+                    observation,
+                    BehaviorQuantifier::May,
+                    profile,
+                    module,
+                    other_module,
+                )
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
         let contextual_equivalence = contextual
             .equivalent(&mut kernel, module, other_module)
             .unwrap();
