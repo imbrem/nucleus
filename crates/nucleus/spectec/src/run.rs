@@ -6,12 +6,12 @@
 //! trace and outcome.
 
 use covalence_logic_hol::{
-    Kernel, KernelError, Ref,
+    Kernel, KernelError, Lit, Ref,
     builtin::{Op1, Op2},
 };
 use covalence_logic_hol_derived::join_same_syntax;
 
-use crate::ContextualObservation;
+use crate::{ContextualObservation, Evidence};
 
 /// Classifiers used by an eventful execution relation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -227,6 +227,154 @@ impl RunDomain {
             specification,
             RunComparison::Refines,
         )
+    }
+
+    /// Proves that every module has the same allowed run graph as itself.
+    ///
+    /// The proof uses only checked equality reflexivity, propositional rules,
+    /// and universal introduction. It has no premises and assumes no property
+    /// of the execution relation or admissibility policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for incompatible profile/module terms or a rejected
+    /// checked construction or theorem rule. `kernel` is unchanged on failure.
+    pub fn prove_equivalence_reflexive(
+        self,
+        kernel: &mut Kernel,
+        profile: Ref,
+        module: Ref,
+    ) -> Result<Evidence, KernelError> {
+        self.prove_comparison_reflexive(kernel, profile, module, RunComparison::Equivalent)
+    }
+
+    /// Proves that every module refines itself.
+    ///
+    /// The proof is structural and premise-free; it assumes no determinism,
+    /// totality, or semantic property of `Runs`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`Self::prove_equivalence_reflexive`].
+    pub fn prove_refinement_reflexive(
+        self,
+        kernel: &mut Kernel,
+        profile: Ref,
+        module: Ref,
+    ) -> Result<Evidence, KernelError> {
+        self.prove_comparison_reflexive(kernel, profile, module, RunComparison::Refines)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn prove_comparison_reflexive(
+        self,
+        kernel: &mut Kernel,
+        profile: Ref,
+        module: Ref,
+        comparison: RunComparison,
+    ) -> Result<Evidence, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.relation.types;
+        require_classifier(&mut staged, profile, types.profile)?;
+        require_classifier(&mut staged, module, types.module)?;
+        let first = staged.fresh_name(&[
+            types.profile,
+            types.module,
+            types.entry,
+            types.inputs,
+            types.host,
+            types.trace,
+            types.outcome,
+            types.bool_ty,
+            self.relation.runs,
+            self.admissible,
+            profile,
+            module,
+        ])?;
+        let entry = staged.tm_fv(first, types.entry)?;
+        let inputs = staged.tm_fv(checked_name(first, 1)?, types.inputs)?;
+        let host = staged.tm_fv(checked_name(first, 2)?, types.host)?;
+        let trace = staged.tm_fv(checked_name(first, 3)?, types.trace)?;
+        let outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
+        let domain_variables = [entry, inputs, host];
+        let run_variables = [entry, inputs, host, trace, outcome];
+        let allowed = apply(
+            &mut staged,
+            self.admissible,
+            &[profile, module, entry, inputs, host],
+        )?;
+        let same_domain = staged.eq(types.bool_ty, allowed, allowed)?;
+        let same_domain_fact = staged.refl(types.bool_ty, allowed)?;
+        join_same_syntax(&mut staged, same_domain_fact.equality, same_domain).map_err(|_| {
+            KernelError::InvalidTheoremRule {
+                rule: "run domain reflexivity alignment",
+            }
+        })?;
+        staged.convert_conclusions(
+            same_domain_fact.theorem,
+            same_domain_fact.equality,
+            same_domain,
+        )?;
+        let (same_domain, same_domain_theorem) = introduce_forall(
+            &mut staged,
+            types.bool_ty,
+            &domain_variables,
+            same_domain,
+            same_domain_fact.theorem,
+        )?;
+
+        let run = apply(
+            &mut staged,
+            self.relation.runs,
+            &[profile, module, entry, inputs, host, trace, outcome],
+        )?;
+        let (behavior, behavior_theorem) = match comparison {
+            RunComparison::Equivalent => {
+                let equality = staged.eq(types.bool_ty, run, run)?;
+                let reflexive = staged.refl(types.bool_ty, run)?;
+                join_same_syntax(&mut staged, reflexive.equality, equality).map_err(|_| {
+                    KernelError::InvalidTheoremRule {
+                        rule: "run behavior reflexivity alignment",
+                    }
+                })?;
+                staged.convert_conclusions(reflexive.theorem, reflexive.equality, equality)?;
+                (equality, reflexive.theorem)
+            }
+            RunComparison::Refines => {
+                let implication = staged.op2(Op2::Imp, run, run)?;
+                let identity = staged.identity(positive(run))?;
+                let theorem = staged.imp_right(identity, positive(implication))?;
+                (implication, theorem)
+            }
+        };
+        let both_allowed = staged.op2(Op2::And, allowed, allowed)?;
+        staged.weaken(behavior_theorem, &[positive(both_allowed)], &[])?;
+        let guarded_behavior = staged.op2(Op2::Imp, both_allowed, behavior)?;
+        let guarded_theorem = staged.imp_right(behavior_theorem, positive(guarded_behavior))?;
+        let (behavior, behavior_theorem) = introduce_forall(
+            &mut staged,
+            types.bool_ty,
+            &run_variables,
+            guarded_behavior,
+            guarded_theorem,
+        )?;
+        let proposition = staged.op2(Op2::And, same_domain, behavior)?;
+        let theorem =
+            staged.and_right(same_domain_theorem, behavior_theorem, positive(proposition))?;
+        let canonical = self.compare_runs(&mut staged, profile, module, module, comparison)?;
+        join_same_syntax(&mut staged, proposition, canonical).map_err(|_| {
+            KernelError::InvalidTheoremRule {
+                rule: "run comparison reflexivity alignment",
+            }
+        })?;
+        staged.convert_conclusions(theorem, proposition, canonical)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: canonical,
+            theorem,
+            holds: true,
+        })
     }
 
     fn compare_runs(
@@ -566,6 +714,27 @@ fn quantify_forall(
     })
 }
 
+fn introduce_forall(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    variables: &[Ref],
+    body: Ref,
+    theorem: covalence_logic_hol::ThmId,
+) -> Result<(Ref, covalence_logic_hol::ThmId), KernelError> {
+    variables
+        .iter()
+        .rev()
+        .try_fold((body, theorem), |(body, theorem), &variable| {
+            let universal = kernel.forall_tm(bool_ty, variable, body)?;
+            let theorem = kernel.forall_intro_at(theorem, variable, universal)?;
+            Ok((universal, theorem))
+        })
+}
+
+fn positive(proposition: Ref) -> Lit {
+    Lit::positive(proposition.get())
+}
+
 fn require_classifier(kernel: &mut Kernel, term: Ref, expected: Ref) -> Result<(), KernelError> {
     let actual = kernel.classifier(term)?;
     join_same_syntax(kernel, actual, expected)
@@ -576,6 +745,7 @@ fn require_classifier(kernel: &mut Kernel, term: Ref, expected: Ref) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::{BehaviorQuantifier, RunRelation, RunTypes};
+    use crate::EvidenceScope;
     use covalence_logic_hol::{Kernel, Tag, TmTag};
 
     #[test]
@@ -658,6 +828,19 @@ mod tests {
             .unwrap();
         assert_eq!(kernel.classifier(equivalent).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(refinement).unwrap(), bool_ty);
+        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+        let equivalence_reflexive = domain
+            .prove_equivalence_reflexive(&mut kernel, profile, module)
+            .unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, equivalence_reflexive)
+            .unwrap();
+        let refinement_reflexive = domain
+            .prove_refinement_reflexive(&mut kernel, profile, module)
+            .unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, refinement_reflexive)
+            .unwrap();
         let contextual = observation
             .contextual(
                 &mut kernel,
@@ -713,6 +896,16 @@ mod tests {
         assert_eq!(kernel.arena(), &before);
 
         let before = kernel.arena().clone();
+        let theorem_count = kernel.thm().live_theorems().count();
+        assert!(
+            domain
+                .prove_equivalence_reflexive(&mut kernel, module, module)
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+
+        let before = kernel.arena().clone();
         assert!(
             observation
                 .contextual(
@@ -726,6 +919,5 @@ mod tests {
                 .is_err()
         );
         assert_eq!(kernel.arena(), &before);
-        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
     }
 }
