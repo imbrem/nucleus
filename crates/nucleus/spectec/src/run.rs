@@ -708,8 +708,8 @@ enum RunComparison {
 pub enum BehaviorQuantifier {
     /// At least one allowed execution has the observed behavior.
     May,
-    /// At least one allowed execution exists and every allowed execution has
-    /// the observed behavior.
+    /// Every admissible invocation has at least one execution, and every one
+    /// of its executions has the observed behavior.
     Must,
     /// No allowed execution has the observed behavior.
     Never,
@@ -749,8 +749,9 @@ impl RunObservation {
 
     /// Constructs a may, must, or never proposition for one profile and module.
     ///
-    /// `Must` is deliberately non-vacuous: it conjoins existence of an allowed
-    /// execution with universal observation of every allowed execution.
+    /// `Must` is deliberately non-vacuous per invocation: for every admissible
+    /// entry/input/host choice, at least one matching execution must exist and
+    /// every execution must satisfy the observation.
     /// `Never` is the literal HOL negation of `May`, so the duality is visible
     /// in the resulting syntax rather than encoded as frontend policy.
     ///
@@ -791,7 +792,9 @@ impl RunObservation {
         let host = staged.tm_fv(checked_name(first, 2)?, types.host)?;
         let trace = staged.tm_fv(checked_name(first, 3)?, types.trace)?;
         let outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
-        let variables = [entry, inputs, host, trace, outcome];
+        let invocation_variables = [entry, inputs, host];
+        let result_variables = [trace, outcome];
+        let run_variables = [entry, inputs, host, trace, outcome];
         let allowed = apply(
             &mut staged,
             self.domain.admissible,
@@ -803,17 +806,36 @@ impl RunObservation {
             &[profile, module, entry, inputs, host, trace, outcome],
         )?;
         let observed = apply(&mut staged, self.observe, &[trace, outcome])?;
-        let eligible = staged.op2(Op2::And, allowed, runs)?;
-        let witnessed = staged.op2(Op2::And, eligible, observed)?;
-        let may = quantify_exists(&mut staged, types.bool_ty, &variables, witnessed)?;
         let proposition = match quantifier {
-            BehaviorQuantifier::May => may,
-            BehaviorQuantifier::Never => staged.op1(Op1::Not, may)?,
+            BehaviorQuantifier::May | BehaviorQuantifier::Never => {
+                let eligible = staged.op2(Op2::And, allowed, runs)?;
+                let witnessed = staged.op2(Op2::And, eligible, observed)?;
+                let may = quantify_exists(&mut staged, types.bool_ty, &run_variables, witnessed)?;
+                if quantifier == BehaviorQuantifier::May {
+                    may
+                } else {
+                    staged.op1(Op1::Not, may)?
+                }
+            }
             BehaviorQuantifier::Must => {
-                let exists = quantify_exists(&mut staged, types.bool_ty, &variables, eligible)?;
-                let implication = staged.op2(Op2::Imp, eligible, observed)?;
-                let every = quantify_forall(&mut staged, types.bool_ty, &variables, implication)?;
-                staged.op2(Op2::And, exists, every)?
+                let matching = staged.op2(Op2::And, runs, observed)?;
+                let exists_matching =
+                    quantify_exists(&mut staged, types.bool_ty, &result_variables, matching)?;
+                let run_implies_observed = staged.op2(Op2::Imp, runs, observed)?;
+                let every_run = quantify_forall(
+                    &mut staged,
+                    types.bool_ty,
+                    &result_variables,
+                    run_implies_observed,
+                )?;
+                let required = staged.op2(Op2::And, exists_matching, every_run)?;
+                let required_when_allowed = staged.op2(Op2::Imp, allowed, required)?;
+                quantify_forall(
+                    &mut staged,
+                    types.bool_ty,
+                    &invocation_variables,
+                    required_when_allowed,
+                )?
             }
         };
         *kernel = staged;
@@ -1078,7 +1100,7 @@ mod tests {
         assert_eq!(kernel.classifier(never).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(must).unwrap(), bool_ty);
         assert_eq!(kernel.arena().tag(never), Some(Tag::Tm(TmTag::Op1)));
-        assert_eq!(kernel.arena().tag(must), Some(Tag::Tm(TmTag::Op2)));
+        assert_eq!(kernel.arena().tag(must), Some(Tag::Tm(TmTag::Eq)));
         let same_runs = domain
             .same_runs(&mut kernel, profile, module, other_module)
             .unwrap();
