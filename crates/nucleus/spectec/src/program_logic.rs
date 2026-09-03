@@ -532,7 +532,27 @@ impl EvidenceScope {
                     rule: "semantic evidence unit premise",
                 });
             };
-            if !self.allowed.contains(premise) {
+            let premise_ref = Ref::new(premise.magnitude().cast_signed()).ok_or(
+                KernelError::InvalidTheoremRule {
+                    rule: "semantic evidence premise reference",
+                },
+            )?;
+            let mut admitted = false;
+            for allowed in self.allowed.iter().copied() {
+                if allowed.is_positive() != premise.is_positive() {
+                    continue;
+                }
+                let allowed_ref = Ref::new(allowed.magnitude().cast_signed()).ok_or(
+                    KernelError::InvalidTheoremRule {
+                        rule: "semantic evidence allowed reference",
+                    },
+                )?;
+                if kernel.equivalent(allowed_ref, premise_ref)? {
+                    admitted = true;
+                    break;
+                }
+            }
+            if !admitted {
                 return Err(KernelError::InvalidTheoremRule {
                     rule: "semantic evidence premise allowlist",
                 });

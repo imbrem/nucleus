@@ -66,6 +66,13 @@ source-indexed declaration constraints, or a caller-enumerated grounding law.
 In particular, an interpreter observation or the desired goal cannot be
 silently smuggled into a purported semantic proof.
 
+`HolTheory::derive_constraint` is the first checked bridge from the complete
+theory term into usable theorem evidence. It derives any source-indexed
+declaration equation from the exact stored conjunction spine, leaving the
+complete theory as its single visible premise. The full pinned-document audit
+uses it to derive the Wasm `Steps` equation and validates that theorem through
+the evidence scope.
+
 `spectec_execution` extracts the exact lowered `instantiate`, `invoke`, and
 `Steps` declarations from the pinned source vocabulary. It adapts SpecTec's
 tuple-argument `Steps` relation to the curried predicate consumed by

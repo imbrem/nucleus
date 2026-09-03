@@ -1537,6 +1537,20 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             "missing {required:?} in {kinds:?}"
         );
     }
+    assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+    let [steps_id] = document.schema.named(IlKind::Relation, "Steps") else {
+        panic!("expected one Steps relation")
+    };
+    let steps_constraint = document
+        .semantics
+        .theory()
+        .derive_constraint(&mut kernel, *steps_id)
+        .unwrap();
+    document
+        .evidence_scope(&[])
+        .check(&kernel, steps_constraint)
+        .unwrap();
+    assert!(kernel.thm().live_theorems().count() > theorem_count);
     let execution = spectec_execution(&mut kernel, &document).unwrap();
     let empty_module = empty_wasm_module(&mut kernel, &document).unwrap();
     assert_eq!(kernel.classifier(empty_module).unwrap(), value);
@@ -1544,7 +1558,6 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     assert_eq!(execution.bool_ty, bool_ty);
     let steps_classifier = kernel.classifier(execution.steps).unwrap();
     assert_eq!(steps_classifier, execution.steps_ty);
-    assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
 }
 
 #[test]
@@ -1640,6 +1653,26 @@ fn empty_module_uses_exact_expression_constructor_vocabulary() {
     let bool_ty = kernel.bool_ty(star).unwrap();
     let value = kernel.ty_fv(0, star).unwrap();
     let document = parameterized_document(&source, &mut kernel, value, bool_ty).unwrap();
+    let declaration = source.declarations()[0].id();
+    let evidence = document
+        .semantics
+        .theory()
+        .derive_constraint(&mut kernel, declaration)
+        .unwrap();
+    document
+        .evidence_scope(&[])
+        .check(&kernel, evidence)
+        .unwrap();
+    let before = kernel.arena().clone();
+    let foreign = DeclarationId::new(999, None).unwrap();
+    assert!(
+        document
+            .semantics
+            .theory()
+            .derive_constraint(&mut kernel, foreign)
+            .is_err()
+    );
+    assert_eq!(kernel.arena(), &before);
 
     let builder = SpecTecValueBuilder::new(&document);
     let empty = builder.list(&mut kernel, &[]).unwrap();

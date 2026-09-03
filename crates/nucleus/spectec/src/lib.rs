@@ -62,8 +62,8 @@ pub use schema::{
 pub use selected::{SelectedCompileError, SelectedCompiler, SelectedKernel, SelectedRoot};
 pub use theory::{
     HolCase, HolFamilyBranch, HolFamilyDefinition, HolFamilyError, HolTheory, HolTheoryError,
-    close_family_definition, close_graph_equation, close_hol_theory, conjoin_constraints,
-    existential_case, ordered_cases,
+    HolTheoryProofError, close_family_definition, close_graph_equation, close_hol_theory,
+    conjoin_constraints, existential_case, ordered_cases,
 };
 pub use type_definition::{RelationalTypeDefinition, relational_type_declaration};
 pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};

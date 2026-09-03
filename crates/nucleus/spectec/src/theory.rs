@@ -5,16 +5,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use covalence_data_spectec::DeclarationId;
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    Kernel, KernelError, Ref,
+    Kernel, KernelError, Lit, Ref,
     builtin::{Op1, Op2},
 };
 
-use crate::Source;
+use crate::{Evidence, Source};
 
 /// A complete source-ordered set of declaration constraints.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HolTheory {
     constraints: Vec<(DeclarationId, Ref)>,
+    conjunctions: Vec<Ref>,
     proposition: Ref,
 }
 
@@ -30,6 +31,94 @@ impl HolTheory {
     pub const fn proposition(&self) -> Ref {
         self.proposition
     }
+
+    /// Derives one declaration constraint from the complete theory conjunction.
+    ///
+    /// The returned theorem has the single visible premise `self.proposition`
+    /// and the selected constraint as its single positive conclusion. No axiom
+    /// or frontend fact is introduced.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `id` is not part of this exact theory or a checked
+    /// Boolean or theorem construction fails. `kernel` is unchanged on failure.
+    pub fn derive_constraint(
+        &self,
+        kernel: &mut Kernel,
+        id: DeclarationId,
+    ) -> Result<Evidence, HolTheoryProofError> {
+        let target_index = self
+            .constraints
+            .iter()
+            .position(|(candidate, _)| *candidate == id)
+            .ok_or(HolTheoryProofError::Missing { id })?;
+        let target = self.constraints[target_index].1;
+        let mut staged = kernel.fork();
+        let mut theorem = None;
+        for (index, &(_, constraint)) in self.constraints.iter().enumerate() {
+            let conjunction = self.conjunctions[index];
+            let next = self.conjunctions[index + 1];
+            if index == target_index {
+                let selected = staged
+                    .identity(positive(constraint))
+                    .map_err(|source| HolTheoryProofError::Kernel { source })?;
+                staged
+                    .weaken(selected, &[positive(conjunction)], &[])
+                    .map_err(|source| HolTheoryProofError::Kernel { source })?;
+                theorem = Some(
+                    staged
+                        .and_left(selected, positive(next))
+                        .map_err(|source| HolTheoryProofError::Kernel { source })?,
+                );
+            } else if let Some(selected) = theorem {
+                staged
+                    .weaken(selected, &[positive(constraint)], &[])
+                    .map_err(|source| HolTheoryProofError::Kernel { source })?;
+                theorem = Some(
+                    staged
+                        .and_left(selected, positive(next))
+                        .map_err(|source| HolTheoryProofError::Kernel { source })?,
+                );
+            }
+        }
+        if self.conjunctions.last().copied() != Some(self.proposition) {
+            return Err(HolTheoryProofError::Kernel {
+                source: KernelError::InvalidTheoremRule {
+                    rule: "complete theory reconstruction",
+                },
+            });
+        }
+        let theorem = theorem.ok_or(HolTheoryProofError::Missing { id })?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: target,
+            theorem,
+            holds: true,
+        })
+    }
+}
+
+fn positive(reference: Ref) -> Lit {
+    Lit::positive(reference.get())
+}
+
+/// Why a declaration constraint could not be derived from its complete theory.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+#[snafu(module)]
+pub enum HolTheoryProofError {
+    /// The requested declaration is not part of the exact theory.
+    #[snafu(display("the SpecTec theory has no declaration constraint for {id:?}"))]
+    Missing {
+        /// Requested structural declaration selector.
+        id: DeclarationId,
+    },
+    /// A checked HOL construction failed.
+    #[snafu(display("could not derive a SpecTec theory constraint: {source}"))]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
 }
 
 /// Why declaration constraints could not form one complete HOL theory.
@@ -313,15 +402,21 @@ pub fn close_hol_theory(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut staged = kernel.fork();
-    let propositions = ordered
-        .iter()
-        .map(|(_, constraint)| *constraint)
-        .collect::<Vec<_>>();
-    let proposition = conjoin_constraints(&mut staged, bool_ty, &propositions)
+    let mut conjunctions = Vec::with_capacity(ordered.len() + 1);
+    let mut proposition = staged
+        .bool(bool_ty, true)
         .map_err(|source| HolTheoryError::Kernel { source })?;
+    conjunctions.push(proposition);
+    for &(_, constraint) in &ordered {
+        proposition = staged
+            .op2(Op2::And, proposition, constraint)
+            .map_err(|source| HolTheoryError::Kernel { source })?;
+        conjunctions.push(proposition);
+    }
     *kernel = staged;
     Ok(HolTheory {
         constraints: ordered,
+        conjunctions,
         proposition,
     })
 }
