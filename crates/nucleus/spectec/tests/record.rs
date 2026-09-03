@@ -1550,6 +1550,33 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         .evidence_scope(&[])
         .check(&kernel, steps_constraint)
         .unwrap();
+    let step_pair_name = kernel
+        .fresh_name(&[value, bool_ty, steps_constraint.proposition])
+        .unwrap();
+    let step_pair = kernel.tm_fv(step_pair_name, value).unwrap();
+    let specialized_steps = document
+        .semantics
+        .theory()
+        .specialize_constraint(&mut kernel, *steps_id, &[step_pair])
+        .unwrap();
+    document
+        .evidence_scope(&[])
+        .check(&kernel, specialized_steps)
+        .unwrap();
+    assert_eq!(
+        kernel.classifier(specialized_steps.proposition).unwrap(),
+        bool_ty
+    );
+    let wrong_argument = kernel.bool(bool_ty, false).unwrap();
+    let before = kernel.arena().clone();
+    assert!(
+        document
+            .semantics
+            .theory()
+            .specialize_constraint(&mut kernel, *steps_id, &[wrong_argument])
+            .is_err()
+    );
+    assert_eq!(kernel.arena(), &before);
     assert!(kernel.thm().live_theorems().count() > theorem_count);
     let execution = spectec_execution(&mut kernel, &document).unwrap();
     let empty_module = empty_wasm_module(&mut kernel, &document).unwrap();

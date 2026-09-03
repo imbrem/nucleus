@@ -8,6 +8,7 @@ use covalence_logic_hol::{
     Kernel, KernelError, Lit, Ref,
     builtin::{Op1, Op2},
 };
+use covalence_logic_hol_derived::{ForallError, forall_elim};
 
 use crate::{Evidence, Source};
 
@@ -96,6 +97,56 @@ impl HolTheory {
             holds: true,
         })
     }
+
+    /// Derives and specializes one declaration constraint at checked arguments.
+    ///
+    /// This is the ordinary efficient entry point for unfolding a declaration
+    /// at a concrete or symbolic value. It eliminates equality-encoded
+    /// universals and applies function equations as appropriate. This is
+    /// userspace orchestration; every substitution, congruence, and theorem
+    /// transport step is checked by the kernel, and the complete theory premise
+    /// remains visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`derive_constraint`](Self::derive_constraint), or if an argument does
+    /// not match the next universal binder. `kernel` is unchanged on failure.
+    pub fn specialize_constraint(
+        &self,
+        kernel: &mut Kernel,
+        id: DeclarationId,
+        arguments: &[Ref],
+    ) -> Result<Evidence, HolTheoryProofError> {
+        let mut staged = kernel.fork();
+        let mut evidence = self.derive_constraint(&mut staged, id)?;
+        for &argument in arguments {
+            let mut universal = staged.fork();
+            match forall_elim(&mut universal, evidence.theorem, argument) {
+                Ok(specialized) => {
+                    staged = universal;
+                    evidence = Evidence {
+                        proposition: specialized.proposition,
+                        theorem: specialized.theorem,
+                        holds: true,
+                    };
+                }
+                Err(ForallError::WrongForm) => {
+                    let specialized = staged
+                        .ap_thm(evidence.theorem, argument)
+                        .map_err(|source| HolTheoryProofError::Kernel { source })?;
+                    evidence = Evidence {
+                        proposition: specialized.equality,
+                        theorem: specialized.theorem,
+                        holds: true,
+                    };
+                }
+                Err(source) => return Err(HolTheoryProofError::Specialize { source }),
+            }
+        }
+        *kernel = staged;
+        Ok(evidence)
+    }
 }
 
 fn positive(reference: Ref) -> Lit {
@@ -118,6 +169,12 @@ pub enum HolTheoryProofError {
     Kernel {
         /// Underlying checked failure.
         source: KernelError,
+    },
+    /// Universal specialization failed.
+    #[snafu(display("could not specialize a SpecTec theory constraint: {source}"))]
+    Specialize {
+        /// Underlying checked derived-rule failure.
+        source: ForallError,
     },
 }
 

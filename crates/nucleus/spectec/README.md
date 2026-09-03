@@ -73,6 +73,12 @@ complete theory as its single visible premise. The full pinned-document audit
 uses it to derive the Wasm `Steps` equation and validates that theorem through
 the evidence scope.
 
+`HolTheory::specialize_constraint` then unfolds that equation at concrete or
+symbolic checked values. It handles both equality-encoded universals and the
+function equalities used for least-closed relation families. The full audit
+specializes `Steps` at a symbolic configuration pair, scope-checks the point
+equation, and transactionally rejects a classifier-mismatched argument.
+
 `spectec_execution` extracts the exact lowered `instantiate`, `invoke`, and
 `Steps` declarations from the pinned source vocabulary. It adapts SpecTec's
 tuple-argument `Steps` relation to the curried predicate consumed by
