@@ -2115,10 +2115,37 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         .assertion_reachability(&mut kernel, exported, host_call)
         .unwrap();
     let final_state = start.initial;
-    let steps_at_final = kernel.app(execution.steps, start.initial).unwrap();
-    let steps_at_final = kernel.app(steps_at_final, final_state).unwrap();
-    let steps_fact = kernel
-        .identity(covalence_logic_hol::Lit::positive(steps_at_final.get()))
+    let final_before_equality = kernel.eq(bool_ty, reflexive_before, start.initial).unwrap();
+    let final_before_equality_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            final_before_equality.get(),
+        ))
+        .unwrap();
+    let final_after_equality = kernel.eq(bool_ty, reflexive_after, final_state).unwrap();
+    let final_after_equality_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            final_after_equality.get(),
+        ))
+        .unwrap();
+    let final_at_initial = execution
+        .transport_steps_before(
+            &mut kernel,
+            reflexive_before,
+            start.initial,
+            reflexive_after,
+            curried_reflexive_steps,
+            final_before_equality_fact,
+        )
+        .unwrap();
+    let steps_fact = execution
+        .transport_steps_after(
+            &mut kernel,
+            start.initial,
+            reflexive_after,
+            final_state,
+            final_at_initial,
+            final_after_equality_fact,
+        )
         .unwrap();
     let calls_fact =
         prove_reflexive_binary_application(&mut kernel, host_call, final_state, start.function)
@@ -2131,7 +2158,7 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             start.initial,
             final_state,
             starts.theorem,
-            steps_fact,
+            steps_fact.theorem,
             calls_fact.theorem,
         )
         .unwrap();
@@ -2204,7 +2231,8 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     grounding.extend([
         initialization_before_equality,
         initialization_after_equality,
-        steps_at_final,
+        final_before_equality,
+        final_after_equality,
         false_export_lists,
         empty_has_no_members,
     ]);

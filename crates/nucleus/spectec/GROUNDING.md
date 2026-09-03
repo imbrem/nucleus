@@ -95,12 +95,13 @@ production condition instead of assuming those graph facts wholesale. The
 initialization `Steps` fact is derived from the retained SpecTec reflexivity
 rule and checked equality transport; the exact equalities relating its
 structural source and target to the instantiation configurations remain
-grounding premises. Export selection and final `Steps` also remain explicit
-grounding premises. The host-call observer is now an immutable structural
-predicate equating its configuration with the exact retained `$invoke`
-production result; its concrete fact is discharged by checked beta reduction
-and equality reflexivity. Interpreter traces cannot be passed in place of
-theorem handles.
+grounding premises. The final reflexive `Steps` fact is derived the same way,
+leaving only its two structural equalities as premises. Export selection
+remains an explicit grounding premise. The host-call observer is an immutable
+structural predicate equating its configuration with the exact retained
+`$invoke` production result; its concrete fact is discharged by checked beta
+reduction and equality reflexivity. Interpreter traces cannot be passed in
+place of theorem handles.
 
 For `FALSE`, the negative proof opens the concrete exported-function predicate
 and reduces non-reachability to two independent laws: every export list exposed
