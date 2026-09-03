@@ -420,7 +420,7 @@ pub struct ExportedFunctionView {
     pub module_instance: Ref,
     /// Graph predicate `module-instance -> export-list -> bool`.
     pub exports: Ref,
-    /// Predicate `export-list -> export-instance -> bool`.
+    /// Exact `SpecTec` predicate `export-instance -> export-list -> bool`.
     pub member: Ref,
     /// Graph predicate `export-instance -> function-address -> bool`.
     pub function_address: Ref,
@@ -476,7 +476,7 @@ impl ExportedFunctionView {
             &[*configuration, *module_instance],
         )?;
         let has_exports = apply(&mut staged, self.exports, &[*module_instance, *exports])?;
-        let contains = apply(&mut staged, self.member, &[*exports, *export_instance])?;
+        let contains = apply(&mut staged, self.member, &[*export_instance, *exports])?;
         let has_function = apply(
             &mut staged,
             self.function_address,
@@ -664,11 +664,11 @@ impl ExportedFunctionView {
             *export_instance,
         ])?;
         let list_binder = staged.tm_fv(list_binder_name, self.value_ty)?;
-        let member_body = apply(&mut staged, self.member, &[list_binder, *export_instance])?;
+        let member_body = apply(&mut staged, self.member, &[*export_instance, list_binder])?;
         let member_function_ty = staged.ty_arr(self.value_ty, self.bool_ty)?;
         let member_function = staged.lam_at(member_function_ty, list_binder, member_body)?;
         let member_equality = staged.ap_term(list_equality_fact, member_function)?;
-        let contains_proposition = apply(&mut staged, self.member, &[*exports, *export_instance])?;
+        let contains_proposition = apply(&mut staged, self.member, &[*export_instance, *exports])?;
         let contains = align_positive_fact(&mut staged, contains, contains_proposition)?;
         let left_substitution = substitute(&mut staged, list_binder, *exports, member_body)
             .map_err(|source| WasmLogicError::Substitute { source })?;
@@ -693,7 +693,7 @@ impl ExportedFunctionView {
             .ok_or(WasmLogicError::StartFact)?;
         let denied_fact =
             staged.expand_conclusion(denied.theorem, positive(denied.proposition), None)?;
-        let expected_member = apply(&mut staged, self.member, &[expected, *export_instance])?;
+        let expected_member = apply(&mut staged, self.member, &[*export_instance, expected])?;
         join_same_syntax(&mut staged, right_substitution.output, expected_member)
             .map_err(|source| WasmLogicError::Syntax { source })?;
         staged.convert_conclusions(expected_contains, member_equality.right, expected_member)?;
@@ -814,7 +814,7 @@ impl ExportedFunctionView {
         )?;
         let has_exports_proposition =
             apply(&mut staged, self.exports, &[*module_instance, *exports])?;
-        let contains_proposition = apply(&mut staged, self.member, &[*exports, *export_instance])?;
+        let contains_proposition = apply(&mut staged, self.member, &[*export_instance, *exports])?;
         let has_module = align_positive_fact(&mut staged, has_module, has_module_proposition)?;
         let has_exports = align_positive_fact(&mut staged, has_exports, has_exports_proposition)?;
         let contains = align_positive_fact(&mut staged, contains, contains_proposition)?;
@@ -951,7 +951,7 @@ fn list_has_no_members_avoiding(
         .collect::<Vec<_>>();
     let name = staged.fresh_name(&roots)?;
     let entry = staged.tm_fv(name, view.value_ty)?;
-    let member = apply(&mut staged, view.member, &[list, entry])?;
+    let member = apply(&mut staged, view.member, &[entry, list])?;
     let denied = staged.op1(covalence_logic_hol::builtin::Op1::Not, member)?;
     let proposition = staged.forall_tm(view.bool_ty, entry, denied)?;
     *kernel = staged;
@@ -1011,7 +1011,7 @@ fn no_export_entries_avoiding(
     )?;
     let has_module = apply(&mut staged, view.module_instance, &[start, module_instance])?;
     let has_exports = apply(&mut staged, view.exports, &[module_instance, exports])?;
-    let contains = apply(&mut staged, view.member, &[exports, export_instance])?;
+    let contains = apply(&mut staged, view.member, &[export_instance, exports])?;
     let mut entry = staged.op2(Op2::And, instantiated, has_module)?;
     entry = staged.op2(Op2::And, entry, has_exports)?;
     entry = staged.op2(Op2::And, entry, contains)?;
@@ -2630,6 +2630,29 @@ mod tests {
         let no_members = view.list_has_no_members(&mut kernel, empty).unwrap();
         let export_lists_equal_fact = kernel.identity(positive(export_lists_equal)).unwrap();
         let no_members_fact = kernel.identity(positive(no_members)).unwrap();
+        let entry = kernel.tm_fv(21, value).unwrap();
+        let denied = forall_elim(&mut kernel, no_members_fact, entry).unwrap();
+        let membership = kernel
+            .arena()
+            .children(denied.proposition)
+            .unwrap()
+            .next()
+            .unwrap();
+        let membership_children = kernel
+            .arena()
+            .children(membership)
+            .unwrap()
+            .collect::<Vec<_>>();
+        let [partial_membership, actual_list] = membership_children.as_slice() else {
+            panic!("expected curried SpecTec membership application")
+        };
+        assert_eq!(*actual_list, empty);
+        let partial_children = kernel
+            .arena()
+            .children(*partial_membership)
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(partial_children, [view.member, entry]);
         let before = kernel.arena().clone();
         assert!(
             view.prove_no_export_entries_from_list_invariant(
