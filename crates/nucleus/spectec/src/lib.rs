@@ -43,7 +43,7 @@ pub use parameterized::{
     ParameterizedError, parameterized_document, parameterized_document_with,
 };
 pub use premise::{PremiseAlgebra, PremiseChildren, fold_premise};
-pub use program_logic::{AssertCombinator, CallsAssert, Established, Proposition};
+pub use program_logic::{AssertCombinator, CallsAssert, Established, Evidence, Proposition};
 pub use relational::{
     RelationalCall, RelationalCaseError, RelationalClause, RelationalCondition,
     RelationalDefinition, RelationalDefinitionSchema, RelationalDefinitionSource,

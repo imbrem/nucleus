@@ -56,41 +56,63 @@ impl<Atom> Proposition<Atom> {
         }
     }
 
-    /// Lowers a formula by requesting checked evidence for each open atom.
+    /// Derives a formula from checked, possibly conditional evidence for each
+    /// open atom.
     ///
     /// The callback is the explicit semantic interpretation boundary. Its
-    /// result must be a premise-free theorem with exactly the claimed positive
-    /// or negative conclusion. Input theorems remain reusable.
+    /// result must have exactly the claimed positive or negative conclusion;
+    /// all theorem premises remain visible and are propagated by checked rules.
+    /// Input theorems remain reusable.
     ///
     /// # Errors
     ///
-    /// Returns an error if atom evidence is not exact or a checked HOL
+    /// Returns an error if atom evidence has the wrong conclusion or a checked HOL
     /// construction fails.
+    pub fn derive_with(
+        &self,
+        kernel: &mut Kernel,
+        bool_ty: Ref,
+        atom: &mut impl FnMut(&Atom, &mut Kernel, Ref) -> Result<Evidence, KernelError>,
+    ) -> Result<Evidence, KernelError> {
+        match self {
+            Self::Atom(value) => {
+                let evidence = atom(value, kernel, bool_ty)?;
+                require_conclusion(kernel, evidence)?;
+                Ok(evidence)
+            }
+            Self::False => constant(kernel, bool_ty, false),
+            Self::True => constant(kernel, bool_ty, true),
+            Self::And(left, right) => {
+                let left = left.derive_with(kernel, bool_ty, atom)?;
+                let right = right.derive_with(kernel, bool_ty, atom)?;
+                establish_and(kernel, left, right)
+            }
+            Self::Or(left, right) => {
+                let left = left.derive_with(kernel, bool_ty, atom)?;
+                let right = right.derive_with(kernel, bool_ty, atom)?;
+                establish_or(kernel, left, right)
+            }
+        }
+    }
+
+    /// Establishes a formula from premise-free checked atom facts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if atom evidence is not premise-free and exact, or a
+    /// checked HOL construction fails.
     pub fn establish_with(
         &self,
         kernel: &mut Kernel,
         bool_ty: Ref,
         atom: &mut impl FnMut(&Atom, &mut Kernel, Ref) -> Result<Established, KernelError>,
     ) -> Result<Established, KernelError> {
-        match self {
-            Self::Atom(value) => {
-                let established = atom(value, kernel, bool_ty)?;
-                require_exact(kernel, established)?;
-                Ok(established)
-            }
-            Self::False => constant(kernel, bool_ty, false),
-            Self::True => constant(kernel, bool_ty, true),
-            Self::And(left, right) => {
-                let left = left.establish_with(kernel, bool_ty, atom)?;
-                let right = right.establish_with(kernel, bool_ty, atom)?;
-                establish_and(kernel, left, right)
-            }
-            Self::Or(left, right) => {
-                let left = left.establish_with(kernel, bool_ty, atom)?;
-                let right = right.establish_with(kernel, bool_ty, atom)?;
-                establish_or(kernel, left, right)
-            }
-        }
+        let evidence = self.derive_with(kernel, bool_ty, &mut |value, kernel, bool_ty| {
+            let established = atom(value, kernel, bool_ty)?;
+            require_exact(kernel, established)?;
+            Ok(established.into())
+        })?;
+        require_premise_free(kernel, evidence)
     }
 }
 
@@ -187,6 +209,27 @@ pub struct Established {
     pub holds: bool,
 }
 
+/// Checked positive or negative evidence whose theorem premises remain visible.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Evidence {
+    /// HOL term denoting the proposition.
+    pub proposition: Ref,
+    /// Kernel-owned theorem deriving the proposition or its negation.
+    pub theorem: ThmId,
+    /// Whether the theorem concludes the positive proposition.
+    pub holds: bool,
+}
+
+impl From<Established> for Evidence {
+    fn from(value: Established) -> Self {
+        Self {
+            proposition: value.proposition,
+            theorem: value.theorem,
+            holds: value.holds,
+        }
+    }
+}
+
 impl Proposition<Infallible> {
     /// Lowers and decides a closed formula using only checked HOL rules.
     ///
@@ -206,7 +249,7 @@ fn positive(reference: Ref) -> Lit {
     Lit::positive(reference.get())
 }
 
-fn constant(kernel: &mut Kernel, bool_ty: Ref, value: bool) -> Result<Established, KernelError> {
+fn constant(kernel: &mut Kernel, bool_ty: Ref, value: bool) -> Result<Evidence, KernelError> {
     let proposition = kernel.bool(bool_ty, value)?;
     let conclusion = if value {
         positive(proposition)
@@ -214,44 +257,68 @@ fn constant(kernel: &mut Kernel, bool_ty: Ref, value: bool) -> Result<Establishe
         positive(proposition).negated()
     };
     let theorem = kernel.true_right(conclusion)?;
-    Ok(Established {
+    Ok(Evidence {
         proposition,
         theorem,
         holds: value,
     })
 }
 
-fn require_exact(kernel: &Kernel, established: Established) -> Result<(), KernelError> {
+fn require_conclusion(kernel: &Kernel, evidence: Evidence) -> Result<(), KernelError> {
     let theorem =
         kernel
             .arena()
             .theorems()
-            .get(established.theorem)
+            .get(evidence.theorem)
             .ok_or(KernelError::MissingTheorem {
-                id: established.theorem,
+                id: evidence.theorem,
             })?;
-    let expected = if established.holds {
-        positive(established.proposition)
+    let expected = if evidence.holds {
+        positive(evidence.proposition)
     } else {
-        positive(established.proposition).negated()
+        positive(evidence.proposition).negated()
     };
     let mut rows = theorem.rhs.rows();
-    if theorem.lhs.rows().next().is_some()
-        || rows.next().is_none_or(|row| row != [expected])
-        || rows.next().is_some()
-    {
+    if rows.next().is_none_or(|row| row != [expected]) || rows.next().is_some() {
         return Err(KernelError::InvalidTheoremRule {
-            rule: "exact interpreted proposition",
+            rule: "interpreted proposition conclusion",
         });
     }
     Ok(())
 }
 
+fn require_exact(kernel: &Kernel, established: Established) -> Result<(), KernelError> {
+    let evidence = established.into();
+    require_conclusion(kernel, evidence)?;
+    require_premise_free(kernel, evidence).map(|_| ())
+}
+
+fn require_premise_free(kernel: &Kernel, evidence: Evidence) -> Result<Established, KernelError> {
+    let theorem =
+        kernel
+            .arena()
+            .theorems()
+            .get(evidence.theorem)
+            .ok_or(KernelError::MissingTheorem {
+                id: evidence.theorem,
+            })?;
+    if theorem.lhs.rows().next().is_some() {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "premise-free interpreted proposition",
+        });
+    }
+    Ok(Established {
+        proposition: evidence.proposition,
+        theorem: evidence.theorem,
+        holds: evidence.holds,
+    })
+}
+
 fn establish_and(
     kernel: &mut Kernel,
-    left: Established,
-    right: Established,
-) -> Result<Established, KernelError> {
+    left: Evidence,
+    right: Evidence,
+) -> Result<Evidence, KernelError> {
     let proposition = kernel.op2(Op2::And, left.proposition, right.proposition)?;
     let conjunction = positive(proposition);
     let theorem = if left.holds && right.holds {
@@ -269,7 +336,7 @@ fn establish_and(
         kernel.not_right(contradiction, conjunction)?;
         contradiction
     };
-    Ok(Established {
+    Ok(Evidence {
         proposition,
         theorem,
         holds: left.holds && right.holds,
@@ -278,9 +345,9 @@ fn establish_and(
 
 fn establish_or(
     kernel: &mut Kernel,
-    left: Established,
-    right: Established,
-) -> Result<Established, KernelError> {
+    left: Evidence,
+    right: Evidence,
+) -> Result<Evidence, KernelError> {
     let proposition = kernel.op2(Op2::Or, left.proposition, right.proposition)?;
     let disjunction = positive(proposition);
     let theorem = if left.holds || right.holds {
@@ -301,7 +368,7 @@ fn establish_or(
         kernel.not_right(contradiction, disjunction)?;
         contradiction
     };
-    Ok(Established {
+    Ok(Evidence {
         proposition,
         theorem,
         holds: left.holds || right.holds,
@@ -390,7 +457,8 @@ mod tests {
         let mut kernel = Kernel::new();
         let star = kernel.star().unwrap();
         let bool_ty = kernel.bool_ty(star).unwrap();
-        let atom = constant(&mut kernel, bool_ty, true).unwrap();
+        let atom_evidence = constant(&mut kernel, bool_ty, true).unwrap();
+        let atom = require_premise_free(&kernel, atom_evidence).unwrap();
         let formula = Proposition::atom("module").and(Proposition::atom("module"));
 
         let result = formula
@@ -421,8 +489,31 @@ mod tests {
         assert!(matches!(
             result,
             Err(KernelError::InvalidTheoremRule {
-                rule: "exact interpreted proposition"
+                rule: "premise-free interpreted proposition"
             })
         ));
+    }
+
+    #[test]
+    fn conditional_semantic_evidence_preserves_visible_premises() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let proposition = kernel.bool(bool_ty, true).unwrap();
+        let theorem = kernel.identity(positive(proposition)).unwrap();
+        let atom = Evidence {
+            proposition,
+            theorem,
+            holds: true,
+        };
+
+        let result = Proposition::atom("module")
+            .or(Proposition::False)
+            .derive_with(&mut kernel, bool_ty, &mut |_, _, _| Ok(atom))
+            .unwrap();
+
+        let theorem = kernel.arena().theorems().get(result.theorem).unwrap();
+        assert!(theorem.lhs.rows().next().is_some());
+        assert!(result.holds);
     }
 }
