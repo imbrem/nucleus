@@ -3,9 +3,11 @@
 //! The selected runtime is the [`tagged`] module: fixed 64-bit
 //! `LIT`/`AND`/`OR`/`SAT` references, checked ownership, an intrusive
 //! allocator, and a sealed [`tagged::Theorem`]. Validation, structural
-//! equality, hashing and decoding are one flat pass over the words; no
-//! recursive syntax tree is stored, so no operation is bounded by the depth of
-//! untrusted input.
+//! equality, hashing and decoding are one flat pass over the words, and no
+//! recursive syntax tree is stored for them. `Formula` is still a recursive
+//! value, so building one, cloning it, hashing it, or packing it is bounded by
+//! its depth; the flat pass is what removed that bound from validation,
+//! comparison, and decoding.
 //!
 //! [`Matrix`] is the untrusted builder and projection the former `Cnf`/`Dnf`
 //! pair became: which of AND/OR sits outermost is a property of the turnstile

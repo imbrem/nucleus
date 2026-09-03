@@ -234,6 +234,39 @@ mod tests {
     }
 
     #[test]
+    fn identity_proves_a_formula_from_itself() {
+        // Mutation testing found nothing pinned this: `identity` could be made
+        // to conclude the negation of its premise and every test still passed.
+        for formula in [
+            literal(1),
+            Formula::Literal {
+                negative: true,
+                atom: 7,
+            },
+            Formula::And {
+                negative: false,
+                children: vec![literal(1), literal(2)],
+            },
+            Formula::Or {
+                negative: true,
+                children: vec![literal(3)],
+            },
+        ] {
+            let table = Theorem::identity(formula.clone())
+                .expect("identity")
+                .checked()
+                .decode_sequents()
+                .expect("decode");
+            assert_eq!(table.len(), 1);
+            assert_eq!(table[0].premise, formula, "premise is the formula itself");
+            assert_eq!(
+                table[0].conclusion, formula,
+                "conclusion is the same formula, with the same polarity"
+            );
+        }
+    }
+
+    #[test]
     fn identity_append_and_canonical_edits_remain_sealed() {
         let p = literal(1);
         let q = literal(2);
