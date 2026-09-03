@@ -46,7 +46,9 @@ def test_refutations_copy_into_all_three_checked_targets() -> None:
     classical = ClassicalKernel()
     theorem = classical.copy_refutation(refutation)
     assert_refutation_sequent(classical.theorem(theorem))
-    assert_refutation_sequent(read_theorem(Cnf.from_dimacs(DIMACS), TEXT_LRAT).sequents[0])
+    assert_refutation_sequent(
+        read_theorem(Cnf.from_dimacs(DIMACS), TEXT_LRAT).sequents[0]
+    )
 
     hol = Kernel()
     assert hol.copy_refutation_to_syllogisms(refutation) == 1

@@ -99,7 +99,10 @@ def test_path_rewrites_and_models() -> None:
     assert proved.premise.kind == "and" and proved.premise.children == []
     assert proved.conclusion.kind == "sat" and not proved.conclusion.negative
     assert Theorem.sat_intro([p]).sequents[0].conclusion.kind == "sat"
-    assert Theorem.model_sat_implication(witness, witness).sequents[0].premise.kind == "sat"
+    assert (
+        Theorem.model_sat_implication(witness, witness).sequents[0].premise.kind
+        == "sat"
+    )
     assert Theorem.truth_intro(p).sequents[0].conclusion.kind == "and"
     with pytest.raises(ValueError):
         ModelWitness.check([p.negated()], [1])
