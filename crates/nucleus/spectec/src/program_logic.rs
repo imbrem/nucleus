@@ -12,12 +12,12 @@ use std::{convert::Infallible, sync::Arc};
 use covalence_data_basic::Symbol;
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    Kernel, KernelError, Lit, Ref, ThmId,
+    Kernel, KernelError, Lit, Ref, SynFactId, SynRel, ThmId,
     builtin::{Op1, Op2},
 };
 use covalence_logic_hol_derived::{
-    ExistsError, ForallError, SyntaxError, forall_elim, introduce_exists, join_alpha_equivalent,
-    open_exists,
+    ExistsError, ForallError, ModelError, SyntaxError, forall_elim, introduce_exists,
+    join_alpha_equivalent, open_exists, substitute,
 };
 
 /// A small, immutable, generic proposition schema.
@@ -232,6 +232,68 @@ impl AssertionReachability {
         Ok(predicate)
     }
 
+    /// Constructs contextual equivalence for closed programs observed through
+    /// this assertion-reachability predicate.
+    ///
+    /// The distinguished context is an actual HOL identity context: `plug _ P`
+    /// beta-reduces to `P`, and every program is admissible in it. Consequently
+    /// it introduces neither semantic premises nor a new trusted rule.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the assertion function is ill-typed, a fresh binder
+    /// cannot be allocated, or a checked lambda construction fails. `kernel`
+    /// is unchanged on failure.
+    pub fn closed_program_observation(
+        self,
+        kernel: &mut Kernel,
+        assert_function: Ref,
+    ) -> Result<ClosedProgramObservation, KernelError> {
+        let mut staged = kernel.fork();
+        require_classifier(&mut staged, assert_function, self.state_ty)?;
+        let first = staged.fresh_name(&[
+            self.program_ty,
+            self.state_ty,
+            self.bool_ty,
+            self.starts,
+            self.steps,
+            self.calls,
+            assert_function,
+        ])?;
+        let context = staged.tm_fv(first, self.bool_ty)?;
+        let program = staged.tm_fv(
+            first.checked_add(1).ok_or(KernelError::TooManyNames)?,
+            self.program_ty,
+        )?;
+        let truth = staged.bool(self.bool_ty, true)?;
+        let program_map_ty = staged.ty_arr(self.program_ty, self.program_ty)?;
+        let identity_program = staged.lam_at(program_map_ty, program, program)?;
+        let plug_ty = staged.ty_arr(self.bool_ty, program_map_ty)?;
+        let plug = staged.lam_at(plug_ty, context, identity_program)?;
+
+        let program_predicate_ty = staged.ty_arr(self.program_ty, self.bool_ty)?;
+        let accepts_program = staged.lam_at(program_predicate_ty, program, truth)?;
+        let admissible_ty = staged.ty_arr(self.bool_ty, program_predicate_ty)?;
+        let admissible = staged.lam_at(admissible_ty, context, accepts_program)?;
+        let observe = self.predicate(&mut staged, assert_function)?;
+        let observation = ClosedProgramObservation {
+            contextual: ContextualObservation {
+                subject_ty: self.program_ty,
+                context_ty: self.bool_ty,
+                observed_ty: self.program_ty,
+                bool_ty: self.bool_ty,
+                plug,
+                admissible,
+                observe,
+            },
+            identity_context: truth,
+            reachability: self,
+            assert_function,
+        };
+        *kernel = staged;
+        Ok(observation)
+    }
+
     /// Constructs the universal negative claim that no admissible execution
     /// reaches the distinguished assertion call.
     ///
@@ -439,6 +501,69 @@ impl AssertionReachability {
             theorem: outer.theorem,
             holds: true,
         })
+    }
+}
+
+/// Closed-program contextual observation through `callsAssert`.
+///
+/// This packages a literal identity context and its always-true admissibility
+/// predicate. The only non-logical premises in a distinction proof therefore
+/// come from the supplied `SpecTec` reachability evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClosedProgramObservation {
+    contextual: ContextualObservation,
+    identity_context: Ref,
+    reachability: AssertionReachability,
+    assert_function: Ref,
+}
+
+impl ClosedProgramObservation {
+    /// Returns the full contextual-equivalence schema.
+    #[must_use]
+    pub const fn contextual(self) -> ContextualObservation {
+        self.contextual
+    }
+
+    /// Proves that two closed programs are contextually distinct from positive
+    /// and negative checked `callsAssert` evidence.
+    ///
+    /// `left_calls` must prove `callsAssert(left)` and `right_does_not_call`
+    /// must disprove `callsAssert(right)`. Checked beta conversions transport
+    /// those facts through the literal identity observation context. The result
+    /// is negative evidence for `left ≈ right`, retaining exactly the semantic
+    /// premises of the two input facts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either fact has the wrong signed conclusion or any
+    /// checked beta, contextual-specialization, or propositional proof step
+    /// fails. `kernel` is unchanged on failure.
+    pub fn prove_distinct(
+        self,
+        kernel: &mut Kernel,
+        left: Ref,
+        right: Ref,
+        left_calls: ThmId,
+        right_does_not_call: ThmId,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        let left_ok = prove_identity_admissible(&mut staged, self, left)?;
+        let right_ok = prove_identity_admissible(&mut staged, self, right)?;
+        let left_observed = align_identity_observation(&mut staged, self, left, left_calls, true)?;
+        let right_not_observed =
+            align_identity_observation(&mut staged, self, right, right_does_not_call, false)?;
+        let distinct = self.contextual.prove_distinct(
+            &mut staged,
+            self.identity_context,
+            left,
+            right,
+            left_ok,
+            right_ok,
+            left_observed,
+            right_not_observed,
+        )?;
+        *kernel = staged;
+        Ok(distinct)
     }
 }
 
@@ -790,6 +915,134 @@ impl FunctionObservation {
     }
 }
 
+fn prove_identity_admissible(
+    kernel: &mut Kernel,
+    observation: ClosedProgramObservation,
+    program: Ref,
+) -> Result<ThmId, ObservationProofError> {
+    let (application, reduced, _) = reduce_checked_binary_lambda(
+        kernel,
+        observation.contextual.admissible,
+        observation.identity_context,
+        program,
+    )?;
+    let truth = kernel.bool(observation.contextual.bool_ty, true)?;
+    join_alpha_equivalent(kernel, reduced, truth)?;
+    let theorem = kernel.true_right(Lit::positive(truth.get()))?;
+    kernel.convert_conclusions(theorem, truth, application)?;
+    Ok(theorem)
+}
+
+fn align_identity_observation(
+    kernel: &mut Kernel,
+    observation: ClosedProgramObservation,
+    program: Ref,
+    theorem: ThmId,
+    holds: bool,
+) -> Result<ThmId, ObservationProofError> {
+    let canonical =
+        observation
+            .reachability
+            .calls_assert(kernel, program, observation.assert_function)?;
+    let source = sole_evidence_proposition(kernel, theorem, holds)?;
+    join_alpha_equivalent(kernel, source, canonical)?;
+    let aligned = kernel.copy_theorem(theorem)?;
+    kernel.convert_conclusions(aligned, source, canonical)?;
+
+    let (plugged, reduced_program, plug_conversion) = reduce_checked_binary_lambda(
+        kernel,
+        observation.contextual.plug,
+        observation.identity_context,
+        program,
+    )?;
+    join_alpha_equivalent(kernel, reduced_program, program)?;
+    let observed_plugged = kernel.app(observation.contextual.observe, plugged)?;
+    let observed_program = kernel.app(observation.contextual.observe, program)?;
+    let observe_refl = kernel.syn_refl(None, SynRel::Syn, observation.contextual.observe)?;
+    let lifted = kernel.syn_congr(
+        None,
+        SynRel::Conv,
+        None,
+        None,
+        observed_plugged,
+        observed_program,
+        &[observe_refl, plug_conversion],
+    )?;
+    kernel.union_syn_fact(lifted)?;
+    let (rebuilt_observed_program, reduced_observation, observation_beta) =
+        reduce_checked_unary_lambda(kernel, observation.contextual.observe, program)?;
+    let same_observed_program = covalence_logic_hol_derived::join_same_syntax(
+        kernel,
+        observed_program,
+        rebuilt_observed_program,
+    )?;
+    let same_canonical = join_alpha_equivalent(kernel, reduced_observation, canonical)?;
+    let conversion = kernel.syn_trans(None, lifted, same_observed_program)?;
+    let conversion = kernel.syn_trans(None, conversion, observation_beta)?;
+    let conversion = kernel.syn_trans(None, conversion, same_canonical)?;
+    kernel.union_syn_fact(conversion)?;
+    kernel.convert_conclusions(aligned, canonical, observed_plugged)?;
+    Ok(aligned)
+}
+
+fn reduce_checked_unary_lambda(
+    kernel: &mut Kernel,
+    function: Ref,
+    argument: Ref,
+) -> Result<(Ref, Ref, SynFactId), ObservationProofError> {
+    let mut lambda = kernel
+        .arena()
+        .children(function)
+        .ok_or(KernelError::InvalidTheoremRule {
+            rule: "closed observation lambda",
+        })?;
+    let binder = lambda.next().ok_or(KernelError::InvalidTheoremRule {
+        rule: "closed observation lambda binder",
+    })?;
+    let body = lambda.next().ok_or(KernelError::InvalidTheoremRule {
+        rule: "closed observation lambda body",
+    })?;
+    drop(lambda);
+    let application = kernel.app(function, argument)?;
+    let reduced = substitute(kernel, binder, argument, body)?;
+    let beta = kernel.tm_beta_fact(None, application, reduced.fact)?;
+    kernel.union_syn_fact(beta)?;
+    Ok((application, reduced.output, beta))
+}
+
+fn reduce_checked_binary_lambda(
+    kernel: &mut Kernel,
+    function: Ref,
+    left: Ref,
+    right: Ref,
+) -> Result<(Ref, Ref, SynFactId), ObservationProofError> {
+    let (partial, inner, outer) = reduce_checked_unary_lambda(kernel, function, left)?;
+    let application = kernel.app(partial, right)?;
+    let reduced_application = kernel.app(inner, right)?;
+    let right_refl = kernel.syn_refl(None, SynRel::Syn, right)?;
+    let lifted = kernel.syn_congr(
+        None,
+        SynRel::Conv,
+        None,
+        None,
+        application,
+        reduced_application,
+        &[outer, right_refl],
+    )?;
+    kernel.union_syn_fact(lifted)?;
+    let (inner_application, reduced, inner_beta) =
+        reduce_checked_unary_lambda(kernel, inner, right)?;
+    let same_middle = covalence_logic_hol_derived::join_same_syntax(
+        kernel,
+        reduced_application,
+        inner_application,
+    )?;
+    let prefix = kernel.syn_trans(None, lifted, same_middle)?;
+    let conversion = kernel.syn_trans(None, prefix, inner_beta)?;
+    kernel.union_syn_fact(conversion)?;
+    Ok((application, reduced, conversion))
+}
+
 fn align_observation_fact(
     kernel: &mut Kernel,
     theorem: ThmId,
@@ -867,6 +1120,12 @@ pub enum ObservationProofError {
         /// Underlying checked alpha-equivalence failure.
         source: SyntaxError,
     },
+    /// Checked capture-avoiding beta reduction failed.
+    #[snafu(display("could not reduce a closed observation context: {source}"))]
+    Substitute {
+        /// Underlying checked substitution failure.
+        source: ModelError,
+    },
     /// An admissibility theorem did not prove the required positive fact.
     #[snafu(display("could not align an admissibility theorem: {source}"))]
     Reachability {
@@ -884,6 +1143,12 @@ impl From<ForallError> for ObservationProofError {
 impl From<SyntaxError> for ObservationProofError {
     fn from(source: SyntaxError) -> Self {
         Self::Syntax { source }
+    }
+}
+
+impl From<ModelError> for ObservationProofError {
+    fn from(source: ModelError) -> Self {
+        Self::Substitute { source }
     }
 }
 
@@ -1215,6 +1480,14 @@ pub struct EvidenceScope {
 }
 
 impl EvidenceScope {
+    /// Creates a scope from exact signed semantic assumptions.
+    #[must_use]
+    pub fn signed(assumptions: &[Lit]) -> Self {
+        Self {
+            allowed: Arc::from(assumptions),
+        }
+    }
+
     /// Creates a scope containing positive semantic assumptions.
     #[must_use]
     pub fn positive(assumptions: &[Ref]) -> Self {
@@ -1871,6 +2144,56 @@ mod tests {
     }
 
     #[test]
+    fn closed_calls_assert_observation_proves_true_distinct_from_false() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let value = kernel.ty_fv(1, star).unwrap();
+        let binary_tail = kernel.ty_arr(value, bool_ty).unwrap();
+        let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
+        let starts = kernel.tm_fv(10, binary_ty).unwrap();
+        let steps = kernel.tm_fv(11, binary_ty).unwrap();
+        let calls = kernel.tm_fv(12, binary_ty).unwrap();
+        let true_program = kernel.tm_fv(13, value).unwrap();
+        let false_program = kernel.tm_fv(14, value).unwrap();
+        let assert_function = kernel.tm_fv(15, value).unwrap();
+        let reachability = AssertionReachability {
+            program_ty: value,
+            state_ty: value,
+            bool_ty,
+            starts,
+            steps,
+            calls,
+        };
+        let true_calls = reachability
+            .calls_assert(&mut kernel, true_program, assert_function)
+            .unwrap();
+        let false_calls = reachability
+            .calls_assert(&mut kernel, false_program, assert_function)
+            .unwrap();
+        let true_fact = kernel.identity(positive(true_calls)).unwrap();
+        let false_fact = kernel.identity(positive(false_calls).negated()).unwrap();
+        let observation = reachability
+            .closed_program_observation(&mut kernel, assert_function)
+            .unwrap();
+
+        let distinct = observation
+            .prove_distinct(
+                &mut kernel,
+                true_program,
+                false_program,
+                true_fact,
+                false_fact,
+            )
+            .unwrap();
+
+        assert!(!distinct.holds);
+        EvidenceScope::signed(&[positive(true_calls), positive(false_calls).negated()])
+            .check(&kernel, distinct)
+            .unwrap();
+    }
+
+    #[test]
     fn contextual_function_replacement_preserves_module_equivalence() {
         let mut kernel = Kernel::new();
         let star = kernel.star().unwrap();
@@ -1912,13 +2235,7 @@ mod tests {
         let equivalence_fact = kernel.identity(positive(equivalence)).unwrap();
 
         let sound = functions
-            .prove_replacement_congruence(
-                &mut kernel,
-                equivalence_fact,
-                replacement,
-                left,
-                right,
-            )
+            .prove_replacement_congruence(&mut kernel, equivalence_fact, replacement, left, right)
             .unwrap();
 
         EvidenceScope::positive(&[equivalence])

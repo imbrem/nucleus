@@ -102,6 +102,13 @@ witness states, it derives the nested existential `callsAssert` proposition,
 preserves every premise, and canonicalizes fresh binders through checked alpha
 equivalence. A mismatched witness fact is rejected transactionally.
 
+`AssertionReachability::closed_program_observation` turns that predicate into
+contextual equivalence with a literal HOL identity context and premise-free
+admissibility. `ClosedProgramObservation::prove_distinct` consequently derives
+`not (TRUE approximately FALSE)` from positive `callsAssert(TRUE)` and negative
+`callsAssert(FALSE)` evidence while retaining exactly their semantic premises;
+the identity-context and beta-transport steps introduce no assumptions.
+
 `SpecTecValueBuilder` is the corresponding generic structural API. It composes
 recorded number, list, optional, tuple, and tagged-case operations immutably and
 transactionally; `empty_wasm_module` and `forwarding_wasm_module` are
