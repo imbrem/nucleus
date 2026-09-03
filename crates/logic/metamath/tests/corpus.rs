@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use covalence_logic_metamath::axiom_sets::{GT, HOL, IZF, PA, PROP, ZF, ZFC};
 use covalence_logic_metamath::{FileResolver, parse_with_resolver, verify_all};
 
 const DATABASES: &[&str] = &[
@@ -32,5 +33,17 @@ fn upstream_databases_parse_and_validate() {
             .unwrap_or_else(|error| panic!("{filename} did not parse: {error}"));
         verify_all(&database)
             .unwrap_or_else(|error| panic!("{filename} did not validate: {error}"));
+        let named_sets = match *filename {
+            "set.mm" => &[&PROP, &ZF, &ZFC, &GT][..],
+            "iset.mm" => &[&IZF][..],
+            "peano.mm" => &[&PA][..],
+            "hol.mm" => &[&HOL][..],
+            _ => &[],
+        };
+        for set in named_sets {
+            set.resolve(&database).unwrap_or_else(|error| {
+                panic!("{} did not resolve against {filename}: {error}", set.name)
+            });
+        }
     }
 }
