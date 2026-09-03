@@ -637,10 +637,13 @@ fn exact_source_definition_lowers_from_selector_and_schema() {
             .equivalent(kernel.classifier(definition.equation).unwrap(), bool_ty)
             .unwrap()
     );
-    let instance = definition
-        .specialize(&mut kernel, bool_ty, &[x], x)
+    let production_witnesses = vec![x; definition.case_artifacts[0].production_binders.len()];
+    let inferred_result = definition
+        .production_result(&mut kernel, 0, &[x], &production_witnesses)
         .unwrap();
-    let production_witnesses = vec![x; instance.case_artifacts[0].production_binders.len()];
+    let instance = definition
+        .specialize(&mut kernel, bool_ty, &[x], inferred_result)
+        .unwrap();
     let production_obligations = instance
         .production_obligations(&mut kernel, 0, &production_witnesses)
         .unwrap();
@@ -1782,16 +1785,54 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
     let exported = kernel.tm_fv(name_base + 3, binary_ty).unwrap();
     let host_call = kernel.tm_fv(name_base + 4, binary_ty).unwrap();
+    let [store_id] = document.schema.named(IlKind::Definition, "store") else {
+        panic!("expected one $store definition")
+    };
+    let store_definition = document.semantics.definitions().get(store_id).unwrap();
+    let [invoke_id] = document.schema.named(IlKind::Definition, "invoke") else {
+        panic!("expected one $invoke definition")
+    };
+    let invoke_definition = document.semantics.definitions().get(invoke_id).unwrap();
     let witnesses = (name_base + 5..name_base + 14)
         .map(|name| kernel.tm_fv(name, value).unwrap())
         .collect::<Vec<_>>();
+    let initialized = builder
+        .case_fields(&mut kernel, "%;%", &[witnesses[7], witnesses[4]])
+        .unwrap();
+    let invoke_binders = &invoke_definition.case_artifacts[0].production_binders;
+    let invoke_name = kernel
+        .fresh_name(&[
+            forwarding,
+            witnesses[5],
+            witnesses[6],
+            witnesses[7],
+            invoke_definition.equation,
+        ])
+        .unwrap();
+    let invoke_witnesses = invoke_binders
+        .iter()
+        .enumerate()
+        .map(|(offset, &binder)| {
+            let name = invoke_name + u64::try_from(offset).unwrap();
+            let classifier = kernel.classifier(binder).unwrap();
+            kernel.tm_fv(name, classifier).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let initial = invoke_definition
+        .production_result(
+            &mut kernel,
+            0,
+            &[witnesses[7], witnesses[5], witnesses[6]],
+            &invoke_witnesses,
+        )
+        .unwrap();
     let start = AdmissibleStartWitness {
         program: forwarding,
-        initial: witnesses[0],
+        initial,
         store: witnesses[1],
         externs: witnesses[2],
         instantiation_start: witnesses[3],
-        initialized: witnesses[4],
+        initialized,
         function: witnesses[5],
         arguments: witnesses[6],
         initialized_store: witnesses[7],
@@ -1804,10 +1845,6 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             .identity(covalence_logic_hol::Lit::positive(proposition.get()))
             .unwrap()
     });
-    let [store_id] = document.schema.named(IlKind::Definition, "store") else {
-        panic!("expected one $store definition")
-    };
-    let store_definition = document.semantics.definitions().get(store_id).unwrap();
     let store_instance = store_definition
         .specialize(
             &mut kernel,
@@ -1817,12 +1854,14 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         )
         .unwrap();
     assert_eq!(store_instance.cases.len(), 1);
-    let store_witnesses = store_instance.case_artifacts[0].production_binders.clone();
+    assert_eq!(store_instance.case_artifacts[0].production_binders.len(), 2);
+    let store_witnesses = vec![start.initialized_store, witnesses[4]];
     let store_conditions = store_instance
         .production_obligations(&mut kernel, 0, &store_witnesses)
         .unwrap();
     let (store_condition_facts, store_remaining) =
         elementary_condition_facts(&mut kernel, &store_conditions);
+    assert!(store_remaining.len() < store_conditions.len());
     let store_branch = store_instance
         .prove_production(
             &mut kernel,
@@ -1847,10 +1886,6 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         .unwrap()
         .theorem;
 
-    let [invoke_id] = document.schema.named(IlKind::Definition, "invoke") else {
-        panic!("expected one $invoke definition")
-    };
-    let invoke_definition = document.semantics.definitions().get(invoke_id).unwrap();
     let invoke_instance = invoke_definition
         .specialize(
             &mut kernel,
@@ -1860,12 +1895,12 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         )
         .unwrap();
     assert_eq!(invoke_instance.cases.len(), 1);
-    let invoke_witnesses = invoke_instance.case_artifacts[0].production_binders.clone();
     let invoke_conditions = invoke_instance
         .production_obligations(&mut kernel, 0, &invoke_witnesses)
         .unwrap();
     let (invoke_condition_facts, invoke_remaining) =
         elementary_condition_facts(&mut kernel, &invoke_conditions);
+    assert!(invoke_remaining.len() < invoke_conditions.len());
     let invoke_branch = invoke_instance
         .prove_production(
             &mut kernel,

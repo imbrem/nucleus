@@ -160,6 +160,84 @@ pub struct RelationalCaseArtifact {
 }
 
 impl RelationalDefinition {
+    /// Constructs a clause's lowered right-hand-side result at chosen values.
+    ///
+    /// The result expression is retained as the right operand of the final
+    /// production condition `formal_result = result`. This method substitutes
+    /// concrete declaration inputs and clause witnesses without evaluating the
+    /// expression. Using the returned term as the graph result makes that final
+    /// condition reflexive by construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a missing case, mismatched input or witness arity,
+    /// malformed retained result equality, or failed checked substitution.
+    /// `kernel` is unchanged on failure.
+    pub fn production_result(
+        &self,
+        kernel: &mut Kernel,
+        index: usize,
+        inputs: &[Ref],
+        witnesses: &[Ref],
+    ) -> Result<Ref, DefinitionProofError> {
+        if inputs.len() != self.formal_inputs.len() {
+            return Err(DefinitionProofError::Arity {
+                expected: self.formal_inputs.len(),
+                actual: inputs.len(),
+            });
+        }
+        let artifact = self
+            .case_artifacts
+            .get(index)
+            .ok_or(DefinitionProofError::MissingCase { index })?;
+        if witnesses.len() != artifact.production_binders.len() {
+            return Err(DefinitionProofError::WitnessArity {
+                expected: artifact.production_binders.len(),
+                actual: witnesses.len(),
+            });
+        }
+        let result_condition = artifact
+            .production_conditions
+            .last()
+            .copied()
+            .ok_or(DefinitionProofError::ConditionShape)?;
+        if kernel.arena().tag(result_condition) != Some(Tag::Tm(covalence_logic_hol::TmTag::Eq)) {
+            return Err(DefinitionProofError::ConditionShape);
+        }
+        let children = kernel
+            .arena()
+            .children(result_condition)
+            .ok_or(DefinitionProofError::ConditionShape)?
+            .collect::<Vec<_>>();
+        let [_operand_ty, formal_result, result] = children.as_slice() else {
+            return Err(DefinitionProofError::ConditionShape);
+        };
+        if *formal_result != self.formal_result {
+            return Err(DefinitionProofError::ConditionShape);
+        }
+        let mut staged = kernel.fork();
+        let mut result = *result;
+        for (variable, value) in self
+            .formal_inputs
+            .iter()
+            .copied()
+            .zip(inputs.iter().copied())
+            .chain(
+                artifact
+                    .production_binders
+                    .iter()
+                    .copied()
+                    .zip(witnesses.iter().copied()),
+            )
+        {
+            result = substitute(&mut staged, variable, value, result)
+                .map_err(|source| DefinitionProofError::Substitute { source })?
+                .output;
+        }
+        *kernel = staged;
+        Ok(result)
+    }
+
     /// Specializes every retained case at concrete graph inputs and result.
     ///
     /// # Errors
