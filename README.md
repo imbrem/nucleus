@@ -5,6 +5,13 @@ Other logics and computation systems can be represented and reasoned about
 inside HOL. Proving a claim made in another logic need not construct or decide
 a derivation in that logic.
 
+WebAssembly is Nucleus's first-class executable grounding. Exact Wasm bytes,
+the Wasm 3.0 semantics, and derived program propositions give tactics and
+programmers a shared workface: prove that a module never reaches a failure
+event, is deterministic or total under explicit assumptions, or refines
+another module. The same interface can ground proof checkers, abstract
+machines, and compiler transformations. See [`docs/wasm.md`](docs/wasm.md).
+
 The kernel API follows the LCF pattern: callers can use theorem handles, but
 only the kernel can create valid ones. Parsers, tactics, solvers, and importers
 propose work for the kernel to check. Proof-producing tools are intended to run
@@ -23,6 +30,7 @@ checked-in Lean module should build continuously.
 - `lexicons/`: portable leaf-object schemas
 - `crates/proof/`, `crates/repl/`, `crates/browser/`: proof guests and user surfaces
 - `apps/docs/`: generated repository documentation
+- `docs/wasm.md`: the Wasm-first executable-grounding direction
 - `docs/research/`: scoped research notes, not a single normative roadmap
 - `.agents/skills/`: task-specific contributor guidance
 
