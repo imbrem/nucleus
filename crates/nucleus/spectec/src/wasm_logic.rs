@@ -3,9 +3,10 @@
 use covalence_data_basic::Symbol;
 use covalence_data_spectec::IlKind;
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref, builtin::Op2};
+use covalence_logic_hol::{Kernel, KernelError, Ref, SynRel, builtin::Op2};
+use covalence_logic_hol_derived::{ModelError, SyntaxError, join_alpha_equivalent, substitute};
 
-use crate::{AssertionReachability, ParameterizedDocument};
+use crate::{AssertionReachability, Evidence, ParameterizedDocument};
 
 /// Immutable view for composing structural `SpecTec` values in HOL.
 ///
@@ -296,6 +297,79 @@ impl SpecTecExecution {
         Ok(pair)
     }
 
+    /// Converts a checked unary `Steps(pair(before, after))` fact to this
+    /// adapter's curried `steps before after` view.
+    ///
+    /// The conversion beta-reduces both checked lambdas using explicit
+    /// capture-avoiding substitution certificates. All theorem premises are
+    /// preserved.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `relation_fact` proves the exact lowered
+    /// relation application for `before` and `after`, or a checked
+    /// substitution, syntax alignment, or theorem conversion fails. `kernel`
+    /// is unchanged on failure.
+    pub fn curry_steps_fact(
+        self,
+        kernel: &mut Kernel,
+        before: Ref,
+        after: Ref,
+        relation_fact: Evidence,
+    ) -> Result<Evidence, WasmLogicError> {
+        if !relation_fact.holds {
+            return Err(WasmLogicError::StepFact);
+        }
+        let mut staged = kernel.fork();
+        let mut outer_lambda = staged
+            .arena()
+            .children(self.steps)
+            .ok_or(WasmLogicError::StepFact)?;
+        let before_binder = outer_lambda.next().ok_or(WasmLogicError::StepFact)?;
+        let outer_body = outer_lambda.next().ok_or(WasmLogicError::StepFact)?;
+        drop(outer_lambda);
+        let outer_application = staged.app(self.steps, before)?;
+        let outer_reduced = substitute(&mut staged, before_binder, before, outer_body)
+            .map_err(|source| WasmLogicError::Substitute { source })?;
+        let outer_beta = staged.tm_beta_fact(None, outer_application, outer_reduced.fact)?;
+        staged.union_syn_fact(outer_beta)?;
+
+        let curried = staged.app(outer_application, after)?;
+        let reduced_application = staged.app(outer_reduced.output, after)?;
+        let after_refl = staged.syn_refl(None, SynRel::Syn, after)?;
+        let lifted_outer_beta = staged.syn_congr(
+            None,
+            SynRel::Conv,
+            None,
+            None,
+            curried,
+            reduced_application,
+            &[outer_beta, after_refl],
+        )?;
+        staged.union_syn_fact(lifted_outer_beta)?;
+        let mut inner_lambda = staged
+            .arena()
+            .children(outer_reduced.output)
+            .ok_or(WasmLogicError::StepFact)?;
+        let after_binder = inner_lambda.next().ok_or(WasmLogicError::StepFact)?;
+        let inner_body = inner_lambda.next().ok_or(WasmLogicError::StepFact)?;
+        drop(inner_lambda);
+        let inner_reduced = substitute(&mut staged, after_binder, after, inner_body)
+            .map_err(|source| WasmLogicError::Substitute { source })?;
+        let inner_beta = staged.tm_beta_fact(None, reduced_application, inner_reduced.fact)?;
+        staged.union_syn_fact(inner_beta)?;
+        join_alpha_equivalent(&mut staged, relation_fact.proposition, inner_reduced.output)
+            .map_err(|source| WasmLogicError::Syntax { source })?;
+        let theorem = staged.copy_theorem(relation_fact.theorem)?;
+        staged.convert_conclusions(theorem, relation_fact.proposition, curried)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: curried,
+            theorem,
+            holds: true,
+        })
+    }
+
     /// Builds the generic assertion-reachability schema from this exact
     /// `SpecTec` execution adapter and the two remaining structural views.
     ///
@@ -464,12 +538,33 @@ pub enum WasmLogicError {
         /// Required stable operation label.
         label: Symbol,
     },
+    /// A supplied fact is not a positive lowered `Steps` relation fact.
+    #[snafu(display("supplied SpecTec Steps fact has the wrong shape"))]
+    StepFact,
     /// A checked HOL construction failed.
     #[snafu(display("could not construct SpecTec program-logic adapter: {source}"))]
     Kernel {
         /// Underlying checked failure.
         source: KernelError,
     },
+    /// Checked capture-avoiding substitution failed.
+    #[snafu(display("could not beta-reduce the SpecTec Steps adapter: {source}"))]
+    Substitute {
+        /// Underlying derived substitution failure.
+        source: ModelError,
+    },
+    /// Checked syntax alignment failed.
+    #[snafu(display("could not align a SpecTec Steps fact: {source}"))]
+    Syntax {
+        /// Underlying derived syntax failure.
+        source: SyntaxError,
+    },
+}
+
+impl From<KernelError> for WasmLogicError {
+    fn from(source: KernelError) -> Self {
+        Self::Kernel { source }
+    }
 }
 
 /// Constructs the structural HOL term for the empty WebAssembly module.

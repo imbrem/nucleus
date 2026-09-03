@@ -1641,6 +1641,34 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         .evidence_scope(&[reflexive_antecedent])
         .check(&kernel, reflexive_steps)
         .unwrap();
+    let reflexive_pair = kernel
+        .arena()
+        .children(reflexive_steps.proposition)
+        .unwrap()
+        .nth(1)
+        .unwrap();
+    let mut pair_children = kernel.arena().children(reflexive_pair).unwrap();
+    let reflexive_partial_pair = pair_children.next().unwrap();
+    let reflexive_after = pair_children.next().unwrap();
+    drop(pair_children);
+    let reflexive_before = kernel
+        .arena()
+        .children(reflexive_partial_pair)
+        .unwrap()
+        .nth(1)
+        .unwrap();
+    let curried_reflexive_steps = execution
+        .curry_steps_fact(
+            &mut kernel,
+            reflexive_before,
+            reflexive_after,
+            reflexive_steps,
+        )
+        .unwrap();
+    document
+        .evidence_scope(&[reflexive_antecedent])
+        .check(&kernel, curried_reflexive_steps)
+        .unwrap();
     let specialized_steps = document
         .semantics
         .theory()
