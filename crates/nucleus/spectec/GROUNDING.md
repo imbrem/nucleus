@@ -120,7 +120,8 @@ reflexivity, symmetry, and transitivity theorems establish the equivalence
 laws, and a checked discriminator refutes equivalence when one side alone is
 admissible. Equivalence is relative to the observation predicate supplied by
 the caller; a complete Wasm observation suite belongs in that parameter. The
-checked replacement theorem proves that replacing a function by an equivalent
-function preserves the supplied module contextual equivalence. This theorem
-is structural and premise-free; it does not depend on an evaluator or on the
-pending concrete representation laws.
+checked replacement rule specializes supplied function-equivalence evidence,
+and the closed replacement-soundness theorem proves directly that function
+equivalence implies equivalence of the replaced modules. The latter theorem
+is structural and premise-free; neither result depends on an evaluator or on
+the pending concrete representation laws.

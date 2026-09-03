@@ -1600,6 +1600,42 @@ impl FunctionObservation {
             holds: true,
         })
     }
+
+    /// Proves the closed replacement-soundness implication.
+    ///
+    /// The result is
+    /// `left ≈function right -> replace replacement left ≈module replace replacement right`.
+    /// Unlike [`Self::prove_replacement_congruence`], this method requires no
+    /// input theorem: it assumes function equivalence inside HOL, specializes
+    /// that assumption at `replacement`, and discharges the assumption with
+    /// checked implication introduction. The returned theorem has no premises.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if an operand has an incompatible classifier or a
+    /// checked construction, specialization, alignment, or implication step
+    /// fails. `kernel` is unchanged on failure.
+    pub fn prove_replacement_soundness(
+        self,
+        kernel: &mut Kernel,
+        replacement: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        let function_equivalence = self.equivalent(&mut staged, left, right)?;
+        let assumed = staged.identity(positive(function_equivalence))?;
+        let congruence =
+            self.prove_replacement_congruence(&mut staged, assumed, replacement, left, right)?;
+        let implication = staged.op2(Op2::Imp, function_equivalence, congruence.proposition)?;
+        let theorem = staged.imp_right(congruence.theorem, positive(implication))?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: implication,
+            theorem,
+            holds: true,
+        })
+    }
 }
 
 fn prove_identity_admissible(
@@ -3107,6 +3143,23 @@ mod tests {
             .check(&kernel, sound)
             .unwrap();
         assert_eq!(kernel.classifier(sound.proposition).unwrap(), bool_ty);
+
+        let closed_sound = functions
+            .prove_replacement_soundness(&mut kernel, replacement, left, right)
+            .unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, closed_sound)
+            .unwrap();
+        let established_sound = closed_sound.close_premises(&mut kernel).unwrap();
+        assert_exact(&kernel, established_sound, true);
+
+        let before = kernel.arena().clone();
+        assert!(
+            functions
+                .prove_replacement_soundness(&mut kernel, replacement, replacement, right)
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
 
         let reverse_sound = functions
             .prove_replacement_congruence(&mut kernel, symmetric.theorem, replacement, right, left)
