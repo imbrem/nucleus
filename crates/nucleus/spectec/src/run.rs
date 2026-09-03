@@ -1383,6 +1383,81 @@ impl ClosedRunContext {
             holds: true,
         })
     }
+
+    /// Derives the bare closed-program equation for an arbitrary property and
+    /// one sound transformation.
+    ///
+    /// Identity linking and both admissibility facts are discharged by this
+    /// closed context's checked definitions. The result is the canonical
+    /// observation equality with definitionally identity plug applications.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `sound` was proved under this exact closed
+    /// context, `property` belongs to its run domain, and all checked
+    /// preservation, beta-conversion, or alignment steps succeed. `kernel` is
+    /// unchanged on failure.
+    pub fn prove_preserves_property(
+        self,
+        kernel: &mut Kernel,
+        sound: SoundRunTransformation,
+        property: RunProperty,
+        module: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let transformation = sound.transformation;
+        if transformation.context != self.context {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "closed context/transformation mismatch",
+            }
+            .into());
+        }
+        self.context.require_property(property)?;
+        let transformed = transformation.sound_application(&mut staged, module)?;
+        let left_admissible = self.prove_admissible(&mut staged, module)?;
+        let right_admissible = self.prove_admissible(&mut staged, transformed)?;
+        let preserved = sound.prove_preserves_property_in_context(
+            &mut staged,
+            property,
+            module,
+            self.identity_context,
+            left_admissible,
+            right_admissible,
+        )?;
+        *kernel = staged;
+        Ok(preserved)
+    }
+
+    /// Derives the bare closed-program equation for one quantified behavior
+    /// observation and sound transformation.
+    ///
+    /// This is the direct closed-context preservation interface when
+    /// `observation` denotes assertion reachability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`Self::prove_preserves_property`], or if `observation` belongs to a
+    /// different run domain. `kernel` is unchanged on failure.
+    pub fn prove_preserves(
+        self,
+        kernel: &mut Kernel,
+        sound: SoundRunTransformation,
+        observation: RunObservation,
+        quantifier: BehaviorQuantifier,
+        module: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        self.context.require_observation(observation)?;
+        let property = observation.property_avoiding(
+            &mut staged,
+            quantifier,
+            &[module, sound.transformation.transform],
+        )?;
+        let preserved = self.prove_preserves_property(&mut staged, sound, property, module)?;
+        *kernel = staged;
+        Ok(preserved)
+    }
 }
 
 impl RunTransformation {
@@ -6553,6 +6628,18 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, closed_sound_identity.soundness())
+            .unwrap();
+        let closed_identity_preserves_may = closed_context
+            .prove_preserves(
+                &mut kernel,
+                closed_sound_identity,
+                observation,
+                BehaviorQuantifier::May,
+                module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, closed_identity_preserves_may)
             .unwrap();
         let identity_transformation = context
             .identity_transformation(&mut kernel, profile)

@@ -67,7 +67,9 @@ program equation therefore requires an admissible identity context.
 `RunDomain::closed_context` supplies that canonical context generically: its
 linker is definitionally the identity, its admissibility predicate is
 definitionally true, and `ClosedRunContext::prove_admissible` derives the
-required fact without premises.
+required fact without premises. Its `prove_preserves` operation packages those
+steps and returns the canonical observation equation whose plug applications
+are definitionally identities.
 That equality checkedly transports either positive or negative observation
 evidence from the original closed program to the transformed one. Negative
 transport is derived by equality symmetry and contradiction rather than by an
