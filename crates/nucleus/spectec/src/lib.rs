@@ -81,8 +81,8 @@ pub use type_definition::{RelationalTypeDefinition, relational_type_declaration}
 pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
 pub use value_algebra::{
     FiniteSequenceLaw, ProvedStructuralFieldPattern, StructuralConstructor,
-    StructuralConstructorLaws, StructuralFieldPattern, StructuralSequenceAlgebra,
-    StructuralValueAlgebra, StructuralValueProofError,
+    StructuralConstructorLaws, StructuralFieldPattern, StructuralProjectionLaw,
+    StructuralSequenceAlgebra, StructuralValueAlgebra, StructuralValueProofError,
 };
 pub use wasm_logic::{
     AdmissibleStartFacts, AdmissibleStartWitness, ExportedFunctionFacts, ExportedFunctionView,

@@ -71,6 +71,42 @@ pub struct ProvedStructuralFieldPattern {
     evidence: Evidence,
 }
 
+/// Exact projection law for one field of a structural constructor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StructuralProjectionLaw {
+    constructor: StructuralConstructor,
+    selector: Ref,
+    selected: usize,
+    binders: Arc<[Ref]>,
+    proposition: Ref,
+}
+
+impl StructuralProjectionLaw {
+    /// Returns the record-like constructor covered by the law.
+    #[must_use]
+    pub const fn constructor(&self) -> StructuralConstructor {
+        self.constructor
+    }
+
+    /// Returns the checked unary selector operation.
+    #[must_use]
+    pub const fn selector(&self) -> Ref {
+        self.selector
+    }
+
+    /// Returns the selected constructor-field index.
+    #[must_use]
+    pub const fn selected(&self) -> usize {
+        self.selected
+    }
+
+    /// Returns `forall fields. selector(constructor(fields)) = fields[selected]`.
+    #[must_use]
+    pub const fn proposition(&self) -> Ref {
+        self.proposition
+    }
+}
+
 impl ProvedStructuralFieldPattern {
     /// Returns the exact immutable pattern proved by the evidence.
     #[must_use]
@@ -752,6 +788,148 @@ impl StructuralValueAlgebra {
         Ok(proved)
     }
 
+    /// Constructs the exact projection law for one structural field.
+    ///
+    /// The proposition is
+    /// `forall fields. selector(constructor(fields)) = fields[selected]`.
+    /// This method constructs syntax only and does not assert that the selector
+    /// has this meaning.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `constructor` belongs to this algebra,
+    /// `selector` has classifier `value -> value`, `selected` is in range, and
+    /// checked proposition construction succeeds. `kernel` is unchanged on
+    /// failure.
+    pub fn projection_law(
+        self,
+        kernel: &mut Kernel,
+        constructor: StructuralConstructor,
+        selector: Ref,
+        selected: usize,
+    ) -> Result<StructuralProjectionLaw, KernelError> {
+        let mut staged = kernel.fork();
+        self.require_constructor(&mut staged, constructor)?;
+        if selected >= constructor.arity {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "structural projection index",
+            });
+        }
+        let expected_selector = staged.ty_arr(self.value_ty, self.value_ty)?;
+        let actual_selector = staged.classifier(selector)?;
+        join_same_syntax(&mut staged, actual_selector, expected_selector).map_err(|_| {
+            KernelError::ClassifierMismatch {
+                expected: expected_selector,
+                actual: actual_selector,
+            }
+        })?;
+        let first =
+            staged.fresh_name(&[self.value_ty, self.bool_ty, constructor.operation, selector])?;
+        let binders = (0..constructor.arity)
+            .map(|offset| {
+                let offset = u64::try_from(offset).map_err(|_| KernelError::TooManyNames)?;
+                staged.tm_fv(
+                    first.checked_add(offset).ok_or(KernelError::TooManyNames)?,
+                    self.value_ty,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let record = apply(&mut staged, constructor.operation, &binders)?;
+        let projected = apply(&mut staged, selector, &[record])?;
+        let equality = staged.eq(self.bool_ty, projected, binders[selected])?;
+        let proposition = binders.iter().rev().try_fold(equality, |body, &binder| {
+            staged.forall_tm(self.bool_ty, binder, body)
+        })?;
+        let law = StructuralProjectionLaw {
+            constructor,
+            selector,
+            selected,
+            binders: Arc::from(binders),
+            proposition,
+        };
+        *kernel = staged;
+        Ok(law)
+    }
+
+    /// Specializes a checked structural projection law at concrete fields.
+    ///
+    /// Every premise of `law_fact` remains visible in the resulting equality.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `fields` exactly fill `law.constructor()` and
+    /// `law_fact` positively proves `law.proposition()`, or checked universal
+    /// specialization and alignment fails. `kernel` is unchanged on failure.
+    pub fn prove_projection(
+        self,
+        kernel: &mut Kernel,
+        law: &StructuralProjectionLaw,
+        law_fact: ThmId,
+        fields: &[Ref],
+    ) -> Result<Evidence, StructuralValueProofError> {
+        if fields.len() != law.binders.len() {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "structural projection field arity",
+            }
+            .into());
+        }
+        let mut staged = kernel.fork();
+        self.require_constructor(&mut staged, law.constructor)?;
+        let source = positive_conclusion(&staged, law_fact)?;
+        let mut theorem = staged.copy_theorem(law_fact)?;
+        if source != law.proposition {
+            join_alpha_equivalent(&mut staged, source, law.proposition)?;
+            staged.convert_conclusions(theorem, source, law.proposition)?;
+        }
+        let mut roots = vec![
+            self.value_ty,
+            self.bool_ty,
+            law.constructor.operation,
+            law.selector,
+            law.proposition,
+        ];
+        roots.extend_from_slice(fields);
+        let first = staged.fresh_name(&roots)?;
+        let binders = (0..law.binders.len())
+            .map(|offset| {
+                let offset = u64::try_from(offset).map_err(|_| KernelError::TooManyNames)?;
+                staged.tm_fv(
+                    first.checked_add(offset).ok_or(KernelError::TooManyNames)?,
+                    self.value_ty,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let generic_record = apply(&mut staged, law.constructor.operation, &binders)?;
+        let generic_projection = apply(&mut staged, law.selector, &[generic_record])?;
+        let generic_equality =
+            staged.eq(self.bool_ty, generic_projection, binders[law.selected])?;
+        let refreshed = binders
+            .iter()
+            .rev()
+            .try_fold(generic_equality, |body, &binder| {
+                staged.forall_tm(self.bool_ty, binder, body)
+            })?;
+        join_alpha_equivalent(&mut staged, law.proposition, refreshed)?;
+        staged.convert_conclusions(theorem, law.proposition, refreshed)?;
+        let mut proposition = refreshed;
+        for &field in fields {
+            let specialized = forall_elim(&mut staged, theorem, field)?;
+            theorem = specialized.theorem;
+            proposition = specialized.proposition;
+        }
+        let record = apply(&mut staged, law.constructor.operation, fields)?;
+        let projected = apply(&mut staged, law.selector, &[record])?;
+        let expected = staged.eq(self.bool_ty, projected, fields[law.selected])?;
+        join_alpha_equivalent(&mut staged, proposition, expected)?;
+        staged.convert_conclusions(theorem, proposition, expected)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: expected,
+            theorem,
+            holds: true,
+        })
+    }
+
     /// Constructs the complete constructor-separation obligations for a finite
     /// vocabulary.
     ///
@@ -1148,11 +1326,29 @@ mod tests {
         EvidenceScope::positive(&[])
             .check(&kernel, proved.evidence())
             .unwrap();
+        let projection = algebra
+            .projection_law(&mut kernel, binary, unary.operation(), 1)
+            .unwrap();
+        let projection_fact = kernel
+            .identity(super::positive(projection.proposition()))
+            .unwrap();
+        let projected = algebra
+            .prove_projection(&mut kernel, &projection, projection_fact, &[other, output])
+            .unwrap();
+        EvidenceScope::positive(&[projection.proposition()])
+            .check(&kernel, projected)
+            .unwrap();
 
         let before = kernel.arena().clone();
         assert!(
             algebra
                 .field_pattern_graph(&mut kernel, binary, 2, unary)
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert!(
+            algebra
+                .prove_projection(&mut kernel, &projection, projection_fact, &[other])
                 .is_err()
         );
         assert_eq!(kernel.arena(), &before);

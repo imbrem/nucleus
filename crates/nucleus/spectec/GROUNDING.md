@@ -200,6 +200,15 @@ checked reflexivity, conjunction, existential introduction, and beta
 conversion. The positive audit uses this checked path for its concrete runtime
 export record.
 
+`StructuralProjectionLaw` covers schemas that record a unary field selector.
+It states `selector(Constructor(fields)) = fields[index]`, and checked
+specialization alpha-refreshes the universal law against later concrete fields
+before elimination. `SpecTecValueBuilder::struct_field_projection_law` resolves
+such laws only when both operations occur in the exact lowered schema. The
+pinned document does not record a `Dot("EXPORTS")` operation, so the audit
+continues to use structural reconstruction for that field rather than inventing
+a selector interpretation.
+
 Grounding therefore requires all of the following:
 
 1. A faithful HOL representation of the SpecTec value algebra, including the

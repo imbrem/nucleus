@@ -14,8 +14,8 @@ use covalence_logic_hol_derived::{
 use crate::{
     AssertionReachability, ContextualObservation, Evidence, FiniteSequenceLaw, FunctionObservation,
     ParameterizedDocument, ProvedStructuralFieldPattern, StructuralConstructor,
-    StructuralConstructorLaws, StructuralSequenceAlgebra, StructuralValueAlgebra,
-    StructuralValueProofError,
+    StructuralConstructorLaws, StructuralProjectionLaw, StructuralSequenceAlgebra,
+    StructuralValueAlgebra, StructuralValueProofError,
 };
 
 fn application_spine(kernel: &Kernel, mut value: Ref) -> (Ref, Vec<Ref>) {
@@ -555,6 +555,58 @@ impl<'a> SpecTecValueBuilder<'a> {
         let graph = staged.lam_at(graph_ty, record, by_output)?;
         *kernel = staged;
         Ok(graph)
+    }
+
+    /// Constructs the exact representation law for one record-field selector.
+    ///
+    /// The result states that applying the recorded `Dot` operation to the
+    /// exact recorded struct constructor returns the selected constructor
+    /// field. It is syntax only; callers must prove it or retain it as an
+    /// explicit representation premise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `selected` is absent or ambiguous, either recorded
+    /// operation is unavailable, or checked law construction fails. `kernel`
+    /// is unchanged on failure.
+    pub fn struct_field_projection_law(
+        self,
+        kernel: &mut Kernel,
+        fields: &[&str],
+        selected: &str,
+    ) -> Result<StructuralProjectionLaw, WasmLogicError> {
+        let mut selected_indices = fields
+            .iter()
+            .enumerate()
+            .filter_map(|(index, field)| (*field == selected).then_some(index));
+        let selected_index = selected_indices
+            .next()
+            .ok_or_else(|| WasmLogicError::Operation {
+                label: Symbol::new(selected),
+            })?;
+        if selected_indices.next().is_some() {
+            return Err(WasmLogicError::Operation {
+                label: Symbol::new(selected),
+            });
+        }
+        let mut staged = kernel.fork();
+        let constructor = self.structural_constructor(
+            &mut staged,
+            &format!("expression:Struct({fields:?})"),
+            fields.len(),
+        )?;
+        let selector = operation(
+            self.document,
+            &format!("expression:Dot({selected:?})"),
+            &[self.value_ty()],
+            self.value_ty(),
+        )?;
+        let law = self
+            .algebra()
+            .projection_law(&mut staged, constructor, selector, selected_index)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        *kernel = staged;
+        Ok(law)
     }
 
     /// Constructs a graph matching one structural record field against a
