@@ -1305,6 +1305,7 @@ fn whole_document_lowering_closes_every_declaration_constraint() {
     let document = relational_document(&mut kernel, &mut resolver, &source, &schema, &[x]).unwrap();
 
     assert_eq!(document.constraints().len(), source.declaration_count());
+    assert_eq!(document.definitions().len(), 1);
     assert_eq!(
         document.theory().constraints().len(),
         source.declaration_count()
@@ -1521,6 +1522,14 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             .declarations()
             .iter()
             .filter(|declaration| declaration.kind() == IlKind::Relation)
+            .count()
+    );
+    assert_eq!(
+        document.semantics.definitions().len(),
+        source
+            .declarations()
+            .iter()
+            .filter(|declaration| declaration.kind() == IlKind::Definition)
             .count()
     );
     assert!(!document.interpretation.is_empty());

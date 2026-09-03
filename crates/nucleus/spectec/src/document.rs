@@ -6,8 +6,8 @@ use covalence_data_spectec::{DeclarationId, IlKind};
 use covalence_logic_hol::{Kernel, Ref};
 
 use crate::{
-    HolSchema, HolTheory, RelationalRelationDefinition, RelationalResolver, Source,
-    close_hol_theory, relational_definition_declaration, relational_grammar_declaration,
+    HolSchema, HolTheory, RelationalDefinition, RelationalRelationDefinition, RelationalResolver,
+    Source, close_hol_theory, relational_definition_declaration, relational_grammar_declaration,
     relational_relation_declaration, relational_type_declaration,
 };
 
@@ -15,6 +15,7 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelationalDocumentDefinition {
     constraints: BTreeMap<DeclarationId, Ref>,
+    definitions: BTreeMap<DeclarationId, RelationalDefinition>,
     relations: BTreeMap<DeclarationId, RelationalRelationDefinition>,
     theory: HolTheory,
 }
@@ -30,6 +31,12 @@ impl RelationalDocumentDefinition {
     #[must_use]
     pub const fn theory(&self) -> &HolTheory {
         &self.theory
+    }
+
+    /// Returns the retained exact clause artifact for every definition.
+    #[must_use]
+    pub const fn definitions(&self) -> &BTreeMap<DeclarationId, RelationalDefinition> {
+        &self.definitions
     }
 
     /// Returns the checked least-family artifact for each relation declaration.
@@ -64,6 +71,7 @@ where
 {
     let mut staged = kernel.fork();
     let mut constraints = BTreeMap::new();
+    let mut definitions = BTreeMap::new();
     let mut relations = BTreeMap::new();
     let mut lowered_relations = BTreeSet::new();
     for declaration in source.declarations() {
@@ -75,11 +83,20 @@ where
                     .definition
                     .equation,
             ),
-            IlKind::Definition => Some(
-                relational_definition_declaration(&mut staged, resolver, source, schema, id, avoid)
-                    .map_err(|source| resolver.declaration_error(id, source))?
-                    .equation,
-            ),
+            IlKind::Definition => {
+                let definition = relational_definition_declaration(
+                    &mut staged,
+                    resolver,
+                    source,
+                    schema,
+                    id,
+                    avoid,
+                )
+                .map_err(|source| resolver.declaration_error(id, source))?;
+                let equation = definition.equation;
+                definitions.insert(id, definition);
+                Some(equation)
+            }
             IlKind::Grammar => Some(
                 relational_grammar_declaration(&mut staged, resolver, source, schema, id, avoid)
                     .map_err(|source| resolver.declaration_error(id, source))?
@@ -129,6 +146,7 @@ where
     *kernel = staged;
     Ok(RelationalDocumentDefinition {
         constraints,
+        definitions,
         relations,
         theory,
     })
