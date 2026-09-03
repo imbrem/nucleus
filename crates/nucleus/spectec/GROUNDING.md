@@ -53,7 +53,8 @@ of its specification, but must retain some behavior whenever the specification
 has a run. Thus refinement cannot encode partiality merely by deleting every
 result. Its checked reflexivity and transitivity derivations make this
 progress-sensitive relation a preorder without assuming anything about the
-underlying execution relation.
+underlying execution relation. Complete run equality checkedly induces
+refinement in both directions, preserving the original equality premises.
 The domain also derives explicit determinism and totality propositions.
 Totality here means that every admissible invocation has a modeled trace and
 outcome; the profile and outcome representation determine whether traps or

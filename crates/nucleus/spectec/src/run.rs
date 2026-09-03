@@ -11,8 +11,9 @@ use covalence_logic_hol::{
     builtin::{Op1, Op2},
 };
 use covalence_logic_hol_derived::{
-    EqualityError, ForallError, ModelError, equality_symmetry, equality_transitivity, forall_elim,
-    join_alpha_equivalent, join_same_syntax, substitute,
+    EqualityError, ExistsError, ForallError, ModelError, equality_symmetry, equality_transitivity,
+    forall_elim, introduce_exists, join_alpha_equivalent, join_same_syntax, open_exists,
+    substitute,
 };
 
 use crate::{ContextualObservation, Evidence};
@@ -1204,6 +1205,12 @@ pub enum RunProofError {
         /// Underlying derived universal-elimination failure.
         source: ForallError,
     },
+    /// Existential opening or introduction rejected progress transport.
+    #[snafu(transparent)]
+    Exists {
+        /// Underlying derived existential failure.
+        source: ExistsError,
+    },
     /// Capture-avoiding beta substitution failed.
     #[snafu(transparent)]
     Model {
@@ -1752,6 +1759,187 @@ impl RunDomain {
         Ok(Evidence {
             proposition: target,
             theorem,
+            holds: true,
+        })
+    }
+
+    /// Converts complete run equality into directional run refinement.
+    ///
+    /// Equality supplies both inclusion of every eligible run and the reverse
+    /// existence transport required by progress-sensitive refinement. Every
+    /// premise of `same_runs` remains visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `same_runs` positively proves equality for the
+    /// supplied modules, or checked equality, existential, universal,
+    /// propositional, or alignment work fails. `kernel` is unchanged on
+    /// failure.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    pub fn prove_same_runs_refines(
+        self,
+        kernel: &mut Kernel,
+        same_runs: Evidence,
+        profile: Ref,
+        implementation: Ref,
+        specification: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let types = self.relation.types;
+        let expected = self.same_runs(&mut staged, profile, implementation, specification)?;
+        let theorem = align_evidence(&mut staged, same_runs, expected)?;
+        let [expected_domain, _] = binary_children(&staged, expected)?;
+        let domain_theorem = staged.expand_conclusion(theorem, positive(expected), Some(false))?;
+        let runs_theorem = staged.expand_conclusion(theorem, positive(expected), Some(true))?;
+        let implementation_graphs = self.run_graphs(&mut staged, profile, implementation)?;
+        let specification_graphs = self.run_graphs(&mut staged, profile, specification)?;
+        let first = staged.fresh_name(&[
+            expected,
+            implementation_graphs.runs,
+            specification_graphs.runs,
+            types.entry,
+            types.inputs,
+            types.host,
+            types.trace,
+            types.outcome,
+        ])?;
+        let entry = staged.tm_fv(first, types.entry)?;
+        let inputs = staged.tm_fv(checked_name(first, 1)?, types.inputs)?;
+        let host = staged.tm_fv(checked_name(first, 2)?, types.host)?;
+        let trace = staged.tm_fv(checked_name(first, 3)?, types.trace)?;
+        let outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
+        let domain_variables = [entry, inputs, host];
+        let run_variables = [entry, inputs, host, trace, outcome];
+
+        let mut pointwise = staged.ap_thm(runs_theorem, entry)?;
+        for &argument in &run_variables[1..] {
+            pointwise = staged.ap_thm(pointwise.theorem, argument)?;
+        }
+        let implementation_run = pointwise.left;
+        let specification_run = pointwise.right;
+        let implementation_fact = staged.identity(positive(implementation_run))?;
+        let specification_fact = staged.eq_mp(pointwise.theorem, implementation_fact)?;
+        let inclusion_implication = staged.op2(Op2::Imp, implementation_run, specification_run)?;
+        let inclusion = staged.imp_right(specification_fact, positive(inclusion_implication))?;
+        let (inclusion_formula, inclusion) = introduce_forall(
+            &mut staged,
+            types.bool_ty,
+            &run_variables,
+            inclusion_implication,
+            inclusion,
+        )?;
+
+        let implementation_exists = quantify_exists(
+            &mut staged,
+            types.bool_ty,
+            &[trace, outcome],
+            implementation_run,
+        )?;
+        let specification_exists = quantify_exists(
+            &mut staged,
+            types.bool_ty,
+            &[trace, outcome],
+            specification_run,
+        )?;
+        let assumed_specification = staged.identity(positive(specification_exists))?;
+        let outer = open_exists(&mut staged, specification_exists)?;
+        let opened = staged.copy_theorem(assumed_specification)?;
+        staged.convert_conclusions(opened, specification_exists, outer.body)?;
+        let inner = open_exists(&mut staged, outer.body)?;
+        staged.convert_conclusions(opened, outer.body, inner.body)?;
+
+        let mut witness_equality = staged.ap_thm(runs_theorem, entry)?;
+        for &argument in &[inputs, host, outer.witness, inner.witness] {
+            witness_equality = staged.ap_thm(witness_equality.theorem, argument)?;
+        }
+        align_theorem_conclusion(
+            &mut staged,
+            opened,
+            inner.body,
+            witness_equality.right,
+            "same-runs refinement witness alignment",
+        )?;
+        let reversed = equality_symmetry(&mut staged, types.bool_ty, witness_equality.theorem)?;
+        let implementation_witness = staged.eq_mp(reversed.theorem, opened)?;
+        let implementation_at_trace = apply(
+            &mut staged,
+            implementation_graphs.runs,
+            &[entry, inputs, host, outer.witness, outcome],
+        )?;
+        let inner_exists = introduce_exists(
+            &mut staged,
+            implementation_witness,
+            outcome,
+            implementation_at_trace,
+            inner.witness,
+        )?;
+        let implementation_at_binders = apply(
+            &mut staged,
+            implementation_graphs.runs,
+            &[entry, inputs, host, trace, outcome],
+        )?;
+        let implementation_outcomes = staged.exists_tm(outcome, implementation_at_binders)?;
+        let outer_exists = introduce_exists(
+            &mut staged,
+            inner_exists.theorem,
+            trace,
+            implementation_outcomes,
+            outer.witness,
+        )?;
+        align_theorem_conclusion(
+            &mut staged,
+            outer_exists.theorem,
+            outer_exists.proposition,
+            implementation_exists,
+            "same-runs refinement progress witness alignment",
+        )?;
+        let progress_implication =
+            staged.op2(Op2::Imp, specification_exists, implementation_exists)?;
+        let progress = staged.imp_right(outer_exists.theorem, positive(progress_implication))?;
+        let (progress_formula, progress) = introduce_forall(
+            &mut staged,
+            types.bool_ty,
+            &domain_variables,
+            progress_implication,
+            progress,
+        )?;
+        let behavior_formula = staged.op2(Op2::And, inclusion_formula, progress_formula)?;
+        let behavior = staged
+            .and_right(inclusion, progress, positive(behavior_formula))
+            .map_err(|_| KernelError::InvalidTheoremRule {
+                rule: "same-runs refinement behavior conjunction",
+            })?;
+        let same_domain = staged.eq(
+            types.bool_ty,
+            implementation_graphs.domain,
+            specification_graphs.domain,
+        )?;
+        align_theorem_conclusion(
+            &mut staged,
+            domain_theorem,
+            expected_domain,
+            same_domain,
+            "same-runs refinement domain alignment",
+        )?;
+        let proposition = staged.op2(Op2::And, same_domain, behavior_formula)?;
+        let result = staged
+            .and_right(domain_theorem, behavior, positive(proposition))
+            .map_err(|_| KernelError::InvalidTheoremRule {
+                rule: "same-runs refinement conjunction",
+            })?;
+        let canonical = self.refinement(&mut staged, profile, implementation, specification)?;
+        align_theorem_conclusion(
+            &mut staged,
+            result,
+            proposition,
+            canonical,
+            "same-runs to refinement alignment",
+        )?;
+        staged.contract_theorem(result)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: canonical,
+            theorem: result,
             holds: true,
         })
     }
@@ -3321,6 +3509,45 @@ mod tests {
         EvidenceScope::positive(&[left_middle])
             .check(&kernel, symmetric)
             .unwrap();
+        let equality_refines = domain
+            .prove_same_runs_refines(
+                &mut kernel,
+                left_middle_evidence,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[left_middle])
+            .check(&kernel, equality_refines)
+            .unwrap();
+        let equality_reverse_refines = domain
+            .prove_same_runs_refines(
+                &mut kernel,
+                symmetric,
+                profile,
+                other_module,
+                module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[left_middle])
+            .check(&kernel, equality_reverse_refines)
+            .unwrap();
+        let before = kernel.arena().clone();
+        let theorem_count = kernel.thm().live_theorems().count();
+        assert!(
+            domain
+                .prove_same_runs_refines(
+                    &mut kernel,
+                    equivalence_reflexive,
+                    profile,
+                    module,
+                    other_module,
+                )
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
         let property_preserved = may_property
             .prove_same_runs_preserves(
                 &mut kernel,
