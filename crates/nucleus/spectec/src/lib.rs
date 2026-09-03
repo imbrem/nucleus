@@ -91,7 +91,9 @@ pub use wasm_logic::{
     empty_wasm_module, forwarding_wasm_module, prove_reflexive_binary_application,
     spectec_execution,
 };
-pub use wasm_theory::{WasmConfiguration, WasmFunction, WasmModule, WasmTheory};
+pub use wasm_theory::{
+    WasmConfiguration, WasmEvidenceReport, WasmFunction, WasmModule, WasmTheory,
+};
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{

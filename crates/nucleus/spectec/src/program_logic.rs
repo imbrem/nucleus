@@ -2816,6 +2816,36 @@ pub struct Evidence {
 }
 
 impl Evidence {
+    /// Returns the theorem's complete residual premise matrix as unit literals.
+    ///
+    /// This is an inspection operation only. It does not close, discharge, or
+    /// otherwise change any premise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the theorem is absent, has the wrong conclusion, or
+    /// contains a non-unit premise row.
+    pub fn premises(self, kernel: &Kernel) -> Result<Arc<[Lit]>, KernelError> {
+        require_conclusion(kernel, self)?;
+        let theorem = kernel
+            .thm()
+            .get(self.theorem)
+            .ok_or(KernelError::MissingTheorem { id: self.theorem })?;
+        theorem
+            .lhs
+            .rows()
+            .map(|row| {
+                let [literal] = row else {
+                    return Err(KernelError::InvalidTheoremRule {
+                        rule: "semantic evidence unit premise inspection",
+                    });
+                };
+                Ok(*literal)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Arc::from)
+    }
+
     /// Internalizes every theorem premise into one HOL implication.
     ///
     /// Positive and negative evidence is first represented as a positive HOL

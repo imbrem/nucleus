@@ -126,7 +126,13 @@ HOL base types. It constructs standard `calls_assert`, `never_calls_assert`,
 and contextual `sem_eqv` propositions, delegates concrete positive and negative
 proofs to the checked reachability rules, and proves the premise-free theorem
 `sem_eqv(P,Q) -> (calls_assert(P) = calls_assert(Q))` from the contextual
-definition. It neither evaluates Wasm nor decides equivalence.
+definition. Its structural module constructors use only operations recorded by
+the same lowered document. `WasmEvidenceReport` exposes the exact conclusion
+and partitions every residual premise into generated-theory and explicit
+grounding categories; its stable summary does not imply that either category
+has been discharged. Reflexivity, symmetry, and transitivity are exposed as
+checked facade proofs. The facade neither evaluates Wasm nor decides
+equivalence.
 
 `SpecTecValueBuilder` is the corresponding generic structural API. It composes
 recorded number, list, optional, tuple, and tagged-case operations immutably and

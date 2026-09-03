@@ -4,11 +4,14 @@
 //! Rust API boundary. They do not introduce distinct HOL base types, execute
 //! Wasm, or create theorem authority.
 
-use covalence_logic_hol::{Kernel, KernelError, Ref, ThmId};
+use std::sync::Arc;
+
+use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, ThmId};
 
 use crate::{
     AssertionReachability, ClosedProgramObservation, Evidence, ObservationProofError,
-    ReachabilityProofError,
+    ParameterizedDocument, ReachabilityProofError, WasmLogicError, empty_wasm_module,
+    forwarding_wasm_module,
 };
 
 /// A checked term used as a structural Wasm module.
@@ -53,13 +56,55 @@ impl WasmConfiguration {
 /// [`Self::sem_eqv`] constructs an observational-equivalence proposition; it
 /// does not decide equivalence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct WasmTheory {
+pub struct WasmTheory<'a> {
+    document: &'a ParameterizedDocument,
     reachability: AssertionReachability,
     observation: ClosedProgramObservation,
     assert_function: WasmFunction,
 }
 
-impl WasmTheory {
+/// Categorized residual assumptions of one checked Wasm theorem.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WasmEvidenceReport {
+    /// Proposition whose evidence was inspected.
+    pub proposition: Ref,
+    /// Whether the theorem proves the proposition or its negation.
+    pub holds: bool,
+    /// Premises originating in the complete generated `SpecTec` theory.
+    pub generated_theory: Arc<[Lit]>,
+    /// Explicit concrete-value representation or grounding premises.
+    pub grounding: Arc<[Lit]>,
+}
+
+impl WasmEvidenceReport {
+    /// Returns whether the theorem has no residual assumptions.
+    #[must_use]
+    pub fn is_premise_free(&self) -> bool {
+        self.generated_theory.is_empty() && self.grounding.is_empty()
+    }
+
+    /// Returns a stable compact text representation of the conclusion and all
+    /// categorized residual assumptions.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        fn literals(values: &[Lit]) -> String {
+            values
+                .iter()
+                .map(|literal| literal.get().to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+        format!(
+            "proposition={};holds={};generated_theory=[{}];grounding=[{}]",
+            self.proposition.get(),
+            self.holds,
+            literals(&self.generated_theory),
+            literals(&self.grounding),
+        )
+    }
+}
+
+impl<'a> WasmTheory<'a> {
     /// Opens a typed view of one checked assertion-reachability interpretation.
     ///
     /// # Errors
@@ -68,6 +113,7 @@ impl WasmTheory {
     /// reachability predicates. `kernel` is unchanged on failure.
     pub fn open(
         kernel: &mut Kernel,
+        document: &'a ParameterizedDocument,
         reachability: AssertionReachability,
         assert_function: Ref,
     ) -> Result<Self, KernelError> {
@@ -75,9 +121,91 @@ impl WasmTheory {
         let observation = reachability.closed_program_observation(&mut staged, assert_function)?;
         *kernel = staged;
         Ok(Self {
+            document,
             reachability,
             observation,
             assert_function: WasmFunction(assert_function),
+        })
+    }
+
+    /// Constructs the structural empty module from exact recorded `SpecTec`
+    /// constructors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a required operation is absent or checked
+    /// application fails. `kernel` is unchanged on failure.
+    pub fn empty_module(self, kernel: &mut Kernel) -> Result<WasmModule, WasmLogicError> {
+        empty_wasm_module(kernel, self.document).map(WasmModule)
+    }
+
+    /// Constructs the structural module that forwards its export to an import.
+    ///
+    /// The three name arguments are terms on the currently erased `SpecTec`
+    /// carrier. Name decoding remains an explicit future refinement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a required operation is absent, an argument has an
+    /// incompatible classifier, or checked application fails. `kernel` is
+    /// unchanged on failure.
+    pub fn forwarding_module(
+        self,
+        kernel: &mut Kernel,
+        import_module: Ref,
+        assert_name: Ref,
+        export_name: Ref,
+    ) -> Result<WasmModule, WasmLogicError> {
+        forwarding_wasm_module(
+            kernel,
+            self.document,
+            import_module,
+            assert_name,
+            export_name,
+        )
+        .map(WasmModule)
+    }
+
+    /// Inspects and categorizes every residual premise of checked evidence.
+    ///
+    /// `grounding_laws` is the explicit concrete-value boundary for this
+    /// proof. Any premise outside it and the complete generated theory is
+    /// rejected rather than silently categorized.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the evidence is malformed or contains a premise
+    /// outside the generated theory and supplied grounding boundary.
+    pub fn inspect_evidence(
+        self,
+        kernel: &Kernel,
+        evidence: Evidence,
+        grounding_laws: &[Ref],
+    ) -> Result<WasmEvidenceReport, KernelError> {
+        self.document
+            .evidence_scope(grounding_laws)
+            .check(kernel, evidence)?;
+        let premises = evidence.premises(kernel)?;
+        let theory_scope = self.document.evidence_scope(&[]);
+        let grounding_scope = crate::EvidenceScope::positive(grounding_laws);
+        let mut generated = Vec::new();
+        let mut grounding = Vec::new();
+        for premise in premises.iter().copied() {
+            if literal_matches_any(kernel, premise, theory_scope.allowed())? {
+                generated.push(premise);
+            } else if literal_matches_any(kernel, premise, grounding_scope.allowed())? {
+                grounding.push(premise);
+            } else {
+                return Err(KernelError::InvalidTheoremRule {
+                    rule: "Wasm evidence premise categorization",
+                });
+            }
+        }
+        Ok(WasmEvidenceReport {
+            proposition: evidence.proposition,
+            holds: evidence.holds,
+            generated_theory: Arc::from(generated),
+            grounding: Arc::from(grounding),
         })
     }
 
@@ -239,4 +367,93 @@ impl WasmTheory {
         self.observation
             .prove_calls_assert_preserved(kernel, left.0, right.0)
     }
+
+    /// Proves `sem_eqv(module, module)` without assumptions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a checked contextual proof step fails. `kernel` is
+    /// unchanged on failure.
+    pub fn prove_reflexive(
+        self,
+        kernel: &mut Kernel,
+        module: WasmModule,
+    ) -> Result<Evidence, ObservationProofError> {
+        self.observation
+            .contextual()
+            .prove_reflexive(kernel, module.0)
+    }
+
+    /// Reverses checked positive evidence for `sem_eqv(left, right)`.
+    ///
+    /// Every premise of `equivalence` remains visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the theorem has the expected conclusion or a
+    /// checked contextual proof step fails. `kernel` is unchanged on failure.
+    pub fn prove_symmetric(
+        self,
+        kernel: &mut Kernel,
+        equivalence: ThmId,
+        left: WasmModule,
+        right: WasmModule,
+    ) -> Result<Evidence, ObservationProofError> {
+        self.observation
+            .contextual()
+            .prove_symmetric(kernel, equivalence, left.0, right.0)
+    }
+
+    /// Composes two checked positive observational equivalence theorems.
+    ///
+    /// Every premise of both inputs remains visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the theorems prove the expected adjacent
+    /// equivalences or a checked contextual proof step fails. `kernel` is
+    /// unchanged on failure.
+    pub fn prove_transitive(
+        self,
+        kernel: &mut Kernel,
+        left_middle: ThmId,
+        middle_right: ThmId,
+        left: WasmModule,
+        middle: WasmModule,
+        right: WasmModule,
+    ) -> Result<Evidence, ObservationProofError> {
+        self.observation.contextual().prove_transitive(
+            kernel,
+            left_middle,
+            middle_right,
+            left.0,
+            middle.0,
+            right.0,
+        )
+    }
+}
+
+fn literal_matches_any(
+    kernel: &Kernel,
+    premise: Lit,
+    candidates: &[Lit],
+) -> Result<bool, KernelError> {
+    let premise_ref =
+        Ref::new(premise.magnitude().cast_signed()).ok_or(KernelError::InvalidTheoremRule {
+            rule: "Wasm evidence premise reference",
+        })?;
+    for candidate in candidates.iter().copied() {
+        if candidate.is_positive() != premise.is_positive() {
+            continue;
+        }
+        let candidate_ref = Ref::new(candidate.magnitude().cast_signed()).ok_or(
+            KernelError::InvalidTheoremRule {
+                rule: "Wasm evidence candidate reference",
+            },
+        )?;
+        if kernel.equivalent(candidate_ref, premise_ref)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

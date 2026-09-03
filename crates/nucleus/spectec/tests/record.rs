@@ -2285,9 +2285,13 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let reachability = execution
         .assertion_reachability(&mut kernel, exported, host_call)
         .unwrap();
-    let wasm = WasmTheory::open(&mut kernel, reachability, start.function).unwrap();
-    let true_module = wasm.module(&mut kernel, forwarding).unwrap();
-    let false_module = wasm.module(&mut kernel, empty_module).unwrap();
+    let wasm = WasmTheory::open(&mut kernel, &document, reachability, start.function).unwrap();
+    let true_module = wasm
+        .forwarding_module(&mut kernel, import_module, assert_name, export_name)
+        .unwrap();
+    let false_module = wasm.empty_module(&mut kernel).unwrap();
+    assert_eq!(true_module.term(), forwarding);
+    assert_eq!(false_module.term(), empty_module);
     let true_initial = wasm.configuration(start.initial);
     let final_state = start.initial;
     let true_final = wasm.configuration(final_state);
@@ -2392,6 +2396,24 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         .evidence_scope(&[])
         .check(&kernel, preservation)
         .unwrap();
+    let reflexive = wasm.prove_reflexive(&mut kernel, true_module).unwrap();
+    let symmetric = wasm
+        .prove_symmetric(&mut kernel, reflexive.theorem, true_module, true_module)
+        .unwrap();
+    let transitive = wasm
+        .prove_transitive(
+            &mut kernel,
+            reflexive.theorem,
+            symmetric.theorem,
+            true_module,
+            true_module,
+            true_module,
+        )
+        .unwrap();
+    for law in [reflexive, symmetric, transitive] {
+        let report = wasm.inspect_evidence(&kernel, law, &[]).unwrap();
+        assert!(report.is_premise_free());
+    }
     let true_not_false = wasm
         .prove_distinct(
             &mut kernel,
@@ -2420,6 +2442,34 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         .evidence_scope(&grounding)
         .check(&kernel, true_not_false)
         .unwrap();
+    let preservation_report = wasm
+        .inspect_evidence(&kernel, preservation, &grounding)
+        .unwrap();
+    assert!(preservation_report.is_premise_free());
+    let true_report = wasm
+        .inspect_evidence(&kernel, true_calls, &grounding)
+        .unwrap();
+    let false_report = wasm
+        .inspect_evidence(&kernel, false_does_not_call, &grounding)
+        .unwrap();
+    let distinction_report = wasm
+        .inspect_evidence(&kernel, true_not_false, &grounding)
+        .unwrap();
+    assert!(!true_report.generated_theory.is_empty());
+    assert!(!true_report.grounding.is_empty());
+    assert!(!false_report.grounding.is_empty());
+    assert!(!distinction_report.generated_theory.is_empty());
+    for report in [
+        preservation_report,
+        true_report,
+        false_report,
+        distinction_report,
+    ] {
+        let summary = report.summary();
+        assert!(summary.starts_with("proposition="));
+        assert!(summary.contains(";generated_theory=["));
+        assert!(summary.contains(";grounding=["));
+    }
     let closed_distinction = true_not_false.close_premises(&mut kernel).unwrap();
     assert!(
         kernel
