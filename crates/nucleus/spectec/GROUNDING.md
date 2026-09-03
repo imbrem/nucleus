@@ -71,7 +71,9 @@ quantifier; `refinement_direction` makes the required premise side explicit.
 The domain also derives explicit determinism and totality propositions.
 Totality here means that every admissible invocation has a modeled trace and
 outcome; the profile and outcome representation determine whether traps or
-divergence count. Both are reusable `RunProperty` schemas, so they compose with
+divergence count. A checked preservation theorem carries totality from a
+specification to every refining implementation using refinement's reverse
+progress clause. Both predicates are reusable `RunProperty` schemas, so they compose with
 other properties and inherit generic contextual-equivalence preservation; the
 module-specific methods are thin applications. Premise-free checked reflexivity theorems establish the first
 laws of equivalence and refinement without assuming either property; checked

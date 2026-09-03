@@ -1434,10 +1434,18 @@ impl RunDomain {
     /// Returns an error if fresh-name allocation or checked HOL construction
     /// fails. `kernel` is unchanged on failure.
     pub fn total_property(self, kernel: &mut Kernel) -> Result<RunProperty, KernelError> {
+        self.total_property_avoiding(kernel, &[])
+    }
+
+    fn total_property_avoiding(
+        self,
+        kernel: &mut Kernel,
+        avoiding: &[Ref],
+    ) -> Result<RunProperty, KernelError> {
         let mut staged = kernel.fork();
         let types = self.relation.types;
-        let (domain, runs) = property_variables(&mut staged, self, &[])?;
-        let first = staged.fresh_name(&[
+        let (domain, runs) = property_variables(&mut staged, self, avoiding)?;
+        let mut roots = vec![
             domain,
             runs,
             types.entry,
@@ -1445,7 +1453,9 @@ impl RunDomain {
             types.host,
             types.trace,
             types.outcome,
-        ])?;
+        ];
+        roots.extend_from_slice(avoiding);
+        let first = staged.fresh_name(&roots)?;
         let entry = staged.tm_fv(first, types.entry)?;
         let inputs = staged.tm_fv(checked_name(first, 1)?, types.inputs)?;
         let host = staged.tm_fv(checked_name(first, 2)?, types.host)?;
@@ -1472,10 +1482,18 @@ impl RunDomain {
     /// Returns an error if fresh-name allocation or checked HOL construction
     /// fails. `kernel` is unchanged on failure.
     pub fn deterministic_property(self, kernel: &mut Kernel) -> Result<RunProperty, KernelError> {
+        self.deterministic_property_avoiding(kernel, &[])
+    }
+
+    fn deterministic_property_avoiding(
+        self,
+        kernel: &mut Kernel,
+        avoiding: &[Ref],
+    ) -> Result<RunProperty, KernelError> {
         let mut staged = kernel.fork();
         let types = self.relation.types;
-        let (domain, runs) = property_variables(&mut staged, self, &[])?;
-        let first = staged.fresh_name(&[
+        let (domain, runs) = property_variables(&mut staged, self, avoiding)?;
+        let mut roots = vec![
             domain,
             runs,
             types.entry,
@@ -1483,7 +1501,9 @@ impl RunDomain {
             types.host,
             types.trace,
             types.outcome,
-        ])?;
+        ];
+        roots.extend_from_slice(avoiding);
+        let first = staged.fresh_name(&roots)?;
         let entry = staged.tm_fv(first, types.entry)?;
         let inputs = staged.tm_fv(checked_name(first, 1)?, types.inputs)?;
         let host = staged.tm_fv(checked_name(first, 2)?, types.host)?;
@@ -1541,7 +1561,7 @@ impl RunDomain {
     /// unchanged on failure.
     pub fn total(self, kernel: &mut Kernel, profile: Ref, module: Ref) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
-        let property = self.total_property(&mut staged)?;
+        let property = self.total_property_avoiding(&mut staged, &[profile, module])?;
         let total = property.proposition(&mut staged, profile, module)?;
         *kernel = staged;
         Ok(total)
@@ -1565,10 +1585,199 @@ impl RunDomain {
         module: Ref,
     ) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
-        let property = self.deterministic_property(&mut staged)?;
+        let property = self.deterministic_property_avoiding(&mut staged, &[profile, module])?;
         let deterministic = property.proposition(&mut staged, profile, module)?;
         *kernel = staged;
         Ok(deterministic)
+    }
+
+    /// Transports totality from a specification to an implementation that
+    /// refines it.
+    ///
+    /// Admissibility equality moves an implementation invocation to the
+    /// specification. The specification's totality supplies a run, and
+    /// refinement's reverse progress clause supplies a retained implementation
+    /// run. Both input premises remain visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `refinement` proves the displayed directional
+    /// refinement, `specification_total` positively proves totality of the
+    /// specification, and every checked equality, existential, universal,
+    /// propositional, or alignment step succeeds. `kernel` is unchanged on
+    /// failure.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    pub fn prove_refinement_preserves_total(
+        self,
+        kernel: &mut Kernel,
+        refinement: Evidence,
+        specification_total: Evidence,
+        profile: Ref,
+        implementation: Ref,
+        specification: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let types = self.relation.types;
+        let expected_refinement =
+            self.refines_runs(&mut staged, profile, implementation, specification)?;
+        let refinement_theorem = align_evidence(&mut staged, refinement, expected_refinement)?;
+        let domain_equality = staged.expand_conclusion(
+            refinement_theorem,
+            positive(expected_refinement),
+            Some(false),
+        )?;
+        let behavior = staged.expand_conclusion(
+            refinement_theorem,
+            positive(expected_refinement),
+            Some(true),
+        )?;
+        let [_, behavior_formula] = binary_children(&staged, expected_refinement)?;
+        binary_children(&staged, behavior_formula)?;
+        let progress =
+            staged.expand_conclusion(behavior, positive(behavior_formula), Some(true))?;
+
+        let implementation_graphs = self.run_graphs(&mut staged, profile, implementation)?;
+        let specification_graphs = self.run_graphs(&mut staged, profile, specification)?;
+        let specification_total_proposition = self.total(&mut staged, profile, specification)?;
+        let total = align_evidence(
+            &mut staged,
+            specification_total,
+            specification_total_proposition,
+        )?;
+        let first = staged.fresh_name(&[
+            expected_refinement,
+            specification_total_proposition,
+            implementation_graphs.domain,
+            implementation_graphs.runs,
+            specification_graphs.domain,
+            specification_graphs.runs,
+            types.entry,
+            types.inputs,
+            types.host,
+            types.trace,
+            types.outcome,
+        ])?;
+        let invocation = [
+            staged.tm_fv(first, types.entry)?,
+            staged.tm_fv(checked_name(first, 1)?, types.inputs)?,
+            staged.tm_fv(checked_name(first, 2)?, types.host)?,
+        ];
+        let trace = staged.tm_fv(checked_name(first, 3)?, types.trace)?;
+        let outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
+        let implementation_allowed = apply(&mut staged, implementation_graphs.domain, &invocation)?;
+        let specification_allowed = apply(&mut staged, specification_graphs.domain, &invocation)?;
+        let implementation_run = apply(
+            &mut staged,
+            implementation_graphs.runs,
+            &[invocation[0], invocation[1], invocation[2], trace, outcome],
+        )?;
+        let specification_run = apply(
+            &mut staged,
+            specification_graphs.runs,
+            &[invocation[0], invocation[1], invocation[2], trace, outcome],
+        )?;
+        let implementation_exists = quantify_exists(
+            &mut staged,
+            types.bool_ty,
+            &[trace, outcome],
+            implementation_run,
+        )?;
+        let specification_exists = quantify_exists(
+            &mut staged,
+            types.bool_ty,
+            &[trace, outcome],
+            specification_run,
+        )?;
+        let specification_implication =
+            staged.op2(Op2::Imp, specification_allowed, specification_exists)?;
+        let specification_direct = quantify_forall(
+            &mut staged,
+            types.bool_ty,
+            &invocation,
+            specification_implication,
+        )?;
+        let specification_reduced =
+            certify_curried_beta2(&mut staged, specification_total_proposition)?;
+        join_alpha_equivalent(&mut staged, specification_reduced, specification_direct).map_err(
+            |_| KernelError::InvalidTheoremRule {
+                rule: "refinement total specification reduction",
+            },
+        )?;
+        staged.convert_conclusions(total, specification_total_proposition, specification_direct)?;
+        let total = specialize_universal_to(
+            &mut staged,
+            total,
+            &invocation,
+            specification_implication,
+            "refinement total specification specialization",
+        )?;
+        let total = staged.expand_conclusion(total, positive(specification_implication), None)?;
+
+        let mut allowed_equality = staged.ap_thm(domain_equality, invocation[0])?;
+        for &argument in &invocation[1..] {
+            allowed_equality = staged.ap_thm(allowed_equality.theorem, argument)?;
+        }
+        let allowed_target =
+            staged.eq(types.bool_ty, implementation_allowed, specification_allowed)?;
+        align_theorem_conclusion(
+            &mut staged,
+            allowed_equality.theorem,
+            allowed_equality.equality,
+            allowed_target,
+            "refinement total admissibility alignment",
+        )?;
+        let assumed = staged.identity(positive(implementation_allowed))?;
+        let specification_allowed_fact = staged.eq_mp(allowed_equality.theorem, assumed)?;
+        let specification_exists_fact = staged.resolve(
+            specification_allowed_fact,
+            total,
+            positive(specification_allowed),
+        )?;
+        let progress_implication =
+            staged.op2(Op2::Imp, specification_exists, implementation_exists)?;
+        let progress = specialize_universal_to(
+            &mut staged,
+            progress,
+            &invocation,
+            progress_implication,
+            "refinement total progress specialization",
+        )?;
+        let progress = staged.expand_conclusion(progress, positive(progress_implication), None)?;
+        let implementation_exists_fact = staged.resolve(
+            specification_exists_fact,
+            progress,
+            positive(specification_exists),
+        )?;
+        let implementation_implication =
+            staged.op2(Op2::Imp, implementation_allowed, implementation_exists)?;
+        let proof = staged.imp_right(
+            implementation_exists_fact,
+            positive(implementation_implication),
+        )?;
+        let (direct, proof) = introduce_forall(
+            &mut staged,
+            types.bool_ty,
+            &invocation,
+            implementation_implication,
+            proof,
+        )?;
+        let implementation_total = self.total(&mut staged, profile, implementation)?;
+        let implementation_reduced = certify_curried_beta2(&mut staged, implementation_total)?;
+        align_theorem_conclusion(
+            &mut staged,
+            proof,
+            direct,
+            implementation_reduced,
+            "refinement total result alignment",
+        )?;
+        staged.convert_conclusions(proof, implementation_reduced, implementation_total)?;
+        staged.contract_theorem(proof)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: implementation_total,
+            theorem: proof,
+            holds: true,
+        })
     }
 
     /// Proves that every module has the same allowed run graph as itself.
@@ -4883,6 +5092,27 @@ mod tests {
                 .unwrap(),
             holds: true,
         };
+        let specification_total = domain.total(&mut kernel, profile, other_module).unwrap();
+        let specification_total_evidence = Evidence {
+            proposition: specification_total,
+            theorem: kernel
+                .identity(super::positive(specification_total))
+                .unwrap(),
+            holds: true,
+        };
+        let implementation_total = domain
+            .prove_refinement_preserves_total(
+                &mut kernel,
+                left_middle_refinement_evidence,
+                specification_total_evidence,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[left_middle_refinement, specification_total])
+            .check(&kernel, implementation_total)
+            .unwrap();
         let implementation_may = observation.may(&mut kernel, profile, module).unwrap();
         let implementation_may_evidence = Evidence {
             proposition: implementation_may,
