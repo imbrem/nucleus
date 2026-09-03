@@ -10,7 +10,10 @@
 use std::{convert::Infallible, sync::Arc};
 
 use covalence_data_basic::Symbol;
-use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, ThmId, builtin::Op2};
+use covalence_logic_hol::{
+    Kernel, KernelError, Lit, Ref, ThmId,
+    builtin::{Op1, Op2},
+};
 
 /// A small, immutable, generic proposition schema.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -193,6 +196,31 @@ impl AssertionReachability {
         let proposition = staged.exists_tm(initial, body)?;
         *kernel = staged;
         Ok(proposition)
+    }
+
+    /// Constructs the universal negative claim that no admissible execution
+    /// reaches the distinguished assertion call.
+    ///
+    /// This is the HOL negation of [`calls_assert`](Self::calls_assert), not a
+    /// conclusion drawn from bounded testing or failure to observe a call.
+    /// It creates checked syntax only.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as `calls_assert`, or if the
+    /// checked negation constructor rejects the resulting proposition.
+    /// `kernel` is unchanged on failure.
+    pub fn never_calls_assert(
+        self,
+        kernel: &mut Kernel,
+        program: Ref,
+        assert_function: Ref,
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let positive = self.calls_assert(&mut staged, program, assert_function)?;
+        let negative = staged.op1(Op1::Not, positive)?;
+        *kernel = staged;
+        Ok(negative)
     }
 }
 
@@ -634,12 +662,17 @@ mod tests {
         let proposition = schema
             .calls_assert(&mut kernel, program, assert_function)
             .unwrap();
+        let negative = schema
+            .never_calls_assert(&mut kernel, program, assert_function)
+            .unwrap();
 
         assert!(
             kernel
                 .equivalent(kernel.classifier(proposition).unwrap(), bool_ty)
                 .unwrap()
         );
+        assert_eq!(kernel.classifier(negative).unwrap(), bool_ty);
+        assert_ne!(negative, proposition);
 
         let before = kernel.arena().clone();
         assert!(
