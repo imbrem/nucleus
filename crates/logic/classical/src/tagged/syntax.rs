@@ -1,5 +1,7 @@
 use std::hash::{Hash, Hasher};
 
+use smallvec::SmallVec;
+
 /// One signed atom or signed n-ary classical connective.
 ///
 /// `Sat` binds every atom below it as a fresh uninterpreted Boolean variable.
@@ -9,7 +11,7 @@ pub enum Formula {
     /// A signed Boolean atom.
     Literal {
         /// The unsigned atom identifier.
-        atom: u64,
+        atom: u32,
         /// Whether the atom is complemented.
         negative: bool,
     },
@@ -64,6 +66,46 @@ impl Formula {
             | Self::And { negative, .. }
             | Self::Or { negative, .. }
             | Self::Sat { negative, .. } => *negative,
+        }
+    }
+}
+
+impl Drop for Formula {
+    /// Dismantles a formula with an explicit worklist.
+    ///
+    /// The derived destructor recurses once per level. Syntax decoded from an
+    /// untrusted arena is as deep as that arena, and a destructor can neither
+    /// fail nor be skipped, so the depth has to leave the stack. Each node's
+    /// child vector is taken out and queued, which leaves behind a node whose
+    /// own drop reaches no further.
+    ///
+    /// The queue is inline for the first few levels, so dismantling the small
+    /// formulas that ordinary rules build allocates nothing.
+    fn drop(&mut self) {
+        let (Self::And { children, .. } | Self::Or { children, .. } | Self::Sat { children, .. }) =
+            self
+        else {
+            return;
+        };
+        if children.is_empty() {
+            return;
+        }
+        let mut pending: SmallVec<[Vec<Self>; 8]> = SmallVec::new();
+        let mut current = std::mem::take(children);
+        loop {
+            for mut child in current {
+                if let Self::And { children, .. }
+                | Self::Or { children, .. }
+                | Self::Sat { children, .. } = &mut child
+                    && !children.is_empty()
+                {
+                    pending.push(std::mem::take(children));
+                }
+            }
+            let Some(next) = pending.pop() else {
+                return;
+            };
+            current = next;
         }
     }
 }

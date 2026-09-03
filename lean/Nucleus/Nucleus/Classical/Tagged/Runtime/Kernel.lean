@@ -249,7 +249,7 @@ def resolve? (left : Theorem payloadWidth) (leftIndex : Nat)
               | some checked => some ⟨checked,
                   resolve_sound leftSelected rightSelected derived packed⟩
 
-/-! ## Legacy matrix compatibility -/
+/-! ## Matrix rules -/
 
 private theorem singleton_sound {result : Tagged.Sequent Nat}
     {checked : Checked payloadWidth}
@@ -307,7 +307,7 @@ namespace Matrix
 
 abbrev Side := Nucleus.Classical.Tagged.Runtime.Matrix.Side
 
-/-- Construct the exact legacy singleton matrix identity. -/
+/-- Construct singleton matrix identity. -/
 def identity? (payloadWidth : Nat) (pivot : Classical.Literal Nat) :
     Option (Theorem payloadWidth) :=
   sealSingleton? payloadWidth

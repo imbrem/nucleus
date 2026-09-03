@@ -53,20 +53,6 @@ pub enum EditError {
         /// Root in which no occurrence was found.
         input: &'static str,
     },
-    /// A compatibility matrix rule received a non-matrix sequent or row.
-    #[snafu(display("{rule} requires positive AND-of-OR premises and OR-of-AND conclusions"))]
-    InapplicableMatrixRule {
-        /// Rule that could not be applied.
-        rule: &'static str,
-    },
-    /// A compatibility matrix row index was absent.
-    #[snafu(display("missing matrix row {index} on the {side:?} side"))]
-    MissingMatrixRow {
-        /// Side containing the requested row.
-        side: Side,
-        /// Zero-based row index in the decoded matrix.
-        index: usize,
-    },
     /// Canonical repacking failed after the abstract edit.
     #[snafu(transparent)]
     Runtime {
@@ -101,40 +87,13 @@ impl Theorem {
         })
     }
 
-    /// Constructs the compatibility matrix identity
-    /// `AND[OR[p]] |- OR[AND[p]]`.
-    ///
-    /// This crate-private introduction exists only to keep the legacy matrix
-    /// facade on the same sealed theorem boundary as the tagged runtime.
-    pub(crate) fn matrix_identity(literal: Formula) -> Result<Self, EditError> {
-        require_literal(&literal, "matrix identity")?;
-        Ok(Self {
-            checked: pack(&[Sequent {
-                premise: Formula::And {
-                    negative: false,
-                    children: vec![Formula::Or {
-                        negative: false,
-                        children: vec![literal.clone()],
-                    }],
-                },
-                conclusion: Formula::Or {
-                    negative: false,
-                    children: vec![Formula::And {
-                        negative: false,
-                        children: vec![literal],
-                    }],
-                },
-            }])?,
-        })
-    }
-
     /// Seals an opaque statefully checked RUP/RAT result.
     ///
     /// The certificate type has no public constructor or deserializer. Its
     /// producing state machine is the Rust counterpart of Lean's
     /// `Runtime.Refutation.Checker.Result` boundary.
     pub(crate) fn seal_refutation(
-        certificate: &crate::compat::Refutation,
+        certificate: &crate::cnf::Refutation,
     ) -> Result<Self, RuntimeError> {
         Ok(Self {
             checked: pack(&[certificate.sequent_for_sealing()])?,
@@ -154,8 +113,8 @@ impl Theorem {
     /// Returns an error when the combined table exceeds the canonical
     /// packer's fixed-word or host resource bounds.
     pub fn append(&self, other: &Self) -> Result<Self, RuntimeError> {
-        let mut sequents = self.checked.sequents().to_vec();
-        sequents.extend_from_slice(other.checked.sequents());
+        let mut sequents = self.checked.decode_sequents()?;
+        sequents.extend(other.checked.decode_sequents()?);
         Ok(Self {
             checked: pack(&sequents)?,
         })
@@ -169,7 +128,7 @@ impl Theorem {
     /// packer's resource bounds.
     pub fn canonical_copy(&self) -> Result<Self, RuntimeError> {
         Ok(Self {
-            checked: pack(self.checked.sequents())?,
+            checked: pack(&self.checked.decode_sequents()?)?,
         })
     }
 
@@ -191,23 +150,20 @@ impl Theorem {
         right_index: usize,
         pivot: &Formula,
     ) -> Result<Self, EditError> {
-        let left =
-            self.checked
-                .sequents()
-                .get(left_index)
-                .ok_or(EditError::MissingInputSequent {
-                    input: "left",
-                    index: left_index,
-                })?;
-        let right =
-            right
-                .checked
-                .sequents()
-                .get(right_index)
-                .ok_or(EditError::MissingInputSequent {
-                    input: "right",
-                    index: right_index,
-                })?;
+        let left_table = self.checked.decode_sequents()?;
+        let left = left_table
+            .get(left_index)
+            .ok_or(EditError::MissingInputSequent {
+                input: "left",
+                index: left_index,
+            })?;
+        let right_table = right.checked.decode_sequents()?;
+        let right = right_table
+            .get(right_index)
+            .ok_or(EditError::MissingInputSequent {
+                input: "right",
+                index: right_index,
+            })?;
         let (left_premise, mut left_conclusion) =
             positive_roots(left).ok_or(EditError::InapplicableBinaryRule { rule: "cut" })?;
         let (mut right_premise, right_conclusion) =
@@ -253,23 +209,20 @@ impl Theorem {
         right_index: usize,
         pivot: &Formula,
     ) -> Result<Self, EditError> {
-        let left =
-            self.checked
-                .sequents()
-                .get(left_index)
-                .ok_or(EditError::MissingInputSequent {
-                    input: "left",
-                    index: left_index,
-                })?;
-        let right =
-            right
-                .checked
-                .sequents()
-                .get(right_index)
-                .ok_or(EditError::MissingInputSequent {
-                    input: "right",
-                    index: right_index,
-                })?;
+        let left_table = self.checked.decode_sequents()?;
+        let left = left_table
+            .get(left_index)
+            .ok_or(EditError::MissingInputSequent {
+                input: "left",
+                index: left_index,
+            })?;
+        let right_table = right.checked.decode_sequents()?;
+        let right = right_table
+            .get(right_index)
+            .ok_or(EditError::MissingInputSequent {
+                input: "right",
+                index: right_index,
+            })?;
         let (left_premise, mut left_conclusion) =
             positive_roots(left).ok_or(EditError::InapplicableBinaryRule { rule: "resolve" })?;
         let (right_premise, mut right_conclusion) =
@@ -296,218 +249,6 @@ impl Theorem {
         };
         Ok(Self {
             checked: pack(&[result])?,
-        })
-    }
-
-    /// Appends one compatibility clause or cube as matrix weakening.
-    pub(crate) fn matrix_weaken_row(
-        &self,
-        index: usize,
-        side: Side,
-        row: Vec<Formula>,
-    ) -> Result<Self, EditError> {
-        require_literal_row(&row, "matrix weakening")?;
-        self.edit(index, |sequent| {
-            let (premise, conclusion) = matrix_roots_mut(sequent, "matrix weakening")?;
-            match side {
-                Side::Left => premise.push(Formula::Or {
-                    negative: false,
-                    children: row,
-                }),
-                Side::Right => conclusion.push(Formula::And {
-                    negative: false,
-                    children: row,
-                }),
-            }
-            Ok(())
-        })
-    }
-
-    /// Cuts the first matching unit cube and clause from two matrix facts.
-    pub(crate) fn matrix_unit_cut(
-        &self,
-        left_index: usize,
-        right: &Self,
-        right_index: usize,
-        pivot: Formula,
-    ) -> Result<Self, EditError> {
-        require_literal(&pivot, "matrix cut")?;
-        let left =
-            self.checked
-                .sequents()
-                .get(left_index)
-                .ok_or(EditError::MissingInputSequent {
-                    input: "left",
-                    index: left_index,
-                })?;
-        let right =
-            right
-                .checked
-                .sequents()
-                .get(right_index)
-                .ok_or(EditError::MissingInputSequent {
-                    input: "right",
-                    index: right_index,
-                })?;
-        let (mut left_premise, mut left_conclusion) = matrix_roots(left, "matrix cut")?;
-        let (mut right_premise, right_conclusion) = matrix_roots(right, "matrix cut")?;
-        erase_first(&mut left_conclusion, &matrix_cube(vec![pivot.clone()])).ok_or(
-            EditError::MissingPivot {
-                rule: "matrix cut",
-                input: "left conclusion",
-            },
-        )?;
-        erase_first(&mut right_premise, &matrix_clause(vec![pivot])).ok_or(
-            EditError::MissingPivot {
-                rule: "matrix cut",
-                input: "right premise",
-            },
-        )?;
-        left_premise.extend(right_premise);
-        left_conclusion.extend(right_conclusion);
-        Ok(Self {
-            checked: pack(&[Sequent {
-                premise: Formula::And {
-                    negative: false,
-                    children: left_premise,
-                },
-                conclusion: Formula::Or {
-                    negative: false,
-                    children: left_conclusion,
-                },
-            }])?,
-        })
-    }
-
-    /// Resolves the first matching complementary unit cubes in two facts.
-    pub(crate) fn matrix_unit_resolve(
-        &self,
-        left_index: usize,
-        right: &Self,
-        right_index: usize,
-        pivot: Formula,
-    ) -> Result<Self, EditError> {
-        require_literal(&pivot, "matrix resolution")?;
-        let left =
-            self.checked
-                .sequents()
-                .get(left_index)
-                .ok_or(EditError::MissingInputSequent {
-                    input: "left",
-                    index: left_index,
-                })?;
-        let right =
-            right
-                .checked
-                .sequents()
-                .get(right_index)
-                .ok_or(EditError::MissingInputSequent {
-                    input: "right",
-                    index: right_index,
-                })?;
-        let (mut left_premise, mut left_conclusion) = matrix_roots(left, "matrix resolution")?;
-        let (right_premise, mut right_conclusion) = matrix_roots(right, "matrix resolution")?;
-        erase_first(&mut left_conclusion, &matrix_cube(vec![pivot.clone()])).ok_or(
-            EditError::MissingPivot {
-                rule: "matrix resolution",
-                input: "left conclusion",
-            },
-        )?;
-        erase_first(&mut right_conclusion, &matrix_cube(vec![pivot.negated()])).ok_or(
-            EditError::MissingPivot {
-                rule: "matrix resolution",
-                input: "right conclusion",
-            },
-        )?;
-        left_premise.extend(right_premise);
-        left_conclusion.extend(right_conclusion);
-        Ok(Self {
-            checked: pack(&[Sequent {
-                premise: Formula::And {
-                    negative: false,
-                    children: left_premise,
-                },
-                conclusion: Formula::Or {
-                    negative: false,
-                    children: left_conclusion,
-                },
-            }])?,
-        })
-    }
-
-    /// Crosses one decoded compatibility row and applies pointwise negation.
-    pub(crate) fn matrix_cross_row(
-        &self,
-        index: usize,
-        source_side: Side,
-        row_index: usize,
-    ) -> Result<Self, EditError> {
-        self.edit(index, |sequent| {
-            let (premise, conclusion) = matrix_roots_mut(sequent, "matrix crossing")?;
-            match source_side {
-                Side::Left => {
-                    let row = take_row(premise, source_side, row_index)?;
-                    let Formula::Or { children, .. } = row else {
-                        return Err(EditError::InapplicableMatrixRule {
-                            rule: "matrix crossing",
-                        });
-                    };
-                    conclusion.push(matrix_cube(
-                        children.into_iter().map(Formula::negated).collect(),
-                    ));
-                }
-                Side::Right => {
-                    let row = take_row(conclusion, source_side, row_index)?;
-                    let Formula::And { children, .. } = row else {
-                        return Err(EditError::InapplicableMatrixRule {
-                            rule: "matrix crossing",
-                        });
-                    };
-                    premise.push(matrix_clause(
-                        children.into_iter().map(Formula::negated).collect(),
-                    ));
-                }
-            }
-            Ok(())
-        })
-    }
-
-    /// Reorders the literals of one decoded compatibility row.
-    pub(crate) fn matrix_permute_row(
-        &self,
-        index: usize,
-        side: Side,
-        row_index: usize,
-        candidate: Vec<Formula>,
-    ) -> Result<Self, EditError> {
-        require_literal_row(&candidate, "matrix row permutation")?;
-        self.edit(index, |sequent| {
-            let row = matrix_row_mut(sequent, side, row_index, "matrix row permutation")?;
-            if !is_permutation(&candidate, row) {
-                return Err(EditError::NotPermutation);
-            }
-            *row = candidate;
-            Ok(())
-        })
-    }
-
-    /// Removes later duplicate literals from one compatibility row.
-    pub(crate) fn matrix_dedupe_row(
-        &self,
-        index: usize,
-        side: Side,
-        row_index: usize,
-    ) -> Result<Self, EditError> {
-        self.edit(index, |sequent| {
-            let row = matrix_row_mut(sequent, side, row_index, "matrix row deduplication")?;
-            let mut unique = Vec::with_capacity(row.len());
-            for literal in row.drain(..) {
-                if !unique.contains(&literal) {
-                    unique.push(literal);
-                }
-            }
-            *row = unique;
-            Ok(())
         })
     }
 
@@ -653,7 +394,7 @@ impl Theorem {
         index: usize,
         edit: impl FnOnce(&mut Sequent) -> Result<(), EditError>,
     ) -> Result<Self, EditError> {
-        let mut sequents = self.checked.sequents().to_vec();
+        let mut sequents = self.checked.decode_sequents()?;
         let sequent = sequents
             .get_mut(index)
             .ok_or(EditError::MissingSequent { index })?;
@@ -700,128 +441,6 @@ fn editable_children_mut(
             },
         ) => Ok(children),
         _ => Err(EditError::InapplicableRoot { side }),
-    }
-}
-
-fn require_literal(formula: &Formula, rule: &'static str) -> Result<(), EditError> {
-    if matches!(formula, Formula::Literal { .. }) {
-        Ok(())
-    } else {
-        Err(EditError::InapplicableMatrixRule { rule })
-    }
-}
-
-fn require_literal_row(row: &[Formula], rule: &'static str) -> Result<(), EditError> {
-    if row
-        .iter()
-        .all(|formula| matches!(formula, Formula::Literal { .. }))
-    {
-        Ok(())
-    } else {
-        Err(EditError::InapplicableMatrixRule { rule })
-    }
-}
-
-fn matrix_clause(children: Vec<Formula>) -> Formula {
-    Formula::Or {
-        negative: false,
-        children,
-    }
-}
-
-fn matrix_cube(children: Vec<Formula>) -> Formula {
-    Formula::And {
-        negative: false,
-        children,
-    }
-}
-
-fn matrix_roots(
-    sequent: &Sequent,
-    rule: &'static str,
-) -> Result<(Vec<Formula>, Vec<Formula>), EditError> {
-    let (premise, conclusion) =
-        positive_roots(sequent).ok_or(EditError::InapplicableMatrixRule { rule })?;
-    if premise.iter().all(is_matrix_clause) && conclusion.iter().all(is_matrix_cube) {
-        Ok((premise, conclusion))
-    } else {
-        Err(EditError::InapplicableMatrixRule { rule })
-    }
-}
-
-fn matrix_roots_mut<'a>(
-    sequent: &'a mut Sequent,
-    rule: &'static str,
-) -> Result<(&'a mut Vec<Formula>, &'a mut Vec<Formula>), EditError> {
-    let (
-        Formula::And {
-            negative: false,
-            children: premise,
-        },
-        Formula::Or {
-            negative: false,
-            children: conclusion,
-        },
-    ) = (&mut sequent.premise, &mut sequent.conclusion)
-    else {
-        return Err(EditError::InapplicableMatrixRule { rule });
-    };
-    if premise.iter().all(is_matrix_clause) && conclusion.iter().all(is_matrix_cube) {
-        Ok((premise, conclusion))
-    } else {
-        Err(EditError::InapplicableMatrixRule { rule })
-    }
-}
-
-fn is_matrix_clause(formula: &Formula) -> bool {
-    matches!(formula, Formula::Or { negative: false, children }
-        if children.iter().all(|child| matches!(child, Formula::Literal { .. })))
-}
-
-fn is_matrix_cube(formula: &Formula) -> bool {
-    matches!(formula, Formula::And { negative: false, children }
-        if children.iter().all(|child| matches!(child, Formula::Literal { .. })))
-}
-
-fn take_row(rows: &mut Vec<Formula>, side: Side, index: usize) -> Result<Formula, EditError> {
-    if index < rows.len() {
-        Ok(rows.remove(index))
-    } else {
-        Err(EditError::MissingMatrixRow { side, index })
-    }
-}
-
-fn matrix_row_mut<'a>(
-    sequent: &'a mut Sequent,
-    side: Side,
-    row_index: usize,
-    rule: &'static str,
-) -> Result<&'a mut Vec<Formula>, EditError> {
-    let (premise, conclusion) = matrix_roots_mut(sequent, rule)?;
-    let row = match side {
-        Side::Left => premise.get_mut(row_index),
-        Side::Right => conclusion.get_mut(row_index),
-    }
-    .ok_or(EditError::MissingMatrixRow {
-        side,
-        index: row_index,
-    })?;
-    match (side, row) {
-        (
-            Side::Left,
-            Formula::Or {
-                negative: false,
-                children,
-            },
-        )
-        | (
-            Side::Right,
-            Formula::And {
-                negative: false,
-                children,
-            },
-        ) => Ok(children),
-        _ => Err(EditError::InapplicableMatrixRule { rule }),
     }
 }
 
@@ -875,7 +494,7 @@ fn concatenate(mut left: Vec<Formula>, right: Vec<Formula>) -> Vec<Formula> {
 mod tests {
     use super::*;
 
-    fn literal(atom: u64) -> Formula {
+    fn literal(atom: u32) -> Formula {
         Formula::Literal {
             atom,
             negative: false,
@@ -901,7 +520,8 @@ mod tests {
         // this constructor.
         let theorem = Theorem { checked };
         let crossed = theorem.canonical_cross_root(0, Side::Left).unwrap();
-        let sequent = &crossed.checked().sequents()[0];
+        let table = crossed.checked().decode_sequents().unwrap();
+        let sequent = &table[0];
         assert_eq!(
             sequent.premise,
             Formula::And {
@@ -950,7 +570,8 @@ mod tests {
         };
 
         let cut = positive.cut(0, &positive, 0, &p).unwrap();
-        let cut_result = &cut.checked().sequents()[0];
+        let cut_table = cut.checked().decode_sequents().unwrap();
+        let cut_result = &cut_table[0];
         assert_eq!(
             cut_result.premise,
             Formula::And {
@@ -967,7 +588,8 @@ mod tests {
         );
 
         let resolved = positive.resolve(0, &negative, 0, &p).unwrap();
-        let resolved_result = &resolved.checked().sequents()[0];
+        let resolved_table = resolved.checked().decode_sequents().unwrap();
+        let resolved_result = &resolved_table[0];
         assert_eq!(
             resolved_result.premise,
             Formula::And {

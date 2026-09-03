@@ -1,8 +1,8 @@
 //! Userspace classical matrices and checked LRAT replay for WebAssembly.
 
 use covalence_logic_classical::{
-    ClassicalKernel as Kernel, Cnf as NativeCnf, Dnf as NativeDnf, Lit, LitVec,
-    Refutation as NativeRefutation, ThmId,
+    ClassicalKernel as Kernel, Lit, LitVec, Matrix as NativeMatrix, Refutation as NativeRefutation,
+    ThmId,
 };
 use covalence_logic_lrat::{
     Formula,
@@ -31,7 +31,7 @@ fn rows_json(rows: impl Iterator<Item = Vec<i32>>) -> Result<String, JsError> {
     covalence_lib_json::to_string(&rows.collect::<Vec<_>>()).map_err(error)
 }
 
-fn formula(cnf: &NativeCnf) -> Result<Formula, JsError> {
+fn formula(cnf: &NativeMatrix) -> Result<Formula, JsError> {
     Formula::from_signed(
         cnf.rows()
             .map(|row| row.iter().map(|literal| i64::from(literal.get()))),
@@ -41,7 +41,7 @@ fn formula(cnf: &NativeCnf) -> Result<Formula, JsError> {
 
 /// A non-normal CNF matrix preserving row and literal order.
 #[wasm_bindgen]
-pub struct Cnf(pub(crate) NativeCnf);
+pub struct Cnf(pub(crate) NativeMatrix);
 
 #[wasm_bindgen]
 impl Cnf {
@@ -52,7 +52,7 @@ impl Cnf {
     /// Returns an error for malformed JSON or literals.
     #[wasm_bindgen(constructor)]
     pub fn new(rows: &str) -> Result<Self, JsError> {
-        Ok(Self(NativeCnf::new(parse_rows(rows)?)))
+        Ok(Self(NativeMatrix::new(parse_rows(rows)?)))
     }
 
     /// Parses a DIMACS CNF byte stream.
@@ -101,7 +101,7 @@ impl Cnf {
 
 /// A non-normal DNF matrix preserving row and literal order.
 #[wasm_bindgen]
-pub struct Dnf(pub(crate) NativeDnf);
+pub struct Dnf(pub(crate) NativeMatrix);
 
 #[wasm_bindgen]
 impl Dnf {
@@ -112,7 +112,7 @@ impl Dnf {
     /// Returns an error for malformed JSON or literals.
     #[wasm_bindgen(constructor)]
     pub fn new(rows: &str) -> Result<Self, JsError> {
-        Ok(Self(NativeDnf::new(parse_rows(rows)?)))
+        Ok(Self(NativeMatrix::new(parse_rows(rows)?)))
     }
 
     /// Returns the non-normal rows as JSON.
@@ -208,7 +208,6 @@ impl ClassicalKernel {
     #[wasm_bindgen(js_name = copyRefutation)]
     pub fn copy_refutation(&mut self, refutation: &Refutation) -> Result<i32, JsError> {
         self.0
-            .rules()
             .copy_refutation(&refutation.0)
             .map(ThmId::get)
             .map_err(error)
