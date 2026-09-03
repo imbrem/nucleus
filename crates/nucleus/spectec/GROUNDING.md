@@ -69,7 +69,10 @@ linker is definitionally the identity, its admissibility predicate is
 definitionally true, and `ClosedRunContext::prove_admissible` derives the
 required fact without premises. Its `prove_preserves` operation packages those
 steps and returns the canonical observation equation whose plug applications
-are definitionally identities.
+are definitionally identities. Its `transport` operation is the corresponding
+one-call path for carrying positive or negative closed-program evidence across
+a sound transformation; no explicit context or admissibility evidence is
+required from the caller.
 That equality checkedly transports either positive or negative observation
 evidence from the original closed program to the transformed one. Negative
 transport is derived by equality symmetry and contradiction rather than by an

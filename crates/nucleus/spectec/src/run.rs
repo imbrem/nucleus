@@ -1458,6 +1458,84 @@ impl ClosedRunContext {
         *kernel = staged;
         Ok(preserved)
     }
+
+    /// Transports signed evidence for an arbitrary property through one sound
+    /// transformation of a closed program.
+    ///
+    /// Identity linking and both admissibility proofs are discharged
+    /// internally. The sign and all premises of `behavior` are retained.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `sound` and `property` belong to this exact
+    /// closed context and `behavior` proves the original program's canonical
+    /// closed observation with its declared sign. `kernel` is unchanged on
+    /// failure.
+    pub fn transport_property(
+        self,
+        kernel: &mut Kernel,
+        sound: SoundRunTransformation,
+        property: RunProperty,
+        module: Ref,
+        behavior: Evidence,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let transformation = sound.transformation;
+        if transformation.context != self.context {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "closed context/transformation mismatch",
+            }
+            .into());
+        }
+        self.context.require_property(property)?;
+        let transformed = transformation.sound_application(&mut staged, module)?;
+        let left_admissible = self.prove_admissible(&mut staged, module)?;
+        let right_admissible = self.prove_admissible(&mut staged, transformed)?;
+        let transported = sound.transport_property_in_context(
+            &mut staged,
+            property,
+            module,
+            self.identity_context,
+            left_admissible,
+            right_admissible,
+            behavior,
+        )?;
+        *kernel = staged;
+        Ok(transported)
+    }
+
+    /// Transports positive or negative behavior evidence through one sound
+    /// transformation of a closed program.
+    ///
+    /// This is the shortest checked path for carrying `callsAssert` or
+    /// `not callsAssert` evidence across a sound Wasm transformation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as [`Self::transport_property`],
+    /// or if `observation` belongs to another run domain. `kernel` is unchanged
+    /// on failure.
+    pub fn transport(
+        self,
+        kernel: &mut Kernel,
+        sound: SoundRunTransformation,
+        observation: RunObservation,
+        quantifier: BehaviorQuantifier,
+        module: Ref,
+        behavior: Evidence,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        self.context.require_observation(observation)?;
+        let property = observation.property_avoiding(
+            &mut staged,
+            quantifier,
+            &[module, sound.transformation.transform],
+        )?;
+        let transported =
+            self.transport_property(&mut staged, sound, property, module, behavior)?;
+        *kernel = staged;
+        Ok(transported)
+    }
 }
 
 impl RunTransformation {
@@ -6640,6 +6718,50 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, closed_identity_preserves_may)
+            .unwrap();
+        let [closed_original_behavior, _closed_transformed_behavior] =
+            super::equality_operands(&kernel, closed_identity_preserves_may.proposition).unwrap();
+        let closed_positive_behavior = Evidence {
+            proposition: closed_original_behavior,
+            theorem: kernel
+                .identity(super::positive(closed_original_behavior))
+                .unwrap(),
+            holds: true,
+        };
+        let closed_positive_transport = closed_context
+            .transport(
+                &mut kernel,
+                closed_sound_identity,
+                observation,
+                BehaviorQuantifier::May,
+                module,
+                closed_positive_behavior,
+            )
+            .unwrap();
+        assert!(closed_positive_transport.holds);
+        EvidenceScope::positive(&[closed_original_behavior])
+            .check(&kernel, closed_positive_transport)
+            .unwrap();
+        let closed_negative_behavior = Evidence {
+            proposition: closed_original_behavior,
+            theorem: kernel
+                .identity(super::positive(closed_original_behavior).negated())
+                .unwrap(),
+            holds: false,
+        };
+        let closed_negative_transport = closed_context
+            .transport(
+                &mut kernel,
+                closed_sound_identity,
+                observation,
+                BehaviorQuantifier::May,
+                module,
+                closed_negative_behavior,
+            )
+            .unwrap();
+        assert!(!closed_negative_transport.holds);
+        EvidenceScope::signed(&[super::positive(closed_original_behavior).negated()])
+            .check(&kernel, closed_negative_transport)
             .unwrap();
         let identity_transformation = context
             .identity_transformation(&mut kernel, profile)
