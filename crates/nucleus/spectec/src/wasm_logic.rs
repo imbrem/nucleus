@@ -1,10 +1,116 @@
 //! Adapters from the complete `SpecTec` document to program-logic predicates.
 
+use covalence_data_basic::Symbol;
 use covalence_data_spectec::IlKind;
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref, builtin::Op2};
 
 use crate::{AssertionReachability, InterpretationKind, ParameterizedDocument};
+
+/// Immutable view for composing structural `SpecTec` values in HOL.
+///
+/// The builder only exposes operations recorded by the lowered document. This
+/// keeps construction generic across schemas and makes missing interpretations
+/// explicit instead of silently inventing meaning for a constructor.
+#[derive(Clone, Copy, Debug)]
+pub struct SpecTecValueBuilder<'a> {
+    document: &'a ParameterizedDocument,
+}
+
+impl<'a> SpecTecValueBuilder<'a> {
+    /// Creates a structural builder over one exact lowered document.
+    #[must_use]
+    pub const fn new(document: &'a ParameterizedDocument) -> Self {
+        Self { document }
+    }
+
+    /// Returns the shared classifier of structural values.
+    #[must_use]
+    pub const fn value_ty(self) -> Ref {
+        self.document.schema.value()
+    }
+
+    /// Constructs a list with the supplied elements.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if this list arity was not recorded by the lowering,
+    /// an element has an incompatible classifier, or application fails.
+    pub fn list(self, kernel: &mut Kernel, elements: &[Ref]) -> Result<Ref, WasmLogicError> {
+        self.expression(kernel, "List", elements)
+    }
+
+    /// Constructs an absent or present optional value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if this optional arity was not recorded by the
+    /// lowering, the value has an incompatible classifier, or application
+    /// fails.
+    pub fn optional(self, kernel: &mut Kernel, value: Option<Ref>) -> Result<Ref, WasmLogicError> {
+        self.expression(kernel, "Optional", value.as_slice())
+    }
+
+    /// Constructs a tuple in semantic child order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if this tuple arity was not recorded by the lowering,
+    /// a child has an incompatible classifier, or application fails.
+    pub fn tuple(self, kernel: &mut Kernel, fields: &[Ref]) -> Result<Ref, WasmLogicError> {
+        self.expression(kernel, "Tuple", fields)
+    }
+
+    /// Constructs a tagged case around one payload value.
+    ///
+    /// `notation` is the exact `SpecTec` mixfix spelling, including one `%` for
+    /// every semantic field.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the constructor was not recorded by the lowering,
+    /// the payload has an incompatible classifier, or application fails.
+    pub fn case(
+        self,
+        kernel: &mut Kernel,
+        notation: &str,
+        payload: Ref,
+    ) -> Result<Ref, WasmLogicError> {
+        let label = format!("expression:Case({notation:?})");
+        self.construct(kernel, &label, &[payload])
+    }
+
+    fn expression(
+        self,
+        kernel: &mut Kernel,
+        name: &str,
+        children: &[Ref],
+    ) -> Result<Ref, WasmLogicError> {
+        let label = format!("expression:{name}");
+        self.construct(kernel, &label, children)
+    }
+
+    fn construct(
+        self,
+        kernel: &mut Kernel,
+        label: &str,
+        children: &[Ref],
+    ) -> Result<Ref, WasmLogicError> {
+        let domains = children
+            .iter()
+            .map(|&child| {
+                kernel
+                    .classifier(child)
+                    .map_err(|source| WasmLogicError::Kernel { source })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let constructor = operation(self.document, label, &domains, self.value_ty())?;
+        let mut staged = kernel.fork();
+        let value = apply(&mut staged, constructor, children)?;
+        *kernel = staged;
+        Ok(value)
+    }
+}
 
 /// The execution predicates extracted from one lowered `SpecTec` document.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -298,7 +404,7 @@ pub enum WasmLogicError {
     #[snafu(display("missing SpecTec interpretation operation {label:?}"))]
     Operation {
         /// Required stable operation label.
-        label: &'static str,
+        label: Symbol,
     },
     /// A checked HOL construction failed.
     #[snafu(display("could not construct SpecTec program-logic adapter: {source}"))]
@@ -324,33 +430,25 @@ pub fn empty_wasm_module(
     kernel: &mut Kernel,
     document: &ParameterizedDocument,
 ) -> Result<Ref, WasmLogicError> {
-    let value = document.schema.value();
-    let empty_list = operation(document, "expression:List", &[], value)?;
-    let absent = operation(document, "expression:Optional", &[], value)?;
-    let tuple = operation(document, "expression:Tuple", &[value; 11], value)?;
-    let module = operation(
-        document,
-        "expression:Case(\"MODULE%%%%%%%%%%%\")",
-        &[value],
-        value,
-    )?;
+    let builder = SpecTecValueBuilder::new(document);
     let mut staged = kernel.fork();
-    let payload = apply(
+    let empty_list = builder.list(&mut staged, &[])?;
+    let absent = builder.optional(&mut staged, None)?;
+    let payload = builder.tuple(
         &mut staged,
-        tuple,
         &[
             empty_list, empty_list, empty_list, empty_list, empty_list, empty_list, empty_list,
             empty_list, empty_list, absent, empty_list,
         ],
     )?;
-    let result = apply(&mut staged, module, &[payload])?;
+    let result = builder.case(&mut staged, "MODULE%%%%%%%%%%%", payload)?;
     *kernel = staged;
     Ok(result)
 }
 
 fn operation(
     document: &ParameterizedDocument,
-    label: &'static str,
+    label: &str,
     domains: &[Ref],
     codomain: Ref,
 ) -> Result<Ref, WasmLogicError> {
@@ -362,7 +460,9 @@ fn operation(
                 && operation.signature.codomain == codomain
         })
         .map(|operation| operation.reference)
-        .ok_or(WasmLogicError::Operation { label })
+        .ok_or_else(|| WasmLogicError::Operation {
+            label: Symbol::new(label),
+        })
 }
 
 /// Extracts a checked curried view of the WebAssembly `Steps` relation.
@@ -412,7 +512,9 @@ pub fn spectec_execution(
                     == [document.schema.value(), document.schema.value()]
                 && operation.signature.codomain == document.schema.value()
         })
-        .ok_or(WasmLogicError::Operation { label: "tuple:2" })?
+        .ok_or_else(|| WasmLogicError::Operation {
+            label: Symbol::new("tuple:2"),
+        })?
         .reference;
 
     let mut staged = kernel.fork();

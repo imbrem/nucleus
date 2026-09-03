@@ -12,13 +12,14 @@ use covalence_nucleus_spectec::{
     HolEmbedding, HolFamilyBranch, HolRule, HolTheoryError, IndexErasure, InterpretationKind,
     KernelRoot, RelationalCall, RelationalClause, RelationalCondition, RelationalDefinitionSchema,
     RelationalDefinitionSource, RelationalExpressionAlgebra, RelationalRelation,
-    RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler, Source, TYPE_NAME,
-    TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family, close_family_definition,
-    close_graph_equation, close_hol_rule, close_hol_rules, close_hol_theory, declare_hol_schema,
-    empty_wasm_module, fold_expression, fold_grammar, fold_type, least_closed_family,
-    least_closed_predicate, ordered_cases, parameterized_document, parameterized_document_with,
-    relational_definition, relational_definition_declaration, relational_definition_schema,
-    relational_document, relational_grammar_declaration, relational_hol_case, relational_hol_rule,
+    RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler, Source,
+    SpecTecValueBuilder, TYPE_NAME, TranslationCase, TypeAlgebra, TypeChildren,
+    begin_least_closed_family, close_family_definition, close_graph_equation, close_hol_rule,
+    close_hol_rules, close_hol_theory, declare_hol_schema, empty_wasm_module, fold_expression,
+    fold_grammar, fold_type, least_closed_family, least_closed_predicate, ordered_cases,
+    parameterized_document, parameterized_document_with, relational_definition,
+    relational_definition_declaration, relational_definition_schema, relational_document,
+    relational_grammar_declaration, relational_hol_case, relational_hol_rule,
     relational_relation_declaration, relational_relations, relational_type_declaration,
     spectec_execution,
 };
@@ -1639,6 +1640,12 @@ fn empty_module_uses_exact_expression_constructor_vocabulary() {
     let bool_ty = kernel.bool_ty(star).unwrap();
     let value = kernel.ty_fv(0, star).unwrap();
     let document = parameterized_document(&source, &mut kernel, value, bool_ty).unwrap();
+
+    let builder = SpecTecValueBuilder::new(&document);
+    let empty = builder.list(&mut kernel, &[]).unwrap();
+    let before = kernel.arena().clone();
+    assert!(builder.list(&mut kernel, &[empty]).is_err());
+    assert_eq!(kernel.arena(), &before);
 
     let module = empty_wasm_module(&mut kernel, &document).unwrap();
 
