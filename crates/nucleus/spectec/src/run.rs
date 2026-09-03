@@ -185,6 +185,18 @@ pub struct RunContext {
     admissible: Ref,
 }
 
+/// An immutable module transformation interpreted under one semantic profile.
+///
+/// Soundness means that every input module is contextually observationally
+/// equivalent to the transformed module. The transformation is a checked HOL
+/// function; packaging it creates no theorem fact.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RunTransformation {
+    context: RunContext,
+    profile: Ref,
+    transform: Ref,
+}
+
 impl RunContext {
     /// Validates a reusable context schema.
     ///
@@ -237,6 +249,32 @@ impl RunContext {
     #[must_use]
     pub const fn domain(self) -> RunDomain {
         self.domain
+    }
+
+    /// Validates and packages a module transformation for one profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `profile` has this run relation's profile
+    /// classifier and `transform` has classifier `module -> module`. `kernel`
+    /// is unchanged on failure.
+    pub fn transformation(
+        self,
+        kernel: &mut Kernel,
+        profile: Ref,
+        transform: Ref,
+    ) -> Result<RunTransformation, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.domain.relation.types;
+        require_classifier(&mut staged, profile, types.profile)?;
+        let transform_ty = staged.ty_arr(types.module, types.module)?;
+        require_classifier(&mut staged, transform, transform_ty)?;
+        *kernel = staged;
+        Ok(RunTransformation {
+            context: self,
+            profile,
+            transform,
+        })
     }
 
     /// Selects one behavior observation for this reusable context schema.
@@ -1181,6 +1219,130 @@ impl RunContext {
             })
         }
     }
+}
+
+impl RunTransformation {
+    /// Returns the contextual semantics used to judge this transformation.
+    #[must_use]
+    pub const fn context(self) -> RunContext {
+        self.context
+    }
+
+    /// Returns the semantic profile under which soundness is stated.
+    #[must_use]
+    pub const fn profile(self) -> Ref {
+        self.profile
+    }
+
+    /// Returns the checked `module -> module` transformation.
+    #[must_use]
+    pub const fn transform(self) -> Ref {
+        self.transform
+    }
+
+    /// Applies this transformation to one module.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `module` has the configured module classifier.
+    /// `kernel` is unchanged on failure.
+    pub fn apply(self, kernel: &mut Kernel, module: Ref) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        require_classifier(
+            &mut staged,
+            module,
+            self.context.domain.relation.types.module,
+        )?;
+        let transformed = staged.app(self.transform, module)?;
+        *kernel = staged;
+        Ok(transformed)
+    }
+
+    /// Constructs the semantic soundness proposition for this transformation.
+    ///
+    /// The result is `forall module. module ≈ transform(module)`, where `≈`
+    /// is contextual observational equivalence under this exact profile and
+    /// context schema. This method constructs syntax only.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if checked application, contextual-equivalence, or
+    /// universal construction fails. `kernel` is unchanged on failure.
+    pub fn sound(self, kernel: &mut Kernel) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.context.domain.relation.types;
+        let module = staged.tm_fv(
+            staged.fresh_name(&[
+                self.context.context_ty,
+                self.context.plug,
+                self.context.admissible,
+                self.profile,
+                self.transform,
+                types.module,
+                types.bool_ty,
+            ])?,
+            types.module,
+        )?;
+        let transformed = self.apply(&mut staged, module)?;
+        let equivalent = self
+            .context
+            .equivalent(&mut staged, self.profile, module, transformed)?;
+        let sound = staged.forall_tm(types.bool_ty, module, equivalent)?;
+        *kernel = staged;
+        Ok(sound)
+    }
+
+    /// Composes this transformation with `next` without mutating either one.
+    ///
+    /// The resulting function applies `self` first and `next` second.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RunTransformationError::ContextMismatch`] or
+    /// [`RunTransformationError::ProfileMismatch`] unless both transformations
+    /// use the same semantic configuration, or an error if checked application
+    /// or abstraction fails. `kernel` is unchanged on failure.
+    pub fn then(self, kernel: &mut Kernel, next: Self) -> Result<Self, RunTransformationError> {
+        if self.context != next.context {
+            return Err(RunTransformationError::ContextMismatch);
+        }
+        if self.profile != next.profile {
+            return Err(RunTransformationError::ProfileMismatch);
+        }
+        let mut staged = kernel.fork();
+        let module_ty = self.context.domain.relation.types.module;
+        let module = staged.tm_fv(
+            staged.fresh_name(&[self.transform, next.transform, module_ty])?,
+            module_ty,
+        )?;
+        let intermediate = self.apply(&mut staged, module)?;
+        let transformed = next.apply(&mut staged, intermediate)?;
+        let transform_ty = staged.ty_arr(module_ty, module_ty)?;
+        let transform = staged.lam_at(transform_ty, module, transformed)?;
+        let composed = self
+            .context
+            .transformation(&mut staged, self.profile, transform)?;
+        *kernel = staged;
+        Ok(composed)
+    }
+}
+
+/// Failure to compose checked module transformations.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum RunTransformationError {
+    /// Transformations use different contextual semantics.
+    #[snafu(display("cannot compose transformations from different run contexts"))]
+    ContextMismatch,
+    /// Transformations use different semantic profiles.
+    #[snafu(display("cannot compose transformations from different semantic profiles"))]
+    ProfileMismatch,
+    /// A checked HOL construction failed.
+    #[snafu(transparent)]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
 }
 
 /// Failure to derive a checked law about run relations.
@@ -5553,6 +5715,37 @@ mod tests {
         assert_eq!(context.context_type(), context_ty);
         assert_eq!(context.plug(), plug);
         assert_eq!(context.admissible(), contextual_admissible);
+        let transform_ty = kernel.ty_arr(types.module, types.module).unwrap();
+        let transform = kernel.tm_fv(34, transform_ty).unwrap();
+        let next_transform = kernel.tm_fv(35, transform_ty).unwrap();
+        let transformation = context
+            .transformation(&mut kernel, profile, transform)
+            .unwrap();
+        let next_transformation = context
+            .transformation(&mut kernel, profile, next_transform)
+            .unwrap();
+        assert_eq!(transformation.context(), context);
+        assert_eq!(transformation.profile(), profile);
+        assert_eq!(transformation.transform(), transform);
+        let transformed = transformation.apply(&mut kernel, module).unwrap();
+        assert_eq!(kernel.classifier(transformed).unwrap(), types.module);
+        let transformation_sound = transformation.sound(&mut kernel).unwrap();
+        assert_eq!(kernel.classifier(transformation_sound).unwrap(), bool_ty);
+        let composed_transformation = transformation
+            .then(&mut kernel, next_transformation)
+            .unwrap();
+        let composed_sound = composed_transformation.sound(&mut kernel).unwrap();
+        assert_eq!(kernel.classifier(composed_sound).unwrap(), bool_ty);
+        let other_profile = kernel.tm_fv(36, types.profile).unwrap();
+        let other_profile_transformation = context
+            .transformation(&mut kernel, other_profile, transform)
+            .unwrap();
+        let before = kernel.arena().clone();
+        assert!(matches!(
+            transformation.then(&mut kernel, other_profile_transformation),
+            Err(super::RunTransformationError::ProfileMismatch)
+        ));
+        assert_eq!(kernel.arena(), &before);
         let contextual_from_schema = context
             .observe(&mut kernel, observation, BehaviorQuantifier::May, profile)
             .unwrap();

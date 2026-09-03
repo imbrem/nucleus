@@ -42,6 +42,11 @@ to ordinary contextual equivalence for any selected run property.
 Premise-free reflexivity and premise-preserving symmetry and transitivity are
 themselves checked derivations, rather than frontend declarations that the
 relation is an equivalence.
+`RunTransformation` packages a checked pure `module -> module` function under
+one context schema and semantic profile. Its `sound` proposition is exactly
+that every input module is contextually observationally equivalent to the
+transformed module. Transformations compose immutably, while mismatched context
+schemas or profiles are rejected before composition.
 Conversely, checked negative evidence for any one contextual observation
 refutes `equivalent`. Thus, once `callsAssert` is supplied as a trace
 observation, its distinction between `TRUE` and `FALSE` is sufficient to prove

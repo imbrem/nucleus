@@ -63,7 +63,8 @@ pub use relational::{
 };
 pub use run::{
     BehaviorQuantifier, RefinementDirection, RunCompositionError, RunContext, RunDomain,
-    RunObservation, RunObservationError, RunProofError, RunProperty, RunRelation, RunTypes,
+    RunObservation, RunObservationError, RunProofError, RunProperty, RunRelation,
+    RunTransformation, RunTransformationError, RunTypes,
 };
 pub use schema::{
     HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,
