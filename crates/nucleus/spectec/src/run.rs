@@ -1423,6 +1423,109 @@ impl RunDomain {
         self.refinement(kernel, profile, implementation, specification)
     }
 
+    /// Constructs the reusable totality property for this run domain.
+    ///
+    /// The property says every admissible invocation has at least one eligible
+    /// trace/outcome pair. Its meaning remains relative to the selected run
+    /// profile and outcome representation when later applied to a module.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if fresh-name allocation or checked HOL construction
+    /// fails. `kernel` is unchanged on failure.
+    pub fn total_property(self, kernel: &mut Kernel) -> Result<RunProperty, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.relation.types;
+        let (domain, runs) = property_variables(&mut staged, self, &[])?;
+        let first = staged.fresh_name(&[
+            domain,
+            runs,
+            types.entry,
+            types.inputs,
+            types.host,
+            types.trace,
+            types.outcome,
+        ])?;
+        let entry = staged.tm_fv(first, types.entry)?;
+        let inputs = staged.tm_fv(checked_name(first, 1)?, types.inputs)?;
+        let host = staged.tm_fv(checked_name(first, 2)?, types.host)?;
+        let trace = staged.tm_fv(checked_name(first, 3)?, types.trace)?;
+        let outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
+        let allowed = apply(&mut staged, domain, &[entry, inputs, host])?;
+        let run = apply(&mut staged, runs, &[entry, inputs, host, trace, outcome])?;
+        let exists_run = quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], run)?;
+        let total = staged.op2(Op2::Imp, allowed, exists_run)?;
+        let total = quantify_forall(&mut staged, types.bool_ty, &[entry, inputs, host], total)?;
+        let property = abstract_property(&mut staged, self, domain, runs, total)?;
+        let property = self.property(&mut staged, property)?;
+        *kernel = staged;
+        Ok(property)
+    }
+
+    /// Constructs the reusable determinism property for this run domain.
+    ///
+    /// For each invocation, any two eligible runs must have equal traces and
+    /// outcomes. Host behavior remains an explicit invocation argument.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if fresh-name allocation or checked HOL construction
+    /// fails. `kernel` is unchanged on failure.
+    pub fn deterministic_property(self, kernel: &mut Kernel) -> Result<RunProperty, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.relation.types;
+        let (domain, runs) = property_variables(&mut staged, self, &[])?;
+        let first = staged.fresh_name(&[
+            domain,
+            runs,
+            types.entry,
+            types.inputs,
+            types.host,
+            types.trace,
+            types.outcome,
+        ])?;
+        let entry = staged.tm_fv(first, types.entry)?;
+        let inputs = staged.tm_fv(checked_name(first, 1)?, types.inputs)?;
+        let host = staged.tm_fv(checked_name(first, 2)?, types.host)?;
+        let left_trace = staged.tm_fv(checked_name(first, 3)?, types.trace)?;
+        let left_outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
+        let right_trace = staged.tm_fv(checked_name(first, 5)?, types.trace)?;
+        let right_outcome = staged.tm_fv(checked_name(first, 6)?, types.outcome)?;
+        let left_run = apply(
+            &mut staged,
+            runs,
+            &[entry, inputs, host, left_trace, left_outcome],
+        )?;
+        let right_run = apply(
+            &mut staged,
+            runs,
+            &[entry, inputs, host, right_trace, right_outcome],
+        )?;
+        let both_runs = staged.op2(Op2::And, left_run, right_run)?;
+        let same_trace = staged.eq(types.bool_ty, left_trace, right_trace)?;
+        let same_outcome = staged.eq(types.bool_ty, left_outcome, right_outcome)?;
+        let same_result = staged.op2(Op2::And, same_trace, same_outcome)?;
+        let deterministic = staged.op2(Op2::Imp, both_runs, same_result)?;
+        let deterministic = quantify_forall(
+            &mut staged,
+            types.bool_ty,
+            &[
+                entry,
+                inputs,
+                host,
+                left_trace,
+                left_outcome,
+                right_trace,
+                right_outcome,
+            ],
+            deterministic,
+        )?;
+        let property = abstract_property(&mut staged, self, domain, runs, deterministic)?;
+        let property = self.property(&mut staged, property)?;
+        *kernel = staged;
+        Ok(property)
+    }
+
     /// Constructs totality under this domain and one selected profile.
     ///
     /// The result says that every admissible entry/input/host choice has at
@@ -1438,38 +1541,8 @@ impl RunDomain {
     /// unchanged on failure.
     pub fn total(self, kernel: &mut Kernel, profile: Ref, module: Ref) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
-        let types = self.relation.types;
-        require_classifier(&mut staged, profile, types.profile)?;
-        require_classifier(&mut staged, module, types.module)?;
-        let first = staged.fresh_name(&[
-            self.relation.runs,
-            self.admissible,
-            profile,
-            module,
-            types.entry,
-            types.inputs,
-            types.host,
-            types.trace,
-            types.outcome,
-        ])?;
-        let entry = staged.tm_fv(first, types.entry)?;
-        let inputs = staged.tm_fv(checked_name(first, 1)?, types.inputs)?;
-        let host = staged.tm_fv(checked_name(first, 2)?, types.host)?;
-        let trace = staged.tm_fv(checked_name(first, 3)?, types.trace)?;
-        let outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
-        let allowed = apply(
-            &mut staged,
-            self.admissible,
-            &[profile, module, entry, inputs, host],
-        )?;
-        let run = apply(
-            &mut staged,
-            self.relation.runs,
-            &[profile, module, entry, inputs, host, trace, outcome],
-        )?;
-        let exists_run = quantify_exists(&mut staged, types.bool_ty, &[trace, outcome], run)?;
-        let total = staged.op2(Op2::Imp, allowed, exists_run)?;
-        let total = quantify_forall(&mut staged, types.bool_ty, &[entry, inputs, host], total)?;
+        let property = self.total_property(&mut staged)?;
+        let total = property.proposition(&mut staged, profile, module)?;
         *kernel = staged;
         Ok(total)
     }
@@ -1492,79 +1565,8 @@ impl RunDomain {
         module: Ref,
     ) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
-        let types = self.relation.types;
-        require_classifier(&mut staged, profile, types.profile)?;
-        require_classifier(&mut staged, module, types.module)?;
-        let first = staged.fresh_name(&[
-            self.relation.runs,
-            self.admissible,
-            profile,
-            module,
-            types.entry,
-            types.inputs,
-            types.host,
-            types.trace,
-            types.outcome,
-            types.bool_ty,
-        ])?;
-        let entry = staged.tm_fv(first, types.entry)?;
-        let inputs = staged.tm_fv(checked_name(first, 1)?, types.inputs)?;
-        let host = staged.tm_fv(checked_name(first, 2)?, types.host)?;
-        let left_trace = staged.tm_fv(checked_name(first, 3)?, types.trace)?;
-        let left_outcome = staged.tm_fv(checked_name(first, 4)?, types.outcome)?;
-        let right_trace = staged.tm_fv(checked_name(first, 5)?, types.trace)?;
-        let right_outcome = staged.tm_fv(checked_name(first, 6)?, types.outcome)?;
-        let allowed = apply(
-            &mut staged,
-            self.admissible,
-            &[profile, module, entry, inputs, host],
-        )?;
-        let left_run = apply(
-            &mut staged,
-            self.relation.runs,
-            &[
-                profile,
-                module,
-                entry,
-                inputs,
-                host,
-                left_trace,
-                left_outcome,
-            ],
-        )?;
-        let right_run = apply(
-            &mut staged,
-            self.relation.runs,
-            &[
-                profile,
-                module,
-                entry,
-                inputs,
-                host,
-                right_trace,
-                right_outcome,
-            ],
-        )?;
-        let runs = staged.op2(Op2::And, left_run, right_run)?;
-        let eligible_runs = staged.op2(Op2::And, allowed, runs)?;
-        let same_trace = staged.eq(types.bool_ty, left_trace, right_trace)?;
-        let same_outcome = staged.eq(types.bool_ty, left_outcome, right_outcome)?;
-        let same_result = staged.op2(Op2::And, same_trace, same_outcome)?;
-        let deterministic = staged.op2(Op2::Imp, eligible_runs, same_result)?;
-        let deterministic = quantify_forall(
-            &mut staged,
-            types.bool_ty,
-            &[
-                entry,
-                inputs,
-                host,
-                left_trace,
-                left_outcome,
-                right_trace,
-                right_outcome,
-            ],
-            deterministic,
-        )?;
+        let property = self.deterministic_property(&mut staged)?;
+        let deterministic = property.proposition(&mut staged, profile, module)?;
         *kernel = staged;
         Ok(deterministic)
     }
@@ -4619,6 +4621,11 @@ mod tests {
         let may_property = observation
             .property(&mut kernel, BehaviorQuantifier::May)
             .unwrap();
+        let total_property = domain.total_property(&mut kernel).unwrap();
+        let deterministic_property = domain.deterministic_property(&mut kernel).unwrap();
+        let well_behaved_property = total_property
+            .and(&mut kernel, deterministic_property)
+            .unwrap();
         assert_eq!(may_property.domain(), domain);
         let property_tail = kernel.ty_arr(domain.run_graph_ty, bool_ty).unwrap();
         let property_ty = kernel.ty_arr(domain.domain_ty, property_tail).unwrap();
@@ -4663,10 +4670,28 @@ mod tests {
             .unwrap();
         let total = domain.total(&mut kernel, profile, module).unwrap();
         let deterministic = domain.deterministic(&mut kernel, profile, module).unwrap();
+        let total_from_property = total_property
+            .proposition(&mut kernel, profile, module)
+            .unwrap();
+        let deterministic_from_property = deterministic_property
+            .proposition(&mut kernel, profile, module)
+            .unwrap();
+        covalence_logic_hol_derived::join_alpha_equivalent(&mut kernel, total_from_property, total)
+            .unwrap();
+        covalence_logic_hol_derived::join_alpha_equivalent(
+            &mut kernel,
+            deterministic_from_property,
+            deterministic,
+        )
+        .unwrap();
+        let well_behaved = well_behaved_property
+            .proposition(&mut kernel, profile, module)
+            .unwrap();
         assert_eq!(kernel.classifier(same_runs).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(refinement).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(total).unwrap(), bool_ty);
         assert_eq!(kernel.classifier(deterministic).unwrap(), bool_ty);
+        assert_eq!(kernel.classifier(well_behaved).unwrap(), bool_ty);
         assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
         let equivalence_reflexive = domain
             .prove_same_runs_reflexive(&mut kernel, profile, module)
@@ -5160,6 +5185,19 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[contextual_same_runs])
             .check(&kernel, custom_contextual_preservation)
+            .unwrap();
+        let well_behaved_contextual_preservation = context
+            .prove_property_preserves(
+                &mut kernel,
+                contextual_same_runs_evidence,
+                well_behaved_property,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[contextual_same_runs])
+            .check(&kernel, well_behaved_contextual_preservation)
             .unwrap();
         let custom_observed_equivalence = contextual_from_custom_property
             .equivalent(&mut kernel, module, other_module)
