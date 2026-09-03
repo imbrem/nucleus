@@ -9,10 +9,13 @@ vacuous-universal `every`, per-invocation non-vacuous `must`, and `never`
 propositions from that one relation. `every` states trace safety independently
 of progress, while `must` additionally requires an observed execution for each
 admissible invocation. Calls, traps, returns, and compound trace properties are
-observation adapters rather than separate execution semantics. Unary trace and outcome predicates have
-checked adapters that explicitly ignore the other component, covering the
-common call/safety and return/trap cases without hand-built lambdas. A domain
-also defines `same_runs`, equality of complete allowed run graphs, and
+observation adapters rather than separate execution semantics. Unary trace and
+outcome predicates have checked adapters that explicitly ignore the other
+component, covering the common call/safety and return/trap cases without
+hand-built lambdas. Observations compose pointwise through immutable `and`,
+`or`, and negation operations; binary composition rejects different run domains
+so host policies cannot be mixed silently. A domain also defines `same_runs`,
+equality of complete allowed run graphs, and
 directional `refines_runs`: an implementation has the same
 admissible invocation domain and may remove, but not add, behaviors of its
 specification, but must retain some behavior whenever the specification has a

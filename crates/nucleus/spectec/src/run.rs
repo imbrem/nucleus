@@ -5,6 +5,7 @@
 //! relation, the allowed invocation/host policy, and the observation over a
 //! trace and outcome.
 
+use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
     Kernel, KernelError, Lit, Ref,
     builtin::{Op1, Op2},
@@ -725,6 +726,21 @@ pub struct RunObservation {
     observe: Ref,
 }
 
+/// Failure to compose behavior observations.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum RunObservationError {
+    /// A checked HOL construction failed.
+    #[snafu(transparent)]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+    /// Binary observations came from different execution domains.
+    #[snafu(display("cannot combine observations from different run domains"))]
+    DomainMismatch,
+}
+
 impl RunObservation {
     /// Returns the underlying versioned execution relation.
     #[must_use]
@@ -748,6 +764,69 @@ impl RunObservation {
     #[must_use]
     pub const fn observation(self) -> Ref {
         self.observe
+    }
+
+    /// Constructs the pointwise negation of this observation.
+    ///
+    /// The result remains attached to the same run domain and can be queried
+    /// with any behavior quantifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if checked application, negation, or abstraction
+    /// fails. `kernel` is unchanged on failure.
+    pub fn negate(self, kernel: &mut Kernel) -> Result<Self, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.domain.relation.types;
+        let (trace, outcome) = observation_variables(&mut staged, self.domain, &[self.observe])?;
+        let observed = apply(&mut staged, self.observe, &[trace, outcome])?;
+        let body = staged.op1(Op1::Not, observed)?;
+        let observe = abstract_observation(&mut staged, types, trace, outcome, body)?;
+        let observation = self.domain.observe(&mut staged, observe)?;
+        *kernel = staged;
+        Ok(observation)
+    }
+
+    /// Constructs pointwise conjunction with another observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RunObservationError::DomainMismatch`] unless both observations
+    /// use the same run relation and admissibility policy, or a checked HOL
+    /// construction fails. `kernel` is unchanged on failure.
+    pub fn and(self, kernel: &mut Kernel, other: Self) -> Result<Self, RunObservationError> {
+        self.combine(kernel, other, Op2::And)
+    }
+
+    /// Constructs pointwise disjunction with another observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns under the same conditions as [`Self::and`].
+    pub fn or(self, kernel: &mut Kernel, other: Self) -> Result<Self, RunObservationError> {
+        self.combine(kernel, other, Op2::Or)
+    }
+
+    fn combine(
+        self,
+        kernel: &mut Kernel,
+        other: Self,
+        operation: Op2,
+    ) -> Result<Self, RunObservationError> {
+        if self.domain != other.domain {
+            return Err(RunObservationError::DomainMismatch);
+        }
+        let mut staged = kernel.fork();
+        let types = self.domain.relation.types;
+        let (trace, outcome) =
+            observation_variables(&mut staged, self.domain, &[self.observe, other.observe])?;
+        let left = apply(&mut staged, self.observe, &[trace, outcome])?;
+        let right = apply(&mut staged, other.observe, &[trace, outcome])?;
+        let body = staged.op2(operation, left, right)?;
+        let observe = abstract_observation(&mut staged, types, trace, outcome, body)?;
+        let observation = self.domain.observe(&mut staged, observe)?;
+        *kernel = staged;
+        Ok(observation)
     }
 
     /// Constructs a may, every, must, or never proposition for one profile and module.
@@ -966,6 +1045,39 @@ fn checked_name(first: u64, offset: u64) -> Result<u64, KernelError> {
     first.checked_add(offset).ok_or(KernelError::TooManyNames)
 }
 
+fn observation_variables(
+    kernel: &mut Kernel,
+    domain: RunDomain,
+    observations: &[Ref],
+) -> Result<(Ref, Ref), KernelError> {
+    let types = domain.relation.types;
+    let mut roots = vec![
+        types.trace,
+        types.outcome,
+        types.bool_ty,
+        domain.relation.runs,
+        domain.admissible,
+    ];
+    roots.extend_from_slice(observations);
+    let first = kernel.fresh_name(&roots)?;
+    let trace = kernel.tm_fv(first, types.trace)?;
+    let outcome = kernel.tm_fv(checked_name(first, 1)?, types.outcome)?;
+    Ok((trace, outcome))
+}
+
+fn abstract_observation(
+    kernel: &mut Kernel,
+    types: RunTypes,
+    trace: Ref,
+    outcome: Ref,
+    body: Ref,
+) -> Result<Ref, KernelError> {
+    let by_outcome_ty = kernel.ty_arr(types.outcome, types.bool_ty)?;
+    let by_outcome = kernel.lam_at(by_outcome_ty, outcome, body)?;
+    let observation_ty = kernel.ty_arr(types.trace, by_outcome_ty)?;
+    kernel.lam_at(observation_ty, trace, by_outcome)
+}
+
 fn curried_type(kernel: &mut Kernel, arguments: &[Ref], result: Ref) -> Result<Ref, KernelError> {
     arguments
         .iter()
@@ -1086,6 +1198,7 @@ mod tests {
             super::curried_type(&mut kernel, &[types.trace, types.outcome], bool_ty).unwrap();
         let runs = kernel.tm_fv(20, run_ty).unwrap();
         let admissible = kernel.tm_fv(21, admissible_ty).unwrap();
+        let other_admissible = kernel.tm_fv(31, admissible_ty).unwrap();
         let observe = kernel.tm_fv(22, observe_ty).unwrap();
         let trace_predicate_ty = kernel.ty_arr(types.trace, bool_ty).unwrap();
         let outcome_predicate_ty = kernel.ty_arr(types.outcome, bool_ty).unwrap();
@@ -1113,6 +1226,13 @@ mod tests {
         assert_eq!(observation.relation(), relation);
         assert_eq!(trace_observation.domain(), domain);
         assert_eq!(outcome_observation.domain(), domain);
+        let combined_observation = trace_observation
+            .and(&mut kernel, outcome_observation)
+            .unwrap();
+        let alternative_observation = trace_observation
+            .or(&mut kernel, outcome_observation)
+            .unwrap();
+        let negated_observation = trace_observation.negate(&mut kernel).unwrap();
 
         let may = observation.may(&mut kernel, profile, module).unwrap();
         let every = observation.every(&mut kernel, profile, module).unwrap();
@@ -1124,6 +1244,16 @@ mod tests {
         assert_eq!(kernel.classifier(must).unwrap(), bool_ty);
         assert_eq!(kernel.arena().tag(never), Some(Tag::Tm(TmTag::Op1)));
         assert_eq!(kernel.arena().tag(must), Some(Tag::Tm(TmTag::Eq)));
+        let never_body = kernel.arena().children(never).unwrap().next().unwrap();
+        covalence_logic_hol_derived::join_same_syntax(&mut kernel, never_body, may).unwrap();
+        for composed in [
+            combined_observation,
+            alternative_observation,
+            negated_observation,
+        ] {
+            let proposition = composed.may(&mut kernel, profile, module).unwrap();
+            assert_eq!(kernel.classifier(proposition).unwrap(), bool_ty);
+        }
         let same_runs = domain
             .same_runs(&mut kernel, profile, module, other_module)
             .unwrap();
@@ -1202,6 +1332,15 @@ mod tests {
                 .observe_trace(&mut kernel, outcome_predicate)
                 .is_err()
         );
+        assert_eq!(kernel.arena(), &before);
+
+        let other_domain = relation.under(&mut kernel, other_admissible).unwrap();
+        let other_observation = other_domain.observe(&mut kernel, observe).unwrap();
+        let before = kernel.arena().clone();
+        assert!(matches!(
+            observation.and(&mut kernel, other_observation),
+            Err(super::RunObservationError::DomainMismatch)
+        ));
         assert_eq!(kernel.arena(), &before);
 
         let before = kernel.arena().clone();
