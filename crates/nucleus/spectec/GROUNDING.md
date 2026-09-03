@@ -92,9 +92,12 @@ two existential states. The pinned audit now derives the `instantiate`,
 `store`, and `invoke` graph facts through retained SpecTec definition
 productions and checked equation transport. It also exposes each remaining
 production condition instead of assuming those graph facts wholesale. The
-initialization `Steps`, export-selection, final `Steps`, and pre-host-call facts
-remain explicit grounding premises. Interpreter traces cannot be passed in
-place of theorem handles.
+initialization `Steps` fact is derived from the retained SpecTec reflexivity
+rule and checked equality transport; the exact equalities relating its
+structural source and target to the instantiation configurations remain
+grounding premises. Export selection, final `Steps`, and the pre-host-call fact
+also remain explicit grounding premises. Interpreter traces cannot be passed
+in place of theorem handles.
 
 For `FALSE`, the negative proof opens the concrete exported-function predicate
 and reduces non-reachability to two independent laws: every export list exposed

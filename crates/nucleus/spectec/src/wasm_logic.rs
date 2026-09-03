@@ -1133,6 +1133,75 @@ impl SpecTecExecution {
         curry_binary_fact(kernel, self.steps, before, after, relation_fact)
     }
 
+    /// Transports the source configuration of a checked `Steps` fact.
+    ///
+    /// `equality` must prove `before = replacement`. The result proves
+    /// `Steps replacement after`, preserving every premise of both input
+    /// theorems. This is ordinary equality congruence and does not assert that
+    /// either configuration representation is faithful.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `steps_fact` proves `Steps before after` and
+    /// `equality` proves the required oriented equality, or a checked
+    /// congruence, beta-reduction, or equality-elimination step fails. `kernel`
+    /// is unchanged on failure.
+    pub fn transport_steps_before(
+        self,
+        kernel: &mut Kernel,
+        before: Ref,
+        replacement: Ref,
+        after: Ref,
+        steps_fact: Evidence,
+        equality: covalence_logic_hol::ThmId,
+    ) -> Result<Evidence, WasmLogicError> {
+        transport_binary_fact(
+            kernel,
+            self.steps,
+            self.state_ty,
+            self.bool_ty,
+            before,
+            after,
+            replacement,
+            steps_fact,
+            equality,
+            true,
+        )
+    }
+
+    /// Transports the target configuration of a checked `Steps` fact.
+    ///
+    /// `equality` must prove `after = replacement`. The result proves
+    /// `Steps before replacement`, preserving every premise of both input
+    /// theorems.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`Self::transport_steps_before`]. `kernel` is unchanged on failure.
+    pub fn transport_steps_after(
+        self,
+        kernel: &mut Kernel,
+        before: Ref,
+        after: Ref,
+        replacement: Ref,
+        steps_fact: Evidence,
+        equality: covalence_logic_hol::ThmId,
+    ) -> Result<Evidence, WasmLogicError> {
+        transport_binary_fact(
+            kernel,
+            self.steps,
+            self.state_ty,
+            self.bool_ty,
+            before,
+            after,
+            replacement,
+            steps_fact,
+            equality,
+            false,
+        )
+    }
+
     /// Builds the generic assertion-reachability schema from this exact
     /// `SpecTec` execution adapter and the two remaining structural views.
     ///
@@ -1659,6 +1728,81 @@ fn start_body(
         .try_fold(propositions[0], |left, &right| {
             kernel.op2(Op2::And, left, right).map_err(Into::into)
         })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn transport_binary_fact(
+    kernel: &mut Kernel,
+    predicate: Ref,
+    value_ty: Ref,
+    bool_ty: Ref,
+    left: Ref,
+    right: Ref,
+    replacement: Ref,
+    fact: Evidence,
+    equality: covalence_logic_hol::ThmId,
+    replace_left: bool,
+) -> Result<Evidence, WasmLogicError> {
+    if !fact.holds {
+        return Err(WasmLogicError::StepFact);
+    }
+    let mut staged = kernel.fork();
+    let source = apply(&mut staged, predicate, &[left, right])?;
+    let fact = align_positive_fact(&mut staged, fact.theorem, source)?;
+    let expected_equality = if replace_left {
+        staged.eq(bool_ty, left, replacement)?
+    } else {
+        staged.eq(bool_ty, right, replacement)?
+    };
+    let equality = align_positive_fact(&mut staged, equality, expected_equality)?;
+    let binder_name = staged.fresh_name(&[
+        predicate,
+        value_ty,
+        bool_ty,
+        left,
+        right,
+        replacement,
+        source,
+        expected_equality,
+    ])?;
+    let binder = staged.tm_fv(binder_name, value_ty)?;
+    let body = if replace_left {
+        apply(&mut staged, predicate, &[binder, right])?
+    } else {
+        apply(&mut staged, predicate, &[left, binder])?
+    };
+    let predicate_ty = staged.ty_arr(value_ty, bool_ty)?;
+    let congruence_function = staged.lam_at(predicate_ty, binder, body)?;
+    let lifted = staged.ap_term(equality, congruence_function)?;
+    let old = if replace_left { left } else { right };
+    let old_substitution = substitute(&mut staged, binder, old, body)
+        .map_err(|source| WasmLogicError::Substitute { source })?;
+    let old_beta = staged.tm_beta_fact(None, lifted.left, old_substitution.fact)?;
+    staged.union_syn_fact(old_beta)?;
+    join_same_syntax(&mut staged, old_substitution.output, source)
+        .map_err(|source| WasmLogicError::Syntax { source })?;
+    staged.convert_conclusions(fact, source, lifted.left)?;
+    let transported = staged.eq_mp(lifted.theorem, fact)?;
+    let replacement_substitution = substitute(&mut staged, binder, replacement, body)
+        .map_err(|source| WasmLogicError::Substitute { source })?;
+    let replacement_beta =
+        staged.tm_beta_fact(None, lifted.right, replacement_substitution.fact)?;
+    staged.union_syn_fact(replacement_beta)?;
+    let target = if replace_left {
+        apply(&mut staged, predicate, &[replacement, right])?
+    } else {
+        apply(&mut staged, predicate, &[left, replacement])?
+    };
+    join_same_syntax(&mut staged, replacement_substitution.output, target)
+        .map_err(|source| WasmLogicError::Syntax { source })?;
+    staged.convert_conclusions(transported, lifted.right, target)?;
+    staged.contract_theorem(transported)?;
+    *kernel = staged;
+    Ok(Evidence {
+        proposition: target,
+        theorem: transported,
+        holds: true,
+    })
 }
 
 fn curry_binary_fact(
@@ -2305,6 +2449,88 @@ mod tests {
         crate::EvidenceScope::positive(&propositions)
             .check(&kernel, proved)
             .unwrap();
+    }
+
+    #[test]
+    fn steps_transport_is_checked_compositional_and_transactional() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let value = kernel.ty_fv(0, star).unwrap();
+        let steps_ty = (0..2)
+            .try_fold(bool_ty, |tail, _| kernel.ty_arr(value, tail))
+            .unwrap();
+        let pair_tail = kernel.ty_arr(value, value).unwrap();
+        let pair_ty = kernel.ty_arr(value, pair_tail).unwrap();
+        let execution = SpecTecExecution {
+            state_ty: value,
+            bool_ty,
+            steps: predicate(&mut kernel, value, bool_ty, 2, 10),
+            pair: kernel.tm_fv(11, pair_ty).unwrap(),
+            steps_ty,
+            instantiate: predicate(&mut kernel, value, bool_ty, 4, 12),
+            invoke: predicate(&mut kernel, value, bool_ty, 4, 13),
+            store: predicate(&mut kernel, value, bool_ty, 2, 14),
+            moduleinst: predicate(&mut kernel, value, bool_ty, 2, 15),
+        };
+        let before = kernel.tm_fv(20, value).unwrap();
+        let after = kernel.tm_fv(21, value).unwrap();
+        let replacement_before = kernel.tm_fv(22, value).unwrap();
+        let replacement_after = kernel.tm_fv(23, value).unwrap();
+        let source = apply(&mut kernel, execution.steps, &[before, after]).unwrap();
+        let source_fact = kernel.identity(positive(source)).unwrap();
+        let before_equality = kernel.eq(bool_ty, before, replacement_before).unwrap();
+        let before_equality_fact = kernel.identity(positive(before_equality)).unwrap();
+        let after_equality = kernel.eq(bool_ty, after, replacement_after).unwrap();
+        let after_equality_fact = kernel.identity(positive(after_equality)).unwrap();
+        let transported_before = execution
+            .transport_steps_before(
+                &mut kernel,
+                before,
+                replacement_before,
+                after,
+                Evidence {
+                    proposition: source,
+                    theorem: source_fact,
+                    holds: true,
+                },
+                before_equality_fact,
+            )
+            .unwrap();
+        let transported = execution
+            .transport_steps_after(
+                &mut kernel,
+                replacement_before,
+                after,
+                replacement_after,
+                transported_before,
+                after_equality_fact,
+            )
+            .unwrap();
+        crate::EvidenceScope::positive(&[source, before_equality, after_equality])
+            .check(&kernel, transported)
+            .unwrap();
+
+        let reversed = kernel.eq(bool_ty, replacement_before, before).unwrap();
+        let reversed_fact = kernel.identity(positive(reversed)).unwrap();
+        let before_failure = kernel.arena().clone();
+        assert!(
+            execution
+                .transport_steps_before(
+                    &mut kernel,
+                    before,
+                    replacement_before,
+                    after,
+                    Evidence {
+                        proposition: source,
+                        theorem: source_fact,
+                        holds: true,
+                    },
+                    reversed_fact,
+                )
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before_failure);
     }
 
     #[test]

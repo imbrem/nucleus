@@ -1948,6 +1948,43 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         )
         .unwrap()
         .theorem;
+    let initialization_before_equality = kernel
+        .eq(bool_ty, reflexive_before, start.instantiation_start)
+        .unwrap();
+    let initialization_before_equality_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            initialization_before_equality.get(),
+        ))
+        .unwrap();
+    let initialization_after_equality = kernel
+        .eq(bool_ty, reflexive_after, start.initialized)
+        .unwrap();
+    let initialization_after_equality_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            initialization_after_equality.get(),
+        ))
+        .unwrap();
+    let initialization_at_start = execution
+        .transport_steps_before(
+            &mut kernel,
+            reflexive_before,
+            start.instantiation_start,
+            reflexive_after,
+            curried_reflexive_steps,
+            initialization_before_equality_fact,
+        )
+        .unwrap();
+    obligation_facts[1] = execution
+        .transport_steps_after(
+            &mut kernel,
+            start.instantiation_start,
+            reflexive_after,
+            start.initialized,
+            initialization_at_start,
+            initialization_after_equality_fact,
+        )
+        .unwrap()
+        .theorem;
     let store_instance = store_definition
         .specialize(
             &mut kernel,
@@ -2135,11 +2172,14 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
             false_does_not_call.theorem,
         )
         .unwrap();
-    let mut grounding = obligations[1..3].to_vec();
+    let mut grounding = obligations[2..3].to_vec();
+    grounding.extend(reflexive_remaining);
     grounding.extend(instantiate_remaining);
     grounding.extend(store_remaining);
     grounding.extend(invoke_remaining);
     grounding.extend([
+        initialization_before_equality,
+        initialization_after_equality,
         steps_at_final,
         calls_at_final,
         false_export_lists,
