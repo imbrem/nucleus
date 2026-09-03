@@ -540,10 +540,10 @@ impl ContextualObservation {
 
     /// Specializes checked contextual equivalence to one admissible context.
     ///
-    /// For function definitions this is the per-closing-context elimination
-    /// rule used by the stronger replacement congruence theorem. The latter
-    /// additionally requires closure of function contexts under composition
-    /// with enclosing module contexts.
+    /// For module definitions this is the per-closing-context elimination
+    /// rule. Function equivalence below quantifies over replacement contexts
+    /// whose results are related by this full module equivalence, so no
+    /// separate context-composition assumption is needed.
     ///
     /// # Errors
     ///
@@ -758,7 +758,7 @@ impl FunctionObservation {
     /// equivalence, universal specialization succeeds, and the resulting
     /// module-equivalence formula can be checked alpha-equivalent. `kernel` is
     /// unchanged on failure.
-    pub fn prove_replacement_sound(
+    pub fn prove_replacement_congruence(
         self,
         kernel: &mut Kernel,
         function_equivalence: ThmId,
@@ -1912,7 +1912,13 @@ mod tests {
         let equivalence_fact = kernel.identity(positive(equivalence)).unwrap();
 
         let sound = functions
-            .prove_replacement_sound(&mut kernel, equivalence_fact, replacement, left, right)
+            .prove_replacement_congruence(
+                &mut kernel,
+                equivalence_fact,
+                replacement,
+                left,
+                right,
+            )
             .unwrap();
 
         EvidenceScope::positive(&[equivalence])
