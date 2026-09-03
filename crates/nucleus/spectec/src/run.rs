@@ -2931,6 +2931,24 @@ impl RunProperty {
         self.combine(kernel, consequent, Op2::Imp)
     }
 
+    /// Constructs pointwise logical equivalence with another run property.
+    ///
+    /// The encoding is the conjunction of both implications, so it requires
+    /// no additional logical primitive or trusted rule.
+    ///
+    /// # Errors
+    ///
+    /// Returns under the same conditions as [`Self::and`]. `kernel` is
+    /// unchanged on failure.
+    pub fn iff(self, kernel: &mut Kernel, other: Self) -> Result<Self, RunCompositionError> {
+        let mut staged = kernel.fork();
+        let forward = self.implies(&mut staged, other)?;
+        let reverse = other.implies(&mut staged, self)?;
+        let equivalent = forward.and(&mut staged, reverse)?;
+        *kernel = staged;
+        Ok(equivalent)
+    }
+
     fn combine(
         self,
         kernel: &mut Kernel,
@@ -5061,6 +5079,7 @@ mod tests {
         let combined_property = may_property.and(&mut kernel, custom_property).unwrap();
         let alternative_property = may_property.or(&mut kernel, custom_property).unwrap();
         let contract_property = may_property.implies(&mut kernel, custom_property).unwrap();
+        let equivalent_property = may_property.iff(&mut kernel, custom_property).unwrap();
         let negated_property = custom_property.negate(&mut kernel).unwrap();
         let custom_proposition = custom_property
             .proposition(&mut kernel, profile, module)
@@ -5087,6 +5106,7 @@ mod tests {
             combined_property,
             alternative_property,
             contract_property,
+            equivalent_property,
             negated_property,
         ] {
             let proposition = composed.proposition(&mut kernel, profile, module).unwrap();
@@ -5673,6 +5693,19 @@ mod tests {
         EvidenceScope::positive(&[contextual_same_runs])
             .check(&kernel, well_behaved_contextual_preservation)
             .unwrap();
+        let equivalent_contextual_preservation = context
+            .prove_property_preserves(
+                &mut kernel,
+                contextual_same_runs_evidence,
+                equivalent_property,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[contextual_same_runs])
+            .check(&kernel, equivalent_contextual_preservation)
+            .unwrap();
         let custom_observed_equivalence = contextual_from_custom_property
             .equivalent(&mut kernel, module, other_module)
             .unwrap();
@@ -5805,6 +5838,12 @@ mod tests {
         let before = kernel.arena().clone();
         assert!(matches!(
             custom_property.and(&mut kernel, other_property),
+            Err(super::RunCompositionError::DomainMismatch)
+        ));
+        assert_eq!(kernel.arena(), &before);
+        let before = kernel.arena().clone();
+        assert!(matches!(
+            custom_property.iff(&mut kernel, other_property),
             Err(super::RunCompositionError::DomainMismatch)
         ));
         assert_eq!(kernel.arena(), &before);
