@@ -23,11 +23,62 @@ const LOCAL_NAME_BLOCK: u64 = 1 << 32;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InterpretationSymbol {
     /// Stable structural description and checked signature discriminator.
-    pub label: String,
+    pub label: Symbol,
     /// Checked free term.
     pub reference: Ref,
     /// Checked classifier of `reference`.
     pub classifier: Ref,
+}
+
+/// The semantic obligation represented by a free interpretation symbol.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum InterpretationKind {
+    /// Membership in a nontrivially embedded `SpecTec` type.
+    Membership,
+    /// A tuple constructor.
+    Tuple,
+    /// A tagged variant constructor.
+    Variant,
+    /// A record constructor.
+    Struct,
+    /// A grammar constructor or reference.
+    Grammar,
+    /// A non-Boolean `SpecTec` expression operation.
+    Expression,
+    /// A repeated relational premise.
+    IteratedPremise,
+    /// A non-expression grammar argument.
+    GrammarArgument,
+}
+
+impl InterpretationSymbol {
+    /// Classifies the concrete semantic implementation still owed by this
+    /// parameterized symbol.
+    #[must_use]
+    pub fn kind(&self) -> InterpretationKind {
+        interpretation_kind(&self.label)
+    }
+}
+
+fn interpretation_kind(label: &str) -> InterpretationKind {
+    if label.starts_with("membership:") {
+        InterpretationKind::Membership
+    } else if label.starts_with("tuple:") {
+        InterpretationKind::Tuple
+    } else if label.starts_with("variant:") {
+        InterpretationKind::Variant
+    } else if label.starts_with("struct:") {
+        InterpretationKind::Struct
+    } else if label.starts_with("grammar-argument:") {
+        InterpretationKind::GrammarArgument
+    } else if label.starts_with("grammar:") {
+        InterpretationKind::Grammar
+    } else if label.starts_with("expression:") {
+        InterpretationKind::Expression
+    } else {
+        debug_assert!(label.starts_with("iterated-premise:"));
+        InterpretationKind::IteratedPremise
+    }
 }
 
 /// Complete parameterized semantics of one exact `SpecTec` document.
@@ -39,6 +90,26 @@ pub struct ParameterizedDocument {
     pub interpretation: Vec<InterpretationSymbol>,
     /// Exact declaration constraints and their complete conjunction.
     pub semantics: RelationalDocumentDefinition,
+}
+
+impl ParameterizedDocument {
+    /// Returns the concrete semantic operations still required before this
+    /// document can ground claims about particular `SpecTec` values.
+    ///
+    /// An empty iterator is necessary, but not by itself sufficient, for a
+    /// closed program theorem: the complete theory must also occur as checked
+    /// proof evidence rather than merely as syntax.
+    #[must_use]
+    pub fn grounding_obligations(&self) -> impl ExactSizeIterator<Item = &InterpretationSymbol> {
+        self.interpretation.iter()
+    }
+
+    /// Returns whether all value-level interpretation obligations were
+    /// discharged by the lowering.
+    #[must_use]
+    pub fn has_closed_interpretation(&self) -> bool {
+        self.interpretation.is_empty()
+    }
 }
 
 /// Why a complete parameterized document could not be lowered.
@@ -288,7 +359,7 @@ impl ParameterizedResolver {
         self.interpretation.symbols.insert(
             key,
             InterpretationSymbol {
-                label,
+                label: Symbol::from(label),
                 reference,
                 classifier,
             },
@@ -863,6 +934,30 @@ impl RelationalResolver for ParameterizedResolver {
     fn relation_otherwise(&mut self) -> Self::Error {
         ParameterizedError::Resolve {
             message: "otherwise is not monotone in a relation rule".to_owned(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InterpretationKind, interpretation_kind};
+
+    #[test]
+    fn grounding_obligations_have_stable_categories() {
+        for (label, expected) in [
+            ("membership:Numeric(Nat)", InterpretationKind::Membership),
+            ("tuple:2", InterpretationKind::Tuple),
+            ("variant:MODULE", InterpretationKind::Variant),
+            ("struct:[\"FUNCS\"]", InterpretationKind::Struct),
+            ("grammar:Terminal", InterpretationKind::Grammar),
+            ("expression:Length", InterpretationKind::Expression),
+            ("iterated-premise:List", InterpretationKind::IteratedPremise),
+            (
+                "grammar-argument:Variable",
+                InterpretationKind::GrammarArgument,
+            ),
+        ] {
+            assert_eq!(interpretation_kind(label), expected);
         }
     }
 }

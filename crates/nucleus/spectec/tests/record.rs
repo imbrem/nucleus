@@ -9,8 +9,8 @@ use covalence_nucleus_spectec::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
     CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
     CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase,
-    HolEmbedding, HolFamilyBranch, HolRule, HolTheoryError, IndexErasure, KernelRoot,
-    RelationalCall, RelationalClause, RelationalCondition, RelationalDefinitionSchema,
+    HolEmbedding, HolFamilyBranch, HolRule, HolTheoryError, IndexErasure, InterpretationKind,
+    KernelRoot, RelationalCall, RelationalClause, RelationalCondition, RelationalDefinitionSchema,
     RelationalDefinitionSource, RelationalExpressionAlgebra, RelationalRelation,
     RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler, Source, TYPE_NAME,
     TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family, close_family_definition,
@@ -1513,6 +1513,28 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         source.declaration_count()
     );
     assert!(!document.interpretation.is_empty());
+    assert!(!document.has_closed_interpretation());
+    assert_eq!(
+        document.grounding_obligations().len(),
+        document.interpretation.len()
+    );
+    let kinds = document
+        .grounding_obligations()
+        .map(covalence_nucleus_spectec::InterpretationSymbol::kind)
+        .collect::<std::collections::BTreeSet<_>>();
+    for required in [
+        InterpretationKind::Membership,
+        InterpretationKind::Tuple,
+        InterpretationKind::Variant,
+        InterpretationKind::Struct,
+        InterpretationKind::Expression,
+        InterpretationKind::IteratedPremise,
+    ] {
+        assert!(
+            kinds.contains(&required),
+            "missing {required:?} in {kinds:?}"
+        );
+    }
     assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
 }
 
