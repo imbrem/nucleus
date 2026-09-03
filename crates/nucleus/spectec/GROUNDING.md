@@ -1,5 +1,16 @@
 # WebAssembly semantic grounding
 
+The generic program-property thin waist is an immutable `RunRelation` with
+the checked HOL shape
+`Runs(profile, module, entry, inputs, host, trace, outcome)`. A
+`RunObservation` adds an explicit profile- and module-sensitive admissibility
+policy plus a predicate over traces and outcomes. It derives `may`,
+non-vacuous `must`, and `never` propositions from that one relation; calls,
+traps, returns, and compound trace properties are observation adapters rather
+than separate execution semantics. The resulting module predicates compose
+with contextual equivalence. This layer constructs checked syntax only and
+neither executes Wasm nor creates theorem facts.
+
 The target program-logic interface is defined by four theorem families over
 actual WebAssembly modules:
 

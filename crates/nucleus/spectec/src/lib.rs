@@ -18,6 +18,7 @@ mod parameterized;
 mod premise;
 mod program_logic;
 mod relational;
+mod run;
 mod schema;
 mod selected;
 mod theory;
@@ -60,6 +61,7 @@ pub use relational::{
     relational_hol_case, relational_hol_rule, relational_relation_declaration,
     relational_relations, relational_relations_avoiding,
 };
+pub use run::{BehaviorQuantifier, RunObservation, RunRelation, RunTypes};
 pub use schema::{
     HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,
 };
