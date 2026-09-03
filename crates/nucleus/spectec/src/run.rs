@@ -977,6 +977,80 @@ impl RunContext {
         })
     }
 
+    /// Refutes contextual run equivalence using one distinguishing observation.
+    ///
+    /// This is the checked contrapositive of observational preservation. If
+    /// `distinction` proves that the selected contextual observation differs,
+    /// the result proves that the modules cannot have equal complete run graphs
+    /// in every admissible context. All premises of `distinction` remain
+    /// visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `distinction` is negative evidence for this
+    /// context's selected observation equivalence, or a checked preservation,
+    /// cut, negation, or alignment step fails. `kernel` is unchanged on
+    /// failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_not_equivalent_runs_from_observation(
+        self,
+        kernel: &mut Kernel,
+        distinction: Evidence,
+        observation: RunObservation,
+        quantifier: BehaviorQuantifier,
+        profile: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        self.require_observation(observation)?;
+        let contextual = self.observe_avoiding(
+            &mut staged,
+            observation,
+            quantifier,
+            profile,
+            &[left, right],
+        )?;
+        let observed_equivalence = contextual.equivalent(&mut staged, left, right)?;
+        let distinction_theorem =
+            align_signed_evidence(&mut staged, distinction, observed_equivalence, false)?;
+        let run_equivalence = self.equivalent_runs(&mut staged, profile, left, right)?;
+        let assumed = staged.identity(positive(run_equivalence))?;
+        let preservation = self.prove_equivalent_runs_preserves(
+            &mut staged,
+            Evidence {
+                proposition: run_equivalence,
+                theorem: assumed,
+                holds: true,
+            },
+            observation,
+            quantifier,
+            profile,
+            left,
+            right,
+        )?;
+        let preservation_theorem = aligned_theorem_conclusion(
+            &mut staged,
+            preservation.theorem,
+            preservation.proposition,
+            observed_equivalence,
+            "contextual run distinction observation alignment",
+        )?;
+        staged.not_left(preservation_theorem, positive(observed_equivalence))?;
+        let contradiction = staged.cut(
+            distinction_theorem,
+            preservation_theorem,
+            positive(observed_equivalence).negated(),
+        )?;
+        staged.not_right(contradiction, positive(run_equivalence))?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: run_equivalence,
+            theorem: contradiction,
+            holds: false,
+        })
+    }
+
     fn same_runs_at(
         self,
         kernel: &mut Kernel,
@@ -2376,12 +2450,25 @@ fn align_evidence(
     evidence: Evidence,
     target: Ref,
 ) -> Result<covalence_logic_hol::ThmId, KernelError> {
-    if !evidence.holds {
+    align_signed_evidence(kernel, evidence, target, true)
+}
+
+fn align_signed_evidence(
+    kernel: &mut Kernel,
+    evidence: Evidence,
+    target: Ref,
+    holds: bool,
+) -> Result<covalence_logic_hol::ThmId, KernelError> {
+    if evidence.holds != holds {
         return Err(KernelError::InvalidTheoremRule {
-            rule: "positive run evidence",
+            rule: "signed run evidence",
         });
     }
-    let expected = positive(evidence.proposition);
+    let expected = if holds {
+        positive(evidence.proposition)
+    } else {
+        positive(evidence.proposition).negated()
+    };
     let exact_conclusion = {
         let theorem = kernel
             .thm()
@@ -2397,7 +2484,7 @@ fn align_evidence(
             rule: "run evidence conclusion",
         });
     }
-    join_same_syntax(kernel, evidence.proposition, target).map_err(|_| {
+    join_alpha_equivalent(kernel, evidence.proposition, target).map_err(|_| {
         KernelError::InvalidTheoremRule {
             rule: "run evidence proposition alignment",
         }
@@ -2872,6 +2959,31 @@ mod tests {
                 .check(&kernel, contextual_preservation)
                 .unwrap();
         }
+        let observed_equivalence = contextual_from_schema
+            .equivalent(&mut kernel, module, other_module)
+            .unwrap();
+        let observed_distinction = Evidence {
+            proposition: observed_equivalence,
+            theorem: kernel
+                .identity(super::positive(observed_equivalence).negated())
+                .unwrap(),
+            holds: false,
+        };
+        let run_distinction = context
+            .prove_not_equivalent_runs_from_observation(
+                &mut kernel,
+                observed_distinction,
+                observation,
+                BehaviorQuantifier::May,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        assert!(!run_distinction.holds);
+        EvidenceScope::signed(&[super::positive(observed_equivalence).negated()])
+            .check(&kernel, run_distinction)
+            .unwrap();
         let denied_contextual_runs = Evidence {
             proposition: contextual_same_runs,
             theorem: kernel

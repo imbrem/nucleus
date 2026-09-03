@@ -34,6 +34,11 @@ to ordinary contextual equivalence for any selected behavior observation.
 Premise-free reflexivity and premise-preserving symmetry and transitivity are
 themselves checked derivations, rather than frontend declarations that the
 relation is an equivalence.
+Conversely, checked negative evidence for any one contextual observation
+refutes `equivalent_runs`. Thus, once `callsAssert` is supplied as a trace
+observation, its distinction between `TRUE` and `FALSE` is sufficient to prove
+that they are not contextually run-equivalent; the API does not require
+comparing their complete graphs by inspection.
 The domain additionally defines directional `refines_runs`: an implementation
 has the same admissible invocation domain and may remove, but not add, behaviors
 of its specification, but must retain some behavior whenever the specification
