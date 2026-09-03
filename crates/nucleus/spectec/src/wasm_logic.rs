@@ -194,6 +194,31 @@ impl<'a> SpecTecValueBuilder<'a> {
         self.expression(kernel, "List", elements)
     }
 
+    /// Matches a value constructed by the exact recorded list operation.
+    ///
+    /// This inspects syntax only and creates no theorem or syntax fact. A
+    /// different structural value is the expected `Ok(None)` outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the list constructor at `arity` was not recorded.
+    /// `kernel` is unchanged.
+    pub fn match_list(
+        self,
+        kernel: &Kernel,
+        arity: usize,
+        value: Ref,
+    ) -> Result<Option<Vec<Ref>>, WasmLogicError> {
+        let constructor = operation(
+            self.document,
+            "expression:List",
+            &vec![self.value_ty(); arity],
+            self.value_ty(),
+        )?;
+        let (head, elements) = application_spine(kernel, value);
+        Ok((head == constructor && elements.len() == arity).then_some(elements))
+    }
+
     /// Constructs an absent or present optional value.
     ///
     /// # Errors

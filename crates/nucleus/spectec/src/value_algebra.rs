@@ -14,7 +14,8 @@ use covalence_logic_hol::{
     builtin::{Op1, Op2},
 };
 use covalence_logic_hol_derived::{
-    ForallError, SyntaxError, forall_elim, join_alpha_equivalent, join_same_syntax,
+    EqualityError, ForallError, SyntaxError, equality_symmetry, forall_elim, join_alpha_equivalent,
+    join_same_syntax,
 };
 
 use crate::Evidence;
@@ -277,6 +278,77 @@ impl StructuralSequenceAlgebra {
             holds: true,
         })
     }
+
+    /// Derives membership of the element at `index` from checked exact finite
+    /// membership semantics.
+    ///
+    /// Every premise of `membership_fact` remains visible. Element equality is
+    /// discharged by checked reflexivity, then introduced into the finite
+    /// disjunction and transported through the membership equation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `index` is out of bounds, `membership_fact` does not
+    /// positively prove `law`, or checked specialization, equality,
+    /// disjunction, or alignment fails. `kernel` is unchanged on failure.
+    pub fn prove_member_at(
+        self,
+        kernel: &mut Kernel,
+        law: &FiniteSequenceLaw,
+        membership_fact: ThmId,
+        index: usize,
+    ) -> Result<Evidence, StructuralValueProofError> {
+        let Some(&element) = law.elements.get(index) else {
+            return Err(StructuralValueProofError::Index {
+                index,
+                len: law.elements.len(),
+            });
+        };
+        let mut staged = kernel.fork();
+        let source = positive_conclusion(&staged, membership_fact)?;
+        let membership_fact = staged.copy_theorem(membership_fact)?;
+        if source != law.proposition {
+            join_alpha_equivalent(&mut staged, source, law.proposition)?;
+            staged.convert_conclusions(membership_fact, source, law.proposition)?;
+        }
+        let specialized = forall_elim(&mut staged, membership_fact, element)?;
+        let contains = apply(&mut staged, self.member, &[element, law.list])?;
+        let mut suffixes = vec![staged.bool(self.values.bool_ty, false)?];
+        let mut equalities = Vec::with_capacity(law.elements.len());
+        for &candidate in law.elements.iter().rev() {
+            let equal = staged.eq(self.values.bool_ty, element, candidate)?;
+            equalities.push(equal);
+            let tail = *suffixes.last().ok_or(KernelError::InvalidTheoremRule {
+                rule: "finite sequence membership suffix",
+            })?;
+            suffixes.push(staged.op2(Op2::Or, equal, tail)?);
+        }
+        suffixes.reverse();
+        equalities.reverse();
+        let enumerated = suffixes[0];
+        let equality = staged.eq(self.values.bool_ty, contains, enumerated)?;
+        join_alpha_equivalent(&mut staged, specialized.proposition, equality)?;
+        staged.convert_conclusions(specialized.theorem, specialized.proposition, equality)?;
+
+        let reflexive = staged.refl(self.values.bool_ty, element)?;
+        join_alpha_equivalent(&mut staged, reflexive.equality, equalities[index])?;
+        staged.convert_conclusions(reflexive.theorem, reflexive.equality, equalities[index])?;
+        let mut disjunction = staged.copy_theorem(reflexive.theorem)?;
+        staged.weaken(disjunction, &[], &[positive(suffixes[index + 1])])?;
+        disjunction = staged.or_right(disjunction, positive(suffixes[index]))?;
+        for outer in (0..index).rev() {
+            staged.weaken(disjunction, &[], &[positive(equalities[outer])])?;
+            disjunction = staged.or_right(disjunction, positive(suffixes[outer]))?;
+        }
+        let reversed = equality_symmetry(&mut staged, self.values.bool_ty, specialized.theorem)?;
+        let theorem = staged.eq_mp(reversed.theorem, disjunction)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: contains,
+            theorem,
+            holds: true,
+        })
+    }
 }
 
 /// Failure to derive a checked structural-value algebra law.
@@ -286,6 +358,14 @@ pub enum StructuralValueProofError {
     /// Empty-sequence elimination was requested for a nonempty law.
     #[snafu(display("expected an empty finite-sequence law"))]
     NonemptySequence,
+    /// The selected finite-sequence element does not exist.
+    #[snafu(display("sequence index {index} is out of bounds for length {len}"))]
+    Index {
+        /// Requested element index.
+        index: usize,
+        /// Actual sequence length.
+        len: usize,
+    },
     /// A checked kernel operation failed.
     #[snafu(transparent)]
     Kernel {
@@ -297,6 +377,12 @@ pub enum StructuralValueProofError {
     Forall {
         /// Underlying derived universal-elimination failure.
         source: ForallError,
+    },
+    /// Checked equality symmetry failed.
+    #[snafu(transparent)]
+    Equality {
+        /// Underlying derived equality failure.
+        source: EqualityError,
     },
     /// Checked formulas could not be aligned.
     #[snafu(transparent)]
@@ -574,6 +660,10 @@ mod tests {
         let singleton_law = sequences
             .membership_law(&mut kernel, unary, &[element])
             .unwrap();
+        let other_element = kernel.tm_fv(14, value_ty).unwrap();
+        let pair_law = sequences
+            .membership_law(&mut kernel, binary, &[element, other_element])
+            .unwrap();
         assert!(empty_law.elements().is_empty());
         assert_eq!(singleton_law.elements(), &[element]);
         assert_eq!(kernel.classifier(empty_law.proposition()).unwrap(), bool_ty);
@@ -589,6 +679,15 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[empty_law.proposition()])
             .check(&kernel, no_members)
+            .unwrap();
+        let pair_fact = kernel
+            .identity(super::positive(pair_law.proposition()))
+            .unwrap();
+        let contains_second = sequences
+            .prove_member_at(&mut kernel, &pair_law, pair_fact, 1)
+            .unwrap();
+        EvidenceScope::positive(&[pair_law.proposition()])
+            .check(&kernel, contains_second)
             .unwrap();
 
         let laws = algebra
@@ -609,6 +708,12 @@ mod tests {
         assert!(
             algebra
                 .constructor(&mut kernel, unary.operation(), 2)
+                .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        assert!(
+            sequences
+                .prove_member_at(&mut kernel, &pair_law, pair_fact, 2)
                 .is_err()
         );
         assert_eq!(kernel.arena(), &before);

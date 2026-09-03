@@ -1782,6 +1782,38 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     )
     .unwrap();
     assert_eq!(kernel.classifier(forwarding).unwrap(), value);
+    let forwarding_fields = builder
+        .match_case_fields(&kernel, "MODULE%%%%%%%%%%%", 11, forwarding)
+        .unwrap()
+        .unwrap();
+    let forwarding_exports = forwarding_fields[10];
+    let export_elements = builder
+        .match_list(&kernel, 1, forwarding_exports)
+        .unwrap()
+        .unwrap();
+    let export_membership = builder
+        .list_membership_law(&mut kernel, &export_elements)
+        .unwrap();
+    covalence_logic_hol_derived::join_same_syntax(
+        &mut kernel,
+        export_membership.list(),
+        forwarding_exports,
+    )
+    .unwrap();
+    let export_membership_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            export_membership.proposition().get(),
+        ))
+        .unwrap();
+    let contains_export = builder
+        .sequence_algebra(&mut kernel)
+        .unwrap()
+        .prove_member_at(&mut kernel, &export_membership, export_membership_fact, 0)
+        .unwrap();
+    document
+        .evidence_scope(&[export_membership.proposition()])
+        .check(&kernel, contains_export)
+        .unwrap();
     assert_eq!(execution.state_ty, value);
     assert_eq!(execution.bool_ty, bool_ty);
     let steps_classifier = kernel.classifier(execution.steps).unwrap();

@@ -180,6 +180,11 @@ disjunction is false. A checked elimination derives the universal no-members
 property for the empty list while preserving the membership equation as its
 premise. The full pinned Wasm audit uses that derivation in the `FALSE`
 non-reachability proof instead of assuming the no-members result directly.
+The dual checked elimination proves membership of any selected listed element
+from equality reflexivity and disjunction introduction. The same audit applies
+it to the forwarding module's actual singleton export list; syntax matching is
+only used to select the witness, while the membership conclusion comes from
+kernel-checked rules and retains the finite-list law as its premise.
 
 Grounding therefore requires all of the following:
 
