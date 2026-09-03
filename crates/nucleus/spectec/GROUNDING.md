@@ -65,7 +65,9 @@ specification-to-implementation direction, while existential counterexamples
 (`may`) transport from implementation to specification. Non-vacuous universal
 properties (`must`) also transport to the implementation: refinement's reverse
 progress clause supplies a retained execution and forward inclusion preserves
-the observation of every retained execution.
+the observation of every retained execution. One public
+`prove_refinement_preserves` operation selects these checked derivations by
+quantifier; `refinement_direction` makes the required premise side explicit.
 The domain also derives explicit determinism and totality propositions.
 Totality here means that every admissible invocation has a modeled trace and
 outcome; the profile and outcome representation determine whether traps or

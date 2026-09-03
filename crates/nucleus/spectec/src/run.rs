@@ -2418,6 +2418,31 @@ pub enum BehaviorQuantifier {
     Never,
 }
 
+/// Direction in which a behavior proposition is preserved by refinement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RefinementDirection {
+    /// Evidence about the implementation yields evidence about its
+    /// specification. This is the variance of existential counterexamples.
+    ImplementationToSpecification,
+    /// Evidence about the specification yields evidence about its refining
+    /// implementation. This is the variance of safety and total correctness.
+    SpecificationToImplementation,
+}
+
+impl BehaviorQuantifier {
+    /// Returns which side supplies a behavior premise and which side receives
+    /// the checked conclusion under run refinement.
+    #[must_use]
+    pub const fn refinement_direction(self) -> RefinementDirection {
+        match self {
+            Self::May => RefinementDirection::ImplementationToSpecification,
+            Self::Every | Self::Must | Self::Never => {
+                RefinementDirection::SpecificationToImplementation
+            }
+        }
+    }
+}
+
 /// An immutable proposition schema over one complete run graph.
 ///
 /// The checked property has shape
@@ -2645,6 +2670,69 @@ pub enum RunCompositionError {
 pub type RunObservationError = RunCompositionError;
 
 impl RunObservation {
+    /// Transports a behavior proposition in its sound refinement direction.
+    ///
+    /// `behavior` must concern the implementation for [`BehaviorQuantifier::May`]
+    /// and the specification for `Every`, `Must`, and `Never`. The conclusion
+    /// concerns the opposite side. [`BehaviorQuantifier::refinement_direction`]
+    /// exposes that choice without requiring callers to duplicate it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `refinement` proves that `implementation`
+    /// refines `specification`, `behavior` proves the selected quantifier on
+    /// the required side, and the corresponding checked derivation succeeds.
+    /// `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_refinement_preserves(
+        self,
+        kernel: &mut Kernel,
+        refinement: Evidence,
+        behavior: Evidence,
+        quantifier: BehaviorQuantifier,
+        profile: Ref,
+        implementation: Ref,
+        specification: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let preserved = match quantifier {
+            BehaviorQuantifier::May => self.prove_refinement_preserves_may(
+                &mut staged,
+                refinement,
+                behavior,
+                profile,
+                implementation,
+                specification,
+            )?,
+            BehaviorQuantifier::Every => self.prove_refinement_preserves_every(
+                &mut staged,
+                refinement,
+                behavior,
+                profile,
+                implementation,
+                specification,
+            )?,
+            BehaviorQuantifier::Must => self.prove_refinement_preserves_must(
+                &mut staged,
+                refinement,
+                behavior,
+                profile,
+                implementation,
+                specification,
+            )?,
+            BehaviorQuantifier::Never => self.prove_refinement_preserves_never(
+                &mut staged,
+                refinement,
+                behavior,
+                profile,
+                implementation,
+                specification,
+            )?,
+        };
+        *kernel = staged;
+        Ok(preserved)
+    }
+
     /// Returns the underlying versioned execution relation.
     #[must_use]
     pub const fn relation(self) -> RunRelation {
@@ -2941,7 +3029,7 @@ impl RunObservation {
     /// existential, propositional, or alignment step succeeds. `kernel` is
     /// unchanged on failure.
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    pub fn prove_refinement_preserves_may(
+    fn prove_refinement_preserves_may(
         self,
         kernel: &mut Kernel,
         refinement: Evidence,
@@ -3161,7 +3249,7 @@ impl RunObservation {
     /// negation, resolution, or alignment step succeeds. `kernel` is unchanged
     /// on failure.
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    pub fn prove_refinement_preserves_never(
+    fn prove_refinement_preserves_never(
         self,
         kernel: &mut Kernel,
         refinement: Evidence,
@@ -3351,7 +3439,7 @@ impl RunObservation {
     /// specialization, propositional, or alignment step succeeds. `kernel` is
     /// unchanged on failure.
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    pub fn prove_refinement_preserves_every(
+    fn prove_refinement_preserves_every(
         self,
         kernel: &mut Kernel,
         refinement: Evidence,
@@ -3502,7 +3590,7 @@ impl RunObservation {
     /// existential, universal, propositional, or alignment step succeeds.
     /// `kernel` is unchanged on failure.
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    pub fn prove_refinement_preserves_must(
+    fn prove_refinement_preserves_must(
         self,
         kernel: &mut Kernel,
         refinement: Evidence,
@@ -4423,13 +4511,27 @@ fn require_classifier(kernel: &mut Kernel, term: Ref, expected: Ref) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::{BehaviorQuantifier, RunRelation, RunTypes};
+    use super::{BehaviorQuantifier, RefinementDirection, RunRelation, RunTypes};
     use crate::{Evidence, EvidenceScope};
     use covalence_logic_hol::Kernel;
 
     #[test]
     #[allow(clippy::too_many_lines)]
     fn eventful_run_observations_are_generic_checked_and_transactional() {
+        assert_eq!(
+            BehaviorQuantifier::May.refinement_direction(),
+            RefinementDirection::ImplementationToSpecification
+        );
+        for quantifier in [
+            BehaviorQuantifier::Every,
+            BehaviorQuantifier::Must,
+            BehaviorQuantifier::Never,
+        ] {
+            assert_eq!(
+                quantifier.refinement_direction(),
+                RefinementDirection::SpecificationToImplementation
+            );
+        }
         let mut kernel = Kernel::new();
         let star = kernel.star().unwrap();
         let bool_ty = kernel.bool_ty(star).unwrap();
@@ -4765,10 +4867,11 @@ mod tests {
             holds: true,
         };
         let specification_may = observation
-            .prove_refinement_preserves_may(
+            .prove_refinement_preserves(
                 &mut kernel,
                 left_middle_refinement_evidence,
                 implementation_may_evidence,
+                BehaviorQuantifier::May,
                 profile,
                 module,
                 other_module,
@@ -4788,10 +4891,11 @@ mod tests {
             holds: true,
         };
         let implementation_never = observation
-            .prove_refinement_preserves_never(
+            .prove_refinement_preserves(
                 &mut kernel,
                 left_middle_refinement_evidence,
                 specification_never_evidence,
+                BehaviorQuantifier::Never,
                 profile,
                 module,
                 other_module,
@@ -4811,10 +4915,11 @@ mod tests {
             holds: true,
         };
         let implementation_every = observation
-            .prove_refinement_preserves_every(
+            .prove_refinement_preserves(
                 &mut kernel,
                 left_middle_refinement_evidence,
                 specification_every_evidence,
+                BehaviorQuantifier::Every,
                 profile,
                 module,
                 other_module,
@@ -4834,10 +4939,11 @@ mod tests {
             holds: true,
         };
         let implementation_must = observation
-            .prove_refinement_preserves_must(
+            .prove_refinement_preserves(
                 &mut kernel,
                 left_middle_refinement_evidence,
                 specification_must_evidence,
+                BehaviorQuantifier::Must,
                 profile,
                 module,
                 other_module,
@@ -4850,10 +4956,11 @@ mod tests {
         let theorem_count = kernel.thm().live_theorems().count();
         assert!(
             observation
-                .prove_refinement_preserves_never(
+                .prove_refinement_preserves(
                     &mut kernel,
                     left_middle_refinement_evidence,
                     implementation_may_evidence,
+                    BehaviorQuantifier::Never,
                     profile,
                     module,
                     other_module,
@@ -4866,10 +4973,11 @@ mod tests {
         let theorem_count = kernel.thm().live_theorems().count();
         assert!(
             observation
-                .prove_refinement_preserves_may(
+                .prove_refinement_preserves(
                     &mut kernel,
                     equivalence_reflexive,
                     implementation_may_evidence,
+                    BehaviorQuantifier::May,
                     profile,
                     module,
                     other_module,
