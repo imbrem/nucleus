@@ -2235,6 +2235,7 @@ fn immutable_interpretations_discharge_checked_grounding_obligations() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn empty_module_uses_exact_expression_constructor_vocabulary() {
     let bytes = br#"(def "empty" nat
         (clause (case "MODULE%%%%%%%%%%%" (tup
@@ -2316,6 +2317,38 @@ fn empty_module_uses_exact_expression_constructor_vocabulary() {
         .evidence_scope(&[body])
         .check(&kernel, unfolded)
         .unwrap();
+    let definition = document.semantics.definitions().get(&declaration).unwrap();
+    let instance = definition
+        .specialize(&mut kernel, bool_ty, &[], module)
+        .unwrap();
+    let before = kernel.arena().clone();
+    assert!(
+        instance
+            .prove_only_production_from_body(&mut kernel, bool_ty, graph.theorem)
+            .is_err()
+    );
+    assert_eq!(kernel.arena(), &before);
+    let production = instance
+        .prove_only_production_from_body(&mut kernel, bool_ty, unfolded.theorem)
+        .unwrap();
+    let opened = instance
+        .open_production(&mut kernel, 0, production.theorem)
+        .unwrap();
+    assert_eq!(opened.conditions.len(), opened.facts.len());
+    assert!(!opened.conditions.is_empty());
+    for (&condition, &fact) in opened.conditions.iter().zip(&opened.facts) {
+        document
+            .evidence_scope(&[body])
+            .check(
+                &kernel,
+                covalence_nucleus_spectec::Evidence {
+                    proposition: condition,
+                    theorem: fact,
+                    holds: true,
+                },
+            )
+            .unwrap();
+    }
     let before = kernel.arena().clone();
     assert!(
         document

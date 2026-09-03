@@ -12,7 +12,7 @@ use covalence_logic_hol::{
 };
 use covalence_logic_hol_derived::{
     EqualityError, ExistsError, ForallError, ModelError, SyntaxError, equality_symmetry,
-    forall_elim, introduce_exists, join_alpha_equivalent, substitute,
+    forall_elim, introduce_exists, join_alpha_equivalent, open_exists, substitute,
 };
 
 use crate::{
@@ -161,6 +161,17 @@ pub struct RelationalCaseArtifact {
     pub production_binders: Vec<Ref>,
     /// Conjuncts inside `case.produces`.
     pub production_conditions: Vec<Ref>,
+}
+
+/// Checked witnesses and elementary facts obtained by opening one production.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenedRelationalProduction {
+    /// Hilbert-choice witnesses encoded by the production existentials.
+    pub witnesses: Vec<Ref>,
+    /// Specialized elementary conditions in source order.
+    pub conditions: Vec<Ref>,
+    /// Theorem facts proving the corresponding [`conditions`](Self::conditions).
+    pub facts: Vec<ThmId>,
 }
 
 impl RelationalDefinition {
@@ -450,6 +461,117 @@ fn match_pattern_term(
 }
 
 impl RelationalDefinitionInstance {
+    /// Extracts the sole ordinary production from a proved definition body.
+    ///
+    /// This is intentionally limited to a one-case, non-`otherwise`
+    /// definition, where no case choice or negated applicability evidence is
+    /// required. It eliminates the ordered body's initial `false` branch with
+    /// ordinary checked propositional rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless this instance has exactly one ordinary case and
+    /// `body_fact` proves its exact body. `kernel` is unchanged on failure.
+    pub fn prove_only_production_from_body(
+        &self,
+        kernel: &mut Kernel,
+        bool_ty: Ref,
+        body_fact: ThmId,
+    ) -> Result<Evidence, DefinitionProofError> {
+        if self.cases.len() != 1 || self.cases[0].otherwise {
+            return Err(DefinitionProofError::MissingCase { index: 1 });
+        }
+        let mut staged = kernel.fork();
+        let source = definition_positive_conclusion(&staged, body_fact)?;
+        join_alpha_equivalent(&mut staged, source, self.body)?;
+        let body_fact = staged.copy_theorem(body_fact)?;
+        staged.convert_conclusions(body_fact, source, self.body)?;
+        let expanded = staged.expand_conclusion(body_fact, positive(self.body), None)?;
+        let falsehood = staged
+            .arena()
+            .children(self.body)
+            .and_then(|mut children| children.next())
+            .ok_or(DefinitionProofError::ConditionShape)?;
+        if staged.classifier(falsehood)? != bool_ty {
+            return Err(DefinitionProofError::ConditionShape);
+        }
+        let false_left = staged.false_left(positive(falsehood))?;
+        let theorem = staged.cut(expanded, false_left, positive(falsehood))?;
+        let production = self.cases[0].produces;
+        let actual = definition_positive_conclusion(&staged, theorem)?;
+        join_alpha_equivalent(&mut staged, actual, production)?;
+        staged.convert_conclusions(theorem, actual, production)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: production,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Opens one proved case production into witnesses and elementary facts.
+    ///
+    /// Existentials are eliminated at their encoded Hilbert-choice witnesses;
+    /// the resulting left-associated conjunction is projected into facts in
+    /// the retained source order. Every returned fact preserves the premises
+    /// of `production_fact`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an absent case, a mismatched theorem, malformed
+    /// existential/conjunction structure, or a rejected checked proof step.
+    /// `kernel` is unchanged on failure.
+    pub fn open_production(
+        &self,
+        kernel: &mut Kernel,
+        index: usize,
+        production_fact: ThmId,
+    ) -> Result<OpenedRelationalProduction, DefinitionProofError> {
+        let artifact = self
+            .case_artifacts
+            .get(index)
+            .ok_or(DefinitionProofError::MissingCase { index })?;
+        let mut staged = kernel.fork();
+        let source = definition_positive_conclusion(&staged, production_fact)?;
+        join_alpha_equivalent(&mut staged, source, artifact.case.produces)?;
+        let mut working = staged.copy_theorem(production_fact)?;
+        staged.convert_conclusions(working, source, artifact.case.produces)?;
+        let mut proposition = artifact.case.produces;
+        let mut witnesses = Vec::with_capacity(artifact.production_binders.len());
+        for _ in &artifact.production_binders {
+            let opened = open_exists(&mut staged, proposition)
+                .map_err(|source| DefinitionProofError::Exists { source })?;
+            staged.convert_conclusions(working, proposition, opened.body)?;
+            witnesses.push(opened.witness);
+            proposition = opened.body;
+        }
+        let conditions = instantiate_case_conditions(
+            &mut staged,
+            &artifact.production_conditions,
+            &artifact.production_binders,
+            &witnesses,
+        )?;
+        let mut reversed_facts = Vec::with_capacity(conditions.len());
+        let mut conjunction = proposition;
+        for &condition in conditions.iter().rev() {
+            let fact = staged.copy_theorem(working)?;
+            let right = staged.expand_conclusion(fact, positive(conjunction), Some(true))?;
+            let actual = definition_positive_conclusion(&staged, right)?;
+            join_alpha_equivalent(&mut staged, actual, condition)?;
+            staged.convert_conclusions(right, actual, condition)?;
+            reversed_facts.push(right);
+            working = staged.expand_conclusion(working, positive(conjunction), Some(false))?;
+            conjunction = definition_positive_conclusion(&staged, working)?;
+        }
+        reversed_facts.reverse();
+        *kernel = staged;
+        Ok(OpenedRelationalProduction {
+            witnesses,
+            conditions,
+            facts: reversed_facts,
+        })
+    }
+
     /// Constructs the elementary obligations for a case's production witnesses.
     ///
     /// # Errors
