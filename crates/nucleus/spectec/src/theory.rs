@@ -8,7 +8,9 @@ use covalence_logic_hol::{
     Kernel, KernelError, Lit, Ref,
     builtin::{Op1, Op2},
 };
-use covalence_logic_hol_derived::{ForallError, forall_elim};
+use covalence_logic_hol_derived::{
+    EqualityError, ForallError, SyntaxError, equality_symmetry, forall_elim, join_alpha_equivalent,
+};
 
 use crate::{Evidence, Source};
 
@@ -147,6 +149,77 @@ impl HolTheory {
         *kernel = staged;
         Ok(evidence)
     }
+
+    /// Proves one specialized graph application from its checked definition body.
+    ///
+    /// This specializes the selected declaration equation at `arguments`,
+    /// checks that `body_fact` proves its exact right-hand side, reverses the
+    /// equation, and transports the fact to the graph application. The complete
+    /// theory premise and every premise of `body_fact` remain visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if specialization does not end in a Boolean equality,
+    /// `body_fact` has the wrong conclusion, or checked alignment, symmetry, or
+    /// equality transport fails. `kernel` is unchanged on failure.
+    pub fn prove_specialized_from_body(
+        &self,
+        kernel: &mut Kernel,
+        id: DeclarationId,
+        arguments: &[Ref],
+        body_fact: covalence_logic_hol::ThmId,
+    ) -> Result<Evidence, HolTheoryProofError> {
+        let mut staged = kernel.fork();
+        let equation = self.specialize_constraint(&mut staged, id, arguments)?;
+        let operands = staged
+            .arena()
+            .children(equation.proposition)
+            .ok_or(HolTheoryProofError::GraphEquation)?
+            .collect::<Vec<_>>();
+        let [bool_ty, graph, body] = operands.as_slice() else {
+            return Err(HolTheoryProofError::GraphEquation);
+        };
+        let source = sole_positive_conclusion(&staged, body_fact)?;
+        join_alpha_equivalent(&mut staged, source, *body)
+            .map_err(|source| HolTheoryProofError::Syntax { source })?;
+        let body_fact = staged
+            .copy_theorem(body_fact)
+            .map_err(|source| HolTheoryProofError::Kernel { source })?;
+        staged
+            .convert_conclusions(body_fact, source, *body)
+            .map_err(|source| HolTheoryProofError::Kernel { source })?;
+        let reversed = equality_symmetry(&mut staged, *bool_ty, equation.theorem)
+            .map_err(|source| HolTheoryProofError::Equality { source })?;
+        let theorem = staged
+            .eq_mp(reversed.theorem, body_fact)
+            .map_err(|source| HolTheoryProofError::Kernel { source })?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: *graph,
+            theorem,
+            holds: true,
+        })
+    }
+}
+
+fn sole_positive_conclusion(
+    kernel: &Kernel,
+    theorem: covalence_logic_hol::ThmId,
+) -> Result<Ref, HolTheoryProofError> {
+    let theorem = kernel
+        .thm()
+        .get(theorem)
+        .ok_or(HolTheoryProofError::Kernel {
+            source: KernelError::MissingTheorem { id: theorem },
+        })?;
+    let mut rows = theorem.rhs.rows();
+    let Some([literal]) = rows.next() else {
+        return Err(HolTheoryProofError::BodyFact);
+    };
+    if rows.next().is_some() || !literal.is_positive() {
+        return Err(HolTheoryProofError::BodyFact);
+    }
+    Ref::new(literal.magnitude().cast_signed()).ok_or(HolTheoryProofError::BodyFact)
 }
 
 fn positive(reference: Ref) -> Lit {
@@ -175,6 +248,24 @@ pub enum HolTheoryProofError {
     Specialize {
         /// Underlying checked derived-rule failure.
         source: ForallError,
+    },
+    /// Specialization did not produce the expected graph equality.
+    #[snafu(display("specialized SpecTec definition is not a graph equation"))]
+    GraphEquation,
+    /// The supplied theorem did not prove one positive definition body.
+    #[snafu(display("theorem does not prove the specialized SpecTec definition body"))]
+    BodyFact,
+    /// Checked body syntax could not be aligned.
+    #[snafu(display("could not align the specialized SpecTec definition body: {source}"))]
+    Syntax {
+        /// Underlying checked syntax failure.
+        source: SyntaxError,
+    },
+    /// Checked equality symmetry failed.
+    #[snafu(display("could not reverse the specialized SpecTec graph equation: {source}"))]
+    Equality {
+        /// Underlying checked equality proof failure.
+        source: EqualityError,
     },
 }
 

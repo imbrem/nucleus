@@ -1959,6 +1959,29 @@ fn empty_module_uses_exact_expression_constructor_vocabulary() {
     let module = empty_wasm_module(&mut kernel, &document).unwrap();
 
     assert_eq!(kernel.classifier(module).unwrap(), value);
+    let specialized = document
+        .semantics
+        .theory()
+        .specialize_constraint(&mut kernel, declaration, &[module])
+        .unwrap();
+    let body = kernel
+        .arena()
+        .children(specialized.proposition)
+        .unwrap()
+        .nth(2)
+        .unwrap();
+    let body_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(body.get()))
+        .unwrap();
+    let graph = document
+        .semantics
+        .theory()
+        .prove_specialized_from_body(&mut kernel, declaration, &[module], body_fact)
+        .unwrap();
+    document
+        .evidence_scope(&[body])
+        .check(&kernel, graph)
+        .unwrap();
 }
 
 #[test]
