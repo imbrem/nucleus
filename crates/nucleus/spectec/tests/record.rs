@@ -16,8 +16,8 @@ use covalence_nucleus_spectec::{
     SpecTecValueBuilder, TYPE_NAME, TranslationCase, TypeAlgebra, TypeChildren,
     begin_least_closed_family, close_family_definition, close_graph_equation, close_hol_rule,
     close_hol_rules, close_hol_theory, declare_hol_schema, empty_wasm_module, fold_expression,
-    fold_grammar, fold_type, least_closed_family, least_closed_predicate, ordered_cases,
-    parameterized_document, parameterized_document_with, relational_definition,
+    fold_grammar, fold_type, forwarding_wasm_module, least_closed_family, least_closed_predicate,
+    ordered_cases, parameterized_document, parameterized_document_with, relational_definition,
     relational_definition_declaration, relational_definition_schema, relational_document,
     relational_grammar_declaration, relational_hol_case, relational_hol_rule,
     relational_relation_declaration, relational_relations, relational_type_declaration,
@@ -1581,6 +1581,21 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let execution = spectec_execution(&mut kernel, &document).unwrap();
     let empty_module = empty_wasm_module(&mut kernel, &document).unwrap();
     assert_eq!(kernel.classifier(empty_module).unwrap(), value);
+    let name_base = kernel
+        .fresh_name(&[value, bool_ty, empty_module, execution.steps])
+        .unwrap();
+    let import_module = kernel.tm_fv(name_base, value).unwrap();
+    let assert_name = kernel.tm_fv(name_base + 1, value).unwrap();
+    let export_name = kernel.tm_fv(name_base + 2, value).unwrap();
+    let forwarding = forwarding_wasm_module(
+        &mut kernel,
+        &document,
+        import_module,
+        assert_name,
+        export_name,
+    )
+    .unwrap();
+    assert_eq!(kernel.classifier(forwarding).unwrap(), value);
     assert_eq!(execution.state_ty, value);
     assert_eq!(execution.bool_ty, bool_ty);
     let steps_classifier = kernel.classifier(execution.steps).unwrap();

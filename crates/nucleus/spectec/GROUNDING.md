@@ -57,6 +57,13 @@ The companion `forwarding_module_calls_assert_in_wasmtime` test supplies an
 observes the call. It is the positive runtime oracle for `TRUE`, under the same
 strict separation from theorem evidence.
 
+`forwarding_wasm_module` now constructs the corresponding structural HOL term
+from the exact pinned Wasm AST constructors: one nullary function type, one
+function import at type index zero, and one export of function index zero. Its
+three names are inputs in the generic SpecTec value representation. This keeps
+the structural program API usable before byte literals land while isolating the
+eventual checked UTF-8/name decoding law instead of hiding it in the builder.
+
 This boundary adds no trusted component. The existing HOL kernel remains the
 only theorem authority; the SpecTec compiler, concrete interpretation, module
 builder, proof search, byte decoder, and interpreter are all checkable

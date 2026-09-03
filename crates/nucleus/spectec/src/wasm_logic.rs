@@ -61,6 +61,22 @@ impl<'a> SpecTecValueBuilder<'a> {
         self.expression(kernel, "Tuple", fields)
     }
 
+    /// Constructs a numeric literal in an exact `SpecTec` family.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if this exact spelling was not recorded by the
+    /// lowering or application fails.
+    pub fn number(
+        self,
+        kernel: &mut Kernel,
+        family: &str,
+        spelling: &str,
+    ) -> Result<Ref, WasmLogicError> {
+        let label = format!("expression:Number {{ family: {family:?}, spelling: {spelling:?} }}");
+        self.construct(kernel, &label, &[])
+    }
+
     /// Constructs a tagged case around one payload value.
     ///
     /// `notation` is the exact `SpecTec` mixfix spelling, including one `%` for
@@ -78,6 +94,28 @@ impl<'a> SpecTecValueBuilder<'a> {
     ) -> Result<Ref, WasmLogicError> {
         let label = format!("expression:Case({notation:?})");
         self.construct(kernel, &label, &[payload])
+    }
+
+    /// Constructs a tagged case from its semantic fields.
+    ///
+    /// This is the usual compositional form: it first constructs the exact
+    /// tuple payload and then wraps it with [`case`](Self::case).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tuple arity or constructor was not recorded, a
+    /// field has an incompatible classifier, or application fails.
+    pub fn case_fields(
+        self,
+        kernel: &mut Kernel,
+        notation: &str,
+        fields: &[Ref],
+    ) -> Result<Ref, WasmLogicError> {
+        let mut staged = kernel.fork();
+        let payload = self.tuple(&mut staged, fields)?;
+        let value = self.case(&mut staged, notation, payload)?;
+        *kernel = staged;
+        Ok(value)
     }
 
     fn expression(
@@ -444,6 +482,66 @@ pub fn empty_wasm_module(
     let result = builder.case(&mut staged, "MODULE%%%%%%%%%%%", payload)?;
     *kernel = staged;
     Ok(result)
+}
+
+/// Constructs the structural Wasm module that exports its `assert` import.
+///
+/// `import_module`, `assert_name`, and `export_name` are already constructed
+/// `SpecTec` `name` values. Keeping name construction outside this function lets
+/// callers use structural names now and substitute a checked byte decoder later
+/// without changing the module-composition API.
+///
+/// The resulting module has one nullary function type, one function import at
+/// type index zero, and one export of function index zero. Invoking that export
+/// therefore invokes the imported function under the intended grounded value
+/// interpretation. This function constructs syntax and creates no theorem.
+///
+/// # Errors
+///
+/// Returns an error if a required recorded constructor is absent, an input is
+/// not a structural value, or a checked application fails. `kernel` is
+/// unchanged on failure.
+pub fn forwarding_wasm_module(
+    kernel: &mut Kernel,
+    document: &ParameterizedDocument,
+    import_module: Ref,
+    assert_name: Ref,
+    export_name: Ref,
+) -> Result<Ref, WasmLogicError> {
+    let builder = SpecTecValueBuilder::new(document);
+    let mut staged = kernel.fork();
+    let empty = builder.list(&mut staged, &[])?;
+    let absent = builder.optional(&mut staged, None)?;
+    let zero = builder.number(&mut staged, "nat", "0")?;
+
+    let function_type = builder.case_fields(&mut staged, "FUNC%->%", &[empty, empty])?;
+    let subtype = builder.case_fields(&mut staged, "SUB%%%", &[absent, empty, function_type])?;
+    let subtypes = builder.list(&mut staged, &[subtype])?;
+    let recursive_type = builder.case_fields(&mut staged, "REC%", &[subtypes])?;
+    let module_type = builder.case_fields(&mut staged, "TYPE%", &[recursive_type])?;
+    let types = builder.list(&mut staged, &[module_type])?;
+
+    let type_index = builder.case_fields(&mut staged, "_IDX%", &[zero])?;
+    let external_type = builder.case_fields(&mut staged, "FUNC%", &[type_index])?;
+    let import = builder.case_fields(
+        &mut staged,
+        "IMPORT%%%",
+        &[import_module, assert_name, external_type],
+    )?;
+    let imports = builder.list(&mut staged, &[import])?;
+
+    let function_index = builder.case_fields(&mut staged, "FUNC%", &[zero])?;
+    let export = builder.case_fields(&mut staged, "EXPORT%%", &[export_name, function_index])?;
+    let exports = builder.list(&mut staged, &[export])?;
+    let module = builder.case_fields(
+        &mut staged,
+        "MODULE%%%%%%%%%%%",
+        &[
+            types, imports, empty, empty, empty, empty, empty, empty, empty, absent, exports,
+        ],
+    )?;
+    *kernel = staged;
+    Ok(module)
 }
 
 fn operation(

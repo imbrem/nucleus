@@ -86,7 +86,7 @@ tuple-argument `Steps` relation to the curried predicate consumed by
 theorem fact.
 
 `SpecTecValueBuilder` is the corresponding generic structural API. It composes
-recorded list, optional, tuple, and tagged-case operations immutably and
-transactionally; `empty_wasm_module` is deliberately only a thin composition
-of those operations. Missing constructor arities are explicit failures rather
-than newly invented semantics.
+recorded number, list, optional, tuple, and tagged-case operations immutably and
+transactionally; `empty_wasm_module` and `forwarding_wasm_module` are
+deliberately only thin compositions of those operations. Missing constructor
+arities are explicit failures rather than newly invented semantics.

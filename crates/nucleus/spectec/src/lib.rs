@@ -69,7 +69,7 @@ pub use type_definition::{RelationalTypeDefinition, relational_type_declaration}
 pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
 pub use wasm_logic::{
     ExportedFunctionView, SpecTecExecution, SpecTecValueBuilder, WasmLogicError, empty_wasm_module,
-    spectec_execution,
+    forwarding_wasm_module, spectec_execution,
 };
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};
