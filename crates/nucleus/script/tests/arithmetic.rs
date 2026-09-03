@@ -526,3 +526,38 @@ fn literal_subtraction_truncates_at_zero() {
         }
     }
 }
+
+#[test]
+fn an_atomic_difference_normalizes_its_operands() {
+    let (kernel, naturals, ring, subtraction) = subtraction_kernel();
+    let mut base = kernel.fork();
+    let [x, y, z] = variables(&mut base, &naturals);
+    let (x, y, z) = (Expr::atom(x), Expr::atom(y), Expr::atom(z));
+
+    // A difference the normalizer cannot cancel is still keyed on the normal
+    // forms of its operands, so semiring-equal differences are one atom.
+    for (left, right) in [
+        ((&x + &y) - &z, (&y + &x) - &z),
+        ((&x + &x) - &z, (&x * 2) - &z),
+        (&x - (&y + &z), &x - (&z + &y)),
+        ((&x * (&y + &z)) - 7, (&x * &y + &x * &z) - 7),
+    ] {
+        let mut case = base.fork();
+        let normalizer =
+            NaturalNormalizer::with_subtraction(&naturals, ring, subtraction);
+        let proof = normalizer
+            .prove_equal(&mut case, &left, &right)
+            .expect("equal normal forms");
+        check_proved(&case, &proof);
+    }
+
+    // And such an atom collects like any other.
+    let difference = (&x + &y) - &z;
+    let mirrored = (&y + &x) - &z;
+    let mut case = base.fork();
+    let normalizer = NaturalNormalizer::with_subtraction(&naturals, ring, subtraction);
+    let proof = normalizer
+        .prove_equal(&mut case, &(&difference + &mirrored), &(&difference * 2))
+        .expect("atomic differences collect");
+    check_proved(&case, &proof);
+}

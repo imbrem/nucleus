@@ -723,7 +723,10 @@ impl NaturalNormalizer<'_> {
         let succ = self.ring.signature.succ;
         let term = self.binary_numeral(kernel, value)?;
         let raised = self.app(kernel, succ, term)?;
-        let target = self.binary_numeral(kernel, value + 1)?;
+        let next = value.checked_add(1).ok_or(NaturalError::WrongForm {
+            expected: "a literal successor within range",
+        })?;
+        let target = self.binary_numeral(kernel, next)?;
         if raised == target {
             return Ok(kernel.refl(self.calc.bool_ty, raised)?.theorem);
         }
@@ -853,6 +856,16 @@ impl NaturalNormalizer<'_> {
         left: u64,
         right: u64,
     ) -> Result<ThmId, NaturalError> {
+        // Refuse a product the engine could not build, rather than spending
+        // O(left * right) steps on the way to the same error.
+        let product = left.checked_mul(right).ok_or(NaturalError::WrongForm {
+            expected: "a numeral product within range",
+        })?;
+        if product > self.engine.max_literal() {
+            return Err(NaturalError::WrongForm {
+                expected: "a literal within the numeral bound",
+            });
+        }
         let right_term = self.build_numeral(kernel, right)?;
         let mut theorem = self
             .calc
@@ -1469,10 +1482,23 @@ impl NaturalNormalizer<'_> {
         let cancellable =
             amount.is_some_and(|amount| amount <= trailing_constant(&left_polynomial));
         let Some(amount) = amount.filter(|_| cancellable) else {
-            let left_term = self.build_term(kernel, left)?;
-            let right_term = self.build_term(kernel, right)?;
-            let atom = self.binary(kernel, sub, left_term, right_term)?;
-            return self.atom_polynomial(kernel, atom);
+            // The atom is keyed on the normalized operands, not on the input
+            // syntax. Otherwise `(x + y) - z` and `(y + x) - z` become different
+            // atoms, and neither collects with the other.
+            let steps = self.congruence(
+                kernel,
+                sub,
+                right,
+                &left_polynomial,
+                left_theorem,
+                right_theorem,
+            )?;
+            let left_normal = self.sum_fold(kernel, &left_polynomial)?;
+            let right_normal = self.sum_fold(kernel, &right_polynomial)?;
+            let atom = self.binary(kernel, sub, left_normal, right_normal)?;
+            let (polynomial, unit) = self.atom_polynomial(kernel, atom)?;
+            let theorem = self.calc.chain(kernel, &[steps.0, steps.1, unit])?;
+            return Ok((polynomial, theorem));
         };
 
         let steps = self.congruence(
