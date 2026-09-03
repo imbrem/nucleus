@@ -340,6 +340,211 @@ impl ExportedFunctionView {
         program: Ref,
     ) -> Result<Ref, WasmLogicError> {
         no_export_entries_avoiding(kernel, self, execution, program, &[])
+            .map(|parts| parts.proposition)
+    }
+
+    /// Constructs the invariant that every reachable export-list view of a
+    /// program equals `expected`.
+    ///
+    /// This is deliberately separate from list membership: execution
+    /// semantics establish which list is exposed, while a generic list model
+    /// establishes what membership in that list means.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a foreign carrier, fresh-name exhaustion, or a
+    /// rejected checked application, equality, or Boolean constructor.
+    /// `kernel` is unchanged on failure.
+    pub fn program_export_lists_equal(
+        self,
+        kernel: &mut Kernel,
+        execution: SpecTecExecution,
+        program: Ref,
+        expected: Ref,
+    ) -> Result<Ref, WasmLogicError> {
+        program_export_lists_equal_avoiding(kernel, self, execution, program, expected, &[])
+    }
+
+    /// Constructs the generic representation law that `list` has no members.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a foreign carrier, fresh-name exhaustion, or a
+    /// rejected checked application or Boolean constructor. `kernel` is
+    /// unchanged on failure.
+    pub fn list_has_no_members(
+        self,
+        kernel: &mut Kernel,
+        list: Ref,
+    ) -> Result<Ref, WasmLogicError> {
+        list_has_no_members_avoiding(kernel, self, list, &[])
+    }
+
+    /// Derives absence of export entries from an execution invariant and a
+    /// generic empty-list membership law.
+    ///
+    /// The first theorem must prove [`Self::program_export_lists_equal`]; the
+    /// second must prove [`Self::list_has_no_members`] for the same list. Both
+    /// sets of premises remain visible in the resulting theorem.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when either theorem has the wrong conclusion or when
+    /// checked specialization, equality substitution, or contradiction
+    /// closure fails. `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_lines)]
+    pub fn prove_no_export_entries_from_list_invariant(
+        self,
+        kernel: &mut Kernel,
+        execution: SpecTecExecution,
+        program: Ref,
+        expected: Ref,
+        export_lists_equal_fact: covalence_logic_hol::ThmId,
+        no_members_fact: covalence_logic_hol::ThmId,
+    ) -> Result<Evidence, WasmLogicError> {
+        let mut staged = kernel.fork();
+        let invariant = program_export_lists_equal_avoiding(
+            &mut staged,
+            self,
+            execution,
+            program,
+            expected,
+            &[],
+        )?;
+        let invariant_fact = align_positive_fact(&mut staged, export_lists_equal_fact, invariant)?;
+        let no_members = list_has_no_members_avoiding(&mut staged, self, expected, &[])?;
+        let no_members_fact = align_positive_fact(&mut staged, no_members_fact, no_members)?;
+        let no_entry_parts = no_export_entries_avoiding(
+            &mut staged,
+            self,
+            execution,
+            program,
+            &[expected, invariant, no_members],
+        )?;
+        let no_entries = no_entry_parts.proposition;
+        let [
+            store,
+            externs,
+            start,
+            initialized,
+            module_instance,
+            exports,
+            export_instance,
+        ] = &no_entry_parts.variables;
+        let entry = no_entry_parts.entry;
+        let assumed = staged.identity(positive(entry))?;
+        let export_prefix = select_conjunct(&mut staged, assumed, entry, &[false])?;
+        let contains = select_conjunct(&mut staged, assumed, entry, &[true])?;
+
+        let mut specialized_invariant = Evidence {
+            proposition: invariant,
+            theorem: invariant_fact,
+            holds: true,
+        };
+        for &argument in &[
+            *store,
+            *externs,
+            *start,
+            *initialized,
+            *module_instance,
+            *exports,
+        ] {
+            let specialized = forall_elim(&mut staged, specialized_invariant.theorem, argument)
+                .map_err(|source| WasmLogicError::Forall { source })?;
+            specialized_invariant = Evidence {
+                proposition: specialized.proposition,
+                theorem: specialized.theorem,
+                holds: true,
+            };
+        }
+        let implication = specialized_invariant.proposition;
+        let operands = staged
+            .arena()
+            .children(implication)
+            .ok_or(WasmLogicError::StartFact)?
+            .collect::<Vec<_>>();
+        let [invariant_prefix, list_equality] = operands.as_slice() else {
+            return Err(WasmLogicError::StartFact);
+        };
+        let export_prefix = align_positive_fact(&mut staged, export_prefix, *invariant_prefix)?;
+        let equality_identity = staged.identity(positive(*list_equality))?;
+        let use_invariant =
+            staged.imp_left(export_prefix, equality_identity, positive(implication))?;
+        let list_equality_fact = staged.cut(
+            specialized_invariant.theorem,
+            use_invariant,
+            positive(implication),
+        )?;
+
+        let list_binder_name = staged.fresh_name(&[
+            no_entries,
+            invariant,
+            no_members,
+            entry,
+            expected,
+            *export_instance,
+        ])?;
+        let list_binder = staged.tm_fv(list_binder_name, self.value_ty)?;
+        let member_body = apply(&mut staged, self.member, &[list_binder, *export_instance])?;
+        let member_function_ty = staged.ty_arr(self.value_ty, self.bool_ty)?;
+        let member_function = staged.lam_at(member_function_ty, list_binder, member_body)?;
+        let member_equality = staged.ap_term(list_equality_fact, member_function)?;
+        let contains_proposition = apply(&mut staged, self.member, &[*exports, *export_instance])?;
+        let contains = align_positive_fact(&mut staged, contains, contains_proposition)?;
+        let left_substitution = substitute(&mut staged, list_binder, *exports, member_body)
+            .map_err(|source| WasmLogicError::Substitute { source })?;
+        let left_beta = staged.tm_beta_fact(None, member_equality.left, left_substitution.fact)?;
+        staged.union_syn_fact(left_beta)?;
+        let right_substitution = substitute(&mut staged, list_binder, expected, member_body)
+            .map_err(|source| WasmLogicError::Substitute { source })?;
+        let right_beta =
+            staged.tm_beta_fact(None, member_equality.right, right_substitution.fact)?;
+        staged.union_syn_fact(right_beta)?;
+        join_same_syntax(&mut staged, left_substitution.output, contains_proposition)
+            .map_err(|source| WasmLogicError::Syntax { source })?;
+        staged.convert_conclusions(contains, contains_proposition, member_equality.left)?;
+        let expected_contains = staged.eq_mp(member_equality.theorem, contains)?;
+
+        let denied = forall_elim(&mut staged, no_members_fact, *export_instance)
+            .map_err(|source| WasmLogicError::Forall { source })?;
+        let denied_member = staged
+            .arena()
+            .children(denied.proposition)
+            .and_then(|mut children| children.next())
+            .ok_or(WasmLogicError::StartFact)?;
+        let denied_fact =
+            staged.expand_conclusion(denied.theorem, positive(denied.proposition), None)?;
+        let expected_member = apply(&mut staged, self.member, &[expected, *export_instance])?;
+        join_same_syntax(&mut staged, right_substitution.output, expected_member)
+            .map_err(|source| WasmLogicError::Syntax { source })?;
+        staged.convert_conclusions(expected_contains, member_equality.right, expected_member)?;
+        join_alpha_equivalent(&mut staged, denied_member, expected_member)
+            .map_err(|source| WasmLogicError::Syntax { source })?;
+        staged.convert_conclusions(denied_fact, denied_member, expected_member)?;
+        staged.not_left(expected_contains, positive(expected_member))?;
+        let contradiction = staged.cut(
+            denied_fact,
+            expected_contains,
+            positive(expected_member).negated(),
+        )?;
+        staged.contract_theorem(contradiction)?;
+        staged.not_right(contradiction, positive(entry))?;
+        let flattened = staged.flatten_conclusion(contradiction, positive(entry).negated())?;
+        let mut theorem = staged.fold_conclusion(flattened, positive(no_entry_parts.body))?;
+        let mut proposition = no_entry_parts.body;
+        for &variable in no_entry_parts.variables.iter().rev() {
+            proposition = staged.forall_tm(execution.bool_ty, variable, proposition)?;
+            theorem = staged.forall_intro_at(theorem, variable, proposition)?;
+        }
+        join_alpha_equivalent(&mut staged, proposition, no_entries)
+            .map_err(|source| WasmLogicError::Syntax { source })?;
+        staged.convert_conclusions(theorem, proposition, no_entries)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: no_entries,
+            theorem,
+            holds: true,
+        })
     }
 
     /// Derives `program_cannot_export` from absence of export-list entries.
@@ -365,7 +570,8 @@ impl ExportedFunctionView {
         no_entries_fact: covalence_logic_hol::ThmId,
     ) -> Result<Evidence, WasmLogicError> {
         let mut staged = kernel.fork();
-        let no_entries = no_export_entries_avoiding(&mut staged, self, execution, program, &[])?;
+        let no_entries =
+            no_export_entries_avoiding(&mut staged, self, execution, program, &[])?.proposition;
         let no_entries_fact = align_positive_fact(&mut staged, no_entries_fact, no_entries)?;
         let exported = self.predicate(&mut staged)?;
         let roots = [
@@ -502,13 +708,99 @@ impl ExportedFunctionView {
     }
 }
 
+fn program_export_lists_equal_avoiding(
+    kernel: &mut Kernel,
+    view: ExportedFunctionView,
+    execution: SpecTecExecution,
+    program: Ref,
+    expected: Ref,
+    avoid: &[Ref],
+) -> Result<Ref, WasmLogicError> {
+    let mut staged = kernel.fork();
+    let roots = [
+        execution.state_ty,
+        execution.bool_ty,
+        execution.instantiate,
+        execution.steps,
+        view.module_instance,
+        view.exports,
+        program,
+        expected,
+    ]
+    .into_iter()
+    .chain(avoid.iter().copied())
+    .collect::<Vec<_>>();
+    let first = staged.fresh_name(&roots)?;
+    let values = (0..6)
+        .map(|offset| {
+            staged.tm_fv(
+                first.checked_add(offset).ok_or(KernelError::TooManyNames)?,
+                execution.state_ty,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let [store, externs, start, initialized, module_instance, exports] = values.as_slice() else {
+        unreachable!()
+    };
+    let instantiated = apply(
+        &mut staged,
+        execution.instantiate,
+        &[*store, program, *externs, *start],
+    )?;
+    let stepped = apply(&mut staged, execution.steps, &[*start, *initialized])?;
+    let has_module = apply(
+        &mut staged,
+        view.module_instance,
+        &[*initialized, *module_instance],
+    )?;
+    let has_exports = apply(&mut staged, view.exports, &[*module_instance, *exports])?;
+    let mut prefix = staged.op2(Op2::And, instantiated, stepped)?;
+    prefix = staged.op2(Op2::And, prefix, has_module)?;
+    prefix = staged.op2(Op2::And, prefix, has_exports)?;
+    let equality = staged.eq(execution.bool_ty, *exports, expected)?;
+    let mut proposition = staged.op2(Op2::Imp, prefix, equality)?;
+    for &variable in values.iter().rev() {
+        proposition = staged.forall_tm(execution.bool_ty, variable, proposition)?;
+    }
+    *kernel = staged;
+    Ok(proposition)
+}
+
+fn list_has_no_members_avoiding(
+    kernel: &mut Kernel,
+    view: ExportedFunctionView,
+    list: Ref,
+    avoid: &[Ref],
+) -> Result<Ref, WasmLogicError> {
+    let mut staged = kernel.fork();
+    let roots = [view.value_ty, view.bool_ty, view.member, list]
+        .into_iter()
+        .chain(avoid.iter().copied())
+        .collect::<Vec<_>>();
+    let name = staged.fresh_name(&roots)?;
+    let entry = staged.tm_fv(name, view.value_ty)?;
+    let member = apply(&mut staged, view.member, &[list, entry])?;
+    let denied = staged.op1(covalence_logic_hol::builtin::Op1::Not, member)?;
+    let proposition = staged.forall_tm(view.bool_ty, entry, denied)?;
+    *kernel = staged;
+    Ok(proposition)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NoExportEntriesParts {
+    proposition: Ref,
+    body: Ref,
+    entry: Ref,
+    variables: [Ref; 7],
+}
+
 fn no_export_entries_avoiding(
     kernel: &mut Kernel,
     view: ExportedFunctionView,
     execution: SpecTecExecution,
     program: Ref,
     avoid: &[Ref],
-) -> Result<Ref, WasmLogicError> {
+) -> Result<NoExportEntriesParts, WasmLogicError> {
     let mut staged = kernel.fork();
     let roots = [
         execution.state_ty,
@@ -532,6 +824,7 @@ fn no_export_entries_avoiding(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let variables: [Ref; 7] = values.try_into().unwrap_or_else(|_| unreachable!());
     let [
         store,
         externs,
@@ -540,33 +833,36 @@ fn no_export_entries_avoiding(
         module_instance,
         exports,
         export_instance,
-    ] = values.as_slice()
-    else {
-        unreachable!()
-    };
+    ] = variables;
     let instantiated = apply(
         &mut staged,
         execution.instantiate,
-        &[*store, program, *externs, *start],
+        &[store, program, externs, start],
     )?;
-    let stepped = apply(&mut staged, execution.steps, &[*start, *initialized])?;
+    let stepped = apply(&mut staged, execution.steps, &[start, initialized])?;
     let has_module = apply(
         &mut staged,
         view.module_instance,
-        &[*initialized, *module_instance],
+        &[initialized, module_instance],
     )?;
-    let has_exports = apply(&mut staged, view.exports, &[*module_instance, *exports])?;
-    let contains = apply(&mut staged, view.member, &[*exports, *export_instance])?;
+    let has_exports = apply(&mut staged, view.exports, &[module_instance, exports])?;
+    let contains = apply(&mut staged, view.member, &[exports, export_instance])?;
     let mut entry = staged.op2(Op2::And, instantiated, stepped)?;
     entry = staged.op2(Op2::And, entry, has_module)?;
     entry = staged.op2(Op2::And, entry, has_exports)?;
     entry = staged.op2(Op2::And, entry, contains)?;
-    let mut proposition = staged.op1(covalence_logic_hol::builtin::Op1::Not, entry)?;
-    for &variable in values.iter().rev() {
+    let body = staged.op1(covalence_logic_hol::builtin::Op1::Not, entry)?;
+    let mut proposition = body;
+    for &variable in variables.iter().rev() {
         proposition = staged.forall_tm(execution.bool_ty, variable, proposition)?;
     }
     *kernel = staged;
-    Ok(proposition)
+    Ok(NoExportEntriesParts {
+        proposition,
+        body,
+        entry,
+        variables,
+    })
 }
 
 fn select_conjunct(
@@ -1885,7 +2181,7 @@ mod tests {
     }
 
     #[test]
-    fn absence_of_export_entries_proves_program_cannot_export() {
+    fn export_list_invariant_proves_program_cannot_export() {
         let mut kernel = Kernel::new();
         let star = kernel.star().unwrap();
         let bool_ty = kernel.bool_ty(star).unwrap();
@@ -1915,20 +2211,46 @@ mod tests {
             function_address: predicate(&mut kernel, value, bool_ty, 2, 18),
         };
         let program = kernel.tm_fv(19, value).unwrap();
-        let no_entries = view
-            .program_has_no_export_entries(&mut kernel, execution, program)
+        let empty = kernel.tm_fv(20, value).unwrap();
+        let export_lists_equal = view
+            .program_export_lists_equal(&mut kernel, execution, program, empty)
             .unwrap();
-        let no_entries_fact = kernel.identity(positive(no_entries)).unwrap();
+        let no_members = view.list_has_no_members(&mut kernel, empty).unwrap();
+        let export_lists_equal_fact = kernel.identity(positive(export_lists_equal)).unwrap();
+        let no_members_fact = kernel.identity(positive(no_members)).unwrap();
+        let before = kernel.arena().clone();
+        assert!(
+            view.prove_no_export_entries_from_list_invariant(
+                &mut kernel,
+                execution,
+                program,
+                empty,
+                no_members_fact,
+                export_lists_equal_fact,
+            )
+            .is_err()
+        );
+        assert_eq!(kernel.arena(), &before);
+        let no_entries = view
+            .prove_no_export_entries_from_list_invariant(
+                &mut kernel,
+                execution,
+                program,
+                empty,
+                export_lists_equal_fact,
+                no_members_fact,
+            )
+            .unwrap();
         let cannot_export = view
             .prove_program_cannot_export_from_no_entries(
                 &mut kernel,
                 execution,
                 program,
-                no_entries_fact,
+                no_entries.theorem,
             )
             .unwrap();
 
-        crate::EvidenceScope::positive(&[no_entries])
+        crate::EvidenceScope::positive(&[export_lists_equal, no_members])
             .check(&kernel, cannot_export)
             .unwrap();
     }

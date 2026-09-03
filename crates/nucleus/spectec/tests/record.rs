@@ -1984,18 +1984,36 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         )
         .unwrap();
 
-    let no_export_entries = export_view
-        .program_has_no_export_entries(&mut kernel, execution, empty_module)
+    let false_export_lists = export_view
+        .program_export_lists_equal(&mut kernel, execution, empty_module, instructions)
         .unwrap();
-    let no_export_entries_fact = kernel
-        .identity(covalence_logic_hol::Lit::positive(no_export_entries.get()))
+    let empty_has_no_members = export_view
+        .list_has_no_members(&mut kernel, instructions)
+        .unwrap();
+    let false_export_lists_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(false_export_lists.get()))
+        .unwrap();
+    let empty_has_no_members_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            empty_has_no_members.get(),
+        ))
+        .unwrap();
+    let no_export_entries = export_view
+        .prove_no_export_entries_from_list_invariant(
+            &mut kernel,
+            execution,
+            empty_module,
+            instructions,
+            false_export_lists_fact,
+            empty_has_no_members_fact,
+        )
         .unwrap();
     let cannot_export = export_view
         .prove_program_cannot_export_from_no_entries(
             &mut kernel,
             execution,
             empty_module,
-            no_export_entries_fact,
+            no_export_entries.theorem,
         )
         .unwrap();
     let no_false_start = execution
@@ -2029,7 +2047,12 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let mut grounding = obligations[..3].to_vec();
     grounding.extend(store_remaining);
     grounding.extend(invoke_remaining);
-    grounding.extend([steps_at_final, calls_at_final, no_export_entries]);
+    grounding.extend([
+        steps_at_final,
+        calls_at_final,
+        false_export_lists,
+        empty_has_no_members,
+    ]);
     document
         .evidence_scope(&grounding)
         .check(&kernel, true_not_false)
