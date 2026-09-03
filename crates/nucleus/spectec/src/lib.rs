@@ -80,8 +80,8 @@ pub use theory::{
 pub use type_definition::{RelationalTypeDefinition, relational_type_declaration};
 pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
 pub use value_algebra::{
-    FiniteSequenceLaw, StructuralConstructor, StructuralConstructorLaws, StructuralSequenceAlgebra,
-    StructuralValueAlgebra, StructuralValueProofError,
+    FiniteSequenceLaw, StructuralConstructor, StructuralConstructorLaws, StructuralFieldPattern,
+    StructuralSequenceAlgebra, StructuralValueAlgebra, StructuralValueProofError,
 };
 pub use wasm_logic::{
     AdmissibleStartFacts, AdmissibleStartWitness, ExportedFunctionFacts, ExportedFunctionView,

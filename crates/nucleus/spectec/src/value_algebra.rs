@@ -50,6 +50,58 @@ pub struct StructuralValueAlgebra {
     pub bool_ty: Ref,
 }
 
+/// Immutable checked shape of one structural field-pattern graph.
+///
+/// The descriptor retains the exact binders used by its predicate so later
+/// proof construction does not need to reconstruct alpha-equivalent syntax.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StructuralFieldPattern {
+    values: StructuralValueAlgebra,
+    record_constructor: StructuralConstructor,
+    selected: usize,
+    pattern_constructor: StructuralConstructor,
+    fields: Arc<[Ref]>,
+    predicate: Ref,
+}
+
+impl StructuralFieldPattern {
+    /// Returns the structural value algebra used by this graph.
+    #[must_use]
+    pub const fn algebra(&self) -> StructuralValueAlgebra {
+        self.values
+    }
+
+    /// Returns the checked binary graph predicate.
+    #[must_use]
+    pub const fn predicate(&self) -> Ref {
+        self.predicate
+    }
+
+    /// Returns the record-like constructor matched by this graph.
+    #[must_use]
+    pub const fn record_constructor(&self) -> StructuralConstructor {
+        self.record_constructor
+    }
+
+    /// Returns the selected record-field index.
+    #[must_use]
+    pub const fn selected(&self) -> usize {
+        self.selected
+    }
+
+    /// Returns the unary constructor required at the selected field.
+    #[must_use]
+    pub const fn pattern_constructor(&self) -> StructuralConstructor {
+        self.pattern_constructor
+    }
+
+    /// Returns the exact existential field binders retained by the predicate.
+    #[must_use]
+    pub fn field_binders(&self) -> &[Ref] {
+        &self.fields
+    }
+}
+
 /// Immutable obligations for one finite structural-constructor vocabulary.
 ///
 /// The propositions contain every constructor's injectivity law followed by
@@ -432,6 +484,28 @@ impl StructuralConstructorLaws {
 }
 
 impl StructuralValueAlgebra {
+    /// Constructs and retains the exact shape of a structural field pattern.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`Self::field_pattern_graph`]. `kernel` is unchanged on failure.
+    pub fn field_pattern(
+        self,
+        kernel: &mut Kernel,
+        record_constructor: StructuralConstructor,
+        selected: usize,
+        pattern_constructor: StructuralConstructor,
+    ) -> Result<StructuralFieldPattern, KernelError> {
+        self.field_pattern_avoiding(
+            kernel,
+            record_constructor,
+            selected,
+            pattern_constructor,
+            &[],
+        )
+    }
+
     /// Constructs a binary graph matching one constructor field against a
     /// unary structural pattern.
     ///
@@ -453,6 +527,18 @@ impl StructuralValueAlgebra {
         selected: usize,
         pattern_constructor: StructuralConstructor,
     ) -> Result<Ref, KernelError> {
+        self.field_pattern(kernel, record_constructor, selected, pattern_constructor)
+            .map(|pattern| pattern.predicate)
+    }
+
+    fn field_pattern_avoiding(
+        self,
+        kernel: &mut Kernel,
+        record_constructor: StructuralConstructor,
+        selected: usize,
+        pattern_constructor: StructuralConstructor,
+        avoid: &[Ref],
+    ) -> Result<StructuralFieldPattern, KernelError> {
         let mut staged = kernel.fork();
         self.require_constructor(&mut staged, record_constructor)?;
         self.require_constructor(&mut staged, pattern_constructor)?;
@@ -466,12 +552,16 @@ impl StructuralValueAlgebra {
                 rule: "structural field pattern arity",
             });
         }
-        let first = staged.fresh_name(&[
+        let roots = [
             self.value_ty,
             self.bool_ty,
             record_constructor.operation,
             pattern_constructor.operation,
-        ])?;
+        ]
+        .into_iter()
+        .chain(avoid.iter().copied())
+        .collect::<Vec<_>>();
+        let first = staged.fresh_name(&roots)?;
         let record = staged.tm_fv(first, self.value_ty)?;
         let output = staged.tm_fv(
             first.checked_add(1).ok_or(KernelError::TooManyNames)?,
@@ -502,8 +592,16 @@ impl StructuralValueAlgebra {
         let by_output = staged.lam_at(output_predicate_ty, output, body)?;
         let graph_ty = staged.ty_arr(self.value_ty, output_predicate_ty)?;
         let graph = staged.lam_at(graph_ty, record, by_output)?;
+        let pattern = StructuralFieldPattern {
+            values: self,
+            record_constructor,
+            selected,
+            pattern_constructor,
+            fields: Arc::from(fields),
+            predicate: graph,
+        };
         *kernel = staged;
-        Ok(graph)
+        Ok(pattern)
     }
 
     /// Constructs the complete constructor-separation obligations for a finite
@@ -823,9 +921,15 @@ mod tests {
         let unary = algebra.constructor(&mut kernel, unary, 1).unwrap();
         let binary = algebra.constructor(&mut kernel, binary, 2).unwrap();
 
-        let graph = algebra
-            .field_pattern_graph(&mut kernel, binary, 1, unary)
+        let pattern = algebra
+            .field_pattern(&mut kernel, binary, 1, unary)
             .unwrap();
+        assert_eq!(pattern.algebra(), algebra);
+        assert_eq!(pattern.record_constructor(), binary);
+        assert_eq!(pattern.selected(), 1);
+        assert_eq!(pattern.pattern_constructor(), unary);
+        assert_eq!(pattern.field_binders().len(), 2);
+        let graph = pattern.predicate();
         let actual = kernel.classifier(graph).unwrap();
         covalence_logic_hol_derived::join_same_syntax(&mut kernel, actual, graph_ty).unwrap();
 
