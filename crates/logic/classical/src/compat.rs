@@ -1545,6 +1545,27 @@ mod tests {
     }
 
     #[test]
+    fn slot_equality_sees_live_rows_and_not_tombstone_layout() {
+        // Crossing a row leaves a tombstone behind it; building the same live
+        // rows directly does not. Storage layout differs, syntax does not.
+        let mut crossed = ClassicalArena::new();
+        let id = crossed
+            .insert(Cnf::new([row([-1]), row([-2])]), Dnf::default())
+            .unwrap();
+        crossed.move_cnf_right(id, CnfId::new(1).unwrap()).unwrap();
+
+        let mut direct = ClassicalArena::new();
+        direct
+            .insert(Cnf::new([row([-2])]), Dnf::new([row([1])]))
+            .unwrap();
+
+        let view = crossed.get(id).unwrap();
+        assert_eq!(view.lhs.to_rows(), vec![row([-2])]);
+        assert_eq!(view.rhs.to_rows(), vec![row([1])]);
+        assert_eq!(crossed, direct);
+    }
+
+    #[test]
     fn failed_replacement_is_transactional() {
         let mut arena = ClassicalArena::new();
         let id = arena.identity(Lit::positive(1)).unwrap();
