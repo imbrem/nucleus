@@ -79,25 +79,18 @@ impl RunRelation {
         self.runs
     }
 
-    /// Validates and attaches an invocation policy and behavior observation.
+    /// Validates and attaches an invocation policy.
     ///
     /// `admissible` has classifier
     /// `profile -> module -> entry -> inputs -> host -> bool`; this keeps host
     /// and input quantification explicit while allowing the policy to depend on
-    /// the selected semantic profile and module. `observe` has classifier
-    /// `trace -> outcome -> bool`, allowing calls, traps, returns, and compound
-    /// trace properties to share the same execution relation.
+    /// the selected semantic profile and module.
     ///
     /// # Errors
     ///
-    /// Returns an error unless both predicates have the exact required
-    /// classifiers. `kernel` is unchanged on failure.
-    pub fn observe(
-        self,
-        kernel: &mut Kernel,
-        admissible: Ref,
-        observe: Ref,
-    ) -> Result<RunObservation, KernelError> {
+    /// Returns an error unless the predicate has the exact required classifier.
+    /// `kernel` is unchanged on failure.
+    pub fn under(self, kernel: &mut Kernel, admissible: Ref) -> Result<RunDomain, KernelError> {
         let mut staged = kernel.fork();
         let admissible_ty = curried_type(
             &mut staged,
@@ -111,16 +104,75 @@ impl RunRelation {
             self.types.bool_ty,
         )?;
         require_classifier(&mut staged, admissible, admissible_ty)?;
-        let observation_ty = curried_type(
-            &mut staged,
-            &[self.types.trace, self.types.outcome],
-            self.types.bool_ty,
-        )?;
+        *kernel = staged;
+        Ok(RunDomain {
+            relation: self,
+            admissible,
+        })
+    }
+
+    /// Validates and attaches an invocation policy and behavior observation.
+    ///
+    /// This is shorthand for `self.under(...).observe(...)` when the policy is
+    /// used by one observation. Use [`Self::under`] to share it across several
+    /// call, trap, return, or trace-property observations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless both predicates have the exact required
+    /// classifiers. `kernel` is unchanged on failure.
+    pub fn observe(
+        self,
+        kernel: &mut Kernel,
+        admissible: Ref,
+        observe: Ref,
+    ) -> Result<RunObservation, KernelError> {
+        let mut staged = kernel.fork();
+        let domain = self.under(&mut staged, admissible)?;
+        let observation = domain.observe(&mut staged, observe)?;
+        *kernel = staged;
+        Ok(observation)
+    }
+}
+
+/// One eventful relation restricted by an explicit invocation and host policy.
+///
+/// A domain is independent of any particular observed event, so one checked
+/// policy can be shared by call, trap, return, and trace-safety propositions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RunDomain {
+    relation: RunRelation,
+    admissible: Ref,
+}
+
+impl RunDomain {
+    /// Returns the underlying versioned execution relation.
+    #[must_use]
+    pub const fn relation(self) -> RunRelation {
+        self.relation
+    }
+
+    /// Returns the allowed invocation/host policy.
+    #[must_use]
+    pub const fn admissible(self) -> Ref {
+        self.admissible
+    }
+
+    /// Validates and attaches a predicate over traces and outcomes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `observe` has classifier
+    /// `trace -> outcome -> bool`. `kernel` is unchanged on failure.
+    pub fn observe(self, kernel: &mut Kernel, observe: Ref) -> Result<RunObservation, KernelError> {
+        let mut staged = kernel.fork();
+        let types = self.relation.types;
+        let observation_ty =
+            curried_type(&mut staged, &[types.trace, types.outcome], types.bool_ty)?;
         require_classifier(&mut staged, observe, observation_ty)?;
         *kernel = staged;
         Ok(RunObservation {
-            relation: self,
-            admissible,
+            domain: self,
             observe,
         })
     }
@@ -141,8 +193,7 @@ pub enum BehaviorQuantifier {
 /// An observation over one eventful execution relation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RunObservation {
-    relation: RunRelation,
-    admissible: Ref,
+    domain: RunDomain,
     observe: Ref,
 }
 
@@ -150,13 +201,19 @@ impl RunObservation {
     /// Returns the underlying versioned execution relation.
     #[must_use]
     pub const fn relation(self) -> RunRelation {
-        self.relation
+        self.domain.relation
+    }
+
+    /// Returns the reusable execution domain.
+    #[must_use]
+    pub const fn domain(self) -> RunDomain {
+        self.domain
     }
 
     /// Returns the allowed invocation/host policy.
     #[must_use]
     pub const fn admissible(self) -> Ref {
-        self.admissible
+        self.domain.admissible
     }
 
     /// Returns the trace/outcome predicate.
@@ -185,7 +242,7 @@ impl RunObservation {
         module: Ref,
     ) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
-        let types = self.relation.types;
+        let types = self.domain.relation.types;
         require_classifier(&mut staged, profile, types.profile)?;
         require_classifier(&mut staged, module, types.module)?;
         let roots = [
@@ -197,8 +254,8 @@ impl RunObservation {
             types.trace,
             types.outcome,
             types.bool_ty,
-            self.relation.runs,
-            self.admissible,
+            self.domain.relation.runs,
+            self.domain.admissible,
             self.observe,
             profile,
             module,
@@ -212,12 +269,12 @@ impl RunObservation {
         let variables = [entry, inputs, host, trace, outcome];
         let allowed = apply(
             &mut staged,
-            self.admissible,
+            self.domain.admissible,
             &[profile, module, entry, inputs, host],
         )?;
         let runs = apply(
             &mut staged,
-            self.relation.runs,
+            self.domain.relation.runs,
             &[profile, module, entry, inputs, host, trace, outcome],
         )?;
         let observed = apply(&mut staged, self.observe, &[trace, outcome])?;
@@ -253,13 +310,13 @@ impl RunObservation {
         profile: Ref,
     ) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
-        let types = self.relation.types;
+        let types = self.domain.relation.types;
         require_classifier(&mut staged, profile, types.profile)?;
         let name = staged.fresh_name(&[
             types.module,
             types.bool_ty,
-            self.relation.runs,
-            self.admissible,
+            self.domain.relation.runs,
+            self.domain.admissible,
             self.observe,
             profile,
         ])?;
@@ -404,7 +461,10 @@ mod tests {
         let profile = kernel.tm_fv(23, types.profile).unwrap();
         let module = kernel.tm_fv(24, types.module).unwrap();
         let relation = RunRelation::new(&mut kernel, types, runs).unwrap();
-        let observation = relation.observe(&mut kernel, admissible, observe).unwrap();
+        let domain = relation.under(&mut kernel, admissible).unwrap();
+        let observation = domain.observe(&mut kernel, observe).unwrap();
+        assert_eq!(observation.domain(), domain);
+        assert_eq!(observation.relation(), relation);
 
         let may = observation.may(&mut kernel, profile, module).unwrap();
         let never = observation.never(&mut kernel, profile, module).unwrap();
@@ -435,7 +495,15 @@ mod tests {
         assert_eq!(kernel.arena(), &before);
 
         let before = kernel.arena().clone();
+        assert!(relation.under(&mut kernel, observe).is_err());
+        assert_eq!(kernel.arena(), &before);
+
+        let before = kernel.arena().clone();
         assert!(relation.observe(&mut kernel, observe, admissible).is_err());
+        assert_eq!(kernel.arena(), &before);
+
+        let before = kernel.arena().clone();
+        assert!(domain.observe(&mut kernel, admissible).is_err());
         assert_eq!(kernel.arena(), &before);
     }
 }
