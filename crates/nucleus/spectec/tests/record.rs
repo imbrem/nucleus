@@ -6,22 +6,22 @@ use covalence_data_spectec::{
 };
 use covalence_logic_hol::{Kernel, Tag, TmTag};
 use covalence_nucleus_spectec::{
-    ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
-    CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
-    CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase,
-    HolEmbedding, HolFamilyBranch, HolRule, HolTheoryError, IndexErasure, InterpretationKind,
-    KernelRoot, RelationalCall, RelationalClause, RelationalCondition, RelationalDefinitionSchema,
-    RelationalDefinitionSource, RelationalExpressionAlgebra, RelationalRelation,
-    RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler, Source,
-    SpecTecValueBuilder, TYPE_NAME, TranslationCase, TypeAlgebra, TypeChildren,
-    begin_least_closed_family, close_family_definition, close_graph_equation, close_hol_rule,
-    close_hol_rules, close_hol_theory, declare_hol_schema, empty_wasm_module, fold_expression,
-    fold_grammar, fold_type, forwarding_wasm_module, least_closed_family, least_closed_predicate,
-    ordered_cases, parameterized_document, parameterized_document_with, relational_definition,
-    relational_definition_declaration, relational_definition_schema, relational_document,
-    relational_grammar_declaration, relational_hol_case, relational_hol_rule,
-    relational_relation_declaration, relational_relations, relational_type_declaration,
-    spectec_execution,
+    ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan,
+    AdmissibleStartFacts, AdmissibleStartWitness, ArtifactError, CompilationRecord, CompileError,
+    Compiler, Coverage, CoverageArtifact, CoverageDisposition, CoveragePlan, Disposition,
+    ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase, HolEmbedding, HolFamilyBranch,
+    HolRule, HolTheoryError, IndexErasure, InterpretationKind, KernelRoot, RelationalCall,
+    RelationalClause, RelationalCondition, RelationalDefinitionSchema, RelationalDefinitionSource,
+    RelationalExpressionAlgebra, RelationalRelation, RelationalResolver, RelationalTerm,
+    SelectedCompileError, SelectedCompiler, Source, SpecTecValueBuilder, TYPE_NAME,
+    TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family, close_family_definition,
+    close_graph_equation, close_hol_rule, close_hol_rules, close_hol_theory, declare_hol_schema,
+    empty_wasm_module, fold_expression, fold_grammar, fold_type, forwarding_wasm_module,
+    least_closed_family, least_closed_predicate, ordered_cases, parameterized_document,
+    parameterized_document_with, relational_definition, relational_definition_declaration,
+    relational_definition_schema, relational_document, relational_grammar_declaration,
+    relational_hol_case, relational_hol_rule, relational_relation_declaration,
+    relational_relations, relational_type_declaration, spectec_execution,
 };
 
 #[derive(Clone)]
@@ -1714,6 +1714,117 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     assert_eq!(execution.bool_ty, bool_ty);
     let steps_classifier = kernel.classifier(execution.steps).unwrap();
     assert_eq!(steps_classifier, execution.steps_ty);
+
+    // End-to-end theorem assembly over the two actual structural module terms.
+    // These graph propositions are explicit grounding premises; the test does
+    // not turn the Wasmtime checks below into theorem authority.
+    let binary_tail = kernel.ty_arr(value, bool_ty).unwrap();
+    let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
+    let exported = kernel.tm_fv(name_base + 3, binary_ty).unwrap();
+    let host_call = kernel.tm_fv(name_base + 4, binary_ty).unwrap();
+    let witnesses = (name_base + 5..name_base + 14)
+        .map(|name| kernel.tm_fv(name, value).unwrap())
+        .collect::<Vec<_>>();
+    let start = AdmissibleStartWitness {
+        program: forwarding,
+        initial: witnesses[0],
+        store: witnesses[1],
+        externs: witnesses[2],
+        instantiation_start: witnesses[3],
+        initialized: witnesses[4],
+        function: witnesses[5],
+        arguments: witnesses[6],
+        initialized_store: witnesses[7],
+    };
+    let obligations = execution
+        .admissible_start_obligations(&mut kernel, exported, start)
+        .unwrap();
+    let obligation_facts = obligations.map(|proposition| {
+        kernel
+            .identity(covalence_logic_hol::Lit::positive(proposition.get()))
+            .unwrap()
+    });
+    let starts = execution
+        .prove_admissible_start(
+            &mut kernel,
+            exported,
+            start,
+            AdmissibleStartFacts {
+                instantiated: obligation_facts[0],
+                initialized: obligation_facts[1],
+                exported: obligation_facts[2],
+                store: obligation_facts[3],
+                invoked: obligation_facts[4],
+            },
+        )
+        .unwrap();
+    let reachability = execution
+        .assertion_reachability(&mut kernel, exported, host_call)
+        .unwrap();
+    let final_state = witnesses[8];
+    let steps_at_final = kernel.app(execution.steps, start.initial).unwrap();
+    let steps_at_final = kernel.app(steps_at_final, final_state).unwrap();
+    let steps_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(steps_at_final.get()))
+        .unwrap();
+    let calls_at_final = kernel.app(host_call, final_state).unwrap();
+    let calls_at_final = kernel.app(calls_at_final, start.function).unwrap();
+    let calls_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(calls_at_final.get()))
+        .unwrap();
+    let true_calls = reachability
+        .prove_calls_assert(
+            &mut kernel,
+            forwarding,
+            start.function,
+            start.initial,
+            final_state,
+            starts.theorem,
+            steps_fact,
+            calls_fact,
+        )
+        .unwrap();
+
+    let cannot_export = execution
+        .program_cannot_export(&mut kernel, exported, empty_module)
+        .unwrap();
+    let cannot_export_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(cannot_export.get()))
+        .unwrap();
+    let no_false_start = execution
+        .prove_no_admissible_start_from_no_export(
+            &mut kernel,
+            exported,
+            empty_module,
+            cannot_export_fact,
+        )
+        .unwrap();
+    let false_does_not_call = reachability
+        .prove_never_calls_assert_from_no_start(
+            &mut kernel,
+            empty_module,
+            start.function,
+            no_false_start.theorem,
+        )
+        .unwrap();
+    let observation = reachability
+        .closed_program_observation(&mut kernel, start.function)
+        .unwrap();
+    let true_not_false = observation
+        .prove_distinct(
+            &mut kernel,
+            forwarding,
+            empty_module,
+            true_calls.theorem,
+            false_does_not_call.theorem,
+        )
+        .unwrap();
+    let mut grounding = obligations.to_vec();
+    grounding.extend([steps_at_final, calls_at_final, cannot_export]);
+    document
+        .evidence_scope(&grounding)
+        .check(&kernel, true_not_false)
+        .unwrap();
 }
 
 #[test]

@@ -409,6 +409,28 @@ impl SpecTecExecution {
         self.admissible_starts_avoiding(kernel, exported, &[])
     }
 
+    /// Constructs the five exact graph obligations for one admissible start.
+    ///
+    /// This is the immutable schema consumed by [`Self::prove_admissible_start`]:
+    /// `$instantiate`, initialization `Steps`, exported-function selection,
+    /// `$store`, and `$invoke`, in that order. It creates syntax, not facts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a witness or predicate is ill-typed or a checked
+    /// application fails. `kernel` is unchanged on failure.
+    pub fn admissible_start_obligations(
+        self,
+        kernel: &mut Kernel,
+        exported: Ref,
+        witness: AdmissibleStartWitness,
+    ) -> Result<[Ref; 5], WasmLogicError> {
+        let mut staged = kernel.fork();
+        let obligations = start_propositions(&mut staged, self, exported, witness)?;
+        *kernel = staged;
+        Ok(obligations)
+    }
+
     fn admissible_starts_avoiding(
         self,
         kernel: &mut Kernel,
@@ -1409,7 +1431,9 @@ mod tests {
             arguments: values[7],
             initialized_store: values[8],
         };
-        let propositions = start_propositions(&mut kernel, execution, exported, witness).unwrap();
+        let propositions = execution
+            .admissible_start_obligations(&mut kernel, exported, witness)
+            .unwrap();
         let fact =
             |kernel: &mut Kernel, proposition: Ref| kernel.identity(positive(proposition)).unwrap();
         let facts = AdmissibleStartFacts {
