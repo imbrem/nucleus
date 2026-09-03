@@ -587,7 +587,7 @@ impl LratProver {
     /// `[[formula]] ⊢ []`.
     pub fn done(mut self) -> Result<UnsatFormula, Error> {
         let refutation = self.refuter.done()?;
-        let universal = self.syllogisms.rules().copy_refutation(&refutation)?;
+        let universal = self.syllogisms.copy_refutation(&refutation)?;
         self.kernel.syl_mut().copy_refutation(&refutation)?;
         let theorem =
             self.kernel

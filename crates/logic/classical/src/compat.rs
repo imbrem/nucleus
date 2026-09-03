@@ -660,58 +660,6 @@ impl ClassicalArena {
         true
     }
 
-    /// Inserts identity syntax.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if packing fails or storage is full.
-    pub fn identity(&mut self, literal: Lit) -> Result<ThmId, Error> {
-        self.insert(
-            Cnf::new([std::iter::once(literal).collect()]),
-            Dnf::new([std::iter::once(literal).collect()]),
-        )
-    }
-
-    /// Weakens checked syntax transactionally.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the handle is absent or replacement packing fails.
-    pub fn weaken(&mut self, id: ThmId, left: &[LitVec], right: &[LitVec]) -> Result<(), Error> {
-        let mut replacement = self.projection(id)?.clone();
-        replacement.0.0.0.extend(left.iter().cloned().map(Some));
-        replacement.1.0.0.extend(right.iter().cloned().map(Some));
-        self.replace_projection(id, replacement)
-    }
-
-    /// Applies matrix cut to checked syntax and stores a fresh result.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for absent inputs, pivots, packing failure, or exhaustion.
-    pub fn cut(&mut self, left: ThmId, right: ThmId, literal: Lit) -> Result<ThmId, Error> {
-        let result = cut_projection(
-            self.projection(left)?.clone(),
-            self.projection(right)?.clone(),
-            literal,
-        )?;
-        self.store_projection(result)
-    }
-
-    /// Applies matrix resolution to checked syntax and stores a fresh result.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for absent inputs, pivots, packing failure, or exhaustion.
-    pub fn resolve(&mut self, left: ThmId, right: ThmId, literal: Lit) -> Result<ThmId, Error> {
-        let result = resolve_projection(
-            self.projection(left)?.clone(),
-            self.projection(right)?.clone(),
-            literal,
-        )?;
-        self.store_projection(result)
-    }
-
     /// Moves one CNF row right and complements every literal.
     ///
     /// # Errors
@@ -817,69 +765,6 @@ impl ClassicalArena {
     }
 }
 
-fn remove_unit(matrix: &mut Matrix, literal: Lit) -> Result<(), Error> {
-    let position = matrix
-        .0
-        .iter()
-        .position(|row| row.as_deref() == Some(&[literal]))
-        .ok_or(Error::MissingUnit {
-            literal: literal.get(),
-        })?;
-    matrix.0.remove(position);
-    Ok(())
-}
-
-fn cut_projection(
-    mut left: Projection,
-    mut right: Projection,
-    literal: Lit,
-) -> Result<Projection, Error> {
-    remove_unit(&mut left.1.0, literal)?;
-    remove_unit(&mut right.0.0, literal)?;
-    left.0.0.0.extend(right.0.0.0);
-    left.1.0.0.extend(right.1.0.0);
-    Ok(left)
-}
-
-fn resolve_projection(
-    mut left: Projection,
-    mut right: Projection,
-    literal: Lit,
-) -> Result<Projection, Error> {
-    remove_unit(&mut left.1.0, literal)?;
-    remove_unit(&mut right.1.0, literal.negated())?;
-    left.0.0.0.extend(right.0.0.0);
-    left.1.0.0.extend(right.1.0.0);
-    Ok(left)
-}
-
-/// The sound, target-independent compatibility inference surface.
-#[allow(clippy::missing_errors_doc)]
-pub trait ClassicalRules {
-    /// Borrows a resident sequent projection.
-    fn get(&self, id: ThmId) -> Option<ThmRef<'_>>;
-    /// Introduces identity.
-    fn identity(&mut self, literal: Lit) -> Result<ThmId, Error>;
-    /// Weakens a resident sequent in place.
-    fn weaken(&mut self, id: ThmId, cnf: &[LitVec], dnf: &[LitVec]) -> Result<(), Error>;
-    /// Cuts a unit literal between two sequents.
-    fn cut(&mut self, left: ThmId, right: ThmId, literal: Lit) -> Result<ThmId, Error>;
-    /// Resolves complementary unit conclusions.
-    fn resolve(&mut self, left: ThmId, right: ThmId, literal: Lit) -> Result<ThmId, Error>;
-    /// Copies a resident sequent.
-    fn copy(&mut self, source: ThmId) -> Result<ThmId, Error>;
-    /// Removes one resident sequent.
-    fn remove(&mut self, id: ThmId) -> bool;
-    /// Moves an indexed CNF row across the turnstile.
-    fn move_cnf_right(&mut self, id: ThmId, row: CnfId) -> Result<(), Error>;
-    /// Moves an indexed DNF row across the turnstile.
-    fn move_dnf_left(&mut self, id: ThmId, row: DnfId) -> Result<(), Error>;
-    /// Normalizes one CNF row.
-    fn normalize_cnf(&mut self, id: ThmId, row: CnfId) -> Result<(), Error>;
-    /// Normalizes one DNF row.
-    fn normalize_dnf(&mut self, id: ThmId, row: DnfId) -> Result<(), Error>;
-}
-
 /// Capability view exposing theorem-preserving mutations of checked syntax.
 ///
 /// This does not promote syntax to a universal theorem; it preserves whatever
@@ -895,30 +780,6 @@ impl<'a> CheckedArena<'a> {
         Self { arena }
     }
 
-    /// Borrows a resident projection.
-    #[must_use]
-    pub fn get(&self, id: ThmId) -> Option<ThmRef<'_>> {
-        self.arena.get(id)
-    }
-
-    /// Iterates over live projections in handle order.
-    pub fn live_theorems(&self) -> impl Iterator<Item = ThmRef<'_>> {
-        self.arena.live_theorems()
-    }
-
-    /// Copies a universal theorem into ambient checked syntax.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the source is absent, packing fails, or storage is full.
-    pub fn copy_from(&mut self, source: &ClassicalKernel, id: ThmId) -> Result<ThmId, Error> {
-        let projection = source
-            .projection(id)
-            .ok_or(Error::MissingTheorem { id: id.get() })?
-            .clone();
-        self.arena.store_projection(projection)
-    }
-
     /// Copies a certified refutation into ambient checked syntax.
     ///
     /// # Errors
@@ -926,42 +787,6 @@ impl<'a> CheckedArena<'a> {
     /// Returns an error if packing fails or storage is full.
     pub fn copy_refutation(&mut self, refutation: &Refutation) -> Result<ThmId, Error> {
         self.arena.store_projection(refutation.projection.clone())
-    }
-}
-
-impl ClassicalRules for CheckedArena<'_> {
-    fn get(&self, id: ThmId) -> Option<ThmRef<'_>> {
-        self.arena.get(id)
-    }
-    fn identity(&mut self, literal: Lit) -> Result<ThmId, Error> {
-        self.arena.identity(literal)
-    }
-    fn weaken(&mut self, id: ThmId, cnf: &[LitVec], dnf: &[LitVec]) -> Result<(), Error> {
-        self.arena.weaken(id, cnf, dnf)
-    }
-    fn cut(&mut self, left: ThmId, right: ThmId, literal: Lit) -> Result<ThmId, Error> {
-        self.arena.cut(left, right, literal)
-    }
-    fn resolve(&mut self, left: ThmId, right: ThmId, literal: Lit) -> Result<ThmId, Error> {
-        self.arena.resolve(left, right, literal)
-    }
-    fn copy(&mut self, source: ThmId) -> Result<ThmId, Error> {
-        self.arena.copy(source)
-    }
-    fn remove(&mut self, id: ThmId) -> bool {
-        self.arena.remove(id)
-    }
-    fn move_cnf_right(&mut self, id: ThmId, row: CnfId) -> Result<(), Error> {
-        self.arena.move_cnf_right(id, row)
-    }
-    fn move_dnf_left(&mut self, id: ThmId, row: DnfId) -> Result<(), Error> {
-        self.arena.move_dnf_left(id, row)
-    }
-    fn normalize_cnf(&mut self, id: ThmId, row: CnfId) -> Result<(), Error> {
-        self.arena.normalize_cnf(id, row)
-    }
-    fn normalize_dnf(&mut self, id: ThmId, row: DnfId) -> Result<(), Error> {
-        self.arena.normalize_dnf(id, row)
     }
 }
 
@@ -1009,6 +834,10 @@ impl ClassicalKernel {
     }
 
     /// Borrows the sealed selected-runtime fact behind one live handle.
+    ///
+    /// This is the only read of the retained [`tagged::Theorem`]. The fact is
+    /// what distinguishes this store from [`ClassicalArena`], which merely
+    /// gates its syntax through canonical packing and discards the result.
     #[must_use]
     pub fn theorem_fact(&self, id: ThmId) -> Option<&tagged::Theorem> {
         self.slot(id).ok().map(|slot| &slot.theorem)
@@ -1019,10 +848,6 @@ impl ClassicalKernel {
             .get(id.position())
             .and_then(Option::as_ref)
             .ok_or(Error::MissingTheorem { id: id.get() })
-    }
-
-    fn projection(&self, id: ThmId) -> Option<&Projection> {
-        self.slot(id).ok().map(|slot| &slot.projection)
     }
 
     fn allocate(&mut self, slot: TheoremSlot) -> Result<ThmId, Error> {
@@ -1041,68 +866,6 @@ impl ClassicalKernel {
         Ok(id)
     }
 
-    /// Opens the sealed theorem rule surface.
-    pub fn rules(&mut self) -> KernelRules<'_> {
-        KernelRules { kernel: self }
-    }
-
-    /// Introduces exact matrix identity through the sealed tagged rule.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if canonical tagged packing fails or storage is full.
-    pub fn identity(&mut self, literal: Lit) -> Result<ThmId, Error> {
-        self.rules().identity(literal)
-    }
-
-    /// Weakens a legacy matrix through sealed tagged row pushes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for an absent handle or tagged edit failure.
-    pub fn weaken(&mut self, id: ThmId, cnf: &[LitVec], dnf: &[LitVec]) -> Result<(), Error> {
-        self.rules().weaken(id, cnf, dnf)
-    }
-
-    /// Cuts a unit matrix row through the sealed tagged rule.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for absent inputs, pivots, or tagged packing failure.
-    pub fn cut(&mut self, left: ThmId, right: ThmId, literal: Lit) -> Result<ThmId, Error> {
-        self.rules().cut(left, right, literal)
-    }
-
-    /// Resolves complementary unit matrix rows through the sealed tagged rule.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for absent inputs, pivots, or tagged packing failure.
-    pub fn resolve(&mut self, left: ThmId, right: ThmId, literal: Lit) -> Result<ThmId, Error> {
-        self.rules().resolve(left, right, literal)
-    }
-
-    /// Copies a universal theorem into a fresh handle.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the source is absent or storage is full.
-    pub fn copy(&mut self, source: ThmId) -> Result<ThmId, Error> {
-        self.rules().copy(source)
-    }
-
-    /// Removes one theorem and returns whether it was live.
-    pub fn remove(&mut self, id: ThmId) -> bool {
-        self.rules().remove(id)
-    }
-}
-
-/// Borrowed access to sealed classical theorem rules.
-pub struct KernelRules<'a> {
-    kernel: &'a mut ClassicalKernel,
-}
-
-impl KernelRules<'_> {
     /// Seals an opaque checked refutation into a fresh tagged theorem slot.
     ///
     /// # Errors
@@ -1110,192 +873,8 @@ impl KernelRules<'_> {
     /// Returns an error if tagged packing fails or theorem storage is full.
     pub fn copy_refutation(&mut self, refutation: &Refutation) -> Result<ThmId, Error> {
         let theorem = tagged::Theorem::seal_refutation(refutation)?;
-        self.kernel
-            .allocate(TheoremSlot::new(theorem, refutation.projection.clone()))
+        self.allocate(TheoremSlot::new(theorem, refutation.projection.clone()))
     }
-
-    fn normalize_row(
-        &mut self,
-        id: ThmId,
-        side: tagged::Side,
-        position: usize,
-        external_index: i32,
-    ) -> Result<(), Error> {
-        let resident = self.kernel.slot(id)?.clone();
-        let matrix = match side {
-            tagged::Side::Left => &resident.projection.0.0,
-            tagged::Side::Right => &resident.projection.1.0,
-        };
-        let live = live_row_position(matrix, position).ok_or_else(|| match side {
-            tagged::Side::Left => Error::MissingCnfRow {
-                id: id.get(),
-                index: external_index,
-            },
-            tagged::Side::Right => Error::MissingDnfRow {
-                id: id.get(),
-                index: external_index,
-            },
-        })?;
-        let mut normalized = matrix.0[position].clone().expect("live row was checked");
-        normalized.sort_unstable();
-        let theorem = resident
-            .theorem
-            .matrix_permute_row(0, side, live, formulas(&normalized))?;
-        normalized.dedup();
-        let theorem = theorem.matrix_dedupe_row(0, side, live)?;
-        let mut projection = resident.projection;
-        match side {
-            tagged::Side::Left => projection.0.0.0[position] = Some(normalized),
-            tagged::Side::Right => projection.1.0.0[position] = Some(normalized),
-        }
-        self.kernel.slots[id.position()] = Some(TheoremSlot::new(theorem, projection));
-        Ok(())
-    }
-}
-
-impl ClassicalRules for KernelRules<'_> {
-    fn get(&self, id: ThmId) -> Option<ThmRef<'_>> {
-        self.kernel.get(id)
-    }
-
-    fn identity(&mut self, literal: Lit) -> Result<ThmId, Error> {
-        let theorem = tagged::Theorem::matrix_identity(literal.formula())?;
-        let projection = Projection::new(
-            Cnf::new([std::iter::once(literal).collect()]),
-            Dnf::new([std::iter::once(literal).collect()]),
-        );
-        self.kernel.allocate(TheoremSlot::new(theorem, projection))
-    }
-
-    fn weaken(&mut self, id: ThmId, cnf: &[LitVec], dnf: &[LitVec]) -> Result<(), Error> {
-        let resident = self.kernel.slot(id)?.clone();
-        let mut theorem = resident.theorem;
-        for row in cnf {
-            theorem = theorem.matrix_weaken_row(0, tagged::Side::Left, formulas(row))?;
-        }
-        for row in dnf {
-            theorem = theorem.matrix_weaken_row(0, tagged::Side::Right, formulas(row))?;
-        }
-        let mut projection = resident.projection;
-        projection.0.0.0.extend(cnf.iter().cloned().map(Some));
-        projection.1.0.0.extend(dnf.iter().cloned().map(Some));
-        self.kernel.slots[id.position()] = Some(TheoremSlot::new(theorem, projection));
-        Ok(())
-    }
-
-    fn cut(&mut self, left: ThmId, right: ThmId, literal: Lit) -> Result<ThmId, Error> {
-        let left_slot = self.kernel.slot(left)?;
-        let right_slot = self.kernel.slot(right)?;
-        let projection = cut_projection(
-            left_slot.projection.clone(),
-            right_slot.projection.clone(),
-            literal,
-        )?;
-        let theorem =
-            left_slot
-                .theorem
-                .matrix_unit_cut(0, &right_slot.theorem, 0, literal.formula())?;
-        self.kernel.allocate(TheoremSlot::new(theorem, projection))
-    }
-
-    fn resolve(&mut self, left: ThmId, right: ThmId, literal: Lit) -> Result<ThmId, Error> {
-        let left_slot = self.kernel.slot(left)?;
-        let right_slot = self.kernel.slot(right)?;
-        let projection = resolve_projection(
-            left_slot.projection.clone(),
-            right_slot.projection.clone(),
-            literal,
-        )?;
-        let theorem =
-            left_slot
-                .theorem
-                .matrix_unit_resolve(0, &right_slot.theorem, 0, literal.formula())?;
-        self.kernel.allocate(TheoremSlot::new(theorem, projection))
-    }
-
-    fn copy(&mut self, source: ThmId) -> Result<ThmId, Error> {
-        let slot = self.kernel.slot(source)?.clone();
-        self.kernel.allocate(slot)
-    }
-
-    fn remove(&mut self, id: ThmId) -> bool {
-        let Some(slot) = self
-            .kernel
-            .slots
-            .get_mut(id.position())
-            .and_then(Option::take)
-        else {
-            return false;
-        };
-        self.kernel.free.push(id);
-        drop(slot);
-        true
-    }
-
-    fn move_cnf_right(&mut self, id: ThmId, row: CnfId) -> Result<(), Error> {
-        let resident = self.kernel.slot(id)?.clone();
-        let live = live_row_position(&resident.projection.0.0, row.position()).ok_or(
-            Error::MissingCnfRow {
-                id: id.get(),
-                index: row.get(),
-            },
-        )?;
-        let theorem = resident
-            .theorem
-            .matrix_cross_row(0, tagged::Side::Left, live)?;
-        let mut projection = resident.projection;
-        let source = projection.0.0.0[row.position()]
-            .take()
-            .expect("live row was checked");
-        projection
-            .1
-            .0
-            .0
-            .push(Some(source.into_iter().map(Lit::negated).collect()));
-        self.kernel.slots[id.position()] = Some(TheoremSlot::new(theorem, projection));
-        Ok(())
-    }
-
-    fn move_dnf_left(&mut self, id: ThmId, row: DnfId) -> Result<(), Error> {
-        let resident = self.kernel.slot(id)?.clone();
-        let live = live_row_position(&resident.projection.1.0, row.position()).ok_or(
-            Error::MissingDnfRow {
-                id: id.get(),
-                index: row.get(),
-            },
-        )?;
-        let theorem = resident
-            .theorem
-            .matrix_cross_row(0, tagged::Side::Right, live)?;
-        let mut projection = resident.projection;
-        let source = projection.1.0.0[row.position()]
-            .take()
-            .expect("live row was checked");
-        projection
-            .0
-            .0
-            .0
-            .push(Some(source.into_iter().map(Lit::negated).collect()));
-        self.kernel.slots[id.position()] = Some(TheoremSlot::new(theorem, projection));
-        Ok(())
-    }
-
-    fn normalize_cnf(&mut self, id: ThmId, row: CnfId) -> Result<(), Error> {
-        self.normalize_row(id, tagged::Side::Left, row.position(), row.get())
-    }
-
-    fn normalize_dnf(&mut self, id: ThmId, row: DnfId) -> Result<(), Error> {
-        self.normalize_row(id, tagged::Side::Right, row.position(), row.get())
-    }
-}
-
-fn formulas(row: &[Lit]) -> Vec<Formula> {
-    row.iter().copied().map(Lit::formula).collect()
-}
-
-fn live_row_position(matrix: &Matrix, position: usize) -> Option<usize> {
-    matrix.0.get(position)?.as_ref()?;
-    Some(matrix.0[..position].iter().flatten().count())
 }
 
 /// An opaque certificate produced by checked RUP/RAT state transitions.
@@ -1346,12 +925,6 @@ impl Refuter {
             derived_empty,
             goal,
         }
-    }
-
-    /// Borrows the original goal.
-    #[must_use]
-    pub const fn goal(&self) -> &Cnf {
-        &self.goal
     }
 
     /// Borrows the current clause state.
@@ -1525,6 +1098,15 @@ mod tests {
         values.into_iter().map(Lit::new).collect()
     }
 
+    /// The identity projection `[[p]] |- [[p]]`, which the arena no longer
+    /// builds for itself now that no consumer asked it to.
+    fn identity(arena: &mut ClassicalArena, literal: Lit) -> Result<ThmId, Error> {
+        arena.insert(
+            Cnf::new([std::iter::once(literal).collect()]),
+            Dnf::new([std::iter::once(literal).collect()]),
+        )
+    }
+
     #[test]
     fn raw_slots_pack_canonically_and_reuse_lifo_handles() {
         let mut arena = ClassicalArena::new();
@@ -1532,8 +1114,8 @@ mod tests {
         let second = arena.insert(Cnf::default(), Dnf::new([row([-2])])).unwrap();
         assert!(arena.remove(first));
         assert!(arena.remove(second));
-        let reused_second = arena.identity(Lit::positive(3)).unwrap();
-        let reused_first = arena.identity(Lit::positive(4)).unwrap();
+        let reused_second = identity(&mut arena, Lit::positive(3)).unwrap();
+        let reused_first = identity(&mut arena, Lit::positive(4)).unwrap();
         assert_eq!((reused_second, reused_first), (second, first));
         // Slots no longer retain a packed arena, but every resident projection
         // is still exactly what canonical packing accepted.
@@ -1568,7 +1150,7 @@ mod tests {
     #[test]
     fn failed_replacement_is_transactional() {
         let mut arena = ClassicalArena::new();
-        let id = arena.identity(Lit::positive(1)).unwrap();
+        let id = identity(&mut arena, Lit::positive(1)).unwrap();
         let before = arena.clone();
         assert!(
             arena
@@ -1588,10 +1170,13 @@ mod tests {
     fn opaque_refuter_certificate_seals_through_the_tagged_kernel() {
         let refutation = Refuter::new(Cnf::new([LitVec::new()])).done().unwrap();
         let mut kernel = ClassicalKernel::new();
-        let id = kernel.rules().copy_refutation(&refutation).unwrap();
+        let id = kernel.copy_refutation(&refutation).unwrap();
         assert_eq!(kernel.get(id).unwrap().lhs.to_rows(), vec![LitVec::new()]);
         assert!(kernel.get(id).unwrap().rhs.rows().next().is_none());
-        assert!(kernel.theorem_fact(id).is_some());
+        assert_eq!(
+            kernel.theorem_fact(id).unwrap().checked().sequents(),
+            &[refutation.sequent_for_sealing()]
+        );
     }
 
     #[test]
@@ -1612,59 +1197,9 @@ mod tests {
     }
 
     #[test]
-    fn sealed_matrix_rules_keep_exact_tagged_projections() {
-        let p = Lit::positive(1);
-        let q = Lit::positive(2);
-        let mut kernel = ClassicalKernel::new();
-        let identity = kernel.identity(p).unwrap();
-        kernel
-            .weaken(identity, &[row([-2, -1, -2])], &[row([-2, -1, -2])])
-            .unwrap();
-        kernel
-            .rules()
-            .normalize_cnf(identity, CnfId::new(2).unwrap())
-            .unwrap();
-        kernel
-            .rules()
-            .normalize_dnf(identity, DnfId::new(2).unwrap())
-            .unwrap();
-        let view = kernel.get(identity).unwrap();
-        assert_eq!(view.lhs.to_rows(), vec![row([-1]), row([-2, -1])]);
-        assert_eq!(view.rhs.to_rows(), vec![row([-1]), row([-2, -1])]);
-        assert_eq!(
-            kernel.theorem_fact(identity).unwrap().checked().sequents(),
-            &[Projection::new(view.lhs.to_owned(), view.rhs.to_owned()).sequent()]
-        );
-
-        let crossed = kernel.identity(q).unwrap();
-        kernel
-            .rules()
-            .move_cnf_right(crossed, CnfId::new(1).unwrap())
-            .unwrap();
-        let crossed_view = kernel.get(crossed).unwrap();
-        assert!(crossed_view.lhs.rows().next().is_none());
-        assert_eq!(crossed_view.rhs.to_rows(), vec![row([-2]), row([2])]);
-
-        let left = kernel.identity(p).unwrap();
-        let right = kernel.identity(p).unwrap();
-        let cut = kernel.cut(left, right, p).unwrap();
-        assert_eq!(kernel.get(cut).unwrap().lhs.to_rows(), vec![row([-1])]);
-        assert_eq!(kernel.get(cut).unwrap().rhs.to_rows(), vec![row([-1])]);
-
-        let positive = kernel.identity(p).unwrap();
-        let negative = kernel.identity(p.negated()).unwrap();
-        let resolved = kernel.resolve(positive, negative, p).unwrap();
-        assert_eq!(
-            kernel.get(resolved).unwrap().lhs.to_rows(),
-            vec![row([-1]), row([1])]
-        );
-        assert!(kernel.get(resolved).unwrap().rhs.rows().next().is_none());
-    }
-
-    #[test]
     fn serde_rechecks_and_canonicalizes_runtime_storage() {
         let mut arena = ClassicalArena::new();
-        arena.identity(Lit::positive(1)).unwrap();
+        identity(&mut arena, Lit::positive(1)).unwrap();
         let mut bytes = Vec::new();
         covalence_lib_cbor::into_writer(&arena, &mut bytes).unwrap();
         let decoded: ClassicalArena = covalence_lib_cbor::from_reader(bytes.as_slice()).unwrap();

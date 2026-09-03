@@ -13,7 +13,6 @@ mod compat;
 pub mod tagged;
 
 pub use compat::{
-    CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, CnfRef, Dnf, DnfId,
-    DnfRef, Error, KernelRules, Lit, LitError, LitVec, RatGroup, Refutation, Refuter, ThmId,
-    ThmRef,
+    CheckedArena, ClassicalArena, ClassicalKernel, Cnf, CnfId, CnfRef, Dnf, DnfId, DnfRef, Error,
+    Lit, LitError, LitVec, RatGroup, Refutation, Refuter, ThmId, ThmRef,
 };

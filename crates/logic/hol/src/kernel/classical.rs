@@ -2649,27 +2649,6 @@ mod tests {
     }
 
     #[test]
-    fn universal_syllogisms_allow_atoms_without_resident_boolean_rows() {
-        let atom = Lit::new(i32::MAX - 1);
-        let mut source = SyllogismKernel::new();
-        let universal = source.identity(atom).unwrap();
-        let mut kernel = Kernel::new();
-
-        let syllogism = kernel.syl_mut().copy_from(&source, universal).unwrap();
-        let theorem = kernel.thm_mut().copy_from(&source, universal).unwrap();
-
-        assert_eq!(
-            kernel.syl().get(syllogism).unwrap(),
-            source.get(universal).unwrap()
-        );
-        assert_eq!(
-            kernel.require_thm(theorem).unwrap(),
-            source.get(universal).unwrap()
-        );
-        assert!(kernel.identity(atom).is_err());
-    }
-
-    #[test]
     fn completed_refutations_copy_into_syl_and_thm_through_checked_views() {
         let atom = Lit::new(i32::MAX - 1);
         let refutation = Refuter::new(Cnf::new([LitVec::new(), std::iter::once(atom).collect()]))

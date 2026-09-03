@@ -177,7 +177,6 @@ impl PyClassicalKernel {
 
     fn copy_refutation(&mut self, refutation: PyRef<'_, PyRefutation>) -> PyResult<i32> {
         self.0
-            .rules()
             .copy_refutation(&refutation.0)
             .map(ThmId::get)
             .map_err(rejection)

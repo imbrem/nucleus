@@ -208,7 +208,6 @@ impl ClassicalKernel {
     #[wasm_bindgen(js_name = copyRefutation)]
     pub fn copy_refutation(&mut self, refutation: &Refutation) -> Result<i32, JsError> {
         self.0
-            .rules()
             .copy_refutation(&refutation.0)
             .map(ThmId::get)
             .map_err(error)
