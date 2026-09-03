@@ -3335,6 +3335,156 @@ impl RunObservation {
         })
     }
 
+    /// Transports a universal behavior property from a specification to an
+    /// implementation that refines it.
+    ///
+    /// Every implementation run is first transported through refinement's
+    /// inclusion theorem and then discharged by the specification's `every`
+    /// proof. This theorem is deliberately progress-neutral; use `must` when
+    /// existence of executions is also required.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `refinement` proves the displayed directional
+    /// refinement, `specification_every` positively proves this observation's
+    /// `every` proposition for the specification, and every checked
+    /// specialization, propositional, or alignment step succeeds. `kernel` is
+    /// unchanged on failure.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    pub fn prove_refinement_preserves_every(
+        self,
+        kernel: &mut Kernel,
+        refinement: Evidence,
+        specification_every: Evidence,
+        profile: Ref,
+        implementation: Ref,
+        specification: Ref,
+    ) -> Result<Evidence, RunProofError> {
+        let mut staged = kernel.fork();
+        let types = self.domain.relation.types;
+        let expected_refinement =
+            self.domain
+                .refines_runs(&mut staged, profile, implementation, specification)?;
+        let refinement_theorem = align_evidence(&mut staged, refinement, expected_refinement)?;
+        let refinement_behavior = staged.expand_conclusion(
+            refinement_theorem,
+            positive(expected_refinement),
+            Some(true),
+        )?;
+        let [_, behavior_formula] = binary_children(&staged, expected_refinement)?;
+        binary_children(&staged, behavior_formula)?;
+        let inclusion = staged.expand_conclusion(
+            refinement_behavior,
+            positive(behavior_formula),
+            Some(false),
+        )?;
+
+        let implementation_graphs = self
+            .domain
+            .run_graphs(&mut staged, profile, implementation)?;
+        let specification_graphs = self
+            .domain
+            .run_graphs(&mut staged, profile, specification)?;
+        let specification_every_proposition = self.every(&mut staged, profile, specification)?;
+        let every = align_evidence(
+            &mut staged,
+            specification_every,
+            specification_every_proposition,
+        )?;
+        let specification_every_direct = self.graph_proposition(
+            &mut staged,
+            BehaviorQuantifier::Every,
+            specification_graphs.domain,
+            specification_graphs.runs,
+            &[],
+        )?;
+        let specification_every_reduced =
+            certify_curried_beta2(&mut staged, specification_every_proposition)?;
+        join_alpha_equivalent(
+            &mut staged,
+            specification_every_reduced,
+            specification_every_direct,
+        )
+        .map_err(|_| KernelError::InvalidTheoremRule {
+            rule: "refinement every specification reduction",
+        })?;
+        staged.convert_conclusions(
+            every,
+            specification_every_proposition,
+            specification_every_direct,
+        )?;
+
+        let first = staged.fresh_name(&[
+            expected_refinement,
+            specification_every_direct,
+            implementation_graphs.runs,
+            specification_graphs.runs,
+            self.observe,
+            types.entry,
+            types.inputs,
+            types.host,
+            types.trace,
+            types.outcome,
+        ])?;
+        let variables = [
+            staged.tm_fv(first, types.entry)?,
+            staged.tm_fv(checked_name(first, 1)?, types.inputs)?,
+            staged.tm_fv(checked_name(first, 2)?, types.host)?,
+            staged.tm_fv(checked_name(first, 3)?, types.trace)?,
+            staged.tm_fv(checked_name(first, 4)?, types.outcome)?,
+        ];
+        let implementation_run = apply(&mut staged, implementation_graphs.runs, &variables)?;
+        let specification_run = apply(&mut staged, specification_graphs.runs, &variables)?;
+        let observed = apply(&mut staged, self.observe, &[variables[3], variables[4]])?;
+        let inclusion_implication = staged.op2(Op2::Imp, implementation_run, specification_run)?;
+        let inclusion = specialize_universal_to(
+            &mut staged,
+            inclusion,
+            &variables,
+            inclusion_implication,
+            "refinement every inclusion specialization",
+        )?;
+        let inclusion =
+            staged.expand_conclusion(inclusion, positive(inclusion_implication), None)?;
+        let every_implication = staged.op2(Op2::Imp, specification_run, observed)?;
+        let every = specialize_universal_to(
+            &mut staged,
+            every,
+            &variables,
+            every_implication,
+            "refinement every specification specialization",
+        )?;
+        let every = staged.expand_conclusion(every, positive(every_implication), None)?;
+        let assumed = staged.identity(positive(implementation_run))?;
+        let specification_run_fact =
+            staged.resolve(assumed, inclusion, positive(implementation_run))?;
+        let observed_fact =
+            staged.resolve(specification_run_fact, every, positive(specification_run))?;
+        let implication = staged.op2(Op2::Imp, implementation_run, observed)?;
+        let proof = staged.imp_right(observed_fact, positive(implication))?;
+        let (direct, proof) =
+            introduce_forall(&mut staged, types.bool_ty, &variables, implication, proof)?;
+
+        let implementation_every = self.every(&mut staged, profile, implementation)?;
+        let implementation_every_reduced =
+            certify_curried_beta2(&mut staged, implementation_every)?;
+        align_theorem_conclusion(
+            &mut staged,
+            proof,
+            direct,
+            implementation_every_reduced,
+            "refinement every result alignment",
+        )?;
+        staged.convert_conclusions(proof, implementation_every_reduced, implementation_every)?;
+        staged.contract_theorem(proof)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: implementation_every,
+            theorem: proof,
+            holds: true,
+        })
+    }
+
     /// Constructs `module -> bool` for one profile and quantification mode.
     ///
     /// The result plugs directly into a generic contextual observation.
@@ -4161,6 +4311,29 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[left_middle_refinement, specification_never])
             .check(&kernel, implementation_never)
+            .unwrap();
+        let specification_every = observation
+            .every(&mut kernel, profile, other_module)
+            .unwrap();
+        let specification_every_evidence = Evidence {
+            proposition: specification_every,
+            theorem: kernel
+                .identity(super::positive(specification_every))
+                .unwrap(),
+            holds: true,
+        };
+        let implementation_every = observation
+            .prove_refinement_preserves_every(
+                &mut kernel,
+                left_middle_refinement_evidence,
+                specification_every_evidence,
+                profile,
+                module,
+                other_module,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[left_middle_refinement, specification_every])
+            .check(&kernel, implementation_every)
             .unwrap();
         let before = kernel.arena().clone();
         let theorem_count = kernel.thm().live_theorems().count();

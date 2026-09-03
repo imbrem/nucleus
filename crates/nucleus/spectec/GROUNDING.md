@@ -60,6 +60,9 @@ specification by opening, transporting, and reintroducing the concrete run
 witness; this makes counterexamples compositional across refinement. Its
 checked contrapositive transports `never` properties from a specification to
 every refining implementation, including eventual `never callsAssert` safety.
+Positive universal invariants (`every`) transport in the same
+specification-to-implementation direction, while existential counterexamples
+(`may`) transport from implementation to specification.
 The domain also derives explicit determinism and totality propositions.
 Totality here means that every admissible invocation has a modeled trace and
 outcome; the profile and outcome representation determine whether traps or
