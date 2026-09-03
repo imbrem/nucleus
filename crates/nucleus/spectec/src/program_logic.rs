@@ -588,6 +588,117 @@ impl ContextualObservation {
     }
 }
 
+/// Contextual equivalence for individual function definitions.
+///
+/// Function equivalence quantifies over a function-hole module context and,
+/// inside it, every outer observation context used by module equivalence. This
+/// formulation makes replacement congruence a direct universal-specialization
+/// theorem rather than an unchecked assumption about context composition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FunctionObservation {
+    /// Classifier of function definitions.
+    pub function_ty: Ref,
+    /// Classifier of modules containing one function hole.
+    pub replacement_context_ty: Ref,
+    /// Curried operation `replacement_context -> function -> module`.
+    pub replace: Ref,
+    /// Contextual observational equivalence of resulting modules.
+    pub modules: ContextualObservation,
+}
+
+impl FunctionObservation {
+    /// Constructs observational equivalence of two function definitions.
+    ///
+    /// The resulting proposition is
+    /// `forall replacement. replace replacement left ≈module replace replacement right`.
+    /// Since module equivalence itself quantifies over all admissible outer
+    /// contexts, this is full contextual function equivalence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for incompatible functions or replacement operation,
+    /// fresh-name exhaustion, or a rejected checked constructor. `kernel` is
+    /// unchanged on failure.
+    pub fn equivalent(
+        self,
+        kernel: &mut Kernel,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        require_classifier(&mut staged, left, self.function_ty)?;
+        require_classifier(&mut staged, right, self.function_ty)?;
+        let name = staged.fresh_name(&[
+            self.function_ty,
+            self.replacement_context_ty,
+            self.replace,
+            left,
+            right,
+            self.modules.subject_ty,
+            self.modules.context_ty,
+            self.modules.observed_ty,
+            self.modules.bool_ty,
+            self.modules.plug,
+            self.modules.admissible,
+            self.modules.observe,
+        ])?;
+        let replacement = staged.tm_fv(name, self.replacement_context_ty)?;
+        let left_module = apply2(&mut staged, self.replace, replacement, left)?;
+        let right_module = apply2(&mut staged, self.replace, replacement, right)?;
+        let module_equivalence = self
+            .modules
+            .equivalent(&mut staged, left_module, right_module)?;
+        let equivalent = staged.forall_tm(self.modules.bool_ty, replacement, module_equivalence)?;
+        *kernel = staged;
+        Ok(equivalent)
+    }
+
+    /// Proves that replacing a function by an observationally equivalent one
+    /// preserves module observational equivalence.
+    ///
+    /// The input theorem proves contextual function equivalence. The result is
+    /// the module-equivalence theorem for the two modules obtained by plugging
+    /// the functions into the selected replacement context. All input theorem
+    /// premises remain visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the theorem proves the exact function
+    /// equivalence, universal specialization succeeds, and the resulting
+    /// module-equivalence formula can be checked alpha-equivalent. `kernel` is
+    /// unchanged on failure.
+    pub fn prove_replacement_sound(
+        self,
+        kernel: &mut Kernel,
+        function_equivalence: ThmId,
+        replacement: Ref,
+        left: Ref,
+        right: Ref,
+    ) -> Result<Evidence, ObservationProofError> {
+        let mut staged = kernel.fork();
+        let expected_function_equivalence = self.equivalent(&mut staged, left, right)?;
+        let source = sole_evidence_proposition(&staged, function_equivalence, true)?;
+        join_alpha_equivalent(&mut staged, source, expected_function_equivalence)?;
+        let aligned = staged.copy_theorem(function_equivalence)?;
+        staged.convert_conclusions(aligned, source, expected_function_equivalence)?;
+        let specialized = forall_elim(&mut staged, aligned, replacement)?;
+        let left_module = apply2(&mut staged, self.replace, replacement, left)?;
+        let right_module = apply2(&mut staged, self.replace, replacement, right)?;
+        let module_equivalence = self
+            .modules
+            .equivalent(&mut staged, left_module, right_module)?;
+        join_alpha_equivalent(&mut staged, specialized.proposition, module_equivalence)?;
+        let theorem = staged.copy_theorem(specialized.theorem)?;
+        staged.convert_conclusions(theorem, specialized.proposition, module_equivalence)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: module_equivalence,
+            theorem,
+            holds: true,
+        })
+    }
+}
+
 fn align_observation_fact(
     kernel: &mut Kernel,
     theorem: ThmId,
@@ -1624,5 +1735,56 @@ mod tests {
             .unwrap();
         assert!(!distinct.holds);
         require_conclusion(&kernel, distinct).unwrap();
+    }
+
+    #[test]
+    fn contextual_function_replacement_preserves_module_equivalence() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let function_ty = kernel.ty_fv(1, star).unwrap();
+        let replacement_ty = kernel.ty_fv(2, star).unwrap();
+        let module_ty = kernel.ty_fv(3, star).unwrap();
+        let outer_ty = kernel.ty_fv(4, star).unwrap();
+        let observed_ty = kernel.ty_fv(5, star).unwrap();
+        let replace_tail = kernel.ty_arr(function_ty, module_ty).unwrap();
+        let replace_ty = kernel.ty_arr(replacement_ty, replace_tail).unwrap();
+        let plug_tail = kernel.ty_arr(module_ty, observed_ty).unwrap();
+        let plug_ty = kernel.ty_arr(outer_ty, plug_tail).unwrap();
+        let admissible_tail = kernel.ty_arr(module_ty, bool_ty).unwrap();
+        let admissible_ty = kernel.ty_arr(outer_ty, admissible_tail).unwrap();
+        let observation_predicate_ty = kernel.ty_arr(observed_ty, bool_ty).unwrap();
+        let replace = kernel.tm_fv(10, replace_ty).unwrap();
+        let plug = kernel.tm_fv(11, plug_ty).unwrap();
+        let admissible = kernel.tm_fv(12, admissible_ty).unwrap();
+        let observe = kernel.tm_fv(13, observation_predicate_ty).unwrap();
+        let left = kernel.tm_fv(14, function_ty).unwrap();
+        let right = kernel.tm_fv(15, function_ty).unwrap();
+        let replacement = kernel.tm_fv(16, replacement_ty).unwrap();
+        let functions = FunctionObservation {
+            function_ty,
+            replacement_context_ty: replacement_ty,
+            replace,
+            modules: ContextualObservation {
+                subject_ty: module_ty,
+                context_ty: outer_ty,
+                observed_ty,
+                bool_ty,
+                plug,
+                admissible,
+                observe,
+            },
+        };
+        let equivalence = functions.equivalent(&mut kernel, left, right).unwrap();
+        let equivalence_fact = kernel.identity(positive(equivalence)).unwrap();
+
+        let sound = functions
+            .prove_replacement_sound(&mut kernel, equivalence_fact, replacement, left, right)
+            .unwrap();
+
+        EvidenceScope::positive(&[equivalence])
+            .check(&kernel, sound)
+            .unwrap();
+        assert_eq!(kernel.classifier(sound.proposition).unwrap(), bool_ty);
     }
 }

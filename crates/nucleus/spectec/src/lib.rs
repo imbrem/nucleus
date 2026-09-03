@@ -46,8 +46,8 @@ pub use parameterized::{
 pub use premise::{PremiseAlgebra, PremiseChildren, fold_premise};
 pub use program_logic::{
     AssertCombinator, AssertionReachability, CallsAssert, ContextualObservation, Established,
-    Evidence, EvidenceScope, ObservationProofError, ProgramConnectives, ProgramLogicObligations,
-    Proposition, ReachabilityProofError,
+    Evidence, EvidenceScope, FunctionObservation, ObservationProofError, ProgramConnectives,
+    ProgramLogicObligations, Proposition, ReachabilityProofError,
 };
 pub use relational::{
     RelationProofError, RelationalCall, RelationalCaseError, RelationalClause, RelationalCondition,
