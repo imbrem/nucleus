@@ -452,12 +452,12 @@ impl ExportedFunctionView {
         Ok(predicate)
     }
 
-    /// Constructs the claim that no reachable initialized export list has an entry.
+    /// Constructs the claim that no freshly instantiated export list has an entry.
     ///
     /// The result quantifies stores, imports, instantiation states, module
     /// instances, export lists, and export entries. It rules out membership in
-    /// every export list exposed by the exact structural view after
-    /// instantiation and initialization of `program`.
+    /// every export list exposed by the exact structural view of the
+    /// configuration returned by instantiating `program`.
     ///
     /// # Errors
     ///
@@ -557,7 +557,6 @@ impl ExportedFunctionView {
             store,
             externs,
             start,
-            initialized,
             module_instance,
             exports,
             export_instance,
@@ -572,14 +571,7 @@ impl ExportedFunctionView {
             theorem: invariant_fact,
             holds: true,
         };
-        for &argument in &[
-            *store,
-            *externs,
-            *start,
-            *initialized,
-            *module_instance,
-            *exports,
-        ] {
+        for &argument in &[*store, *externs, *start, *module_instance, *exports] {
             let specialized = forall_elim(&mut staged, specialized_invariant.theorem, argument)
                 .map_err(|source| WasmLogicError::Forall { source })?;
             specialized_invariant = Evidence {
@@ -709,13 +701,12 @@ impl ExportedFunctionView {
             execution.state_ty,
             execution.bool_ty,
             execution.instantiate,
-            execution.steps,
             exported,
             program,
             no_entries,
         ];
         let first = staged.fresh_name(&roots)?;
-        let values = (0..5)
+        let values = (0..4)
             .map(|offset| {
                 staged.tm_fv(
                     first.checked_add(offset).ok_or(KernelError::TooManyNames)?,
@@ -723,7 +714,7 @@ impl ExportedFunctionView {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let [store, externs, start, initialized, function] = values.as_slice() else {
+        let [store, externs, start, function] = values.as_slice() else {
             unreachable!()
         };
         let instantiated = apply(
@@ -731,17 +722,15 @@ impl ExportedFunctionView {
             execution.instantiate,
             &[*store, program, *externs, *start],
         )?;
-        let stepped = apply(&mut staged, execution.steps, &[*start, *initialized])?;
-        let initialization = staged.op2(Op2::And, instantiated, stepped)?;
-        let is_exported = apply(&mut staged, exported, &[*initialized, *function])?;
-        let prefix = staged.op2(Op2::And, initialization, is_exported)?;
+        let is_exported = apply(&mut staged, exported, &[*start, *function])?;
+        let prefix = staged.op2(Op2::And, instantiated, is_exported)?;
         let assumed = staged.identity(positive(prefix))?;
-        let initialization_fact = select_conjunct(&mut staged, assumed, prefix, &[false])?;
+        let instantiated_fact = select_conjunct(&mut staged, assumed, prefix, &[false])?;
         let exported_fact = select_conjunct(&mut staged, assumed, prefix, &[true])?;
         let exported_fact = align_positive_fact(&mut staged, exported_fact, is_exported)?;
 
         let (curried_exported, mut opened) =
-            reduce_binary_application(&mut staged, exported, *initialized, *function)?;
+            reduce_binary_application(&mut staged, exported, *start, *function)?;
         let opened_export = staged.copy_theorem(exported_fact)?;
         join_same_syntax(&mut staged, is_exported, curried_exported)
             .map_err(|source| WasmLogicError::Syntax { source })?;
@@ -765,7 +754,7 @@ impl ExportedFunctionView {
         let has_module_proposition = apply(
             &mut staged,
             self.module_instance,
-            &[*initialized, *module_instance],
+            &[*start, *module_instance],
         )?;
         let has_exports_proposition =
             apply(&mut staged, self.exports, &[*module_instance, *exports])?;
@@ -773,9 +762,9 @@ impl ExportedFunctionView {
         let has_module = align_positive_fact(&mut staged, has_module, has_module_proposition)?;
         let has_exports = align_positive_fact(&mut staged, has_exports, has_exports_proposition)?;
         let contains = align_positive_fact(&mut staged, contains, contains_proposition)?;
-        let with_module = staged.op2(Op2::And, initialization, has_module_proposition)?;
+        let with_module = staged.op2(Op2::And, instantiated, has_module_proposition)?;
         let with_module_fact =
-            staged.and_right(initialization_fact, has_module, positive(with_module))?;
+            staged.and_right(instantiated_fact, has_module, positive(with_module))?;
         let with_exports = staged.op2(Op2::And, with_module, has_exports_proposition)?;
         let with_exports_fact =
             staged.and_right(with_module_fact, has_exports, positive(with_exports))?;
@@ -791,7 +780,6 @@ impl ExportedFunctionView {
             *store,
             *externs,
             *start,
-            *initialized,
             *module_instance,
             *exports,
             *export_instance,
@@ -852,7 +840,6 @@ fn program_export_lists_equal_avoiding(
         execution.state_ty,
         execution.bool_ty,
         execution.instantiate,
-        execution.steps,
         view.module_instance,
         view.exports,
         program,
@@ -862,7 +849,7 @@ fn program_export_lists_equal_avoiding(
     .chain(avoid.iter().copied())
     .collect::<Vec<_>>();
     let first = staged.fresh_name(&roots)?;
-    let values = (0..6)
+    let values = (0..5)
         .map(|offset| {
             staged.tm_fv(
                 first.checked_add(offset).ok_or(KernelError::TooManyNames)?,
@@ -870,7 +857,7 @@ fn program_export_lists_equal_avoiding(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let [store, externs, start, initialized, module_instance, exports] = values.as_slice() else {
+    let [store, externs, start, module_instance, exports] = values.as_slice() else {
         unreachable!()
     };
     let instantiated = apply(
@@ -878,15 +865,13 @@ fn program_export_lists_equal_avoiding(
         execution.instantiate,
         &[*store, program, *externs, *start],
     )?;
-    let stepped = apply(&mut staged, execution.steps, &[*start, *initialized])?;
     let has_module = apply(
         &mut staged,
         view.module_instance,
-        &[*initialized, *module_instance],
+        &[*start, *module_instance],
     )?;
     let has_exports = apply(&mut staged, view.exports, &[*module_instance, *exports])?;
-    let mut prefix = staged.op2(Op2::And, instantiated, stepped)?;
-    prefix = staged.op2(Op2::And, prefix, has_module)?;
+    let mut prefix = staged.op2(Op2::And, instantiated, has_module)?;
     prefix = staged.op2(Op2::And, prefix, has_exports)?;
     let equality = staged.eq(execution.bool_ty, *exports, expected)?;
     let mut proposition = staged.op2(Op2::Imp, prefix, equality)?;
@@ -922,7 +907,7 @@ struct NoExportEntriesParts {
     proposition: Ref,
     body: Ref,
     entry: Ref,
-    variables: [Ref; 7],
+    variables: [Ref; 6],
 }
 
 fn no_export_entries_avoiding(
@@ -937,7 +922,6 @@ fn no_export_entries_avoiding(
         execution.state_ty,
         execution.bool_ty,
         execution.instantiate,
-        execution.steps,
         view.module_instance,
         view.exports,
         view.member,
@@ -947,7 +931,7 @@ fn no_export_entries_avoiding(
     .chain(avoid.iter().copied())
     .collect::<Vec<_>>();
     let first = staged.fresh_name(&roots)?;
-    let values = (0..7)
+    let values = (0..6)
         .map(|offset| {
             staged.tm_fv(
                 first.checked_add(offset).ok_or(KernelError::TooManyNames)?,
@@ -955,12 +939,11 @@ fn no_export_entries_avoiding(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let variables: [Ref; 7] = values.try_into().unwrap_or_else(|_| unreachable!());
+    let variables: [Ref; 6] = values.try_into().unwrap_or_else(|_| unreachable!());
     let [
         store,
         externs,
         start,
-        initialized,
         module_instance,
         exports,
         export_instance,
@@ -970,16 +953,10 @@ fn no_export_entries_avoiding(
         execution.instantiate,
         &[store, program, externs, start],
     )?;
-    let stepped = apply(&mut staged, execution.steps, &[start, initialized])?;
-    let has_module = apply(
-        &mut staged,
-        view.module_instance,
-        &[initialized, module_instance],
-    )?;
+    let has_module = apply(&mut staged, view.module_instance, &[start, module_instance])?;
     let has_exports = apply(&mut staged, view.exports, &[module_instance, exports])?;
     let contains = apply(&mut staged, view.member, &[exports, export_instance])?;
-    let mut entry = staged.op2(Op2::And, instantiated, stepped)?;
-    entry = staged.op2(Op2::And, entry, has_module)?;
+    let mut entry = staged.op2(Op2::And, instantiated, has_module)?;
     entry = staged.op2(Op2::And, entry, has_exports)?;
     entry = staged.op2(Op2::And, entry, contains)?;
     let body = staged.op1(covalence_logic_hol::builtin::Op1::Not, entry)?;
@@ -1133,8 +1110,9 @@ impl SpecTecExecution {
     /// `exported` must classify as `state -> function-address -> bool`. The
     /// result existentially chooses a store, imports, initial and completed
     /// instantiation configurations, exported function address, arguments, and
-    /// completed store. It conjoins the exact lowered `instantiate`, `Steps`,
-    /// `store`, and `invoke` graph predicates with `exported`.
+    /// completed store. It selects the export from the configuration returned
+    /// by `instantiate`, then conjoins exact `Steps`, `store`, and `invoke`
+    /// graph predicates.
     ///
     /// # Errors
     ///
@@ -1151,8 +1129,9 @@ impl SpecTecExecution {
     /// Constructs the five exact graph obligations for one admissible start.
     ///
     /// This is the immutable schema consumed by [`Self::prove_admissible_start`]:
-    /// `$instantiate`, initialization `Steps`, exported-function selection,
-    /// `$store`, and `$invoke`, in that order. It creates syntax, not facts.
+    /// `$instantiate`, initialization `Steps`, pre-initialization
+    /// exported-function selection, `$store`, and `$invoke`, in that order. It
+    /// creates syntax, not facts.
     ///
     /// # Errors
     ///
@@ -1238,7 +1217,7 @@ impl SpecTecExecution {
             self.steps,
             &[*instantiation_start, *initialized],
         )?;
-        let is_exported = apply(&mut staged, exported, &[*initialized, *function])?;
+        let is_exported = apply(&mut staged, exported, &[*instantiation_start, *function])?;
         let has_store = apply(&mut staged, self.store, &[*initialized, *initialized_store])?;
         let invoked = apply(
             &mut staged,
@@ -1378,8 +1357,8 @@ impl SpecTecExecution {
         Ok(result)
     }
 
-    /// Constructs the claim that instantiating `program` cannot produce an
-    /// initialized configuration with an exported function.
+    /// Constructs the claim that instantiating `program` cannot produce a
+    /// configuration with an exported function.
     ///
     /// # Errors
     ///
@@ -1394,8 +1373,8 @@ impl SpecTecExecution {
         program_cannot_export_avoiding(kernel, self, exported, program, &[])
     }
 
-    /// Proves that a program has no admissible start when no initialized
-    /// configuration reachable from that program exports a function.
+    /// Proves that a program has no admissible start when no configuration
+    /// produced by instantiating that program exports a function.
     ///
     /// `cannot_export_fact` must prove [`Self::program_cannot_export`]. The proof
     /// opens the seven witnesses of an assumed admissible start, extracts its
@@ -1440,13 +1419,27 @@ impl SpecTecExecution {
         let first_four = sole_positive_conclusion_ref(&staged, prefix_fact)?;
         prefix_fact = staged.expand_conclusion(prefix_fact, positive(first_four), Some(false))?;
         let first_three = sole_positive_conclusion_ref(&staged, prefix_fact)?;
+        let initialization = select_conjunct(&mut staged, prefix_fact, first_three, &[false])?;
+        let exported_fact = select_conjunct(&mut staged, prefix_fact, first_three, &[true])?;
+        let initialization_proposition = sole_positive_conclusion_ref(&staged, initialization)?;
+        let instantiated_fact = select_conjunct(
+            &mut staged,
+            initialization,
+            initialization_proposition,
+            &[false],
+        )?;
+        let instantiated = sole_positive_conclusion_ref(&staged, instantiated_fact)?;
+        let exported_proposition = sole_positive_conclusion_ref(&staged, exported_fact)?;
+        let no_export_prefix = staged.op2(Op2::And, instantiated, exported_proposition)?;
+        let prefix_fact =
+            staged.and_right(instantiated_fact, exported_fact, positive(no_export_prefix))?;
 
         let mut denied = Evidence {
             proposition: cannot_export,
             theorem: cannot_export_fact,
             holds: true,
         };
-        for &argument in &witnesses[..5] {
+        for &argument in &[witnesses[0], witnesses[1], witnesses[2], witnesses[4]] {
             let specialized = forall_elim(&mut staged, denied.theorem, argument)
                 .map_err(|source| WasmLogicError::Forall { source })?;
             denied = Evidence {
@@ -1460,14 +1453,18 @@ impl SpecTecExecution {
             .children(denied.proposition)
             .and_then(|mut children| children.next())
             .ok_or(WasmLogicError::StartFact)?;
-        join_alpha_equivalent(&mut staged, denied_prefix, first_three)
+        join_alpha_equivalent(&mut staged, denied_prefix, no_export_prefix)
             .map_err(|source| WasmLogicError::Syntax { source })?;
         let denied_fact =
             staged.expand_conclusion(denied.theorem, positive(denied.proposition), None)?;
-        staged.convert_conclusions(denied_fact, denied_prefix, first_three)?;
-        staged.not_left(prefix_fact, positive(first_three))?;
-        let contradiction =
-            staged.cut(denied_fact, prefix_fact, positive(first_three).negated())?;
+        staged.convert_conclusions(denied_fact, denied_prefix, no_export_prefix)?;
+        staged.not_left(prefix_fact, positive(no_export_prefix))?;
+        let contradiction = staged.cut(
+            denied_fact,
+            prefix_fact,
+            positive(no_export_prefix).negated(),
+        )?;
+        staged.contract_theorem(contradiction)?;
         staged.not_right(contradiction, positive(starts_at))?;
         let does_not_start = staged.op1(covalence_logic_hol::builtin::Op1::Not, starts_at)?;
         let negative_start = staged.fold_conclusion(contradiction, positive(does_not_start))?;
@@ -1495,14 +1492,14 @@ fn program_cannot_export_avoiding(
         .chain(avoid.iter().copied())
         .collect::<Vec<_>>();
     let first = staged.fresh_name(&roots)?;
-    let mut variables = Vec::with_capacity(5);
-    for offset in 0..5 {
+    let mut variables = Vec::with_capacity(4);
+    for offset in 0..4 {
         let name = first
             .checked_add(u64::try_from(offset).map_err(|_| KernelError::TooManyNames)?)
             .ok_or(KernelError::TooManyNames)?;
         variables.push(staged.tm_fv(name, execution.state_ty)?);
     }
-    let [store, externs, start, initialized, function] = variables.as_slice() else {
+    let [store, externs, start, function] = variables.as_slice() else {
         unreachable!()
     };
     let instantiated = apply(
@@ -1510,10 +1507,8 @@ fn program_cannot_export_avoiding(
         execution.instantiate,
         &[*store, program, *externs, *start],
     )?;
-    let stepped = apply(&mut staged, execution.steps, &[*start, *initialized])?;
-    let is_exported = apply(&mut staged, exported, &[*initialized, *function])?;
-    let prefix = staged.op2(Op2::And, instantiated, stepped)?;
-    let prefix = staged.op2(Op2::And, prefix, is_exported)?;
+    let is_exported = apply(&mut staged, exported, &[*start, *function])?;
+    let prefix = staged.op2(Op2::And, instantiated, is_exported)?;
     let mut proposition = staged.op1(covalence_logic_hol::builtin::Op1::Not, prefix)?;
     for &variable in variables.iter().rev() {
         proposition = staged.forall_tm(execution.bool_ty, variable, proposition)?;
@@ -1573,7 +1568,11 @@ fn start_propositions(
             execution.steps,
             &[witness.instantiation_start, witness.initialized],
         )?,
-        apply(kernel, exported, &[witness.initialized, witness.function])?,
+        apply(
+            kernel,
+            exported,
+            &[witness.instantiation_start, witness.function],
+        )?,
         apply(
             kernel,
             execution.store,
