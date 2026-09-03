@@ -65,6 +65,7 @@ pub use run::{
     BehaviorQuantifier, RefinementDirection, RunCompositionError, RunContext, RunDomain,
     RunObservation, RunObservationError, RunProofError, RunProperty, RunRelation,
     RunTransformation, RunTransformationError, RunTypes, SoundRunTransformation,
+    SoundRunTransformationError,
 };
 pub use schema::{
     HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,

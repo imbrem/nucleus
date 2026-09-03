@@ -52,7 +52,9 @@ kernel evidence against that exact soundness proposition, and it retains every
 premise of the supplied theorem.
 The identity transformation has a premise-free checked soundness derivation,
 providing the neutral proof-carrying transformation without any semantic
-assumption.
+assumption. Proof-carrying transformations compose by checked universal
+specialization and transitivity of contextual observational equivalence, while
+retaining the premises of both component proofs.
 Conversely, checked negative evidence for any one contextual observation
 refutes `equivalent`. Thus, once `callsAssert` is supplied as a trace
 observation, its distinction between `TRUE` and `FALSE` is sufficient to prove

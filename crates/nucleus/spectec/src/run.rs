@@ -1376,22 +1376,35 @@ impl RunTransformation {
             ])?,
             types.module,
         )?;
-        let transformed = self.apply(&mut staged, module)?;
-        let transformed = if staged.arena().tag(self.transform) == Some(Tag::Tm(TmTag::Lam)) {
-            certify_beta_application(&mut staged, transformed)
-                .map_err(|_| KernelError::InvalidTheoremRule {
-                    rule: "transformation soundness beta reduction",
-                })?
-                .0
-        } else {
-            transformed
-        };
+        let transformed = self.sound_application(&mut staged, module)?;
         let equivalent = self
             .context
             .equivalent(&mut staged, self.profile, module, transformed)?;
         let sound = staged.forall_tm(types.bool_ty, module, equivalent)?;
         *kernel = staged;
         Ok(sound)
+    }
+
+    fn sound_application(self, kernel: &mut Kernel, module: Ref) -> Result<Ref, KernelError> {
+        let mut transformed = self.apply(kernel, module)?;
+        loop {
+            let Some(children) = kernel.arena().children(transformed) else {
+                break;
+            };
+            let children = children.collect::<Vec<_>>();
+            let [function, _argument] = children.as_slice() else {
+                break;
+            };
+            if kernel.arena().tag(*function) != Some(Tag::Tm(TmTag::Lam)) {
+                break;
+            }
+            transformed = certify_beta_application(kernel, transformed)
+                .map_err(|_| KernelError::InvalidTheoremRule {
+                    rule: "transformation soundness beta reduction",
+                })?
+                .0;
+        }
+        Ok(transformed)
     }
 
     /// Pairs this transformation with checked evidence of its exact soundness
@@ -1471,6 +1484,137 @@ impl SoundRunTransformation {
     pub const fn soundness(self) -> Evidence {
         self.soundness
     }
+
+    /// Composes two proved-sound transformations and derives soundness of the
+    /// result.
+    ///
+    /// The derivation specializes both universal soundness theorems at the
+    /// relevant module, composes their contextual equivalences transitively,
+    /// and universally closes the result. Every premise from both proofs is
+    /// retained.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless both transformations use the same context and
+    /// profile, their stored evidence still checks, and every checked
+    /// specialization, transitivity, conversion, or universal step succeeds.
+    /// `kernel` is unchanged on failure.
+    pub fn then(
+        self,
+        kernel: &mut Kernel,
+        next: Self,
+    ) -> Result<Self, SoundRunTransformationError> {
+        let mut staged = kernel.fork();
+        let composed = self.transformation.then(&mut staged, next.transformation)?;
+        let left_sound = self.transformation.sound(&mut staged)?;
+        let left_theorem = align_evidence(&mut staged, self.soundness, left_sound)?;
+        let right_sound = next.transformation.sound(&mut staged)?;
+        let right_theorem = align_evidence(&mut staged, next.soundness, right_sound)?;
+        let context = self.transformation.context;
+        let profile = self.transformation.profile;
+        let types = context.domain.relation.types;
+        let module = staged.tm_fv(
+            staged.fresh_name(&[
+                left_sound,
+                right_sound,
+                composed.transform,
+                types.module,
+                types.bool_ty,
+            ])?,
+            types.module,
+        )?;
+        let intermediate = self.transformation.sound_application(&mut staged, module)?;
+        let final_module = next
+            .transformation
+            .sound_application(&mut staged, intermediate)?;
+
+        let left = forall_elim(&mut staged, left_theorem, module)?;
+        let left_at = context.equivalent(&mut staged, profile, module, intermediate)?;
+        join_alpha_equivalent(&mut staged, left.proposition, left_at).map_err(|_| {
+            KernelError::InvalidTheoremRule {
+                rule: "composed transformation left soundness alignment",
+            }
+        })?;
+        staged.convert_conclusions(left.theorem, left.proposition, left_at)?;
+
+        let right = forall_elim(&mut staged, right_theorem, intermediate)?;
+        let right_at = context.equivalent(&mut staged, profile, intermediate, final_module)?;
+        join_alpha_equivalent(&mut staged, right.proposition, right_at).map_err(|_| {
+            KernelError::InvalidTheoremRule {
+                rule: "composed transformation right soundness alignment",
+            }
+        })?;
+        staged.convert_conclusions(right.theorem, right.proposition, right_at)?;
+
+        let transitive = context.prove_transitive(
+            &mut staged,
+            Evidence {
+                proposition: left_at,
+                theorem: left.theorem,
+                holds: true,
+            },
+            Evidence {
+                proposition: right_at,
+                theorem: right.theorem,
+                holds: true,
+            },
+            profile,
+            module,
+            intermediate,
+            final_module,
+        )?;
+        staged.contract_theorem(transitive.theorem)?;
+        let direct = staged.forall_tm(types.bool_ty, module, transitive.proposition)?;
+        let theorem = staged.forall_intro_at(transitive.theorem, module, direct)?;
+        let canonical = composed.sound(&mut staged)?;
+        align_theorem_conclusion(
+            &mut staged,
+            theorem,
+            direct,
+            canonical,
+            "composed transformation soundness alignment",
+        )?;
+        let sound = composed.with_soundness(
+            &mut staged,
+            Evidence {
+                proposition: canonical,
+                theorem,
+                holds: true,
+            },
+        )?;
+        *kernel = staged;
+        Ok(sound)
+    }
+}
+
+/// Failure to compose proof-carrying sound transformations.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum SoundRunTransformationError {
+    /// The underlying transformation schemas cannot be composed.
+    #[snafu(transparent)]
+    Composition {
+        /// Underlying immutable composition failure.
+        source: RunTransformationError,
+    },
+    /// A checked HOL construction failed.
+    #[snafu(transparent)]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+    /// A derived proof step failed.
+    #[snafu(transparent)]
+    Proof {
+        /// Underlying run-proof failure.
+        source: RunProofError,
+    },
+    /// Universal specialization failed.
+    #[snafu(transparent)]
+    Forall {
+        /// Underlying derived universal-elimination failure.
+        source: ForallError,
+    },
 }
 
 /// Failure to compose checked module transformations.
@@ -5876,6 +6020,10 @@ mod tests {
         EvidenceScope::positive(&[])
             .check(&kernel, sound_identity.soundness())
             .unwrap();
+        let sound_identity_composition = sound_identity.then(&mut kernel, sound_identity).unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, sound_identity_composition.soundness())
+            .unwrap();
         let transform_ty = kernel.ty_arr(types.module, types.module).unwrap();
         let transform = kernel.tm_fv(34, transform_ty).unwrap();
         let next_transform = kernel.tm_fv(35, transform_ty).unwrap();
@@ -5922,6 +6070,21 @@ mod tests {
         );
         assert_eq!(kernel.arena(), &before);
         assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+        let next_sound = next_transformation.sound(&mut kernel).unwrap();
+        let next_sound_evidence = Evidence {
+            proposition: next_sound,
+            theorem: kernel.identity(super::positive(next_sound)).unwrap(),
+            holds: true,
+        };
+        let sound_next_transformation = next_transformation
+            .with_soundness(&mut kernel, next_sound_evidence)
+            .unwrap();
+        let sound_composition = sound_transformation
+            .then(&mut kernel, sound_next_transformation)
+            .unwrap();
+        EvidenceScope::positive(&[transformation_sound, next_sound])
+            .check(&kernel, sound_composition.soundness())
+            .unwrap();
         let composed_transformation = transformation
             .then(&mut kernel, next_transformation)
             .unwrap();
