@@ -8,7 +8,7 @@ use crate::sat::{PyClause, PyLiteral};
 use covalence_lib_python::exceptions::create_exception;
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::types::PyType;
-use covalence_logic_hol::{ClassicalKernel, Cnf, Dnf, Lit, LitVec, Refutation, ThmId};
+use covalence_logic_hol::{ClassicalKernel, Lit, LitVec, Matrix, Refutation, ThmId};
 use covalence_logic_lrat::{
     Formula, RatGroup,
     parse::{
@@ -38,7 +38,7 @@ fn rows(rows: Vec<Vec<i32>>) -> PyResult<Vec<LitVec>> {
         .collect()
 }
 
-fn formula(cnf: &Cnf) -> PyResult<Formula> {
+fn formula(cnf: &Matrix) -> PyResult<Formula> {
     Formula::from_signed(
         cnf.rows()
             .map(|row| row.iter().map(|literal| i64::from(literal.get()))),
@@ -50,14 +50,14 @@ type PyClassicalSequent = (Vec<Vec<i32>>, Vec<Vec<i32>>);
 
 #[pyclass(module = "covalence.logic.classical", name = "Cnf")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
-pub struct PyCnf(pub(crate) Cnf);
+pub struct PyCnf(pub(crate) Matrix);
 
 #[pymethods]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyCnf {
     #[new]
     fn new(value: Vec<Vec<i32>>) -> PyResult<Self> {
-        Ok(Self(Cnf::new(rows(value)?)))
+        Ok(Self(Matrix::new(rows(value)?)))
     }
 
     #[staticmethod]
@@ -110,14 +110,14 @@ impl PyCnf {
 
 #[pyclass(module = "covalence.logic.classical", name = "Dnf")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
-pub struct PyDnf(Dnf);
+pub struct PyDnf(Matrix);
 
 #[pymethods]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyDnf {
     #[new]
     fn new(value: Vec<Vec<i32>>) -> PyResult<Self> {
-        Ok(Self(Dnf::new(rows(value)?)))
+        Ok(Self(Matrix::new(rows(value)?)))
     }
 
     #[getter]

@@ -28,8 +28,8 @@ mod syn_facts;
 
 pub use classical::{AbsThm, ApTerm, ApThm, ChoiceThm, ForallThm, ReflThm, TyForallThm};
 pub use covalence_logic_classical::{
-    CheckedArena, ClassicalArena, ClassicalKernel, Cnf, CnfId, Dnf, DnfId, Lit, LitError, LitVec,
-    Refutation, ThmId, ThmRef,
+    CheckedArena, ClassicalArena, ClassicalKernel, Lit, LitError, LitVec, Matrix, Refutation,
+    RowId, ThmId, ThmRef,
 };
 pub use infinity::{AX_INF, INFINITY_BINDER_COUNT, InfinityAxiom, InfinityBinder};
 pub use subtype::{AX_SUB, BINDER_COUNT, Binder, SubtypeAxiom};

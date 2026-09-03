@@ -1,7 +1,7 @@
 //! Lossless browser boundary for the checked classical HOL kernel.
 
 use covalence_logic_hol::{
-    CnfId, DnfId, Kernel, Lit, LitVec, Ref, ThmId,
+    Kernel, Lit, LitVec, Ref, RowId, ThmId,
     builtin::{Op1, Op2},
 };
 use wasm_bindgen::prelude::*;
@@ -807,12 +807,12 @@ fn parse_thm(value: i32) -> Result<ThmId, String> {
     ThmId::new(value).ok_or_else(|| "theorem IDs are one-based".to_owned())
 }
 
-fn parse_cnf(value: i32) -> Result<CnfId, String> {
-    CnfId::new(value).ok_or_else(|| "CNF row IDs are one-based".to_owned())
+fn parse_cnf(value: i32) -> Result<RowId, String> {
+    RowId::new(value).ok_or_else(|| "CNF row IDs are one-based".to_owned())
 }
 
-fn parse_dnf(value: i32) -> Result<DnfId, String> {
-    DnfId::new(value).ok_or_else(|| "DNF row IDs are one-based".to_owned())
+fn parse_dnf(value: i32) -> Result<RowId, String> {
+    RowId::new(value).ok_or_else(|| "DNF row IDs are one-based".to_owned())
 }
 
 fn parse_context(values: &[i32]) -> Result<Vec<Lit>, String> {
@@ -1090,7 +1090,7 @@ mod tests {
         assert!(
             prover
                 .kernel
-                .normalize_cnf(theorem, CnfId::new(99).unwrap())
+                .normalize_cnf(theorem, RowId::new(99).unwrap())
                 .is_err()
         );
         assert_eq!(prover.theorem_json(theorem_id).unwrap(), before);
@@ -1100,21 +1100,21 @@ mod tests {
         assert!(
             prover
                 .kernel
-                .normalize_dnf(theorem, DnfId::new(99).unwrap())
+                .normalize_dnf(theorem, RowId::new(99).unwrap())
                 .is_err()
         );
         assert_eq!(prover.theorem_json(theorem_id).unwrap(), before);
         assert!(
             prover
                 .kernel
-                .move_cnf_right(theorem, CnfId::new(99).unwrap())
+                .move_cnf_right(theorem, RowId::new(99).unwrap())
                 .is_err()
         );
         assert_eq!(prover.theorem_json(theorem_id).unwrap(), before);
         assert!(
             prover
                 .kernel
-                .move_dnf_left(theorem, DnfId::new(99).unwrap())
+                .move_dnf_left(theorem, RowId::new(99).unwrap())
                 .is_err()
         );
         assert_eq!(prover.theorem_json(theorem_id).unwrap(), before);

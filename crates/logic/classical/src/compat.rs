@@ -1,6 +1,6 @@
 //! Compatibility surface for the former matrix API.
 //!
-//! `Cnf` and `Dnf` are untrusted construction and projection values. Every
+//! `Matrix` and `Matrix` are untrusted construction and projection values. Every
 //! live arena slot is backed by the selected tagged runtime: raw arenas carry
 //! [`tagged::Checked`] syntax, while [`ClassicalKernel`] carries sealed
 //! [`tagged::Theorem`] facts. One-based IDs are only external handles.
@@ -134,191 +134,194 @@ impl<'de> Deserialize<'de> for Lit {
 /// Compact literal storage optimized for unit and binary rows.
 pub type LitVec = SmallVec<[Lit; 2]>;
 
+/// An untrusted matrix of literal rows with positional tombstones.
+///
+/// The turnstile side, not the type, fixes polarity: a left matrix denotes a
+/// conjunction of disjunctive rows and a right matrix denotes a disjunction of
+/// conjunctive rows. Nothing else ever distinguished the two former types.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
-struct Matrix(Vec<Option<LitVec>>);
+pub struct Matrix(Vec<Option<LitVec>>);
 
-/// An untrusted conjunction of disjunctive literal rows.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(transparent)]
-pub struct Cnf(Matrix);
+impl Matrix {
+    /// Constructs the empty matrix.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(Vec::new())
+    }
 
-/// An untrusted disjunction of conjunctive literal rows.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(transparent)]
-pub struct Dnf(Matrix);
+    /// Constructs a matrix without normalizing it.
+    #[must_use]
+    pub fn new(rows: impl IntoIterator<Item = LitVec>) -> Self {
+        Self(rows.into_iter().map(Some).collect())
+    }
 
-macro_rules! semantic_matrix {
-    ($name:ident) => {
-        impl $name {
-            /// Constructs the empty matrix.
-            #[must_use]
-            pub const fn empty() -> Self {
-                Self(Matrix(Vec::new()))
-            }
+    /// Iterates over live rows in insertion order.
+    pub fn rows(&self) -> impl Iterator<Item = &[Lit]> {
+        self.0.iter().filter_map(Option::as_deref)
+    }
 
-            /// Constructs a matrix without normalizing it.
-            #[must_use]
-            pub fn new(rows: impl IntoIterator<Item = LitVec>) -> Self {
-                Self(Matrix(rows.into_iter().map(Some).collect()))
-            }
+    /// Clones live rows, omitting neutral tombstones.
+    #[must_use]
+    pub fn to_rows(&self) -> Vec<LitVec> {
+        self.0.iter().flatten().cloned().collect()
+    }
 
-            /// Iterates over live rows in insertion order.
-            pub fn rows(&self) -> impl Iterator<Item = &[Lit]> {
-                self.0.0.iter().filter_map(Option::as_deref)
-            }
-
-            /// Clones live rows, omitting neutral tombstones.
-            #[must_use]
-            pub fn to_rows(&self) -> Vec<LitVec> {
-                self.0.0.iter().flatten().cloned().collect()
-            }
-
-            /// Sorts and deduplicates rows and literals and removes tombstones.
-            pub fn normalize(&mut self) {
-                let mut rows = self.0.0.drain(..).flatten().collect::<Vec<_>>();
-                for row in &mut rows {
-                    row.sort_unstable();
-                    row.dedup();
-                }
-                rows.sort_unstable();
-                rows.dedup();
-                self.0.0 = rows.into_iter().map(Some).collect();
-            }
+    /// Sorts and deduplicates rows and literals and removes tombstones.
+    pub fn normalize(&mut self) {
+        let mut rows = self.0.drain(..).flatten().collect::<Vec<_>>();
+        for row in &mut rows {
+            row.sort_unstable();
+            row.dedup();
         }
+        rows.sort_unstable();
+        rows.dedup();
+        self.0 = rows.into_iter().map(Some).collect();
+    }
 
-        impl<const N: usize> From<[LitVec; N]> for $name {
-            fn from(value: [LitVec; N]) -> Self {
-                Self::new(value)
-            }
-        }
-    };
-}
+    fn view(&self) -> MatrixRef<'_> {
+        MatrixRef(&self.0)
+    }
 
-semantic_matrix!(Cnf);
-semantic_matrix!(Dnf);
-
-impl Cnf {
-    fn row(&self, id: CnfId) -> Result<&LitVec, Error> {
+    fn row(&self, id: RowId) -> Result<&LitVec, Error> {
         self.0
-            .0
             .get(id.position())
             .and_then(Option::as_ref)
             .ok_or(Error::MissingCnf { id: id.get() })
     }
 
-    fn append(&mut self, row: LitVec) -> Result<CnfId, Error> {
+    fn append(&mut self, row: LitVec) -> Result<RowId, Error> {
         let id = self
-            .0
             .0
             .len()
             .checked_add(1)
             .and_then(|value| i32::try_from(value).ok())
-            .and_then(CnfId::new)
+            .and_then(RowId::new)
             .ok_or(Error::ArenaFull)?;
-        self.0.0.push(Some(row));
+        self.0.push(Some(row));
         Ok(id)
     }
 
-    fn remove(&mut self, id: CnfId) -> Result<LitVec, Error> {
+    fn remove(&mut self, id: RowId) -> Result<LitVec, Error> {
         self.0
-            .0
             .get_mut(id.position())
             .and_then(Option::take)
             .ok_or(Error::MissingCnf { id: id.get() })
     }
 
-    fn formula(&self) -> Formula {
-        Formula::And {
-            negative: false,
-            children: self
-                .rows()
-                .map(|row| Formula::Or {
-                    negative: false,
-                    children: row.iter().copied().map(Lit::formula).collect(),
+    /// Denotes this matrix as the formula on one side of the turnstile.
+    fn formula(&self, side: tagged::Side) -> Formula {
+        junction(
+            side,
+            self.rows()
+                .map(|row| {
+                    junction(
+                        opposite(side),
+                        row.iter().copied().map(Lit::formula).collect(),
+                    )
                 })
                 .collect(),
-        }
+        )
     }
 }
 
-impl Dnf {
-    fn formula(&self) -> Formula {
-        Formula::Or {
-            negative: false,
-            children: self
-                .rows()
-                .map(|row| Formula::And {
-                    negative: false,
-                    children: row.iter().copied().map(Lit::formula).collect(),
-                })
-                .collect(),
-        }
+impl<const N: usize> From<[LitVec; N]> for Matrix {
+    fn from(value: [LitVec; N]) -> Self {
+        Self::new(value)
     }
 }
 
-/// A borrowed CNF projection of tagged checked syntax.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CnfRef<'a>(&'a [Option<LitVec>]);
-
-/// A borrowed DNF projection of tagged checked syntax.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DnfRef<'a>(&'a [Option<LitVec>]);
-
-macro_rules! matrix_ref {
-    ($name:ident, $owned:ident) => {
-        impl<'a> $name<'a> {
-            /// Iterates over live rows, skipping tombstones.
-            pub fn rows(self) -> impl Iterator<Item = &'a [Lit]> {
-                self.0.iter().filter_map(Option::as_deref)
-            }
-
-            /// Copies live rows into compact owned storage.
-            #[must_use]
-            pub fn to_rows(self) -> Vec<LitVec> {
-                self.0.iter().flatten().cloned().collect()
-            }
-
-            /// Copies this projection into an untrusted builder.
-            #[must_use]
-            pub fn to_owned(self) -> $owned {
-                $owned::new(self.to_rows())
-            }
-        }
-    };
+const fn opposite(side: tagged::Side) -> tagged::Side {
+    match side {
+        tagged::Side::Left => tagged::Side::Right,
+        tagged::Side::Right => tagged::Side::Left,
+    }
 }
 
-matrix_ref!(CnfRef, Cnf);
-matrix_ref!(DnfRef, Dnf);
+fn missing_row(id: ThmId, side: tagged::Side, row: RowId) -> Error {
+    match side {
+        tagged::Side::Left => Error::MissingCnfRow {
+            id: id.get(),
+            index: row.get(),
+        },
+        tagged::Side::Right => Error::MissingDnfRow {
+            id: id.get(),
+            index: row.get(),
+        },
+    }
+}
+
+fn junction(side: tagged::Side, children: Vec<Formula>) -> Formula {
+    match side {
+        tagged::Side::Left => Formula::And {
+            negative: false,
+            children,
+        },
+        tagged::Side::Right => Formula::Or {
+            negative: false,
+            children,
+        },
+    }
+}
+
+/// A borrowed matrix projection of tagged checked syntax.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MatrixRef<'a>(&'a [Option<LitVec>]);
+
+impl<'a> MatrixRef<'a> {
+    /// Iterates over live rows, skipping tombstones.
+    pub fn rows(self) -> impl Iterator<Item = &'a [Lit]> {
+        self.0.iter().filter_map(Option::as_deref)
+    }
+
+    /// Copies live rows into compact owned storage.
+    #[must_use]
+    pub fn to_rows(self) -> Vec<LitVec> {
+        self.0.iter().flatten().cloned().collect()
+    }
+
+    /// Copies this projection into an untrusted builder.
+    #[must_use]
+    pub fn to_owned(self) -> Matrix {
+        Matrix::new(self.to_rows())
+    }
+}
 
 /// A borrowed compatibility projection interpreted as `CNF |- DNF`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ThmRef<'a> {
     /// Conjunctive left-hand side.
-    pub lhs: CnfRef<'a>,
+    pub lhs: MatrixRef<'a>,
     /// Disjunctive right-hand side.
-    pub rhs: DnfRef<'a>,
+    pub rhs: MatrixRef<'a>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct Projection(Cnf, Dnf);
+struct Projection(Matrix, Matrix);
 
 impl Projection {
-    const fn new(left: Cnf, right: Dnf) -> Self {
+    const fn new(left: Matrix, right: Matrix) -> Self {
         Self(left, right)
     }
 
     fn view(&self) -> ThmRef<'_> {
         ThmRef {
-            lhs: CnfRef(&self.0.0.0),
-            rhs: DnfRef(&self.1.0.0),
+            lhs: self.0.view(),
+            rhs: self.1.view(),
+        }
+    }
+
+    fn side_mut(&mut self, side: tagged::Side) -> &mut Matrix {
+        match side {
+            tagged::Side::Left => &mut self.0,
+            tagged::Side::Right => &mut self.1,
         }
     }
 
     fn sequent(&self) -> Sequent {
         Sequent {
-            premise: self.0.formula(),
-            conclusion: self.1.formula(),
+            premise: self.0.formula(tagged::Side::Left),
+            conclusion: self.1.formula(tagged::Side::Right),
         }
     }
 }
@@ -340,7 +343,7 @@ impl<'de> Deserialize<'de> for Projection {
     where
         D: Deserializer<'de>,
     {
-        let (left, right) = <(Cnf, Dnf)>::deserialize(deserializer)?;
+        let (left, right) = <(Matrix, Matrix)>::deserialize(deserializer)?;
         Ok(Self(left, right))
     }
 }
@@ -379,8 +382,7 @@ macro_rules! one_based_id {
 }
 
 one_based_id!(ThmId, "An ephemeral one-based theorem handle.");
-one_based_id!(CnfId, "A one-based CNF-row identifier.");
-one_based_id!(DnfId, "A one-based DNF-row identifier.");
+one_based_id!(RowId, "A one-based matrix-row identifier.");
 
 /// A classical compatibility operation failure.
 #[derive(Clone, Debug, Eq, PartialEq, Snafu)]
@@ -514,8 +516,8 @@ fn same_live_rows(left: &Matrix, right: &Matrix) -> bool {
 
 impl PartialEq for SyntaxSlot {
     fn eq(&self, other: &Self) -> bool {
-        same_live_rows(&self.projection.0.0, &other.projection.0.0)
-            && same_live_rows(&self.projection.1.0, &other.projection.1.0)
+        same_live_rows(&self.projection.0, &other.projection.0)
+            && same_live_rows(&self.projection.1, &other.projection.1)
     }
 }
 
@@ -636,7 +638,7 @@ impl ClassicalArena {
     /// # Errors
     ///
     /// Returns an error if packing fails or no handle is available.
-    pub fn insert(&mut self, premises: Cnf, conclusions: Dnf) -> Result<ThmId, Error> {
+    pub fn insert(&mut self, premises: Matrix, conclusions: Matrix) -> Result<ThmId, Error> {
         self.store_projection(Projection::new(premises, conclusions))
     }
 
@@ -660,95 +662,47 @@ impl ClassicalArena {
         true
     }
 
-    /// Moves one CNF row right and complements every literal.
+    /// Moves one indexed row across the turnstile, complementing its literals.
+    ///
+    /// The source row leaves a tombstone so that later row identifiers on that
+    /// side stay stable.
     ///
     /// # Errors
     ///
     /// Returns an error for an absent handle or row, or packing failure.
-    pub fn move_cnf_right(&mut self, id: ThmId, row: CnfId) -> Result<(), Error> {
+    pub fn cross_row(&mut self, id: ThmId, side: tagged::Side, row: RowId) -> Result<(), Error> {
         let mut replacement = self.projection(id)?.clone();
         let source = replacement
-            .0
-            .0
+            .side_mut(side)
             .0
             .get_mut(row.position())
             .and_then(Option::take)
-            .ok_or(Error::MissingCnfRow {
-                id: id.get(),
-                index: row.get(),
-            })?;
+            .ok_or_else(|| missing_row(id, side, row))?;
         replacement
-            .1
-            .0
+            .side_mut(opposite(side))
             .0
             .push(Some(source.into_iter().map(Lit::negated).collect()));
         self.replace_projection(id, replacement)
     }
 
-    /// Moves one DNF row left and complements every literal.
+    /// Sorts and deduplicates one indexed row transactionally.
     ///
     /// # Errors
     ///
     /// Returns an error for an absent handle or row, or packing failure.
-    pub fn move_dnf_left(&mut self, id: ThmId, row: DnfId) -> Result<(), Error> {
-        let mut replacement = self.projection(id)?.clone();
-        let source = replacement
-            .1
-            .0
-            .0
-            .get_mut(row.position())
-            .and_then(Option::take)
-            .ok_or(Error::MissingDnfRow {
-                id: id.get(),
-                index: row.get(),
-            })?;
-        replacement
-            .0
-            .0
-            .0
-            .push(Some(source.into_iter().map(Lit::negated).collect()));
-        self.replace_projection(id, replacement)
-    }
-
-    /// Sorts and deduplicates one CNF row transactionally.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for an absent handle or row, or packing failure.
-    pub fn normalize_cnf(&mut self, id: ThmId, row: CnfId) -> Result<(), Error> {
+    pub fn normalize_row(
+        &mut self,
+        id: ThmId,
+        side: tagged::Side,
+        row: RowId,
+    ) -> Result<(), Error> {
         let mut replacement = self.projection(id)?.clone();
         let target = replacement
-            .0
-            .0
+            .side_mut(side)
             .0
             .get_mut(row.position())
             .and_then(Option::as_mut)
-            .ok_or(Error::MissingCnfRow {
-                id: id.get(),
-                index: row.get(),
-            })?;
-        target.sort_unstable();
-        target.dedup();
-        self.replace_projection(id, replacement)
-    }
-
-    /// Sorts and deduplicates one DNF row transactionally.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for an absent handle or row, or packing failure.
-    pub fn normalize_dnf(&mut self, id: ThmId, row: DnfId) -> Result<(), Error> {
-        let mut replacement = self.projection(id)?.clone();
-        let target = replacement
-            .1
-            .0
-            .0
-            .get_mut(row.position())
-            .and_then(Option::as_mut)
-            .ok_or(Error::MissingDnfRow {
-                id: id.get(),
-                index: row.get(),
-            })?;
+            .ok_or_else(|| missing_row(id, side, row))?;
         target.sort_unstable();
         target.dedup();
         self.replace_projection(id, replacement)
@@ -760,7 +714,12 @@ impl ClassicalArena {
     ///
     /// Returns an error if the handle is absent or packing fails. On failure,
     /// the resident checked value is unchanged.
-    pub fn replace(&mut self, id: ThmId, premises: Cnf, conclusions: Dnf) -> Result<(), Error> {
+    pub fn replace(
+        &mut self,
+        id: ThmId,
+        premises: Matrix,
+        conclusions: Matrix,
+    ) -> Result<(), Error> {
         self.replace_projection(id, Projection::new(premises, conclusions))
     }
 }
@@ -902,23 +861,23 @@ impl Refutation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RatGroup {
     /// Live row containing the complementary pivot.
-    pub opposing: CnfId,
+    pub opposing: RowId,
     /// Ordered RUP hints for its resolvent.
-    pub hints: Vec<CnfId>,
+    pub hints: Vec<RowId>,
 }
 
 /// Stateful syntax-level CNF refutation checking.
 #[derive(Debug)]
 pub struct Refuter {
-    goal: Cnf,
-    state: Cnf,
+    goal: Matrix,
+    state: Matrix,
     derived_empty: bool,
 }
 
 impl Refuter {
     /// Opens a goal and initializes the live state from it.
     #[must_use]
-    pub fn new(goal: Cnf) -> Self {
+    pub fn new(goal: Matrix) -> Self {
         let derived_empty = goal.rows().any(<[Lit]>::is_empty);
         Self {
             state: goal.clone(),
@@ -929,7 +888,7 @@ impl Refuter {
 
     /// Borrows the current clause state.
     #[must_use]
-    pub const fn state(&self) -> &Cnf {
+    pub const fn state(&self) -> &Matrix {
         &self.state
     }
 
@@ -938,7 +897,7 @@ impl Refuter {
     /// # Errors
     ///
     /// Returns an error if the row is absent or deleted.
-    pub fn row(&self, id: CnfId) -> Result<&[Lit], Error> {
+    pub fn row(&self, id: RowId) -> Result<&[Lit], Error> {
         self.state.row(id).map(LitVec::as_slice)
     }
 
@@ -947,7 +906,7 @@ impl Refuter {
     /// # Errors
     ///
     /// Returns an error if a hint is absent or the trail does not conflict.
-    pub fn learn_rup(&mut self, row: LitVec, hints: &[CnfId]) -> Result<CnfId, Error> {
+    pub fn learn_rup(&mut self, row: LitVec, hints: &[RowId]) -> Result<RowId, Error> {
         let mut trail = falsifying_trail(&row);
         if !trail_conflicts(&trail) && !propagate(&self.state, &mut trail, hints)? {
             return Err(Error::NoConflict);
@@ -963,7 +922,7 @@ impl Refuter {
     /// # Errors
     ///
     /// Returns an error if the row is absent or already deleted.
-    pub fn remove(&mut self, id: CnfId) -> Result<(), Error> {
+    pub fn remove(&mut self, id: RowId) -> Result<(), Error> {
         self.state.remove(id).map(drop)
     }
 
@@ -977,7 +936,7 @@ impl Refuter {
             return Err(Error::NoRefutation);
         }
         Ok(Refutation {
-            projection: Projection::new(self.goal, Dnf::default()),
+            projection: Projection::new(self.goal, Matrix::default()),
         })
     }
 
@@ -990,9 +949,9 @@ impl Refuter {
         &mut self,
         row: LitVec,
         pivot: Lit,
-        prefix_hints: &[CnfId],
+        prefix_hints: &[RowId],
         groups: &[RatGroup],
-    ) -> Result<CnfId, Error> {
+    ) -> Result<RowId, Error> {
         if row.first().copied() != Some(pivot) {
             return Err(Error::BadPivot);
         }
@@ -1021,7 +980,7 @@ fn trail_conflicts(trail: &BTreeSet<Lit>) -> bool {
         .any(|literal| trail.contains(&literal.negated()))
 }
 
-fn propagate(state: &Cnf, trail: &mut BTreeSet<Lit>, hints: &[CnfId]) -> Result<bool, Error> {
+fn propagate(state: &Matrix, trail: &mut BTreeSet<Lit>, hints: &[RowId]) -> Result<bool, Error> {
     for id in hints {
         let row = state.row(*id)?;
         if row.iter().any(|literal| trail.contains(literal)) {
@@ -1043,7 +1002,7 @@ fn propagate(state: &Cnf, trail: &mut BTreeSet<Lit>, hints: &[CnfId]) -> Result<
 }
 
 fn check_rat(
-    state: &Cnf,
+    state: &Matrix,
     pivot: Lit,
     prefix: &BTreeSet<Lit>,
     groups: &[RatGroup],
@@ -1079,9 +1038,9 @@ fn check_rat(
             return Err(Error::NoConflict);
         }
     }
-    for (position, row) in state.0.0.iter().enumerate() {
+    for (position, row) in state.0.iter().enumerate() {
         let Some(row) = row else { continue };
-        let id = CnfId::new(i32::try_from(position + 1).expect("CNF slot is i32-bounded"))
+        let id = RowId::new(i32::try_from(position + 1).expect("CNF slot is i32-bounded"))
             .expect("CNF slots are one-based");
         if row.contains(&complement) && !covered.contains(&id) {
             return Err(Error::IncompleteRat { id: id.get() });
@@ -1102,16 +1061,20 @@ mod tests {
     /// builds for itself now that no consumer asked it to.
     fn identity(arena: &mut ClassicalArena, literal: Lit) -> Result<ThmId, Error> {
         arena.insert(
-            Cnf::new([std::iter::once(literal).collect()]),
-            Dnf::new([std::iter::once(literal).collect()]),
+            Matrix::new([std::iter::once(literal).collect()]),
+            Matrix::new([std::iter::once(literal).collect()]),
         )
     }
 
     #[test]
     fn raw_slots_pack_canonically_and_reuse_lifo_handles() {
         let mut arena = ClassicalArena::new();
-        let first = arena.insert(Cnf::new([row([-1])]), Dnf::default()).unwrap();
-        let second = arena.insert(Cnf::default(), Dnf::new([row([-2])])).unwrap();
+        let first = arena
+            .insert(Matrix::new([row([-1])]), Matrix::default())
+            .unwrap();
+        let second = arena
+            .insert(Matrix::default(), Matrix::new([row([-2])]))
+            .unwrap();
         assert!(arena.remove(first));
         assert!(arena.remove(second));
         let reused_second = identity(&mut arena, Lit::positive(3)).unwrap();
@@ -1132,13 +1095,15 @@ mod tests {
         // rows directly does not. Storage layout differs, syntax does not.
         let mut crossed = ClassicalArena::new();
         let id = crossed
-            .insert(Cnf::new([row([-1]), row([-2])]), Dnf::default())
+            .insert(Matrix::new([row([-1]), row([-2])]), Matrix::default())
             .unwrap();
-        crossed.move_cnf_right(id, CnfId::new(1).unwrap()).unwrap();
+        crossed
+            .cross_row(id, tagged::Side::Left, RowId::new(1).unwrap())
+            .unwrap();
 
         let mut direct = ClassicalArena::new();
         direct
-            .insert(Cnf::new([row([-2])]), Dnf::new([row([1])]))
+            .insert(Matrix::new([row([-2])]), Matrix::new([row([1])]))
             .unwrap();
 
         let view = crossed.get(id).unwrap();
@@ -1154,12 +1119,12 @@ mod tests {
         let before = arena.clone();
         assert!(
             arena
-                .replace(id, Cnf::new([row([i32::MAX - 1])]), Dnf::default())
+                .replace(id, Matrix::new([row([i32::MAX - 1])]), Matrix::default())
                 .is_ok()
         );
         // Missing-handle failure cannot disturb the successfully replaced slot.
         assert!(matches!(
-            arena.replace(ThmId::new(2).unwrap(), Cnf::default(), Dnf::default()),
+            arena.replace(ThmId::new(2).unwrap(), Matrix::default(), Matrix::default()),
             Err(Error::MissingTheorem { .. })
         ));
         assert_ne!(arena, before);
@@ -1168,7 +1133,7 @@ mod tests {
 
     #[test]
     fn opaque_refuter_certificate_seals_through_the_tagged_kernel() {
-        let refutation = Refuter::new(Cnf::new([LitVec::new()])).done().unwrap();
+        let refutation = Refuter::new(Matrix::new([LitVec::new()])).done().unwrap();
         let mut kernel = ClassicalKernel::new();
         let id = kernel.copy_refutation(&refutation).unwrap();
         assert_eq!(kernel.get(id).unwrap().lhs.to_rows(), vec![LitVec::new()]);
@@ -1181,19 +1146,19 @@ mod tests {
 
     #[test]
     fn rat_accepts_a_tautological_opposing_remainder_without_hints() {
-        let mut refuter = Refuter::new(Cnf::new([row([1, -2, 2])]));
+        let mut refuter = Refuter::new(Matrix::new([row([1, -2, 2])]));
         let learned = refuter
             .learn_rat(
                 row([-1]),
                 Lit::positive(1),
                 &[],
                 &[RatGroup {
-                    opposing: CnfId::new(1).unwrap(),
+                    opposing: RowId::new(1).unwrap(),
                     hints: Vec::new(),
                 }],
             )
             .unwrap();
-        assert_eq!(learned, CnfId::new(2).unwrap());
+        assert_eq!(learned, RowId::new(2).unwrap());
     }
 
     #[test]

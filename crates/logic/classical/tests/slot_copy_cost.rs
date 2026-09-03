@@ -9,7 +9,7 @@
 
 use std::time::Instant;
 
-use covalence_logic_classical::{ClassicalArena, Cnf, Dnf, Lit, LitVec};
+use covalence_logic_classical::{ClassicalArena, Lit, LitVec, Matrix};
 
 /// Builds an arena of `theorems` slots, each a `width`-row sequent.
 fn build(theorems: u32, width: u32) -> ClassicalArena {
@@ -24,7 +24,7 @@ fn build(theorems: u32, width: u32) -> ClassicalArena {
                 .collect()
         };
         arena
-            .insert(Cnf::new(rows(0)), Dnf::new(rows(1)))
+            .insert(Matrix::new(rows(0)), Matrix::new(rows(1)))
             .expect("insert");
     }
     arena

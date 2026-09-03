@@ -13,6 +13,7 @@ mod compat;
 pub mod tagged;
 
 pub use compat::{
-    CheckedArena, ClassicalArena, ClassicalKernel, Cnf, CnfId, CnfRef, Dnf, DnfId, DnfRef, Error,
-    Lit, LitError, LitVec, RatGroup, Refutation, Refuter, ThmId, ThmRef,
+    CheckedArena, ClassicalArena, ClassicalKernel, Error, Lit, LitError, LitVec, Matrix, MatrixRef,
+    RatGroup, Refutation, Refuter, RowId, ThmId, ThmRef,
 };
+pub use tagged::Side;

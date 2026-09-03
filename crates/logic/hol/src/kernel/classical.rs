@@ -1,8 +1,8 @@
 //! Checked finite classical sequents over stable local term references.
 
 use covalence_logic_classical::{
-    CheckedArena, ClassicalArena, ClassicalKernel as SyllogismKernel, Cnf, CnfId, Dnf, DnfId, Lit,
-    LitVec, ThmId, ThmRef,
+    CheckedArena, ClassicalArena, ClassicalKernel as SyllogismKernel, Lit, LitVec, Matrix, RowId,
+    Side, ThmId, ThmRef,
 };
 #[cfg(test)]
 use covalence_logic_classical::{LitError, Refuter};
@@ -14,10 +14,10 @@ use crate::{
 };
 
 #[derive(Clone)]
-struct Thm(Cnf, Dnf);
+struct Thm(Matrix, Matrix);
 
 impl Thm {
-    const fn new(lhs: Cnf, rhs: Dnf) -> Self {
+    const fn new(lhs: Matrix, rhs: Matrix) -> Self {
         Self(lhs, rhs)
     }
 }
@@ -200,7 +200,7 @@ impl Kernel {
         let mut conclusions_out = old.rhs.to_rows();
         conclusions_out.extend(conclusions.iter().copied().map(unit_row));
         self.validate_props(premises.iter().chain(conclusions.iter()).copied())?;
-        let replacement = Thm::new(Cnf::new(premises_out), Dnf::new(conclusions_out));
+        let replacement = Thm::new(Matrix::new(premises_out), Matrix::new(conclusions_out));
         self.replace_theorem(theorem, replacement)
     }
 
@@ -233,7 +233,7 @@ impl Kernel {
         left.extend_from_slice(premises);
         let mut right = replacement.rhs.to_rows();
         right.extend_from_slice(conclusions);
-        self.replace_theorem(theorem, Thm::new(Cnf::new(left), Dnf::new(right)))
+        self.replace_theorem(theorem, Thm::new(Matrix::new(left), Matrix::new(right)))
     }
 
     /// Replaces every signed occurrence of one Boolean atom in a theorem by
@@ -272,7 +272,10 @@ impl Kernel {
             .rows()
             .map(|row| replace_atom(row, source, target))
             .collect();
-        self.replace_theorem(theorem, Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
+        self.replace_theorem(
+            theorem,
+            Thm::new(Matrix::new(premises), Matrix::new(conclusions)),
+        )
     }
 
     /// Replaces an atom only in a theorem's conclusion matrix.
@@ -306,7 +309,7 @@ impl Kernel {
             .rows()
             .map(|row| replace_atom(row, source, target))
             .collect();
-        self.replace_theorem(theorem, Thm::new(premises, Dnf::new(conclusions)))
+        self.replace_theorem(theorem, Thm::new(premises, Matrix::new(conclusions)))
     }
 
     /// Introduces equality reflexivity (`REFL`).
@@ -327,8 +330,8 @@ impl Kernel {
         };
         let equality = staged.eq(bool_ty, term, term)?;
         let theorem = staged.push_theorem(Thm::new(
-            Cnf::default(),
-            Dnf::new(vec![unit_row(positive(equality))]),
+            Matrix::default(),
+            Matrix::new(vec![unit_row(positive(equality))]),
         ))?;
         *self = staged;
         Ok(ReflThm { equality, theorem })
@@ -368,7 +371,7 @@ impl Kernel {
         let equality = staged.eq(bool_ty, left, right)?;
         let theorem = staged.push_theorem(Thm::new(
             premises,
-            Dnf::new(vec![unit_row(positive(equality))]),
+            Matrix::new(vec![unit_row(positive(equality))]),
         ))?;
         *self = staged;
         Ok(ApThm {
@@ -429,7 +432,7 @@ impl Kernel {
         let equality = staged.eq(bool_ty, left, right)?;
         let theorem = staged.push_theorem(Thm::new(
             premises,
-            Dnf::new(vec![unit_row(positive(equality))]),
+            Matrix::new(vec![unit_row(positive(equality))]),
         ))?;
         *self = staged;
         Ok(AbsThm {
@@ -470,7 +473,7 @@ impl Kernel {
         let equality = staged.eq(bool_ty, left, right)?;
         let theorem = staged.push_theorem(Thm::new(
             premises,
-            Dnf::new(vec![unit_row(positive(equality))]),
+            Matrix::new(vec![unit_row(positive(equality))]),
         ))?;
         *self = staged;
         Ok(ApTerm {
@@ -515,8 +518,8 @@ impl Kernel {
         let mut premises = equality_source.lhs.to_rows();
         premises.extend(premise_source.lhs.to_rows());
         self.push_theorem(Thm::new(
-            Cnf::new(premises),
-            Dnf::new(vec![unit_row(positive(right))]),
+            Matrix::new(premises),
+            Matrix::new(vec![unit_row(positive(right))]),
         ))
     }
 
@@ -548,7 +551,7 @@ impl Kernel {
         }
         self.push_theorem(Thm::new(
             premises,
-            Dnf::new(vec![unit_row(positive(proposition))]),
+            Matrix::new(vec![unit_row(positive(proposition))]),
         ))
     }
 
@@ -627,7 +630,7 @@ impl Kernel {
         }
         self.push_theorem(Thm::new(
             premises,
-            Dnf::new(vec![unit_row(positive(target))]),
+            Matrix::new(vec![unit_row(positive(target))]),
         ))
     }
 
@@ -718,7 +721,7 @@ impl Kernel {
         }
         self.push_theorem(Thm::new(
             premises,
-            Dnf::new(vec![unit_row(positive(universal))]),
+            Matrix::new(vec![unit_row(positive(universal))]),
         ))
     }
 
@@ -750,8 +753,8 @@ impl Kernel {
         };
         let universal = staged.ty_forall(name, predicate)?;
         let theorem = staged.push_theorem(Thm::new(
-            Cnf::default(),
-            Dnf::new(vec![unit_row(positive(universal))]),
+            Matrix::default(),
+            Matrix::new(vec![unit_row(positive(universal))]),
         ))?;
         *self = staged;
         Ok(TyForallThm { universal, theorem })
@@ -763,10 +766,10 @@ impl Kernel {
     ///
     /// Returns an error if the theorem or clause is absent. The theorem is
     /// unchanged on error.
-    pub fn move_cnf_right(&mut self, theorem: ThmId, row: CnfId) -> Result<(), KernelError> {
+    pub fn move_cnf_right(&mut self, theorem: ThmId, row: RowId) -> Result<(), KernelError> {
         self.arena
             .theorems_mut()
-            .move_cnf_right(theorem, row)
+            .cross_row(theorem, Side::Left, row)
             .map_err(|_| KernelError::InvalidTheoremRule {
                 rule: "CNF transfer right",
             })
@@ -778,10 +781,10 @@ impl Kernel {
     ///
     /// Returns an error if the theorem or cube is absent. The theorem is
     /// unchanged on error.
-    pub fn move_dnf_left(&mut self, theorem: ThmId, row: DnfId) -> Result<(), KernelError> {
+    pub fn move_dnf_left(&mut self, theorem: ThmId, row: RowId) -> Result<(), KernelError> {
         self.arena
             .theorems_mut()
-            .move_dnf_left(theorem, row)
+            .cross_row(theorem, Side::Right, row)
             .map_err(|_| KernelError::InvalidTheoremRule {
                 rule: "DNF transfer left",
             })
@@ -792,10 +795,10 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error if the theorem or clause is absent.
-    pub fn normalize_cnf(&mut self, theorem: ThmId, row: CnfId) -> Result<(), KernelError> {
+    pub fn normalize_cnf(&mut self, theorem: ThmId, row: RowId) -> Result<(), KernelError> {
         self.arena
             .theorems_mut()
-            .normalize_cnf(theorem, row)
+            .normalize_row(theorem, Side::Left, row)
             .map_err(|_| KernelError::InvalidTheoremRule {
                 rule: "CNF row normalization",
             })
@@ -806,10 +809,10 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error if the theorem or cube is absent.
-    pub fn normalize_dnf(&mut self, theorem: ThmId, row: DnfId) -> Result<(), KernelError> {
+    pub fn normalize_dnf(&mut self, theorem: ThmId, row: RowId) -> Result<(), KernelError> {
         self.arena
             .theorems_mut()
-            .normalize_dnf(theorem, row)
+            .normalize_row(theorem, Side::Right, row)
             .map_err(|_| KernelError::InvalidTheoremRule {
                 rule: "DNF row normalization",
             })
@@ -860,7 +863,7 @@ impl Kernel {
         premises.extend(right_premises);
         let mut conclusions = left_conclusions;
         conclusions.extend(rhs.rhs.to_rows());
-        self.push_theorem(Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
+        self.push_theorem(Thm::new(Matrix::new(premises), Matrix::new(conclusions)))
     }
 
     /// Introduces falsity on the left.
@@ -921,7 +924,7 @@ impl Kernel {
         }
         let mut premises = source.lhs.to_rows();
         premises.push(unit_row(p.negated()));
-        let replacement = Thm::new(Cnf::new(premises), Dnf::new(conclusions));
+        let replacement = Thm::new(Matrix::new(premises), Matrix::new(conclusions));
         self.replace_theorem(theorem, replacement)
     }
 
@@ -940,7 +943,7 @@ impl Kernel {
         }
         let mut conclusions = source.rhs.to_rows();
         conclusions.push(unit_row(p.negated()));
-        let replacement = Thm::new(Cnf::new(premises), Dnf::new(conclusions));
+        let replacement = Thm::new(Matrix::new(premises), Matrix::new(conclusions));
         self.replace_theorem(theorem, replacement)
     }
 
@@ -958,7 +961,7 @@ impl Kernel {
             return Err(KernelError::InvalidTheoremRule { rule: "and left" });
         }
         premises.push(unit_row(conjunction));
-        self.push_theorem(Thm::new(Cnf::new(premises), source.rhs.to_owned()))
+        self.push_theorem(Thm::new(Matrix::new(premises), source.rhs.to_owned()))
     }
 
     /// Introduces a checked conjunction on the right, concatenating contexts.
@@ -985,7 +988,7 @@ impl Kernel {
         let mut conclusions = left_conc;
         conclusions.extend(right_conc);
         conclusions.push(unit_row(conjunction));
-        self.push_theorem(Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
+        self.push_theorem(Thm::new(Matrix::new(premises), Matrix::new(conclusions)))
     }
 
     /// Introduces a checked disjunction on the left, concatenating contexts.
@@ -1012,7 +1015,7 @@ impl Kernel {
         premises.push(unit_row(disjunction));
         let mut conclusions = lhs.rhs.to_rows();
         conclusions.extend(rhs.rhs.to_rows());
-        self.push_theorem(Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
+        self.push_theorem(Thm::new(Matrix::new(premises), Matrix::new(conclusions)))
     }
 
     /// Folds two conclusions into their checked disjunction opcode.
@@ -1029,7 +1032,7 @@ impl Kernel {
             return Err(KernelError::InvalidTheoremRule { rule: "or right" });
         }
         conclusions.push(unit_row(disjunction));
-        self.push_theorem(Thm::new(source.lhs.to_owned(), Dnf::new(conclusions)))
+        self.push_theorem(Thm::new(source.lhs.to_owned(), Matrix::new(conclusions)))
     }
 
     /// Introduces a checked implication on the left.
@@ -1057,7 +1060,7 @@ impl Kernel {
         premises.push(unit_row(implication));
         let mut conclusions = left_conc;
         conclusions.extend(rhs.rhs.to_rows());
-        self.push_theorem(Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
+        self.push_theorem(Thm::new(Matrix::new(premises), Matrix::new(conclusions)))
     }
 
     /// Introduces a checked implication on the right.
@@ -1075,7 +1078,7 @@ impl Kernel {
             return Err(KernelError::InvalidTheoremRule { rule: "imp right" });
         }
         conclusions.push(unit_row(implication));
-        self.push_theorem(Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
+        self.push_theorem(Thm::new(Matrix::new(premises), Matrix::new(conclusions)))
     }
 
     /// Resolves complementary conclusions of two checked sequents.
@@ -1096,7 +1099,7 @@ impl Kernel {
         premises.extend(rhs.lhs.to_rows());
         let mut conclusions = left_conc;
         conclusions.extend(right_conc);
-        self.push_theorem(Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
+        self.push_theorem(Thm::new(Matrix::new(premises), Matrix::new(conclusions)))
     }
 
     /// Replaces one right-side connective by a sound one-step expansion.
@@ -1123,7 +1126,7 @@ impl Kernel {
         }
         let replacement = self.expand_right(formula, branch)?;
         conc.extend(replacement.into_iter().map(unit_row));
-        self.push_theorem(Thm::new(source.lhs.to_owned(), Dnf::new(conc)))
+        self.push_theorem(Thm::new(source.lhs.to_owned(), Matrix::new(conc)))
     }
 
     /// Recursively flattens a disjunctive opcode tree on the right side.
@@ -1157,7 +1160,7 @@ impl Kernel {
             }
         }
         conclusions.extend(leaves.into_iter().map(unit_row));
-        self.push_theorem(Thm::new(source.lhs.to_owned(), Dnf::new(conclusions)))
+        self.push_theorem(Thm::new(source.lhs.to_owned(), Matrix::new(conclusions)))
     }
 
     /// Recursively flattens a conjunctive opcode tree on the left side.
@@ -1176,7 +1179,7 @@ impl Kernel {
         }
         let leaves = self.collect_tree(formula, TreeSide::Conjunctive)?;
         premises.extend(leaves.into_iter().map(unit_row));
-        self.push_theorem(Thm::new(Cnf::new(premises), source.rhs.to_owned()))
+        self.push_theorem(Thm::new(Matrix::new(premises), source.rhs.to_owned()))
     }
 
     /// Folds the leaves of a conjunctive opcode tree on the left side.
@@ -1238,8 +1241,8 @@ impl Kernel {
         let premises = self.canonical_props(premises)?;
         let conclusions = self.canonical_props(conclusions)?;
         Ok(Thm::new(
-            Cnf::new(premises.into_iter().map(unit_row)),
-            Dnf::new(conclusions.into_iter().map(unit_row)),
+            Matrix::new(premises.into_iter().map(unit_row)),
+            Matrix::new(conclusions.into_iter().map(unit_row)),
         ))
     }
 
@@ -1290,7 +1293,7 @@ impl Kernel {
         Ok(())
     }
 
-    fn decode_cnf(&self, formula: Lit) -> Result<Cnf, KernelError> {
+    fn decode_cnf(&self, formula: Lit) -> Result<Matrix, KernelError> {
         if !formula.is_positive() {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "CNF polarity",
@@ -1313,7 +1316,7 @@ impl Kernel {
                 rows.push(self.decode_disjunction(current)?);
             }
         }
-        Ok(Cnf::new(rows))
+        Ok(Matrix::new(rows))
     }
 
     fn decode_disjunction(&self, formula: Ref) -> Result<LitVec, KernelError> {
@@ -1552,7 +1555,7 @@ impl Kernel {
             TreeSide::Conjunctive => premises.push(unit_row(formula)),
             TreeSide::Disjunctive => conclusions.push(unit_row(formula)),
         }
-        self.push_theorem(Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
+        self.push_theorem(Thm::new(Matrix::new(premises), Matrix::new(conclusions)))
     }
 }
 
@@ -1645,14 +1648,14 @@ mod tests {
         }
     }
 
-    fn cnf_id(position: usize) -> CnfId {
+    fn cnf_id(position: usize) -> RowId {
         let one_based = position.checked_add(1).unwrap();
-        CnfId::new(i32::try_from(one_based).unwrap()).unwrap()
+        RowId::new(i32::try_from(one_based).unwrap()).unwrap()
     }
 
-    fn dnf_id(position: usize) -> DnfId {
+    fn dnf_id(position: usize) -> RowId {
         let one_based = position.checked_add(1).unwrap();
-        DnfId::new(i32::try_from(one_based).unwrap()).unwrap()
+        RowId::new(i32::try_from(one_based).unwrap()).unwrap()
     }
 
     fn unit_premises(theorem: ThmRef<'_>) -> Vec<Lit> {
@@ -2192,12 +2195,12 @@ mod tests {
         assert_eq!(snapshot(kernel.require_thm(theorem).unwrap()), before);
         assert!(
             kernel
-                .move_cnf_right(theorem, CnfId::new(i32::MAX).unwrap())
+                .move_cnf_right(theorem, RowId::new(i32::MAX).unwrap())
                 .is_err()
         );
         assert!(
             kernel
-                .move_dnf_left(theorem, DnfId::new(i32::MAX).unwrap())
+                .move_dnf_left(theorem, RowId::new(i32::MAX).unwrap())
                 .is_err()
         );
         assert_eq!(snapshot(kernel.require_thm(theorem).unwrap()), before);
@@ -2651,9 +2654,12 @@ mod tests {
     #[test]
     fn completed_refutations_copy_into_syl_and_thm_through_checked_views() {
         let atom = Lit::new(i32::MAX - 1);
-        let refutation = Refuter::new(Cnf::new([LitVec::new(), std::iter::once(atom).collect()]))
-            .done()
-            .unwrap();
+        let refutation = Refuter::new(Matrix::new([
+            LitVec::new(),
+            std::iter::once(atom).collect(),
+        ]))
+        .done()
+        .unwrap();
         let mut kernel = Kernel::new();
 
         let syllogism = kernel.syl_mut().copy_refutation(&refutation).unwrap();

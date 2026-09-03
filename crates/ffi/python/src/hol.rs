@@ -18,8 +18,8 @@ use covalence_lib_python::pyo3::{
     types::{PyBytes, PyType},
 };
 use covalence_logic_hol::{
-    AmbPred, Arena, CnfId, DnfId, Import, ImportId, Kernel, Link, LinkFormat, Lit, LitVec, Ref,
-    Sort, SynFact, SynFactId, SynRel, ThmId,
+    AmbPred, Arena, Import, ImportId, Kernel, Link, LinkFormat, Lit, LitVec, Ref, RowId, Sort,
+    SynFact, SynFactId, SynRel, ThmId,
     builtin::{Op1, Op2},
     wire,
 };
@@ -90,12 +90,12 @@ fn theorem_id(value: i32) -> PyResult<ThmId> {
     ThmId::new(value).ok_or_else(|| PyValueError::new_err("theorem IDs are positive i32 values"))
 }
 
-fn cnf_id(value: i32) -> PyResult<CnfId> {
-    CnfId::new(value).ok_or_else(|| PyValueError::new_err("CNF row IDs are positive i32 values"))
+fn cnf_id(value: i32) -> PyResult<RowId> {
+    RowId::new(value).ok_or_else(|| PyValueError::new_err("CNF row IDs are positive i32 values"))
 }
 
-fn dnf_id(value: i32) -> PyResult<DnfId> {
-    DnfId::new(value).ok_or_else(|| PyValueError::new_err("DNF row IDs are positive i32 values"))
+fn dnf_id(value: i32) -> PyResult<RowId> {
+    RowId::new(value).ok_or_else(|| PyValueError::new_err("DNF row IDs are positive i32 values"))
 }
 
 fn literal(value: i32) -> PyResult<Lit> {
