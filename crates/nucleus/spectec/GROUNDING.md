@@ -52,6 +52,10 @@ vocabulary, while `empty_module_agrees_with_wasmtime_observation` independently
 checks the canonical eight-byte module with Wasmtime. The matching shape is a
 useful regression signal, but it is not the still-missing checked theorem that
 relates those bytes to the structural term or proves non-reachability.
+The companion `forwarding_module_calls_assert_in_wasmtime` test supplies an
+`assert` host function, invokes the module's exported imported function, and
+observes the call. It is the positive runtime oracle for `TRUE`, under the same
+strict separation from theorem evidence.
 
 This boundary adds no trusted component. The existing HOL kernel remains the
 only theorem authority; the SpecTec compiler, concrete interpretation, module

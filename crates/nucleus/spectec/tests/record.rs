@@ -1671,6 +1671,35 @@ fn empty_module_agrees_with_wasmtime_observation() {
 }
 
 #[test]
+fn forwarding_module_calls_assert_in_wasmtime() {
+    use covalence_lib_wasm::wasmtime::{Caller, Engine, Func, Linker, Module, Store};
+
+    // `(module (type (func)) (import "env" "assert" (func (type 0)))
+    //          (export "run" (func 0)))`.
+    let bytes = [
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x04, 0x01, 0x60, 0x00, 0x00, 0x02,
+        0x0e, 0x01, 0x03, b'e', b'n', b'v', 0x06, b'a', b's', b's', b'e', b'r', b't', 0x00, 0x00,
+        0x07, 0x07, 0x01, 0x03, b'r', b'u', b'n', 0x00, 0x00,
+    ];
+    let engine = Engine::default();
+    let module = Module::new(&engine, bytes).unwrap();
+    let mut store = Store::new(&engine, false);
+    let mut linker = Linker::new(&engine);
+    let assert = Func::wrap(&mut store, |mut caller: Caller<'_, bool>| {
+        *caller.data_mut() = true;
+    });
+    linker.define(&mut store, "env", "assert", assert).unwrap();
+    let instance = linker.instantiate(&mut store, &module).unwrap();
+    let run = instance
+        .get_typed_func::<(), ()>(&mut store, "run")
+        .unwrap();
+
+    assert!(!*store.data());
+    run.call(&mut store, ()).unwrap();
+    assert!(*store.data());
+}
+
+#[test]
 fn pinned_otherwise_chains_do_not_negate_recursive_candidates() {
     let source = Source::wasm3().unwrap();
     for root in source.il().roots() {
