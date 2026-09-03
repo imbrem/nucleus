@@ -3,7 +3,7 @@
 //! Parsing and validation are userspace operations. They do not create theorem
 //! facts or establish that these bytes denote a term in a HOL semantics.
 
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash};
 use covalence_lib_error::snafu::Snafu;
@@ -119,6 +119,86 @@ impl<'a> Module<'a> {
     pub fn payload(&self, section: &Section) -> &'a [u8] {
         &self.bytes[section.payload.clone()]
     }
+
+    /// Copies the exact bytes into an immutable, shareable module artifact.
+    ///
+    /// The already validated section/function metadata and CID are retained;
+    /// this does not parse, validate, or assign semantic meaning a second time.
+    #[must_use]
+    pub fn into_shared(self) -> SharedModule {
+        SharedModule {
+            bytes: Arc::from(self.bytes),
+            cid: self.cid,
+            sections: Arc::from(self.sections),
+            functions: Arc::from(self.functions),
+        }
+    }
+}
+
+/// A validated WebAssembly 3.0 core module with shared exact-byte ownership.
+///
+/// This is the portable/concurrent counterpart of borrowing [`Module`]. It is
+/// immutable and uses `Arc` only for storage ownership; neither validation nor
+/// a content address constitutes a semantic theorem.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SharedModule {
+    bytes: Arc<[u8]>,
+    cid: Cid,
+    sections: Arc<[Section]>,
+    functions: Arc<[Function]>,
+}
+
+impl SharedModule {
+    /// Returns the exact retained module bytes.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Returns the raw SHA-256 content address of the exact module bytes.
+    #[must_use]
+    pub const fn cid(&self) -> Cid {
+        self.cid
+    }
+
+    /// Returns all binary sections in source order.
+    #[must_use]
+    pub fn sections(&self) -> &[Section] {
+        &self.sections
+    }
+
+    /// Returns defined function bodies in binary order.
+    #[must_use]
+    pub fn functions(&self) -> &[Function] {
+        &self.functions
+    }
+
+    /// Streams parser payloads from the retained exact bytes.
+    ///
+    /// The parser uses the same WebAssembly 3.0 feature profile with which the
+    /// original borrowed module was validated.
+    pub fn payloads(
+        &self,
+    ) -> impl Iterator<Item = Result<Payload<'_>, covalence_lib_wasm::wasmparser::BinaryReaderError>>
+    {
+        let mut parser = Parser::new(0);
+        parser.set_features(WasmFeatures::WASM3);
+        parser.parse_all(&self.bytes)
+    }
+
+    /// Opens a typed reader for one retained function body.
+    #[must_use]
+    pub fn function_body(&self, function: &Function) -> FunctionBody<'_> {
+        let mut reader = BinaryReader::new(&self.bytes[function.body.clone()], function.body.start);
+        reader.set_features(WasmFeatures::WASM3);
+        FunctionBody::new(reader)
+    }
+
+    /// Returns the exact payload bytes for a retained section.
+    #[must_use]
+    pub fn payload(&self, section: &Section) -> &[u8] {
+        &self.bytes[section.payload.clone()]
+    }
 }
 
 /// Why bytes could not be recognized as a WebAssembly 3.0 core module.
@@ -215,15 +295,71 @@ pub fn parse(bytes: &[u8], limits: Limits) -> Result<Module<'_>, Error> {
     })
 }
 
+/// Recognizes and validates an already shared exact WebAssembly module.
+///
+/// Unlike [`Module::into_shared`], this retains the caller's `Arc<[u8]>`
+/// allocation. Parsing and validation remain userspace operations and create
+/// no theorem fact.
+///
+/// # Errors
+///
+/// Returns under the same conditions as [`parse`].
+pub fn parse_shared(bytes: Arc<[u8]>, limits: Limits) -> Result<SharedModule, Error> {
+    let parsed = parse(&bytes, limits)?;
+    let Module {
+        cid,
+        sections,
+        functions,
+        ..
+    } = parsed;
+    Ok(SharedModule {
+        bytes,
+        cid,
+        sections: Arc::from(sections),
+        functions: Arc::from(functions),
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use covalence_lib_wasm::wasmparser::Operator;
 
     use covalence_data_cbor::drisl::{self, CidCodec, CidHash};
 
-    use super::{Error, Limits, parse};
+    use super::{Error, Limits, SharedModule, parse, parse_shared};
 
     const EMPTY_MODULE: &[u8] = b"\0asm\x01\0\0\0";
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn shared_modules_retain_exact_owned_bytes() {
+        assert_send_sync::<SharedModule>();
+        let bytes: Arc<[u8]> = Arc::from(EMPTY_MODULE);
+        let module = parse_shared(Arc::clone(&bytes), Limits::default()).unwrap();
+
+        assert!(Arc::ptr_eq(&bytes, &module.bytes));
+        assert_eq!(module.bytes(), EMPTY_MODULE);
+        assert_eq!(
+            module.cid(),
+            parse(EMPTY_MODULE, Limits::default()).unwrap().cid()
+        );
+        assert!(module.sections().is_empty());
+        assert!(module.functions().is_empty());
+        assert_eq!(
+            parse(EMPTY_MODULE, Limits::default())
+                .unwrap()
+                .into_shared(),
+            module
+        );
+
+        let cloned = module.clone();
+        std::thread::spawn(move || assert_eq!(cloned.bytes(), EMPTY_MODULE))
+            .join()
+            .unwrap();
+    }
 
     #[test]
     fn retains_exact_bytes_and_ordered_section_payloads() {

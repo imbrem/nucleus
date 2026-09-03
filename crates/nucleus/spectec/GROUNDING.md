@@ -112,6 +112,14 @@ Grounding therefore requires all of the following:
 5. Interpreter comparisons kept as differential tests only. Interpreter output
    never creates a theorem or discharges a semantic premise.
 
+The exact-byte side is separately represented by `covalence-data-wasm`. It
+recognizes resource-bounded Wasm 3.0 modules while retaining every input byte,
+section range, and a raw SHA-256 CID. A borrowed module can be promoted to an
+immutable `Arc`-backed artifact, and `parse_shared` retains an existing
+`Arc<[u8]>` allocation for concurrent proof-package workflows. Neither form
+claims that the bytes denote a particular HOL term; that still requires the
+checked decoding evidence above.
+
 The empty-module experiment already keeps these two evidence classes separate:
 `empty_wasm_module` constructs the structural HOL term from the pinned SpecTec
 vocabulary, while `empty_module_agrees_with_wasmtime_observation` independently
