@@ -2017,6 +2017,21 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         .evidence_scope(&grounding)
         .check(&kernel, true_not_false)
         .unwrap();
+    let closed_distinction = true_not_false.close_premises(&mut kernel).unwrap();
+    assert!(
+        kernel
+            .thm()
+            .get(closed_distinction.theorem)
+            .unwrap()
+            .lhs
+            .rows()
+            .next()
+            .is_none()
+    );
+    assert_eq!(
+        kernel.classifier(closed_distinction.proposition).unwrap(),
+        bool_ty
+    );
 }
 
 #[test]

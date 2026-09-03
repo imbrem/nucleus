@@ -1469,6 +1469,78 @@ pub struct Evidence {
     pub holds: bool,
 }
 
+impl Evidence {
+    /// Internalizes every theorem premise into one HOL implication.
+    ///
+    /// Positive and negative evidence is first represented as a positive HOL
+    /// formula (`p` or `not p`). The theorem's exact signed unit premises are
+    /// then discharged one-by-one, producing premise-free evidence for nested
+    /// implications ending in the conclusion. With no premises, this simply
+    /// returns the positive formula. No assumption is erased: it moves into the
+    /// proposition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if this evidence has the wrong conclusion, any premise
+    /// is not a unit literal, or a checked negation, conjunction, folding, or
+    /// implication rule fails. `kernel` is unchanged on failure.
+    pub fn close_premises(self, kernel: &mut Kernel) -> Result<Established, KernelError> {
+        require_conclusion(kernel, self)?;
+        let theorem = kernel
+            .thm()
+            .get(self.theorem)
+            .ok_or(KernelError::MissingTheorem { id: self.theorem })?;
+        let premise_literals = theorem
+            .lhs
+            .rows()
+            .map(|row| {
+                let [literal] = row else {
+                    return Err(KernelError::InvalidTheoremRule {
+                        rule: "semantic evidence unit premise closure",
+                    });
+                };
+                Ok(*literal)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut staged = kernel.fork();
+        let mut theorem = staged.copy_theorem(self.theorem)?;
+        let mut conclusion = if self.holds {
+            self.proposition
+        } else {
+            let negated = staged.op1(Op1::Not, self.proposition)?;
+            theorem = staged.fold_conclusion(theorem, positive(negated))?;
+            negated
+        };
+        if !premise_literals.is_empty() {
+            for literal in premise_literals {
+                let proposition = Ref::new(literal.magnitude().cast_signed()).ok_or(
+                    KernelError::InvalidTheoremRule {
+                        rule: "semantic evidence premise reference closure",
+                    },
+                )?;
+                let antecedent = if literal.is_positive() {
+                    proposition
+                } else {
+                    let negated = staged.op1(Op1::Not, proposition)?;
+                    theorem = staged.fold_premise(theorem, positive(negated))?;
+                    negated
+                };
+                conclusion = staged.op2(Op2::Imp, antecedent, conclusion)?;
+                theorem = staged.imp_right(theorem, positive(conclusion))?;
+            }
+        }
+        let closed = Established {
+            proposition: conclusion,
+            theorem,
+            holds: true,
+        };
+        require_exact(&staged, closed)?;
+        *kernel = staged;
+        Ok(closed)
+    }
+}
+
 /// Immutable allowlist for assumptions admitted by a semantic proof.
 ///
 /// A checked theorem remains kernel authority; this scope additionally checks
@@ -2191,6 +2263,8 @@ mod tests {
         EvidenceScope::signed(&[positive(true_calls), positive(false_calls).negated()])
             .check(&kernel, distinct)
             .unwrap();
+        let closed = distinct.close_premises(&mut kernel).unwrap();
+        assert_exact(&kernel, closed, true);
     }
 
     #[test]
