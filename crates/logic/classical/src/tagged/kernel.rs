@@ -93,7 +93,7 @@ impl Theorem {
     /// producing state machine is the Rust counterpart of Lean's
     /// `Runtime.Refutation.Checker.Result` boundary.
     pub(crate) fn seal_refutation(
-        certificate: &crate::compat::Refutation,
+        certificate: &crate::cnf::Refutation,
     ) -> Result<Self, RuntimeError> {
         Ok(Self {
             checked: pack(&[certificate.sequent_for_sealing()])?,
@@ -494,7 +494,7 @@ fn concatenate(mut left: Vec<Formula>, right: Vec<Formula>) -> Vec<Formula> {
 mod tests {
     use super::*;
 
-    fn literal(atom: u64) -> Formula {
+    fn literal(atom: u32) -> Formula {
         Formula::Literal {
             atom,
             negative: false,

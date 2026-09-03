@@ -642,7 +642,7 @@ impl UnsatFormula {
             .get(self.refutation)
             .ok_or(Error::NoRefutation)?;
         let formula = positive(self.formula);
-        if is_unit_refutation(sequent, formula) {
+        if is_unit_refutation(&sequent, formula) {
             Ok(())
         } else {
             Err(Error::NoRefutation)
@@ -684,7 +684,7 @@ fn reference(proposition: Lit) -> Ref {
         .expect("literal magnitude is nonzero")
 }
 
-fn is_unit_refutation(theorem: ThmRef<'_>, formula: Lit) -> bool {
+fn is_unit_refutation(theorem: &ThmRef, formula: Lit) -> bool {
     let mut premises = theorem.lhs.rows();
     premises.next() == Some(&[formula][..])
         && premises.next().is_none()

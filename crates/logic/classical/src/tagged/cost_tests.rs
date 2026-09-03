@@ -9,9 +9,9 @@
 
 use std::time::Instant;
 
-use covalence_logic_classical::tagged::{Arena, Checked, Formula, Sequent, pack};
+use super::{Arena, Checked, Formula, Sequent, pack};
 
-fn literal(atom: u64) -> Formula {
+fn literal(atom: u32) -> Formula {
     Formula::Literal {
         atom,
         negative: false,
@@ -22,7 +22,7 @@ fn literal(atom: u64) -> Formula {
 fn unit_table(count: usize) -> Vec<Sequent> {
     (0..count)
         .map(|index| {
-            let atom = u64::try_from(index).expect("test index fits") + 1;
+            let atom = u32::try_from(index).expect("test index fits") + 1;
             Sequent {
                 premise: Formula::And {
                     negative: false,
@@ -45,12 +45,12 @@ fn unit_table(count: usize) -> Vec<Sequent> {
 
 /// The shape one HOL theorem slot projects to: `rows` clauses of four literals.
 fn projection(rows: usize) -> Sequent {
-    let clause = |tag: u64| {
+    let clause = |tag: u32| {
         (0..4)
             .map(|offset| literal(tag * 4 + offset + 1))
             .collect::<Vec<_>>()
     };
-    let tags = || 0..u64::try_from(rows).expect("test row count fits");
+    let tags = || 0..u32::try_from(rows).expect("test row count fits");
     Sequent {
         premise: Formula::And {
             negative: false,

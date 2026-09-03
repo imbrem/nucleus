@@ -858,11 +858,13 @@ mod tests {
         HolProver::try_new().unwrap()
     }
 
-    fn unit_premises(theorem: covalence_logic_hol::ThmRef<'_>) -> Vec<Lit> {
+    #[allow(clippy::needless_pass_by_value)]
+    fn unit_premises(theorem: covalence_logic_hol::ThmRef) -> Vec<Lit> {
         theorem.lhs.rows().map(|clause| clause[0]).collect()
     }
 
-    fn unit_conclusions(theorem: covalence_logic_hol::ThmRef<'_>) -> Vec<Lit> {
+    #[allow(clippy::needless_pass_by_value)]
+    fn unit_conclusions(theorem: covalence_logic_hol::ThmRef) -> Vec<Lit> {
         theorem.rhs.rows().map(|cube| cube[0]).collect()
     }
 

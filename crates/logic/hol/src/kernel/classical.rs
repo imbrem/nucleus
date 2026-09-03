@@ -134,7 +134,7 @@ impl Kernel {
         CheckedArena::new(self.arena.theorems_mut())
     }
 
-    fn require_thm(&self, id: ThmId) -> Result<ThmRef<'_>, KernelError> {
+    fn require_thm(&self, id: ThmId) -> Result<ThmRef, KernelError> {
         self.arena
             .theorems()
             .get(id)
@@ -164,7 +164,7 @@ impl Kernel {
         }
         let mut expected = self.decode_cnf(formula)?;
         expected.normalize();
-        let mut actual = theorem.lhs.to_owned();
+        let mut actual = theorem.lhs.clone();
         actual.normalize();
         if actual != expected {
             return Err(KernelError::InvalidTheoremRule {
@@ -303,7 +303,7 @@ impl Kernel {
             });
         }
         let old = self.require_thm(theorem)?;
-        let premises = old.lhs.to_owned();
+        let premises = old.lhs.clone();
         let conclusions: Vec<LitVec> = old
             .rhs
             .rows()
@@ -351,8 +351,8 @@ impl Kernel {
     /// neither syntax nor theorem slots are changed.
     pub fn ap_thm(&mut self, theorem: ThmId, argument: Ref) -> Result<ApThm, KernelError> {
         let source_theorem = self.require_thm(theorem)?;
-        let source = sole_positive_conclusion(source_theorem)?;
-        let premises = source_theorem.lhs.to_owned();
+        let source = sole_positive_conclusion(&source_theorem)?;
+        let premises = source_theorem.lhs.clone();
         let bool_ty = self.require_bool_term::<std::convert::Infallible>(source)?;
         self.require_category::<std::convert::Infallible>(argument, crate::Sort::Tm)?;
         let Node::Eq(function_ty, function, varied) = *self.row(source)?.expr() else {
@@ -394,8 +394,8 @@ impl Kernel {
     /// any premise proposition. Rejection is transactional.
     pub fn abs_thm(&mut self, theorem: ThmId, binder: Ref) -> Result<AbsThm, KernelError> {
         let source_theorem = self.require_thm(theorem)?;
-        let source = sole_positive_conclusion(source_theorem)?;
-        let premises = source_theorem.lhs.to_owned();
+        let source = sole_positive_conclusion(&source_theorem)?;
+        let premises = source_theorem.lhs.clone();
         let bool_ty = self.require_bool_term::<std::convert::Infallible>(source)?;
         self.require_form::<std::convert::Infallible>(binder, "tm.fv", |node| {
             matches!(node, Node::TmFv { .. })
@@ -455,8 +455,8 @@ impl Kernel {
     /// transactional.
     pub fn ap_term(&mut self, theorem: ThmId, function: Ref) -> Result<ApTerm, KernelError> {
         let source_theorem = self.require_thm(theorem)?;
-        let source = sole_positive_conclusion(source_theorem)?;
-        let premises = source_theorem.lhs.to_owned();
+        let source = sole_positive_conclusion(&source_theorem)?;
+        let premises = source_theorem.lhs.clone();
         let bool_ty = self.require_bool_term::<std::convert::Infallible>(source)?;
         let Node::Eq(_, left_operand, right_operand) = *self.row(source)?.expr() else {
             return Err(KernelError::InvalidTheoremRule {
@@ -499,9 +499,9 @@ impl Kernel {
         premise_theorem: ThmId,
     ) -> Result<ThmId, KernelError> {
         let equality_source = self.require_thm(equality_theorem)?;
-        let equality = sole_positive_conclusion(equality_source)?;
+        let equality = sole_positive_conclusion(&equality_source)?;
         let premise_source = self.require_thm(premise_theorem)?;
-        let premise = sole_positive_conclusion(premise_source)?;
+        let premise = sole_positive_conclusion(&premise_source)?;
         self.require_bool_term::<std::convert::Infallible>(equality)?;
         let Node::Eq(ty, left, right) = *self.row(equality)?.expr() else {
             return Err(KernelError::InvalidTheoremRule {
@@ -535,8 +535,8 @@ impl Kernel {
     /// Rejection does not alter theorem storage.
     pub fn eqt_elim(&mut self, theorem: ThmId) -> Result<ThmId, KernelError> {
         let source_theorem = self.require_thm(theorem)?;
-        let source = sole_positive_conclusion(source_theorem)?;
-        let premises = source_theorem.lhs.to_owned();
+        let source = sole_positive_conclusion(&source_theorem)?;
+        let premises = source_theorem.lhs.clone();
         self.require_bool_term::<std::convert::Infallible>(source)?;
         let Node::Eq(_, proposition, truth) = *self.row(source)?.expr() else {
             return Err(KernelError::InvalidTheoremRule {
@@ -567,7 +567,7 @@ impl Kernel {
     /// of application form. Rejection is transactional.
     pub fn choice_intro(&mut self, theorem: ThmId) -> Result<ChoiceThm, KernelError> {
         let source_theorem = self.require_thm(theorem)?;
-        let source = sole_positive_conclusion(source_theorem)?;
+        let source = sole_positive_conclusion(&source_theorem)?;
         self.require_bool_term::<std::convert::Infallible>(source)?;
         let Node::App(predicate, _) = *self.row(source)?.expr() else {
             return Err(KernelError::InvalidTheoremRule {
@@ -600,8 +600,8 @@ impl Kernel {
     /// and `target` is exactly `predicate (ε predicate)`.
     pub fn choice_intro_at(&mut self, theorem: ThmId, target: Ref) -> Result<ThmId, KernelError> {
         let source_theorem = self.require_thm(theorem)?;
-        let source = sole_positive_conclusion(source_theorem)?;
-        let premises = source_theorem.lhs.to_owned();
+        let source = sole_positive_conclusion(&source_theorem)?;
+        let premises = source_theorem.lhs.clone();
         self.require_bool_term::<std::convert::Infallible>(source)?;
         self.require_bool_term::<std::convert::Infallible>(target)?;
         let Node::App(predicate, _) = *self.row(source)?.expr() else {
@@ -646,7 +646,7 @@ impl Kernel {
     /// conclusion, `binder` is a checked term variable, and `binder` is absent
     /// from every premise proposition. Rejection is transactional.
     pub fn forall_intro(&mut self, theorem: ThmId, binder: Ref) -> Result<ForallThm, KernelError> {
-        let body = sole_positive_conclusion(self.require_thm(theorem)?)?;
+        let body = sole_positive_conclusion(&self.require_thm(theorem)?)?;
         let bool_ty = self.require_bool_term::<std::convert::Infallible>(body)?;
 
         let mut staged = Self {
@@ -677,8 +677,8 @@ impl Kernel {
         universal: Ref,
     ) -> Result<ThmId, KernelError> {
         let source = self.require_thm(theorem)?;
-        let body = sole_positive_conclusion(source)?;
-        let premises = source.lhs.to_owned();
+        let body = sole_positive_conclusion(&source)?;
+        let premises = source.lhs.clone();
         let bool_ty = self.require_bool_term::<std::convert::Infallible>(body)?;
         self.require_form::<std::convert::Infallible>(binder, "tm.fv", |node| {
             matches!(node, Node::TmFv { .. })
@@ -746,7 +746,7 @@ impl Kernel {
                 rule: "type universal introduction",
             });
         }
-        let predicate = sole_positive_conclusion(source)?;
+        let predicate = sole_positive_conclusion(&source)?;
         let mut staged = Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
@@ -829,8 +829,8 @@ impl Kernel {
     /// Returns an error if the theorem handle is absent.
     pub fn contract_theorem(&mut self, theorem: ThmId) -> Result<(), KernelError> {
         let source = self.require_thm(theorem)?;
-        let mut premises = source.lhs.to_owned();
-        let mut conclusions = source.rhs.to_owned();
+        let mut premises = source.lhs.clone();
+        let mut conclusions = source.rhs.clone();
         premises.normalize();
         conclusions.normalize();
         self.replace_theorem(theorem, Thm::new(premises, conclusions))
@@ -961,7 +961,7 @@ impl Kernel {
             return Err(KernelError::InvalidTheoremRule { rule: "and left" });
         }
         premises.push(unit_row(conjunction));
-        self.push_theorem(Thm::new(Matrix::new(premises), source.rhs.to_owned()))
+        self.push_theorem(Thm::new(Matrix::new(premises), source.rhs.clone()))
     }
 
     /// Introduces a checked conjunction on the right, concatenating contexts.
@@ -1032,7 +1032,7 @@ impl Kernel {
             return Err(KernelError::InvalidTheoremRule { rule: "or right" });
         }
         conclusions.push(unit_row(disjunction));
-        self.push_theorem(Thm::new(source.lhs.to_owned(), Matrix::new(conclusions)))
+        self.push_theorem(Thm::new(source.lhs.clone(), Matrix::new(conclusions)))
     }
 
     /// Introduces a checked implication on the left.
@@ -1126,7 +1126,7 @@ impl Kernel {
         }
         let replacement = self.expand_right(formula, branch)?;
         conc.extend(replacement.into_iter().map(unit_row));
-        self.push_theorem(Thm::new(source.lhs.to_owned(), Matrix::new(conc)))
+        self.push_theorem(Thm::new(source.lhs.clone(), Matrix::new(conc)))
     }
 
     /// Recursively flattens a disjunctive opcode tree on the right side.
@@ -1160,7 +1160,7 @@ impl Kernel {
             }
         }
         conclusions.extend(leaves.into_iter().map(unit_row));
-        self.push_theorem(Thm::new(source.lhs.to_owned(), Matrix::new(conclusions)))
+        self.push_theorem(Thm::new(source.lhs.clone(), Matrix::new(conclusions)))
     }
 
     /// Recursively flattens a conjunctive opcode tree on the left side.
@@ -1179,7 +1179,7 @@ impl Kernel {
         }
         let leaves = self.collect_tree(formula, TreeSide::Conjunctive)?;
         premises.extend(leaves.into_iter().map(unit_row));
-        self.push_theorem(Thm::new(Matrix::new(premises), source.rhs.to_owned()))
+        self.push_theorem(Thm::new(Matrix::new(premises), source.rhs.clone()))
     }
 
     /// Folds the leaves of a conjunctive opcode tree on the left side.
@@ -1565,7 +1565,7 @@ enum TreeSide {
     Disjunctive,
 }
 
-fn sole_positive_conclusion(theorem: ThmRef<'_>) -> Result<Ref, KernelError> {
+fn sole_positive_conclusion(theorem: &ThmRef) -> Result<Ref, KernelError> {
     let mut rows = theorem.rhs.rows();
     let row = rows.next().ok_or(KernelError::InvalidTheoremRule {
         rule: "AP_THM single conclusion",
@@ -1658,7 +1658,8 @@ mod tests {
         RowId::new(i32::try_from(one_based).unwrap()).unwrap()
     }
 
-    fn unit_premises(theorem: ThmRef<'_>) -> Vec<Lit> {
+    #[allow(clippy::needless_pass_by_value)]
+    fn unit_premises(theorem: ThmRef) -> Vec<Lit> {
         theorem
             .lhs
             .rows()
@@ -1666,7 +1667,8 @@ mod tests {
             .collect()
     }
 
-    fn unit_conclusions(theorem: ThmRef<'_>) -> Vec<Lit> {
+    #[allow(clippy::needless_pass_by_value)]
+    fn unit_conclusions(theorem: ThmRef) -> Vec<Lit> {
         theorem
             .rhs
             .rows()
@@ -1674,7 +1676,8 @@ mod tests {
             .collect()
     }
 
-    fn snapshot(theorem: ThmRef<'_>) -> (Vec<LitVec>, Vec<LitVec>) {
+    #[allow(clippy::needless_pass_by_value)]
+    fn snapshot(theorem: ThmRef) -> (Vec<LitVec>, Vec<LitVec>) {
         (theorem.lhs.to_rows(), theorem.rhs.to_rows())
     }
 
@@ -1711,7 +1714,7 @@ mod tests {
             .convert_theorem(positive_theorem, application, reference(p))
             .unwrap();
         let converted = kernel.thm().get(positive_theorem).unwrap();
-        assert_eq!(unit_premises(converted), [p]);
+        assert_eq!(unit_premises(converted.clone()), [p]);
         assert_eq!(unit_conclusions(converted), [p]);
 
         let negative_theorem = kernel.identity(source.negated()).unwrap();
@@ -1719,7 +1722,7 @@ mod tests {
             .convert_theorem(negative_theorem, application, reference(p))
             .unwrap();
         let converted = kernel.thm().get(negative_theorem).unwrap();
-        assert_eq!(unit_premises(converted), [p.negated()]);
+        assert_eq!(unit_premises(converted.clone()), [p.negated()]);
         assert_eq!(unit_conclusions(converted), [p.negated()]);
 
         let before = snapshot(kernel.thm().get(positive_theorem).unwrap());
@@ -1752,7 +1755,7 @@ mod tests {
             .convert_conclusions(theorem, application, reference(p))
             .unwrap();
         let converted = kernel.thm().get(theorem).unwrap();
-        assert_eq!(unit_premises(converted), [positive(application)]);
+        assert_eq!(unit_premises(converted.clone()), [positive(application)]);
         assert_eq!(unit_conclusions(converted), [p]);
     }
 
@@ -2034,7 +2037,7 @@ mod tests {
             [predicate, chosen.witness]
         );
         let result = kernel.require_thm(chosen.theorem).unwrap();
-        assert_eq!(unit_premises(result), [positive(application)]);
+        assert_eq!(unit_premises(result.clone()), [positive(application)]);
         assert_eq!(unit_conclusions(result), [positive(chosen.proposition)]);
 
         let malformed = kernel.identity(p).unwrap();
@@ -2054,7 +2057,7 @@ mod tests {
 
         let applied = kernel.ap_term(equality_theorem, function).unwrap();
         let applied_theorem = kernel.require_thm(applied.theorem).unwrap();
-        assert_eq!(unit_premises(applied_theorem), [positive(equality)]);
+        assert_eq!(unit_premises(applied_theorem.clone()), [positive(equality)]);
         assert_eq!(
             unit_conclusions(applied_theorem),
             [positive(applied.equality)]
@@ -2069,7 +2072,7 @@ mod tests {
             .eq_mp(proposition_equality_theorem, premise_theorem)
             .unwrap();
         let rewritten = kernel.require_thm(rewritten).unwrap();
-        assert_eq!(unit_premises(rewritten), [p]);
+        assert_eq!(unit_premises(rewritten.clone()), [p]);
         assert_eq!(unit_conclusions(rewritten), [q]);
 
         let wrong_premise = kernel.identity(q).unwrap();
@@ -2333,7 +2336,7 @@ mod tests {
         let neg_p_clause = kernel.expand_conclusion(not_clause, not_p, None).unwrap();
         let refutation = kernel.resolve(p_clause, neg_p_clause, p).unwrap();
         let sequent = kernel.require_thm(refutation).unwrap();
-        assert_eq!(unit_premises(sequent), [formula, formula]);
+        assert_eq!(unit_premises(sequent.clone()), [formula, formula]);
         assert!(sequent.rhs.rows().next().is_none());
     }
 
@@ -2653,7 +2656,7 @@ mod tests {
 
     #[test]
     fn completed_refutations_copy_into_syl_and_thm_through_checked_views() {
-        let atom = Lit::new(i32::MAX - 1);
+        let atom = Lit::new((1 << 29) - 1);
         let refutation = Refuter::new(Matrix::new([
             LitVec::new(),
             std::iter::once(atom).collect(),
@@ -2702,7 +2705,8 @@ mod tests {
         assert_valid(&kernel, or_right, &[p, q]);
     }
 
-    fn valid(sequent: ThmRef<'_>, p: Lit, p_value: bool, q: Lit, q_value: bool) -> bool {
+    #[allow(clippy::needless_pass_by_value)]
+    fn valid(sequent: ThmRef, p: Lit, p_value: bool, q: Lit, q_value: bool) -> bool {
         let value = |proposition: Lit| {
             let atom = if reference(proposition) == reference(p) {
                 p_value

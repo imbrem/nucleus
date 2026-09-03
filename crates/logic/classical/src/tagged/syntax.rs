@@ -11,7 +11,7 @@ pub enum Formula {
     /// A signed Boolean atom.
     Literal {
         /// The unsigned atom identifier.
-        atom: u64,
+        atom: u32,
         /// Whether the atom is complemented.
         negative: bool,
     },

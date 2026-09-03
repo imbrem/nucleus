@@ -1,10 +1,7 @@
-//! Compatibility surface for the former matrix API.
+//! CNF construction and checked refutation.
 //!
-//! [`Matrix`] is an untrusted construction and projection value. Canonical
-//! tagged packing gates every insertion and mutation, so a resident slot is
-//! always syntax that packs into a valid arena; [`ClassicalArena`] discards the
-//! packed result, while [`ClassicalKernel`] retains the sealed
-//! [`tagged::Theorem`] fact. One-based IDs are only external handles.
+//! [`Matrix`] is untrusted syntax. Every stored mutation passes through the
+//! tagged validator. Only [`ClassicalKernel`] stores theorem facts.
 
 use std::{collections::BTreeSet, num::NonZeroI32};
 
@@ -95,7 +92,7 @@ impl Lit {
 
     fn formula(self) -> Formula {
         Formula::Literal {
-            atom: u64::from(self.magnitude()),
+            atom: self.magnitude(),
             negative: !self.is_positive(),
         }
     }
@@ -180,10 +177,6 @@ impl Matrix {
         self.0 = rows.into_iter().map(Some).collect();
     }
 
-    fn view(&self) -> MatrixRef<'_> {
-        MatrixRef(&self.0)
-    }
-
     fn row(&self, id: RowId) -> Result<&LitVec, Error> {
         self.0
             .get(id.position())
@@ -265,36 +258,13 @@ fn junction(side: tagged::Side, children: Vec<Formula>) -> Formula {
     }
 }
 
-/// A borrowed matrix projection of tagged checked syntax.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MatrixRef<'a>(&'a [Option<LitVec>]);
-
-impl<'a> MatrixRef<'a> {
-    /// Iterates over live rows, skipping tombstones.
-    pub fn rows(self) -> impl Iterator<Item = &'a [Lit]> {
-        self.0.iter().filter_map(Option::as_deref)
-    }
-
-    /// Copies live rows into compact owned storage.
-    #[must_use]
-    pub fn to_rows(self) -> Vec<LitVec> {
-        self.0.iter().flatten().cloned().collect()
-    }
-
-    /// Copies this projection into an untrusted builder.
-    #[must_use]
-    pub fn to_owned(self) -> Matrix {
-        Matrix::new(self.to_rows())
-    }
-}
-
-/// A borrowed compatibility projection interpreted as `CNF |- DNF`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ThmRef<'a> {
+/// An owned matrix sequent interpreted as `CNF |- DNF`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThmRef {
     /// Conjunctive left-hand side.
-    pub lhs: MatrixRef<'a>,
+    pub lhs: Matrix,
     /// Disjunctive right-hand side.
-    pub rhs: MatrixRef<'a>,
+    pub rhs: Matrix,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -305,10 +275,10 @@ impl Projection {
         Self(left, right)
     }
 
-    fn view(&self) -> ThmRef<'_> {
+    fn view(&self) -> ThmRef {
         ThmRef {
-            lhs: self.0.view(),
-            rhs: self.1.view(),
+            lhs: Matrix::new(self.0.to_rows()),
+            rhs: Matrix::new(self.1.to_rows()),
         }
     }
 
@@ -325,6 +295,74 @@ impl Projection {
             conclusion: self.1.formula(tagged::Side::Right),
         }
     }
+
+    fn from_sequent(sequent: &Sequent) -> Result<Self, Error> {
+        Ok(Self(
+            matrix_from_formula(&sequent.premise, tagged::Side::Left)?,
+            matrix_from_formula(&sequent.conclusion, tagged::Side::Right)?,
+        ))
+    }
+}
+
+#[allow(clippy::manual_let_else)]
+fn matrix_from_formula(formula: &Formula, side: tagged::Side) -> Result<Matrix, Error> {
+    let children = match (side, formula) {
+        (
+            tagged::Side::Left,
+            Formula::And {
+                negative: false,
+                children,
+            },
+        )
+        | (
+            tagged::Side::Right,
+            Formula::Or {
+                negative: false,
+                children,
+            },
+        ) => children,
+        _ => {
+            return Err(Error::Tagged {
+                source: tagged::RuntimeError::InvalidArena,
+            });
+        }
+    };
+    let mut rows = Vec::with_capacity(children.len());
+    for child in children {
+        let literals = match (side, child) {
+            (
+                tagged::Side::Left,
+                Formula::Or {
+                    negative: false,
+                    children,
+                },
+            )
+            | (
+                tagged::Side::Right,
+                Formula::And {
+                    negative: false,
+                    children,
+                },
+            ) => children,
+            _ => {
+                return Err(Error::Tagged {
+                    source: tagged::RuntimeError::InvalidArena,
+                });
+            }
+        };
+        let mut row = LitVec::with_capacity(literals.len());
+        for literal in literals {
+            let Formula::Literal { atom, negative } = literal else {
+                return Err(Error::Tagged {
+                    source: tagged::RuntimeError::InvalidArena,
+                });
+            };
+            let magnitude = i32::try_from(*atom).map_err(|_| Error::ArenaFull)?;
+            row.push(Lit::new(if *negative { magnitude } else { -magnitude }));
+        }
+        rows.push(row);
+    }
+    Ok(Matrix::new(rows))
 }
 
 impl Serialize for Projection {
@@ -385,7 +423,7 @@ macro_rules! one_based_id {
 one_based_id!(ThmId, "An ephemeral one-based theorem handle.");
 one_based_id!(RowId, "A one-based matrix-row identifier.");
 
-/// A classical compatibility operation failure.
+/// A classical operation failure.
 #[derive(Clone, Debug, Eq, PartialEq, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum Error {
@@ -459,7 +497,7 @@ pub enum Error {
     /// The refuter has not derived an empty row.
     #[snafu(display("the current CNF state has not been refuted"))]
     NoRefutation,
-    /// Canonical tagged packing rejected a compatibility projection.
+    /// Canonical tagged packing rejected a matrix sequent.
     #[snafu(transparent)]
     Tagged {
         /// Tagged runtime failure.
@@ -473,52 +511,35 @@ pub enum Error {
     },
 }
 
-/// One resident compatibility projection.
-///
-/// The projection is the whole slot. Canonical tagged packing still gates
-/// every insertion and replacement, so a resident slot is always syntax that
-/// packs into a valid arena, but the packed value itself is not retained: no
-/// consumer ever read it, and every mutation rebuilt it from the projection
-/// anyway. Dropping it makes copying a slot a flat matrix copy.
+/// One resident matrix sequent.
 #[derive(Clone, Debug)]
 struct SyntaxSlot {
-    projection: Projection,
+    checked: tagged::Checked,
 }
 
 impl SyntaxSlot {
-    /// Validates untrusted syntax by canonical packing and stores the matrix.
-    fn pack(projection: Projection) -> Result<Self, Error> {
-        // Gate only: the packed arena is discarded, never stored.
-        tagged::pack(&[projection.sequent()])?;
-        Ok(Self { projection })
+    /// Validates and packs untrusted syntax.
+    fn pack(projection: &Projection) -> Result<Self, Error> {
+        Ok(Self {
+            checked: tagged::pack(&[projection.sequent()])?,
+        })
     }
 
-    fn view(&self) -> ThmRef<'_> {
-        self.projection.view()
+    fn projection(&self) -> Result<Projection, Error> {
+        let sequent = self.checked.decode_sequents()?.pop().ok_or(Error::Tagged {
+            source: tagged::RuntimeError::InvalidArena,
+        })?;
+        Projection::from_sequent(&sequent)
     }
-}
 
-/// Compares live rows in order, ignoring tombstone positions.
-///
-/// This is exactly the relation the retained [`tagged::Checked`] value used to
-/// define: packing reads live rows only, so two projections packed equal
-/// exactly when their live rows agree.
-fn same_live_rows(left: &Matrix, right: &Matrix) -> bool {
-    let mut left = left.0.iter().flatten();
-    let mut right = right.0.iter().flatten();
-    loop {
-        match (left.next(), right.next()) {
-            (None, None) => return true,
-            (Some(left), Some(right)) if left == right => (),
-            _ => return false,
-        }
+    fn view(&self) -> Result<ThmRef, Error> {
+        Ok(self.projection()?.view())
     }
 }
 
 impl PartialEq for SyntaxSlot {
     fn eq(&self, other: &Self) -> bool {
-        same_live_rows(&self.projection.0, &other.projection.0)
-            && same_live_rows(&self.projection.1, &other.projection.1)
+        self.checked == other.checked
     }
 }
 
@@ -526,23 +547,14 @@ impl Eq for SyntaxSlot {}
 
 /// Mutable checked-syntax storage with stable external handles and LIFO reuse.
 ///
-/// Slots hold untrusted matrix projections only. Every insertion and mutation
-/// is repacked and checked by [`tagged::pack`] before its slot changes, so a
-/// resident slot is always syntax that packs into a valid arena; the packed
-/// arena is the gate, not the storage. Storing checked syntax here would
-/// promote nothing — theorem facts live in [`ClassicalKernel`] as sealed
-/// [`tagged::Theorem`] values, and this store is deliberately outside that
-/// authority.
+/// Slots contain packed, validated syntax. They do not carry theorem
+/// authority; universal facts live in [`ClassicalKernel`].
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ClassicalArena {
     slots: Vec<Option<SyntaxSlot>>,
     free: Vec<ThmId>,
 }
 
-// This compatibility representation is deliberately the historical sequence
-// of matrix projections. It is embedded in the current HOL wire format and is
-// not the versioned tagged-arena leaf. Standalone canonical DRISL encoding
-// lives in `covalence-data-classical`; migrating HOL is a separate wire change.
 impl Serialize for ClassicalArena {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -550,7 +562,7 @@ impl Serialize for ClassicalArena {
     {
         let mut sequence = serializer.serialize_seq(Some(self.live_theorems().count()))?;
         for slot in self.slots.iter().flatten() {
-            sequence.serialize_element(&slot.projection)?;
+            sequence.serialize_element(&slot.projection().map_err(serde::ser::Error::custom)?)?;
         }
         sequence.end()
     }
@@ -564,7 +576,7 @@ impl<'de> Deserialize<'de> for ClassicalArena {
         let rows = Vec::<Projection>::deserialize(deserializer)?;
         let mut arena = Self::new();
         for row in rows {
-            arena.store_projection(row).map_err(de::Error::custom)?;
+            arena.store_projection(&row).map_err(de::Error::custom)?;
         }
         Ok(arena)
     }
@@ -581,14 +593,17 @@ impl ClassicalArena {
     }
 
     /// Iterates over live projections in handle order.
-    pub fn live_theorems(&self) -> impl Iterator<Item = ThmRef<'_>> {
-        self.slots.iter().flatten().map(SyntaxSlot::view)
+    pub fn live_theorems(&self) -> impl Iterator<Item = ThmRef> + '_ {
+        self.slots
+            .iter()
+            .flatten()
+            .filter_map(|slot| slot.view().ok())
     }
 
-    /// Borrows a live compatibility projection.
+    /// Borrows a live matrix sequent.
     #[must_use]
-    pub fn get(&self, id: ThmId) -> Option<ThmRef<'_>> {
-        self.slot(id).ok().map(SyntaxSlot::view)
+    pub fn get(&self, id: ThmId) -> Option<ThmRef> {
+        self.slot(id).ok()?.view().ok()
     }
 
     fn slot(&self, id: ThmId) -> Result<&SyntaxSlot, Error> {
@@ -598,8 +613,8 @@ impl ClassicalArena {
             .ok_or(Error::MissingTheorem { id: id.get() })
     }
 
-    fn projection(&self, id: ThmId) -> Result<&Projection, Error> {
-        Ok(&self.slot(id)?.projection)
+    fn projection(&self, id: ThmId) -> Result<Projection, Error> {
+        self.slot(id)?.projection()
     }
 
     fn allocate(&mut self, slot: SyntaxSlot) -> Result<ThmId, Error> {
@@ -618,12 +633,12 @@ impl ClassicalArena {
         Ok(id)
     }
 
-    fn store_projection(&mut self, projection: Projection) -> Result<ThmId, Error> {
+    fn store_projection(&mut self, projection: &Projection) -> Result<ThmId, Error> {
         let slot = SyntaxSlot::pack(projection)?;
         self.allocate(slot)
     }
 
-    fn replace_projection(&mut self, id: ThmId, projection: Projection) -> Result<(), Error> {
+    fn replace_projection(&mut self, id: ThmId, projection: &Projection) -> Result<(), Error> {
         let replacement = SyntaxSlot::pack(projection)?;
         let slot = self
             .slots
@@ -640,7 +655,7 @@ impl ClassicalArena {
     ///
     /// Returns an error if packing fails or no handle is available.
     pub fn insert(&mut self, premises: Matrix, conclusions: Matrix) -> Result<ThmId, Error> {
-        self.store_projection(Projection::new(premises, conclusions))
+        self.store_projection(&Projection::new(premises, conclusions))
     }
 
     /// Copies checked syntax into a fresh handle.
@@ -649,8 +664,8 @@ impl ClassicalArena {
     ///
     /// Returns an error if the source is absent, repacking fails, or storage is full.
     pub fn copy(&mut self, source: ThmId) -> Result<ThmId, Error> {
-        let projection = self.projection(source)?.clone();
-        self.store_projection(projection)
+        let projection = self.projection(source)?;
+        self.store_projection(&projection)
     }
 
     /// Removes one live handle and makes it the next reusable handle.
@@ -672,7 +687,15 @@ impl ClassicalArena {
     ///
     /// Returns an error for an absent handle or row, or packing failure.
     pub fn cross_row(&mut self, id: ThmId, side: tagged::Side, row: RowId) -> Result<(), Error> {
-        let mut replacement = self.projection(id)?.clone();
+        let slot = self
+            .slots
+            .get_mut(id.position())
+            .and_then(Option::as_mut)
+            .ok_or(Error::MissingTheorem { id: id.get() })?;
+        if slot.checked.cross_matrix_row(side, row.position()) {
+            return Ok(());
+        }
+        let mut replacement = self.projection(id)?;
         let source = replacement
             .side_mut(side)
             .0
@@ -683,7 +706,7 @@ impl ClassicalArena {
             .side_mut(opposite(side))
             .0
             .push(Some(source.into_iter().map(Lit::negated).collect()));
-        self.replace_projection(id, replacement)
+        self.replace_projection(id, &replacement)
     }
 
     /// Sorts and deduplicates one indexed row transactionally.
@@ -697,16 +720,16 @@ impl ClassicalArena {
         side: tagged::Side,
         row: RowId,
     ) -> Result<(), Error> {
-        let mut replacement = self.projection(id)?.clone();
-        let target = replacement
-            .side_mut(side)
-            .0
-            .get_mut(row.position())
+        let slot = self
+            .slots
+            .get_mut(id.position())
             .and_then(Option::as_mut)
-            .ok_or_else(|| missing_row(id, side, row))?;
-        target.sort_unstable();
-        target.dedup();
-        self.replace_projection(id, replacement)
+            .ok_or(Error::MissingTheorem { id: id.get() })?;
+        if slot.checked.normalize_matrix_row(side, row.position()) {
+            Ok(())
+        } else {
+            Err(missing_row(id, side, row))
+        }
     }
 
     /// Replaces a live handle after packing and validating the new syntax.
@@ -721,7 +744,7 @@ impl ClassicalArena {
         premises: Matrix,
         conclusions: Matrix,
     ) -> Result<(), Error> {
-        self.replace_projection(id, Projection::new(premises, conclusions))
+        self.replace_projection(id, &Projection::new(premises, conclusions))
     }
 }
 
@@ -746,18 +769,17 @@ impl<'a> CheckedArena<'a> {
     ///
     /// Returns an error if packing fails or storage is full.
     pub fn copy_refutation(&mut self, refutation: &Refutation) -> Result<ThmId, Error> {
-        self.arena.store_projection(refutation.projection.clone())
+        self.arena.store_projection(&refutation.projection)
     }
 }
 
 #[derive(Clone, Debug)]
 struct TheoremSlot {
     theorem: tagged::Theorem,
-    projection: Projection,
 }
 
 impl TheoremSlot {
-    fn new(theorem: tagged::Theorem, projection: Projection) -> Self {
+    fn new(theorem: tagged::Theorem, projection: &Projection) -> Self {
         assert_eq!(
             theorem
                 .checked()
@@ -765,14 +787,19 @@ impl TheoremSlot {
                 .expect("sealed syntax decodes"),
             [projection.sequent()]
         );
-        Self {
-            theorem,
-            projection,
-        }
+        Self { theorem }
     }
 
-    fn view(&self) -> ThmRef<'_> {
-        self.projection.view()
+    fn view(&self) -> Result<ThmRef, Error> {
+        let sequent = self
+            .theorem
+            .checked()
+            .decode_sequents()?
+            .pop()
+            .ok_or(Error::Tagged {
+                source: tagged::RuntimeError::InvalidArena,
+            })?;
+        Ok(Projection::from_sequent(&sequent)?.view())
     }
 }
 
@@ -795,8 +822,8 @@ impl ClassicalKernel {
 
     /// Borrows one universally valid theorem projection.
     #[must_use]
-    pub fn get(&self, id: ThmId) -> Option<ThmRef<'_>> {
-        self.slot(id).ok().map(TheoremSlot::view)
+    pub fn get(&self, id: ThmId) -> Option<ThmRef> {
+        self.slot(id).ok()?.view().ok()
     }
 
     /// Borrows the sealed selected-runtime fact behind one live handle.
@@ -839,7 +866,7 @@ impl ClassicalKernel {
     /// Returns an error if tagged packing fails or theorem storage is full.
     pub fn copy_refutation(&mut self, refutation: &Refutation) -> Result<ThmId, Error> {
         let theorem = tagged::Theorem::seal_refutation(refutation)?;
-        self.allocate(TheoremSlot::new(theorem, refutation.projection.clone()))
+        self.allocate(TheoremSlot::new(theorem, &refutation.projection))
     }
 }
 
@@ -853,9 +880,9 @@ pub struct Refutation {
 }
 
 impl Refutation {
-    /// Borrows the certified compatibility sequent `goal |- []`.
+    /// Borrows the certified sequent `goal |- []`.
     #[must_use]
-    pub fn theorem(&self) -> ThmRef<'_> {
+    pub fn theorem(&self) -> ThmRef {
         self.projection.view()
     }
 
@@ -1064,8 +1091,6 @@ mod tests {
         values.into_iter().map(Lit::new).collect()
     }
 
-    /// The identity projection `[[p]] |- [[p]]`, which the arena no longer
-    /// builds for itself now that no consumer asked it to.
     fn identity(arena: &mut ClassicalArena, literal: Lit) -> Result<ThmId, Error> {
         arena.insert(
             Matrix::new([std::iter::once(literal).collect()]),
@@ -1087,10 +1112,8 @@ mod tests {
         let reused_second = identity(&mut arena, Lit::positive(3)).unwrap();
         let reused_first = identity(&mut arena, Lit::positive(4)).unwrap();
         assert_eq!((reused_second, reused_first), (second, first));
-        // Slots no longer retain a packed arena, but every resident projection
-        // is still exactly what canonical packing accepted.
         for slot in arena.slots.iter().flatten() {
-            let sequent = slot.projection.sequent();
+            let sequent = slot.projection().unwrap().sequent();
             let packed = tagged::pack(std::slice::from_ref(&sequent)).unwrap();
             assert_eq!(packed.decode_sequents().unwrap(), [sequent]);
         }
@@ -1098,15 +1121,18 @@ mod tests {
 
     #[test]
     fn slot_equality_sees_live_rows_and_not_tombstone_layout() {
-        // Crossing a row leaves a tombstone behind it; building the same live
-        // rows directly does not. Storage layout differs, syntax does not.
         let mut crossed = ClassicalArena::new();
         let id = crossed
             .insert(Matrix::new([row([-1]), row([-2])]), Matrix::default())
             .unwrap();
+        let words = crossed.slot(id).unwrap().checked.arena().words().len();
         crossed
             .cross_row(id, tagged::Side::Left, RowId::new(1).unwrap())
             .unwrap();
+        assert_eq!(
+            crossed.slot(id).unwrap().checked.arena().words().len(),
+            words
+        );
 
         let mut direct = ClassicalArena::new();
         direct
@@ -1126,7 +1152,7 @@ mod tests {
         let before = arena.clone();
         assert!(
             arena
-                .replace(id, Matrix::new([row([i32::MAX - 1])]), Matrix::default())
+                .replace(id, Matrix::new([row([500_000_000])]), Matrix::default())
                 .is_ok()
         );
         // Missing-handle failure cannot disturb the successfully replaced slot.
@@ -1183,7 +1209,12 @@ mod tests {
         assert_eq!(decoded, arena);
         // Decoding re-gates every slot through canonical packing, which leaves
         // no free blocks. The packed arena is checked here, not retained.
-        let sequent = decoded.slots[0].as_ref().unwrap().projection.sequent();
+        let sequent = decoded.slots[0]
+            .as_ref()
+            .unwrap()
+            .projection()
+            .unwrap()
+            .sequent();
         assert!(tagged::pack(&[sequent]).unwrap().free_blocks().is_empty());
     }
 }

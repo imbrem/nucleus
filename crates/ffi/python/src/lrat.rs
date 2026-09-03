@@ -159,7 +159,7 @@ impl PyRefutation {
 
     #[getter]
     fn cnf(&self) -> PyCnf {
-        PyCnf(self.0.theorem().lhs.to_owned())
+        PyCnf(self.0.theorem().lhs.clone())
     }
 }
 

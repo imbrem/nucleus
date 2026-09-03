@@ -12,7 +12,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use covalence_logic_classical::tagged::{Arena, Checked, Formula, Ref, Word};
+use super::{Arena, Checked, Formula, Ref, Word};
 
 /// A left-nested chain of `depth` unary `AND` nodes over one literal.
 ///
@@ -28,7 +28,7 @@ fn nested_chain(depth: usize) -> Arena {
         let child = if level + 1 == depth {
             leaf
         } else {
-            let next = u64::try_from(base + 4).expect("address fits");
+            let next = u32::try_from(base + 4).expect("address fits");
             Word::pointer(next, 0, false).expect("pointer fits")
         };
         words.extend([Word::natural(0).expect("size class fits"), child]);

@@ -13,7 +13,7 @@
 //! to shallow arenas -- which is the point of replacing it, and the reason the
 //! depth tests live elsewhere.
 
-use covalence_logic_classical::tagged::{Arena, Checked, Formula, Ref, Sequent, Word, pack};
+use super::{Arena, Checked, Formula, Ref, Sequent, Word, pack};
 
 // ---------------------------------------------------------------------------
 // The former validator, transcribed.
@@ -22,7 +22,7 @@ use covalence_logic_classical::tagged::{Arena, Checked, Formula, Ref, Sequent, W
 mod reference {
     use super::{Arena, Formula, Ref, Sequent, Word};
 
-    const PAYLOAD_WIDTH: u64 = 63;
+    const PAYLOAD_WIDTH: u32 = 31;
     const RESERVED_WORDS: usize = 4;
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -96,7 +96,7 @@ mod reference {
         }
     }
 
-    fn natural(word: Word) -> Option<u64> {
+    fn natural(word: Word) -> Option<u32> {
         (!word.is_negative()).then(|| word.payload())
     }
 
@@ -206,7 +206,7 @@ mod reference {
             pairwise_disjoint(&blocks).then_some(blocks)
         }
 
-        fn live_block(&self, base: u64) -> Option<Block> {
+        fn live_block(&self, base: u32) -> Option<Block> {
             let base = usize::try_from(base).ok()?;
             let size_class = usize::try_from(natural(self.word(base)?)?).ok()?;
             if size_class.checked_add(2)? > usize::try_from(PAYLOAD_WIDTH).ok()? {
@@ -217,7 +217,7 @@ mod reference {
         }
 
         fn read_live(&self, block: Block) -> Option<Vec<Ref>> {
-            if self.live_block(u64::try_from(block.base).ok()?)? != block {
+            if self.live_block(u32::try_from(block.base).ok()?)? != block {
                 return None;
             }
             let capacity = block.capacity()?;
@@ -329,14 +329,14 @@ mod reference {
 // Shapes and mutation.
 // ---------------------------------------------------------------------------
 
-fn literal(atom: u64) -> Formula {
+fn literal(atom: u32) -> Formula {
     Formula::Literal {
         atom,
         negative: atom.is_multiple_of(3),
     }
 }
 
-fn clause(tag: u64, width: u64) -> Formula {
+fn clause(tag: u32, width: u32) -> Formula {
     Formula::Or {
         negative: false,
         children: (0..width)
@@ -349,8 +349,8 @@ fn clause(tag: u64, width: u64) -> Formula {
 /// arena carrying free blocks so the intrusive rings are exercised too.
 fn seeds() -> Vec<Arena> {
     let mut arenas = Vec::new();
-    for rows in [0_u64, 1, 3] {
-        for width in [1_u64, 2, 4] {
+    for rows in [0_u32, 1, 3] {
+        for width in [1_u32, 2, 4] {
             let sequent = Sequent {
                 premise: Formula::And {
                     negative: false,
@@ -397,12 +397,12 @@ fn seeds() -> Vec<Arena> {
     }])
     .expect("packs");
     let (mut words, _, roots) = canonical.arena().clone().into_parts();
-    let base = u64::try_from(words.len()).expect("fits");
+    let base = u32::try_from(words.len()).expect("fits");
     let free = Word::pointer(base, 0, false).expect("fits");
     words.extend([Word::ZERO, free, free, Word::ZERO]);
     arenas.push(Arena::new(words, free, roots));
 
-    let pointer = |base: u64| Word::pointer(base, 0, false).expect("fits");
+    let pointer = |base: u32| Word::pointer(base, 0, false).expect("fits");
     arenas.push(Arena::new(
         vec![
             Word::ZERO,
@@ -446,8 +446,8 @@ impl Rng {
 }
 
 /// The nearest four-aligned block base at or below `index`, never null.
-fn aligned(index: usize) -> u64 {
-    (u64::try_from(index).expect("index fits") / 4).max(1) * 4
+fn aligned(index: usize) -> u32 {
+    (u32::try_from(index).expect("index fits") / 4).max(1) * 4
 }
 
 /// Overwrites a handful of words with values chosen to look plausible: zeros,
@@ -460,11 +460,13 @@ fn mutate(arena: &Arena, rng: &mut Rng) -> Arena {
     }
     for _ in 0..=rng.below(4) {
         let index = rng.below(words.len());
-        let length = u64::try_from(words.len()).expect("fits");
+        let length = u32::try_from(words.len()).expect("fits");
         words[index] = match rng.below(7) {
             0 => Word::ZERO,
-            1 => Word::natural(rng.next() % 4).expect("small natural fits"),
-            2 => Word::literal(rng.next() % 8, rng.next().is_multiple_of(2)).expect("fits"),
+            1 => Word::natural((rng.next() % 4) as u32).expect("small natural fits"),
+            2 => {
+                Word::literal((rng.next() % 8) as u32, rng.next().is_multiple_of(2)).expect("fits")
+            }
             3 => Word::pointer(
                 aligned(rng.below(words.len())),
                 u8::try_from(rng.below(3)).expect("tag fits"),
@@ -473,7 +475,9 @@ fn mutate(arena: &Arena, rng: &mut Rng) -> Arena {
             .expect("pointer fits"),
             4 => Word::pointer((length / 4).max(1) * 4, 0, false).expect("pointer fits"),
             5 => words[index].negated(),
-            _ => Word::from_raw(rng.next()),
+            _ => Word::from_raw(
+                u32::try_from(rng.next() & u64::from(u32::MAX)).expect("masked random word fits"),
+            ),
         };
     }
     if rng.below(4) == 0 && !roots.is_empty() && !words.is_empty() {
@@ -572,7 +576,7 @@ fn every_single_word_corruption_is_judged_identically() {
         Word::pointer(4, 1, false).expect("fits"),
         Word::pointer(8, 2, true).expect("fits"),
         Word::from_raw(1),
-        Word::from_raw(u64::MAX),
+        Word::from_raw(u32::MAX),
     ];
     let mut accepted = 0_usize;
     for index in 0..arena.words().len() {

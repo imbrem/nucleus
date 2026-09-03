@@ -1,9 +1,7 @@
-//! Cost of the transactional arena copy that every kernel rule stages.
+//! Measures the cost of transactional arena copies.
 //!
-//! Each checked rule stages `arena: self.arena.clone()` and commits only on
-//! success, so the price of a rule is bounded below by the price of copying
-//! the whole arena. These measurements separate the two things that grow:
-//! dense syntax rows and classical theorem slots.
+//! Checked rules clone the arena before committing. The benchmarks vary syntax
+//! rows and theorem slots independently.
 //!
 //! Run with `cargo test --release -p covalence-logic-hol --test fork_cost
 //! -- --ignored --nocapture`.
@@ -21,7 +19,6 @@ struct Shape {
     term: Ref,
 }
 
-/// Builds a kernel with `rows` extra syntax rows and `theorems` extra theorems.
 fn build(rows: u64, theorems: u64) -> Shape {
     let mut fix = Fix::new();
     let bool_ty = fix.bool_ty;
@@ -39,8 +36,6 @@ fn build(rows: u64, theorems: u64) -> Shape {
     }
 }
 
-/// Median of several timing rounds, which rejects allocator and scheduler
-/// outliers that a single round reports as signal.
 fn median(mut samples: Vec<f64>) -> f64 {
     samples.sort_by(f64::total_cmp);
     samples[samples.len() / 2]
@@ -65,9 +60,6 @@ fn time_refl(shape: &Shape, iterations: u32) -> f64 {
     start.elapsed().as_secs_f64() * 1e6 / f64::from(iterations)
 }
 
-/// A synthetic proof of the shape a normalizer evaluation drives: a chain of
-/// rules applied in sequence to a kernel that already holds `resident`
-/// theorems. Returns microseconds for the whole chain.
 fn time_proof(shape: &Shape, steps: u32) -> f64 {
     let start = Instant::now();
     let mut kernel = shape.kernel.fork();
@@ -94,7 +86,7 @@ fn arena_copy_cost_grows_with_rows_and_theorems() {
         (8_200, 2_200),
     ] {
         let shape = build(rows, theorems);
-        // Warm the allocator and the branch predictors before measuring.
+        // Warm up before measuring.
         time_fork(&shape.kernel, 200);
         let fork = median((0..5).map(|_| time_fork(&shape.kernel, 2_000)).collect());
         time_refl(&shape, 100);

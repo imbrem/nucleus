@@ -2,13 +2,11 @@ import Nucleus.Classical.Refutation
 import Nucleus.Classical.Tagged.Runtime.Derive
 
 /-!
-# Canonical compatibility rules for classical matrices
+# Classical matrix rules
 
-The legacy matrix is the strict depth-two tagged shape
-`AND(OR(literal...)) ⊢ OR(AND(literal...))`.  This module parses that shape,
-constructs rule targets as decoded syntax, and proves them through the existing
-representation-independent matrix semantics.  Packing and theorem sealing stay
-in `Runtime.Kernel`.
+Matrices use the depth-two tagged shape
+`AND(OR(literal...)) ⊢ OR(AND(literal...))`. This module decodes that shape and
+proves its rules against the representation-independent matrix semantics.
 -/
 
 namespace Nucleus.Classical.Tagged.Runtime.Matrix

@@ -1,25 +1,28 @@
-//! Selected tagged classical runtime.
+//! Tagged formula storage and theorem rules.
 //!
-//! This module mirrors the fixed-64-bit Lean design: self-describing
-//! `LIT`/`AND`/`OR`/`SAT` formulas, intrusive free rings, strict ownership
-//! validation, canonical packing, structural equality/hashing, and a sealed
-//! LCF theorem wrapper. The matrix API is a compatibility facade over this
-//! implementation; its wire representation is defined separately.
-//!
-//! Validation is one flat pass with an explicit worklist, and ownership and
-//! coverage are decided by marking a bitmap rather than by scanning the blocks
-//! already claimed. That pass also serves hashing, structural equality and
-//! decoding, so a [`Checked`] value stores words and nothing else.
+//! Validation uses an explicit worklist and a bitmap for ownership. A checked
+//! value stores only words and roots; decoded syntax is never retained beside
+//! it.
 
 mod kernel;
 mod runtime;
 mod syntax;
 mod word;
 
+#[cfg(test)]
+mod cost_tests;
+#[cfg(test)]
+mod deep_arena_tests;
+#[cfg(test)]
+mod validator_tests;
+
 pub use kernel::{EditError, Theorem};
-pub use runtime::{Arena, Block, Checked, RuntimeError, pack};
+#[cfg(test)]
+pub(crate) use runtime::Arena;
+pub use runtime::{Checked, RuntimeError, pack};
 pub use syntax::{Formula, Sequent, Side};
-pub use word::{Ref, Word, WordError};
+pub use word::WordError;
+pub(crate) use word::{Ref, Word};
 
 #[cfg(test)]
 mod tests {
@@ -46,8 +49,8 @@ mod tests {
             self.0.push(u64::from(value));
         }
 
-        fn write_u64(&mut self, value: u64) {
-            self.0.push(value);
+        fn write_u32(&mut self, value: u32) {
+            self.0.push(u64::from(value));
         }
 
         fn write_usize(&mut self, value: usize) {
@@ -56,14 +59,14 @@ mod tests {
         }
     }
 
-    fn literal(atom: u64) -> Formula {
+    fn literal(atom: u32) -> Formula {
         Formula::Literal {
             atom,
             negative: false,
         }
     }
 
-    fn pointer(base: u64) -> Word {
+    fn pointer(base: u32) -> Word {
         Word::pointer(base, 0, false).expect("test pointer must fit")
     }
 
@@ -72,12 +75,13 @@ mod tests {
         let positive = Word::literal(7, false).unwrap();
         let negative = positive.negated();
         assert_eq!(positive.raw(), 31);
-        assert_eq!(negative.raw(), (1_u64 << 63) | 31);
+        assert_eq!(negative.raw(), (1_u32 << 31) | 31);
         assert_eq!(Word::from_raw(negative.raw()), negative);
         assert_eq!(negative.tag(), 3);
         assert_eq!(negative.base(), 28);
         assert_eq!(Ref::new(negative).unwrap().negated().word(), positive);
         assert!(Ref::new(Word::ZERO).is_err());
+        assert!(Word::literal(1 << 29, false).is_err());
     }
 
     #[test]
@@ -192,13 +196,29 @@ mod tests {
         }])
         .unwrap();
         let (mut words, _, roots) = canonical.arena().clone().into_parts();
-        let base = u64::try_from(words.len()).unwrap();
+        let base = u32::try_from(words.len()).unwrap();
         let free = pointer(base);
         words.extend([Word::ZERO, free, free, Word::ZERO]);
         let with_free = Checked::check(Arena::new(words, free, roots)).unwrap();
 
         assert_ne!(canonical.arena(), with_free.arena());
         assert_eq!(canonical, with_free);
+        let (words, _, roots) = with_free.arena().clone().into_parts();
+        assert!(
+            Checked::from_snapshot(
+                words.into_iter().map(Word::raw).collect(),
+                roots
+                    .into_iter()
+                    .map(|(left, right)| (left.word().raw(), right.word().raw()))
+                    .collect(),
+            )
+            .is_err()
+        );
+        let snapshot = canonical.snapshot();
+        assert_eq!(
+            Checked::from_snapshot(snapshot.0, snapshot.1).unwrap(),
+            canonical
+        );
         let mut canonical_hash = DefaultHasher::new();
         canonical.hash(&mut canonical_hash);
         let mut with_free_hash = DefaultHasher::new();
@@ -278,7 +298,7 @@ mod tests {
         let sorted = identity
             .canonical_sort_root_by_key(0, super::Side::Left, |formula| match formula {
                 Formula::Literal { atom, .. } => *atom,
-                _ => u64::MAX,
+                _ => u32::MAX,
             })
             .unwrap();
         let deduped = sorted.canonical_dedupe_root(0, super::Side::Left).unwrap();
