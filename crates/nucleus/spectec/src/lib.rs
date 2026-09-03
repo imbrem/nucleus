@@ -66,7 +66,7 @@ pub use theory::{
 };
 pub use type_definition::{RelationalTypeDefinition, relational_type_declaration};
 pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
-pub use wasm_logic::{SpecTecExecution, WasmLogicError, spectec_execution};
+pub use wasm_logic::{ExportedFunctionView, SpecTecExecution, WasmLogicError, spectec_execution};
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{

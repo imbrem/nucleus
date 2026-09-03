@@ -23,6 +23,112 @@ pub struct SpecTecExecution {
     pub invoke: Ref,
     /// Exact lowered graph predicate for `$store`.
     pub store: Ref,
+    /// Exact lowered graph predicate for `$moduleinst`.
+    pub moduleinst: Ref,
+}
+
+/// Structural views needed to recognize an exported function address.
+///
+/// Keeping list membership explicit is essential for negative proofs: a raw
+/// totalized indexing operation cannot establish that an empty export list has
+/// no members.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExportedFunctionView {
+    /// Shared erased value classifier.
+    pub value_ty: Ref,
+    /// HOL Boolean classifier.
+    pub bool_ty: Ref,
+    /// Graph predicate `configuration -> module-instance -> bool`.
+    pub module_instance: Ref,
+    /// Graph predicate `module-instance -> export-list -> bool`.
+    pub exports: Ref,
+    /// Predicate `export-list -> export-instance -> bool`.
+    pub member: Ref,
+    /// Graph predicate `export-instance -> function-address -> bool`.
+    pub function_address: Ref,
+}
+
+impl ExportedFunctionView {
+    /// Constructs `configuration -> function-address -> bool` by existentially
+    /// joining the four structural views.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for incompatible predicates, name exhaustion, or a
+    /// rejected checked HOL construction. `kernel` is unchanged on failure.
+    pub fn predicate(self, kernel: &mut Kernel) -> Result<Ref, WasmLogicError> {
+        let mut staged = kernel.fork();
+        let roots = [
+            self.value_ty,
+            self.bool_ty,
+            self.module_instance,
+            self.exports,
+            self.member,
+            self.function_address,
+        ];
+        let first = staged
+            .fresh_name(&roots)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        let mut variables = Vec::with_capacity(5);
+        for offset in 0..5 {
+            variables.push(
+                staged
+                    .tm_fv(
+                        first.checked_add(offset).ok_or(WasmLogicError::Kernel {
+                            source: KernelError::TooManyNames,
+                        })?,
+                        self.value_ty,
+                    )
+                    .map_err(|source| WasmLogicError::Kernel { source })?,
+            );
+        }
+        let [
+            configuration,
+            function,
+            module_instance,
+            exports,
+            export_instance,
+        ] = variables.as_slice()
+        else {
+            unreachable!()
+        };
+        let has_module = apply(
+            &mut staged,
+            self.module_instance,
+            &[*configuration, *module_instance],
+        )?;
+        let has_exports = apply(&mut staged, self.exports, &[*module_instance, *exports])?;
+        let contains = apply(&mut staged, self.member, &[*exports, *export_instance])?;
+        let has_function = apply(
+            &mut staged,
+            self.function_address,
+            &[*export_instance, *function],
+        )?;
+        let mut body = staged
+            .op2(Op2::And, has_module, has_exports)
+            .and_then(|body| staged.op2(Op2::And, body, contains))
+            .and_then(|body| staged.op2(Op2::And, body, has_function))
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        for &witness in [*module_instance, *exports, *export_instance].iter().rev() {
+            body = staged
+                .exists_tm(witness, body)
+                .map_err(|source| WasmLogicError::Kernel { source })?;
+        }
+        let predicate_ty = staged
+            .ty_arr(self.value_ty, self.bool_ty)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        let by_function = staged
+            .lam_at(predicate_ty, *function, body)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        let curried_ty = staged
+            .ty_arr(self.value_ty, predicate_ty)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        let predicate = staged
+            .lam_at(curried_ty, *configuration, by_function)
+            .map_err(|source| WasmLogicError::Kernel { source })?;
+        *kernel = staged;
+        Ok(predicate)
+    }
 }
 
 impl SpecTecExecution {
@@ -77,6 +183,7 @@ impl SpecTecExecution {
             self.instantiate,
             self.invoke,
             self.store,
+            self.moduleinst,
             exported,
         ];
         let first = staged
@@ -237,6 +344,7 @@ pub fn spectec_execution(
     let instantiate = unique_definition(document, "instantiate")?;
     let invoke = unique_definition(document, "invoke")?;
     let store = unique_definition(document, "store")?;
+    let moduleinst = unique_definition(document, "moduleinst")?;
     let tuple = document
         .operations()
         .find(|operation| {
@@ -255,6 +363,7 @@ pub fn spectec_execution(
         instantiate,
         invoke,
         store,
+        moduleinst,
         tuple,
         document.schema.value(),
         document.schema.bool_ty(),
@@ -299,6 +408,7 @@ pub fn spectec_execution(
         instantiate,
         invoke,
         store,
+        moduleinst,
     })
 }
 
@@ -353,8 +463,18 @@ mod tests {
             instantiate: predicate(&mut kernel, value, bool_ty, 4, 11),
             invoke: predicate(&mut kernel, value, bool_ty, 4, 12),
             store: predicate(&mut kernel, value, bool_ty, 2, 13),
+            moduleinst: predicate(&mut kernel, value, bool_ty, 2, 18),
         };
-        let exported = predicate(&mut kernel, value, bool_ty, 2, 14);
+        let exported = ExportedFunctionView {
+            value_ty: value,
+            bool_ty,
+            module_instance: execution.moduleinst,
+            exports: predicate(&mut kernel, value, bool_ty, 2, 19),
+            member: predicate(&mut kernel, value, bool_ty, 2, 20),
+            function_address: predicate(&mut kernel, value, bool_ty, 2, 21),
+        }
+        .predicate(&mut kernel)
+        .unwrap();
         let host_call = predicate(&mut kernel, value, bool_ty, 2, 15);
         let program = kernel.tm_fv(16, value).unwrap();
         let assert_function = kernel.tm_fv(17, value).unwrap();
