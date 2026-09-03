@@ -80,6 +80,18 @@ theorem Derivable.mono {Atom : Type} {small large : Formula Atom → Prop}
   | classical p q => exact .classical p q
   | mp _ _ implication premise => exact .mp implication premise
 
+/-- Replace every use of an assumption by a derivation from another theory. -/
+theorem Derivable.mapAssumptions {Atom : Type} {source target : Formula Atom → Prop}
+    (replace : ∀ p, source p → Derivable target p) {p : Formula Atom} :
+    Derivable source p → Derivable target p := by
+  intro derivation
+  induction derivation with
+  | assumption member => exact replace _ member
+  | k p q => exact .k p q
+  | s p q r => exact .s p q r
+  | classical p q => exact .classical p q
+  | mp _ _ implication premise => exact .mp implication premise
+
 /-- Every Hilbert derivation preserves truth. -/
 theorem Derivable.sound {Atom : Type} {assumptions : Formula Atom → Prop}
     {p : Formula Atom} (derivation : Derivable assumptions p)
@@ -102,6 +114,77 @@ theorem theorem_true {Atom : Type} {p : Formula Atom}
     (derivation : Derivable (fun _ => False) p) (valuation : Atom → Prop) :
     p.Holds valuation :=
   derivation.sound valuation (fun _ impossible => False.elim impossible)
+
+/-- An axiom set is consistent when it cannot derive falsity. -/
+def Consistent {Atom : Type} (axioms : Formula Atom → Prop) : Prop :=
+  ¬ Derivable axioms .falsum
+
+/-- Ordinary propositional logic, with no premises beyond its Hilbert schemes,
+is consistent. -/
+theorem propositional_consistent {Atom : Type} :
+    Consistent (Atom := Atom) (fun _ => False) := by
+  intro derivation
+  exact theorem_true derivation (fun _ => True)
+
+/-- The intentionally wrong theory that postulates falsity is inconsistent. -/
+theorem falsum_axiom_inconsistent {Atom : Type} :
+    ¬ Consistent (Atom := Atom) (fun p => p = .falsum) := by
+  intro consistent
+  exact consistent (.assumption rfl)
+
+/-- A subset of a consistent axiom set is consistent. -/
+theorem consistent_of_subset {Atom : Type} {small large : Formula Atom → Prop}
+    (subset : ∀ p, small p → large p) (consistent : Consistent large) :
+    Consistent small := by
+  intro contradiction
+  exact consistent (contradiction.mono subset)
+
+/-- Adding an already derivable proposition preserves and reflects
+consistency. -/
+theorem consistent_add_derived_iff {Atom : Type} {axioms : Formula Atom → Prop}
+    {p : Formula Atom} (hp : Derivable axioms p) :
+    Consistent (fun q => axioms q ∨ q = p) ↔ Consistent axioms := by
+  constructor
+  · exact consistent_of_subset (fun _ member => Or.inl member)
+  · intro consistent contradiction
+    apply consistent
+    exact contradiction.mapAssumptions fun q member => by
+      rcases member with member | rfl
+      · exact .assumption member
+      · exact hp
+
+/-- `p` is independent of `axioms` when adjoining either `p` or its negation
+preserves consistency. This proof-theoretic definition makes no completeness
+claim. -/
+def Independent {Atom : Type} (axioms : Formula Atom → Prop) (p : Formula Atom) : Prop :=
+  Consistent (fun q => axioms q ∨ q = p) ∧
+    Consistent (fun q => axioms q ∨ q = p.neg)
+
+/-- Two models, differing on `p`, certify proof-theoretic independence. -/
+theorem independent_of_models {Atom : Type} {axioms : Formula Atom → Prop}
+    {p : Formula Atom} {trueModel falseModel : Atom → Prop}
+    (axiomsTrue : ∀ q, axioms q → q.Holds trueModel)
+    (axiomsFalse : ∀ q, axioms q → q.Holds falseModel)
+    (pTrue : p.Holds trueModel) (pFalse : ¬ p.Holds falseModel) :
+    Independent axioms p := by
+  constructor
+  · intro contradiction
+    exact contradiction.sound trueModel
+      (fun q member => member.elim (axiomsTrue q) (fun h => h ▸ pTrue))
+  · intro contradiction
+    have falseNeg : p.neg.Holds falseModel := fun hp => pFalse hp
+    exact contradiction.sound falseModel
+      (fun q member => member.elim (axiomsFalse q) (fun h => h ▸ falseNeg))
+
+/-- A concrete independence sanity check: one unconstrained proposition is
+independent of pure propositional logic. -/
+theorem fresh_proposition_independent :
+    Independent (fun _ : Formula Unit => False) (.atom ()) := by
+  apply independent_of_models (trueModel := fun _ => True) (falseModel := fun _ => False)
+  · exact fun _ impossible => False.elim impossible
+  · exact fun _ impossible => False.elim impossible
+  · trivial
+  · simp [Formula.Holds]
 
 /-- Embed a base formula into a language with fresh defined proposition names. -/
 def lift {Base Defined : Type} : Formula Base → Formula (Sum Base Defined)
@@ -179,6 +262,25 @@ theorem DefinitionalDerivable.expand {Base Defined : Type}
         (Derivable.identity (assumptions := assumptions) (definitions name))
   | mp _ _ implication premise => exact .mp implication premise
 
+/-- Every base derivation remains available after definitions are added. -/
+theorem Derivable.liftDefinitions {Base Defined : Type}
+    {assumptions : Formula Base → Prop} {definitions : Defined → Formula Base}
+    {p : Formula Base} (derivation : Derivable assumptions p) :
+    DefinitionalDerivable assumptions definitions (lift p) := by
+  induction derivation with
+  | assumption member => exact .assumption member
+  | k p q =>
+      simpa [lift] using
+        DefinitionalDerivable.k (definitions := definitions) (lift p) (lift q)
+  | s p q r =>
+      simpa [lift] using
+        DefinitionalDerivable.s (definitions := definitions) (lift p) (lift q) (lift r)
+  | classical p q =>
+      simpa [lift, Formula.neg] using
+        DefinitionalDerivable.classical (definitions := definitions) (lift p) (lift q)
+  | mp _ _ implication premise =>
+      simpa [lift] using DefinitionalDerivable.mp implication premise
+
 /-- Explicit nonrecursive definitions are conservative: an extended proof of
 a base-language formula yields a base proof of the same formula. -/
 theorem definitions_conservative {Base Defined : Type}
@@ -187,6 +289,23 @@ theorem definitions_conservative {Base Defined : Type}
     (derivation : DefinitionalDerivable assumptions definitions (lift p)) :
     Derivable assumptions p := by
   simpa using derivation.expand
+
+/-- Consistency for the explicit definitional-extension calculus. -/
+def DefinitionalConsistent {Base Defined : Type}
+    (assumptions : Formula Base → Prop) (definitions : Defined → Formula Base) : Prop :=
+  ¬ DefinitionalDerivable assumptions definitions .falsum
+
+/-- Adding explicit nonrecursive definitions preserves and reflects
+consistency. -/
+theorem definitions_consistent_iff {Base Defined : Type}
+    {assumptions : Formula Base → Prop} {definitions : Defined → Formula Base} :
+    DefinitionalConsistent assumptions definitions ↔ Consistent assumptions := by
+  constructor
+  · intro extended contradiction
+    apply extended
+    simpa [lift] using contradiction.liftDefinitions (definitions := definitions)
+  · intro base contradiction
+    exact base contradiction.expand
 
 end Propositional
 

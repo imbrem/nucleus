@@ -9,6 +9,11 @@ of a valid proof. See
 [`docs/metamath-axiom-audit.md`](../../../docs/metamath-axiom-audit.md) for the
 formal axiom-set, soundness, and conservativity results and their scope.
 
+The `axiom_sets` module names the `PA`, `HOL`, `IZF`, `ZF`, `ZFC`, and `GT`
+logical axiom layers. Resolving a set checks its labels are logical `$a`
+statements in the supplied database; the names themselves carry no semantic
+authority.
+
 This crate parses and validates Metamath databases. It supports comments,
 scopes, every declaration form, recursive `$[ file $]` inclusion, normal
 proofs, and compressed proofs (including `Z` saves and heap references).

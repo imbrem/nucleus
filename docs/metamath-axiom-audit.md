@@ -62,6 +62,23 @@ fresh name translates an extended derivation to the base calculus;
 `definitions_conservative` therefore proves that an extended proof of an old
 formula yields a proof of that formula in the old calculus.
 
+The module also defines proof-theoretic `Consistent A` as the impossibility of
+deriving falsity. It proves:
+
+- pure classical propositional logic is consistent, via its truth semantics;
+- a theory postulating falsity is inconsistent;
+- subsets of consistent theories are consistent;
+- adjoining an already derivable proposition preserves and reflects
+  consistency;
+- explicit nonrecursive definitional extension preserves and reflects
+  consistency.
+
+`Independent A p` means both `A + p` and `A + not p` are consistent.
+`independent_of_models` derives this from two models, and
+`fresh_proposition_independent` is a concrete check for an unconstrained atom
+over pure propositional logic. No ZFC independence claim is made without a
+checked ZFC interpretation and models for both extensions.
+
 Applying these results directly to a concrete `set.mm` formula still requires
 a checked interpretation identifying its syntax and selected axiom labels with
 this calculus. Certifying the `df-*` corpus under an appropriate explicit-
@@ -78,3 +95,10 @@ work in [issue #1241](https://github.com/imbrem/nucleus/issues/1241). The old
 repository did not contain an equivalent completed second-order-arithmetic
 soundness development; that new formalization is tracked in
 [issue #1242](https://github.com/imbrem/nucleus/issues/1242).
+
+The Rust `axiom_sets` module supplies deterministic named label sets for `PA`
+(`peano.mm`), `HOL` (`hol.mm`), `IZF` (`iset.mm`), and `ZF`, `ZFC`, and `GT`
+(`set.mm`). `resolve` checks every constant against a parsed database as a
+logical `$a`; the opt-in corpus test resolves all sets against upstream files.
+These constants identify assertions. They do not themselves prove consistency
+or attach the intended semantics.

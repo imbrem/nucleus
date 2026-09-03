@@ -4,6 +4,7 @@
 //! [`DatabaseSink`] interface is the boundary intended to drive a future HOL
 //! replay: parsing may suggest kernel operations, but cannot establish them.
 
+pub mod axiom_sets;
 mod database;
 mod emit;
 mod error;
