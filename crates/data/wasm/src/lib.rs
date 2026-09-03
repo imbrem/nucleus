@@ -37,11 +37,18 @@ impl Default for Limits {
 pub struct Section {
     /// Binary section identifier.
     pub id: u8,
+    owner: Cid,
     /// Payload byte range in the original module.
     payload: Range<usize>,
 }
 
 impl Section {
+    /// Returns the exact module CID from which this section was parsed.
+    #[must_use]
+    pub const fn module_cid(&self) -> Cid {
+        self.owner
+    }
+
     /// Returns the payload byte range in the exact module.
     #[must_use]
     pub fn range(&self) -> Range<usize> {
@@ -52,10 +59,17 @@ impl Section {
 /// One defined function body in function-index order after imports.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Function {
+    owner: Cid,
     body: Range<usize>,
 }
 
 impl Function {
+    /// Returns the exact module CID from which this function was parsed.
+    #[must_use]
+    pub const fn module_cid(&self) -> Cid {
+        self.owner
+    }
+
     /// Returns the body byte range, including locals and instructions but not
     /// its encoded size prefix.
     #[must_use]
@@ -120,7 +134,13 @@ impl<'a> Module<'a> {
     /// Returns an error if `function` did not originate from this module and
     /// its retained range is outside the exact bytes.
     pub fn function_body(&self, function: &Function) -> Result<FunctionBody<'a>, Error> {
-        let bytes = checked_range(self.bytes, &function.body, "function body")?;
+        let bytes = checked_view(
+            self.bytes,
+            self.cid,
+            function.owner,
+            &function.body,
+            "function body",
+        )?;
         let mut reader = BinaryReader::new(bytes, function.body.start);
         reader.set_features(WasmFeatures::WASM3);
         Ok(FunctionBody::new(reader))
@@ -132,7 +152,13 @@ impl<'a> Module<'a> {
     /// Returns an error if `section` did not originate from this module and
     /// its retained range is outside the exact bytes.
     pub fn payload(&self, section: &Section) -> Result<&'a [u8], Error> {
-        checked_range(self.bytes, &section.payload, "section payload")
+        checked_view(
+            self.bytes,
+            self.cid,
+            section.owner,
+            &section.payload,
+            "section payload",
+        )
     }
 
     /// Copies the exact bytes into an immutable, shareable module artifact.
@@ -207,7 +233,13 @@ impl SharedModule {
     /// Returns an error if `function` did not originate from this module and
     /// its retained range is outside the exact bytes.
     pub fn function_body(&self, function: &Function) -> Result<FunctionBody<'_>, Error> {
-        let bytes = checked_range(&self.bytes, &function.body, "function body")?;
+        let bytes = checked_view(
+            &self.bytes,
+            self.cid,
+            function.owner,
+            &function.body,
+            "function body",
+        )?;
         let mut reader = BinaryReader::new(bytes, function.body.start);
         reader.set_features(WasmFeatures::WASM3);
         Ok(FunctionBody::new(reader))
@@ -219,7 +251,13 @@ impl SharedModule {
     /// Returns an error if `section` did not originate from this module and
     /// its retained range is outside the exact bytes.
     pub fn payload(&self, section: &Section) -> Result<&[u8], Error> {
-        checked_range(&self.bytes, &section.payload, "section payload")
+        checked_view(
+            &self.bytes,
+            self.cid,
+            section.owner,
+            &section.payload,
+            "section payload",
+        )
     }
 }
 
@@ -259,6 +297,16 @@ pub enum Error {
         /// Exact module byte length.
         length: usize,
     },
+    /// A retained view belongs to different exact module bytes.
+    #[snafu(display("{kind} belongs to module {actual:?}, not requested module {expected:?}"))]
+    Foreign {
+        /// Kind of retained byte view.
+        kind: &'static str,
+        /// CID of the requested module.
+        expected: Cid,
+        /// CID stored in the view.
+        actual: Cid,
+    },
     /// Input used a non-module binary encoding.
     #[snafu(display("WebAssembly binary is not a core module"))]
     NotModule,
@@ -270,11 +318,20 @@ pub enum Error {
     },
 }
 
-fn checked_range<'a>(
+fn checked_view<'a>(
     bytes: &'a [u8],
+    expected: Cid,
+    actual: Cid,
     range: &Range<usize>,
     kind: &'static str,
 ) -> Result<&'a [u8], Error> {
+    if actual != expected {
+        return Err(Error::Foreign {
+            kind,
+            expected,
+            actual,
+        });
+    }
     bytes.get(range.clone()).ok_or(Error::Range {
         kind,
         start: range.start,
@@ -301,6 +358,7 @@ pub fn parse(bytes: &[u8], limits: Limits) -> Result<Module<'_>, Error> {
         });
     }
 
+    let cid = drisl::address(CidCodec::Raw, CidHash::Sha256, bytes);
     let mut sections = Vec::new();
     let mut functions = Vec::new();
     let mut is_module = false;
@@ -315,7 +373,10 @@ pub fn parse(bytes: &[u8], limits: Limits) -> Result<Module<'_>, Error> {
                     limit: limits.functions,
                 });
             }
-            functions.push(Function { body: body.range() });
+            functions.push(Function {
+                owner: cid,
+                body: body.range(),
+            });
         }
         if let Some((id, payload)) = payload.as_section() {
             if sections.len() == limits.sections {
@@ -323,7 +384,11 @@ pub fn parse(bytes: &[u8], limits: Limits) -> Result<Module<'_>, Error> {
                     limit: limits.sections,
                 });
             }
-            sections.push(Section { id, payload });
+            sections.push(Section {
+                id,
+                owner: cid,
+                payload,
+            });
         }
     }
     if !is_module {
@@ -336,7 +401,7 @@ pub fn parse(bytes: &[u8], limits: Limits) -> Result<Module<'_>, Error> {
 
     Ok(Module {
         bytes,
-        cid: drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        cid,
         sections,
         functions,
     })
@@ -411,23 +476,40 @@ mod tests {
     #[test]
     fn rejects_views_from_other_modules_without_panicking() {
         let module = parse(EMPTY_MODULE, Limits::default()).unwrap();
+        let foreign_cid = drisl::address(CidCodec::Raw, CidHash::Sha256, b"foreign");
         let foreign_section = super::Section {
             id: 0,
+            owner: foreign_cid,
+            payload: 0..1,
+        };
+        let foreign_function = super::Function {
+            owner: foreign_cid,
+            body: 0..1,
+        };
+        let invalid_section = super::Section {
+            id: 0,
+            owner: module.cid(),
             payload: 100..101,
         };
-        let foreign_function = super::Function { body: 100..101 };
 
         assert!(matches!(
             module.payload(&foreign_section),
-            Err(Error::Range {
+            Err(Error::Foreign {
                 kind: "section payload",
                 ..
             })
         ));
         assert!(matches!(
             module.function_body(&foreign_function),
-            Err(Error::Range {
+            Err(Error::Foreign {
                 kind: "function body",
+                ..
+            })
+        ));
+        assert!(matches!(
+            module.payload(&invalid_section),
+            Err(Error::Range {
+                kind: "section payload",
                 ..
             })
         ));
@@ -435,14 +517,14 @@ mod tests {
         let shared = module.into_shared();
         assert!(matches!(
             shared.payload(&foreign_section),
-            Err(Error::Range {
+            Err(Error::Foreign {
                 kind: "section payload",
                 ..
             })
         ));
         assert!(matches!(
             shared.function_body(&foreign_function),
-            Err(Error::Range {
+            Err(Error::Foreign {
                 kind: "function body",
                 ..
             })
@@ -461,6 +543,7 @@ mod tests {
         );
         assert_eq!(module.sections().len(), 2);
         assert_eq!(module.sections()[0].id, 0);
+        assert_eq!(module.sections()[0].module_cid(), module.cid());
         assert_eq!(
             module.payload(&module.sections()[0]).unwrap(),
             b"\x01x\x01y"
@@ -501,6 +584,7 @@ mod tests {
         let [function] = module.functions() else {
             panic!("expected one function")
         };
+        assert_eq!(function.module_cid(), module.cid());
         let body = module.function_body(function).unwrap();
         assert_eq!(body.as_bytes(), b"\0\x0b");
         let mut operators = body.get_operators_reader().expect("locals decode");
