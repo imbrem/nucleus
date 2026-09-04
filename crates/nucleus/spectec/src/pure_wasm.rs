@@ -8,8 +8,8 @@
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, ThmId, builtin::Op2};
 use covalence_logic_hol_derived::{
-    EqualityError, SyntaxError, equality_symmetry, equality_transitivity, join_alpha_equivalent,
-    join_same_syntax,
+    EqualityError, ForallError, SyntaxError, equality_symmetry, equality_transitivity, forall_elim,
+    join_alpha_equivalent, join_same_syntax,
 };
 
 use crate::{Evidence, WasmScalar, WasmScalarKind, WasmScalarTypes};
@@ -693,6 +693,94 @@ impl PureWasmSemantics {
             holds: true,
         })
     }
+
+    /// Transports checked non-return from a specification relation to a program.
+    ///
+    /// Both the exact-denotation theorem and the theorem that the relation has
+    /// no output for `input` remain visible as premises. This is the branch
+    /// needed by partial specifications such as “factorial returns its result
+    /// when representable and otherwise does not return.”
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the supplied theorems prove the exact
+    /// specification and non-return propositions, the scalar kind matches, or
+    /// a checked equality, quantifier, or propositional step fails. `kernel`
+    /// is unchanged on failure.
+    pub fn prove_non_return_from_specification(
+        self,
+        kernel: &mut Kernel,
+        program: PureWasmProgram,
+        specification: PureWasmRelation,
+        input: WasmScalar,
+        specification_fact: ThmId,
+        non_return_fact: ThmId,
+    ) -> Result<Evidence, PureWasmProofError> {
+        if input.kind() != self.scalar_kind {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "pure Wasm specification scalar kind",
+            }
+            .into());
+        }
+        let mut staged = kernel.fork();
+        let specification_claim = self.specifies(&mut staged, program, specification)?;
+        let specification_fact =
+            align_positive(&mut staged, specification_fact, specification_claim)?;
+        let name = staged.fresh_name(&[
+            self.program_ty,
+            self.scalar_ty,
+            self.relation_ty,
+            self.denotation,
+            program.0,
+            specification.0,
+            input.term(),
+        ])?;
+        let output = staged.tm_fv(name, self.scalar_ty)?;
+        let scalar_output = WasmScalar::from_checked(self.scalar_kind, output);
+
+        let relation_at_input = staged.app(specification.0, input.term())?;
+        let relation_returns = staged.app(relation_at_input, output)?;
+        let relation_non_return = {
+            let denied = staged.op1(covalence_logic_hol::builtin::Op1::Not, relation_returns)?;
+            staged.forall_tm(self.bool_ty, output, denied)?
+        };
+        let non_return_fact = align_positive(&mut staged, non_return_fact, relation_non_return)?;
+        let denied = forall_elim(&mut staged, non_return_fact, output)?;
+        let denied =
+            staged.flatten_conclusion(denied.theorem, Lit::positive(denied.proposition.get()))?;
+
+        let at_input = staged.ap_thm(specification_fact, input.term())?;
+        let at_output = staged.ap_thm(at_input.theorem, output)?;
+        let implementation_returns = self.returns(&mut staged, program, input, scalar_output)?;
+        join_alpha_equivalent(&mut staged, at_output.left, implementation_returns)?;
+        let assumed = staged.identity(Lit::positive(at_output.left.get()))?;
+        let specification_returns = staged.eq_mp(at_output.theorem, assumed)?;
+        join_alpha_equivalent(&mut staged, at_output.right, relation_returns)?;
+        staged.convert_conclusions(specification_returns, at_output.right, relation_returns)?;
+        let contradiction = staged.resolve(
+            specification_returns,
+            denied,
+            Lit::positive(relation_returns.get()),
+        )?;
+        staged.not_right(contradiction, Lit::positive(at_output.left.get()))?;
+        let implementation_denied = staged.op1(
+            covalence_logic_hol::builtin::Op1::Not,
+            at_output.left,
+        )?;
+        let theorem =
+            staged.fold_conclusion(contradiction, Lit::positive(implementation_denied.get()))?;
+        let universal = staged.forall_tm(self.bool_ty, output, implementation_denied)?;
+        let theorem = staged.forall_intro_at(theorem, output, universal)?;
+        let proposition = self.does_not_return(&mut staged, program, input)?;
+        join_alpha_equivalent(&mut staged, universal, proposition)?;
+        staged.convert_conclusions(theorem, universal, proposition)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition,
+            theorem,
+            holds: true,
+        })
+    }
 }
 
 /// Single-threaded and multi-threaded denotations of the same pure programs.
@@ -838,6 +926,12 @@ pub enum PureWasmProofError {
     Syntax {
         /// Underlying syntax-certification failure.
         source: SyntaxError,
+    },
+    /// Universal specialization failed.
+    #[snafu(transparent)]
+    Forall {
+        /// Underlying specialization failure.
+        source: ForallError,
     },
 }
 
@@ -1043,6 +1137,32 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[specification_claim, relation_returns])
             .check(&kernel, program_returns)
+            .unwrap();
+
+        let arbitrary_output = kernel.tm_fv(21, scalar_types.i32).unwrap();
+        let relation_at_input = kernel.app(specification.term(), input.term()).unwrap();
+        let relation_returns = kernel.app(relation_at_input, arbitrary_output).unwrap();
+        let relation_denied = kernel
+            .op1(covalence_logic_hol::builtin::Op1::Not, relation_returns)
+            .unwrap();
+        let relation_non_return = kernel
+            .forall_tm(bool_ty, arbitrary_output, relation_denied)
+            .unwrap();
+        let relation_non_return_fact = kernel
+            .identity(Lit::positive(relation_non_return.get()))
+            .unwrap();
+        let program_non_return = semantics
+            .prove_non_return_from_specification(
+                &mut kernel,
+                left,
+                specification,
+                input,
+                specification_fact,
+                relation_non_return_fact,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[specification_claim, relation_non_return])
+            .check(&kernel, program_non_return)
             .unwrap();
 
         let single = kernel.tm_fv(15, denotation_ty).unwrap();
