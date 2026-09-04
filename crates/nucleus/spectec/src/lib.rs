@@ -17,8 +17,10 @@ mod grammar_definition;
 mod parameterized;
 mod premise;
 mod program_logic;
+mod pure_wasm;
 mod relational;
 mod run;
+mod scalar;
 mod schema;
 mod selected;
 mod theory;
@@ -53,6 +55,10 @@ pub use program_logic::{
     ObservationProofError, ObservationTransformation, ProgramConnectives, ProgramLogicObligations,
     Proposition, ReachabilityProofError, SoundObservationTransformation,
 };
+pub use pure_wasm::{
+    PureWasmProgram, PureWasmProofError, PureWasmRelation, PureWasmSemantics,
+    ThreadedPureWasmSemantics,
+};
 pub use relational::{
     DefinitionProofError, OpenedRelationalProduction, RelationProofError, RelationalCall,
     RelationalCaseArtifact, RelationalCaseError, RelationalClause, RelationalCondition,
@@ -68,6 +74,10 @@ pub use run::{
     RunDomain, RunObservation, RunObservationError, RunProofError, RunProperty, RunRelation,
     RunTransformation, RunTransformationError, RunTypes, SoundRunTransformation,
     SoundRunTransformationError,
+};
+pub use scalar::{
+    WasmScalar, WasmScalarBinary, WasmScalarKind, WasmScalarProofError, WasmScalarTypes,
+    WasmScalars,
 };
 pub use schema::{
     HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,

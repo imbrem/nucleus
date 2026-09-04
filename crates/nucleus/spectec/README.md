@@ -134,6 +134,34 @@ has been discharged. Reflexivity, symmetry, and transitivity are exposed as
 checked facade proofs. The facade neither evaluates Wasm nor decides
 equivalence.
 
+`WasmScalars` adds typed handles for `i32`, `i64`, `f32`, `f64`, and `v128`
+classifiers and kind-preserving scalar operations. Algebraic methods construct
+and specialize explicit commutativity and associativity obligations; they do
+not evaluate host integers or floats or claim laws inappropriate for a
+particular operation.
+`PureWasmSemantics` is the first small denotational experiment: a caller
+supplies checked operations mapping structural pure unary programs to scalar
+input/output relations and composing program syntax. Missing outputs represent
+divergence, so partial programs and overflow-sensitive specifications do not
+need a fake result value. Given the explicit composition-law theorem, checked
+witnesses for `P: x -> y` and `Q: y -> z` derive a witness for
+`P; Q: x -> z`. Observational equivalence is
+equality of those denotations, with checked reflexivity, symmetry,
+transitivity, pointwise observation, refinement, and the generic soundness
+schema `P ≈ Q -> T(P) ≈ T(Q)`. Guarded function relations have the form
+`defined(x) /\ y = f(x)`; an exact-denotation theorem for one yields checked
+partial correctness (`returns(P, x, y) -> y = f(x)`) and transports both
+positive returns and non-return. This is the shape intended for bounded
+factorial: the guard says its mathematical result fits the selected scalar.
+`ThreadedPureWasmSemantics` proves a
+single-threaded denotation equal to a multi-threaded one through two visible
+agreement facts with the shared pure denotation. It also transports pure
+equivalence of different programs into cross-profile equivalence, so
+single-threaded `P` and multi-threaded `Q` agree whenever both profiles agree
+with the pure semantics and `P ≈ Q`. None of these wrappers claims
+that the supplied denotation or composition law already agrees with SpecTec;
+that correspondence remains ordinary proof evidence.
+
 `SpecTecValueBuilder` is the corresponding generic structural API. It composes
 recorded number, list, optional, tuple, and tagged-case operations immutably and
 transactionally; `empty_wasm_module` and `forwarding_wasm_module` are

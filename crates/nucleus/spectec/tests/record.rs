@@ -2286,6 +2286,12 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         .assertion_reachability(&mut kernel, exported, host_call)
         .unwrap();
     let wasm = WasmTheory::open(&mut kernel, &document, reachability, start.function).unwrap();
+    let provisional_scalars = wasm.provisional_scalars();
+    assert_eq!(provisional_scalars.types.i32, value);
+    assert_eq!(provisional_scalars.types.i64, value);
+    assert_eq!(provisional_scalars.types.f32, value);
+    assert_eq!(provisional_scalars.types.f64, value);
+    assert_eq!(provisional_scalars.types.v128, value);
     let true_module = wasm
         .forwarding_module(&mut kernel, import_module, assert_name, export_name)
         .unwrap();
