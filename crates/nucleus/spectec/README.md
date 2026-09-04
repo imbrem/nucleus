@@ -143,7 +143,13 @@ input/output relations and composing program syntax. Missing outputs represent
 divergence, so partial programs and overflow-sensitive specifications do not
 need a fake result value. Observational equivalence is
 equality of those denotations, with checked reflexivity, symmetry,
-transitivity, and pointwise observation. `ThreadedPureWasmSemantics` proves a
+transitivity, pointwise observation, refinement, and the generic soundness
+schema `P ≈ Q -> T(P) ≈ T(Q)`. Guarded function relations have the form
+`defined(x) /\ y = f(x)`; an exact-denotation theorem for one yields checked
+partial correctness (`returns(P, x, y) -> y = f(x)`) and transports both
+positive returns and non-return. This is the shape intended for bounded
+factorial: the guard says its mathematical result fits the selected scalar.
+`ThreadedPureWasmSemantics` proves a
 single-threaded denotation equal to a multi-threaded one through two visible
 agreement facts with the shared pure denotation. None of these wrappers claims
 that the supplied denotation or composition law already agrees with SpecTec;
