@@ -11,6 +11,31 @@ mod tests {
         }
     }
 
+    fn shared_and_theorem() -> Theorem {
+        use crate::tagged::{Arena, Ref, Word};
+
+        let root = Ref::new(Word::pointer(4, false).unwrap()).unwrap();
+        let first = Ref::new(Word::literal(1, false).unwrap()).unwrap();
+        let second = Ref::new(Word::literal(2, false).unwrap()).unwrap();
+        let arena = Arena::new(
+            vec![
+                Word::ZERO,
+                Word::ZERO,
+                Word::ZERO,
+                Word::ZERO,
+                Word::from_raw(2 << 7),
+                first.word(),
+                second.word(),
+                Word::ZERO,
+            ],
+            Word::ZERO,
+            vec![(root, root)],
+        );
+        Theorem {
+            checked: Checked::check(arena).unwrap(),
+        }
+    }
+
     #[test]
     fn canonical_cross_moves_and_complements_the_final_owned_formula() {
         let p = literal(1);
@@ -164,7 +189,43 @@ mod tests {
             })
         );
         assert_eq!(theorem, before);
+        assert_eq!(theorem.checked.arena(), before.checked.arena());
         Checked::check(theorem.checked.arena().clone()).unwrap();
+    }
+
+    #[test]
+    fn rejected_shared_path_rewrites_do_not_mutate_storage() {
+        let path = FormulaPath::new(0, Side::Left, Vec::new());
+
+        let mut demorgan = shared_and_theorem();
+        let before = demorgan.checked.arena().clone();
+        assert_eq!(
+            demorgan.demorgan_mut(&path),
+            Err(EditError::Runtime {
+                source: RuntimeError::Shape,
+            })
+        );
+        assert_eq!(demorgan.checked.arena(), &before);
+
+        let mut dedup = shared_and_theorem();
+        let before = dedup.checked.arena().clone();
+        assert_eq!(
+            dedup.dedup_local_mut(&path, 0, 1),
+            Err(EditError::Runtime {
+                source: RuntimeError::Shape,
+            })
+        );
+        assert_eq!(dedup.checked.arena(), &before);
+
+        let mut contradiction = shared_and_theorem();
+        let before = contradiction.checked.arena().clone();
+        assert_eq!(
+            contradiction.contradiction_mut(&path, 0, 1),
+            Err(EditError::Runtime {
+                source: RuntimeError::Shape,
+            })
+        );
+        assert_eq!(contradiction.checked.arena(), &before);
     }
 
     #[test]
