@@ -1,0 +1,16 @@
+[package]
+name = "covalence-data-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Lossless, resource-bounded WebAssembly binary data"
+publish = false
+
+[dependencies]
+covalence-data-cbor = { path = "../cbor" }
+covalence-lib-error = { path = "../../lib/error" }
+covalence-lib-wasm = { path = "../../lib/wasm", features = ["parser"] }
+
+[lints]
+workspace = true

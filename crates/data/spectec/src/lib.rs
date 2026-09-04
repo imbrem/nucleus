@@ -15,6 +15,19 @@ use covalence_data_sexpr::{
 };
 use covalence_lib_error::snafu::Snafu;
 
+mod il;
+mod wasm3;
+
+pub use il::{
+    ClauseId, DeclarationId, IlArgument, IlBinding, IlChildren, IlClause, IlClauseSchema, IlCursor,
+    IlDeclaration, IlDeclarationBody, IlDeclarationSchema, IlDocument, IlDomain, IlError,
+    IlExpression, IlExpressionKind, IlExpressionView, IlForm, IlGrammarSymbol, IlIteration, IlKind,
+    IlNode, IlPathStep, IlPremise, IlProductionSchema, IlRoot, IlRule, IlRuleSchema, IlSchemaError,
+    IlType, IlTypeBinding, IlTypeCase, IlTypeDefinition, IlTypeField, IlTypeInstance, RootOrdinal,
+    RuleId,
+};
+pub use wasm3::{WASM_3_AST_BYTES, WASM_3_MANIFEST_BYTES, Wasm3Bundle, Wasm3Error, wasm3_bundle};
+
 /// Schema discriminator for pinned `SpecTec` source bundles.
 pub const FORMAT: &str = "io.github.imbrem.nucleus.spectecBundleV1";
 
@@ -30,8 +43,25 @@ pub const WASM_3_RELEASE: &str = "wg-3.0";
 /// `SpecTec` version reported by the pinned executable.
 pub const SPECTEC_VERSION: &str = "0.5";
 
-/// Exact ordered source set passed to `SpecTec` for the Wasm 3.0 bundle.
-pub const WASM_3_SOURCES: &[&str] = &[
+macro_rules! wasm_3_sources {
+    ($($source:literal),+ $(,)?) => {
+        /// Exact ordered source set passed to `SpecTec` for the Wasm 3.0 bundle.
+        pub const WASM_3_SOURCES: &[&str] = &[$($source),+];
+
+        /// Returns exact checked-in bytes for one bundle-relative Wasm 3.0 source path.
+        #[must_use]
+        pub fn wasm3_source(path: &str) -> Option<&'static [u8]> {
+            match path {
+                $(concat!("source/", $source) => Some(include_bytes!(concat!(
+                    "../vendor/wasm-3.0/source/", $source
+                ))),)+
+                _ => None,
+            }
+        }
+    };
+}
+
+wasm_3_sources!(
     "0.1-aux.vars.spectec",
     "0.2-aux.num.spectec",
     "0.3-aux.seq.spectec",
@@ -67,7 +97,7 @@ pub const WASM_3_SOURCES: &[&str] = &[
     "X.3-notation.execution.spectec",
     "X.4-notation.binary.spectec",
     "X.5-notation.text.spectec",
-];
+);
 
 /// Resource limits applied before constructing a recursive owned AST.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -1,0 +1,69 @@
+{
+  "lexicon": 1,
+  "id": "io.github.imbrem.nucleus.spectecAddSliceV1",
+  "defs": {
+    "main": {
+      "type": "object",
+      "description": "Exhaustive structural coverage for the first SpecTec parameter-only add slice.",
+      "required": ["bundle", "ast", "declarations", "clauses", "rules"],
+      "properties": {
+        "bundle": { "type": "cid-link" },
+        "ast": { "type": "cid-link" },
+        "declarations": {
+          "type": "array",
+          "items": { "type": "ref", "ref": "#declaration" }
+        },
+        "clauses": {
+          "type": "array",
+          "items": { "type": "ref", "ref": "#nested" }
+        },
+        "rules": {
+          "type": "array",
+          "items": { "type": "ref", "ref": "#nested" }
+        }
+      }
+    },
+    "declaration": {
+      "type": "object",
+      "required": ["root", "member", "disposition"],
+      "properties": {
+        "root": { "type": "integer", "minimum": 1 },
+        "member": { "type": "integer", "minimum": 0 },
+        "disposition": { "type": "ref", "ref": "#disposition" }
+      }
+    },
+    "nested": {
+      "type": "object",
+      "required": ["root", "member", "path", "disposition"],
+      "properties": {
+        "root": { "type": "integer", "minimum": 1 },
+        "member": { "type": "integer", "minimum": 0 },
+        "path": {
+          "type": "array",
+          "minLength": 1,
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "disposition": { "type": "ref", "ref": "#disposition" }
+      }
+    },
+    "disposition": {
+      "type": "object",
+      "required": [
+        "status",
+        "case",
+        "rejection",
+        "sourcePath",
+        "firstLine",
+        "lastLine"
+      ],
+      "properties": {
+        "status": { "type": "string", "knownValues": ["translate", "reject"] },
+        "case": { "type": "string" },
+        "rejection": { "type": "string" },
+        "sourcePath": { "type": "string" },
+        "firstLine": { "type": "integer", "minimum": 0 },
+        "lastLine": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

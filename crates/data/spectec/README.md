@@ -18,3 +18,13 @@ cargo run -p covalence-data-spectec --example generate-wasm3
 
 Successful parsing proves only that the artifact has recognized syntax. HOL
 validity and fidelity to the SpecTec source are separate checked obligations.
+
+`IlDocument` additionally inventories every top-level declaration and every
+member of a recursive group. It is the exhaustive source side of the
+semi-trusted correspondence API in `covalence-nucleus-spectec`; it still assigns
+no semantics and creates no theorem facts. Nested `rule` forms have structural
+selectors consisting of their declaration ID and one-based expression path;
+malformed rule forms are rejected instead of disappearing from the inventory.
+`IlDocument::node` provides a parser-independent, one-based structural view for
+semantic frontends: lists expose arity and ordinary textual atoms expose their
+decoded spelling, without making the S-expression crate part of their API.

@@ -1080,6 +1080,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-data-wasm"
+version = "0.0.0"
+dependencies = [
+ "covalence-data-cbor",
+ "covalence-lib-error",
+ "covalence-lib-wasm",
+]
+
+[[package]]
 name = "covalence-ffi-python"
 version = "0.0.0"
 dependencies = [
@@ -1225,6 +1234,7 @@ name = "covalence-lib-wasm"
 version = "0.0.0"
 dependencies = [
  "wasm-bindgen",
+ "wasmparser 0.254.0",
  "wasmtime",
  "wasmtime-wasi",
  "wit-bindgen-rt",
@@ -1362,6 +1372,16 @@ dependencies = [
  "covalence-lib-serde",
  "covalence-nucleus-core",
  "tokio",
+]
+
+[[package]]
+name = "covalence-nucleus-spectec"
+version = "0.0.0"
+dependencies = [
+ "covalence-data-cbor",
+ "covalence-data-spectec",
+ "covalence-lib-error",
+ "covalence-logic-hol",
 ]
 
 [[package]]

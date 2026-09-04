@@ -8,6 +8,7 @@
 //! - `component-guest` exposes the canonical-ABI runtime used by generated WIT
 //!   bindings;
 //! - `browser` exposes `wasm-bindgen` on `wasm32-unknown-unknown`.
+//! - `parser` exposes the pinned, non-authoritative binary reader and validator.
 //!
 //! This crate supplies versions and paths, not a common abstraction over the
 //! three runtimes. They implement different sides of the WebAssembly boundary.
@@ -17,6 +18,9 @@ pub use wasm_bindgen;
 
 #[cfg(feature = "component-guest")]
 pub use wit_bindgen_rt;
+
+#[cfg(feature = "parser")]
+pub use wasmparser;
 
 #[cfg(all(feature = "component-host", not(target_arch = "wasm32")))]
 pub use wasmtime;
