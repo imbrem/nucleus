@@ -139,7 +139,9 @@ classifiers and kind-preserving scalar operations. Algebraic methods construct
 explicit HOL obligations; they do not evaluate host integers or floats.
 `PureWasmSemantics` is the first small denotational experiment: a caller
 supplies checked operations mapping structural pure unary programs to scalar
-endofunctions and composing program syntax. Observational equivalence is
+input/output relations and composing program syntax. Missing outputs represent
+divergence, so partial programs and overflow-sensitive specifications do not
+need a fake result value. Observational equivalence is
 equality of those denotations, with checked reflexivity, symmetry,
 transitivity, and pointwise observation. `ThreadedPureWasmSemantics` proves a
 single-threaded denotation equal to a multi-threaded one through two visible

@@ -1,7 +1,7 @@
 //! Denotational primitives for a pure unary subset of WebAssembly.
 //!
 //! A semantic instance supplies checked HOL operations mapping structural
-//! program terms to pure scalar endofunctions and composing program terms.
+//! program terms to pure input/output relations and composing program terms.
 //! This module constructs propositions and equality proofs; it never executes
 //! Wasm or asserts that a supplied interpretation agrees with `SpecTec`.
 
@@ -26,13 +26,13 @@ impl PureWasmProgram {
     }
 }
 
-/// Checked denotational vocabulary for pure scalar endofunctions.
+/// Checked denotational vocabulary for pure scalar input/output relations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PureWasmSemantics {
     program_ty: Ref,
     scalar_kind: WasmScalarKind,
     scalar_ty: Ref,
-    function_ty: Ref,
+    relation_ty: Ref,
     bool_ty: Ref,
     denotation: Ref,
     compose: Ref,
@@ -41,7 +41,8 @@ pub struct PureWasmSemantics {
 impl PureWasmSemantics {
     /// Validates a pure denotation and structural composition operation.
     ///
-    /// `denotation` must have classifier `program -> scalar -> scalar`;
+    /// `denotation` must have classifier
+    /// `program -> scalar -> scalar -> bool`;
     /// `compose` must have classifier `program -> program -> program`.
     ///
     /// # Errors
@@ -60,8 +61,9 @@ impl PureWasmSemantics {
     ) -> Result<Self, KernelError> {
         let mut staged = kernel.fork();
         let scalar_ty = scalar_types.get(scalar_kind);
-        let function_ty = staged.ty_arr(scalar_ty, scalar_ty)?;
-        let denotation_ty = staged.ty_arr(program_ty, function_ty)?;
+        let output_predicate_ty = staged.ty_arr(scalar_ty, bool_ty)?;
+        let relation_ty = staged.ty_arr(scalar_ty, output_predicate_ty)?;
+        let denotation_ty = staged.ty_arr(program_ty, relation_ty)?;
         require_classifier_mut(&mut staged, denotation, denotation_ty)?;
         let compose_tail = staged.ty_arr(program_ty, program_ty)?;
         let compose_ty = staged.ty_arr(program_ty, compose_tail)?;
@@ -71,7 +73,7 @@ impl PureWasmSemantics {
             program_ty,
             scalar_kind,
             scalar_ty,
-            function_ty,
+            relation_ty,
             bool_ty,
             denotation,
             compose,
@@ -108,7 +110,7 @@ impl PureWasmSemantics {
         Ok(PureWasmProgram(program))
     }
 
-    /// Returns the checked pure scalar function denoted by `program`.
+    /// Returns the checked pure input/output relation denoted by `program`.
     ///
     /// # Errors
     ///
@@ -121,7 +123,7 @@ impl PureWasmSemantics {
     ) -> Result<Ref, KernelError> {
         let mut staged = kernel.fork();
         let denotation = staged.app(self.denotation, program.0)?;
-        require_classifier(&staged, denotation, self.function_ty)?;
+        require_classifier(&staged, denotation, self.relation_ty)?;
         *kernel = staged;
         Ok(denotation)
     }
@@ -146,35 +148,79 @@ impl PureWasmSemantics {
         Ok(equivalent)
     }
 
-    /// Observes a pure program at one scalar input.
+    /// Constructs the proposition that a pure program returns one scalar
+    /// output for one input.
     ///
     /// # Errors
     ///
     /// Returns an error unless the scalar has the configured kind or checked
     /// application fails. `kernel` is unchanged on failure.
-    pub fn observe(
+    pub fn returns(
         self,
         kernel: &mut Kernel,
         program: PureWasmProgram,
         input: WasmScalar,
-    ) -> Result<WasmScalar, KernelError> {
-        if input.kind() != self.scalar_kind {
+        output: WasmScalar,
+    ) -> Result<Ref, KernelError> {
+        if input.kind() != self.scalar_kind || output.kind() != self.scalar_kind {
             return Err(KernelError::InvalidTheoremRule {
-                rule: "pure Wasm observation scalar kind",
+                rule: "pure Wasm return scalar kind",
             });
         }
         let mut staged = kernel.fork();
         let denotation = self.denotation(&mut staged, program)?;
-        let output = staged.app(denotation, input.term())?;
-        require_classifier(&staged, output, self.scalar_ty)?;
+        let at_input = staged.app(denotation, input.term())?;
+        let proposition = staged.app(at_input, output.term())?;
+        require_classifier(&staged, proposition, self.bool_ty)?;
         *kernel = staged;
-        Ok(WasmScalar::from_checked(self.scalar_kind, output))
+        Ok(proposition)
+    }
+
+    /// Constructs the proposition that `program` has no return value for
+    /// `input` in this pure semantics.
+    ///
+    /// For this deliberately small semantics, non-return combines divergence
+    /// and any other behavior excluded from the return relation. A later
+    /// effectful semantics may distinguish traps and resource exhaustion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the input has the configured kind or checked
+    /// application, negation, and quantification succeed. `kernel` is unchanged
+    /// on failure.
+    pub fn does_not_return(
+        self,
+        kernel: &mut Kernel,
+        program: PureWasmProgram,
+        input: WasmScalar,
+    ) -> Result<Ref, KernelError> {
+        if input.kind() != self.scalar_kind {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "pure Wasm non-return scalar kind",
+            });
+        }
+        let mut staged = kernel.fork();
+        let name = staged.fresh_name(&[
+            self.program_ty,
+            self.scalar_ty,
+            self.relation_ty,
+            self.denotation,
+            program.0,
+            input.term(),
+        ])?;
+        let output = staged.tm_fv(name, self.scalar_ty)?;
+        let output = WasmScalar::from_checked(self.scalar_kind, output);
+        let returns = self.returns(&mut staged, program, input, output)?;
+        let does_not_return = staged.op1(covalence_logic_hol::builtin::Op1::Not, returns)?;
+        let proposition = staged.forall_tm(self.bool_ty, output.term(), does_not_return)?;
+        *kernel = staged;
+        Ok(proposition)
     }
 
     /// Constructs the semantic law for structural function composition.
     ///
     /// The result states that the denotation of `first; second` equals
-    /// `fun x => denote(second) (denote(first) x)`. It is an explicit
+    /// `fun x z => exists y. denote(first) x y /\ denote(second) y z`. It is an explicit
     /// grounding obligation, not a theorem created by this method.
     ///
     /// # Errors
@@ -195,16 +241,34 @@ impl PureWasmSemantics {
         let name = staged.fresh_name(&[
             self.program_ty,
             self.scalar_ty,
-            self.function_ty,
+            self.relation_ty,
             self.denotation,
             self.compose,
             first.0,
             second.0,
         ])?;
-        let binder = staged.tm_fv(name, self.scalar_ty)?;
-        let intermediate = staged.app(first_denotation, binder)?;
-        let output = staged.app(second_denotation, intermediate)?;
-        let semantic_composition = staged.lam_at(self.function_ty, binder, output)?;
+        let input = staged.tm_fv(name, self.scalar_ty)?;
+        let output = staged.tm_fv(
+            name.checked_add(1).ok_or(KernelError::TooManyNames)?,
+            self.scalar_ty,
+        )?;
+        let intermediate = staged.tm_fv(
+            name.checked_add(2).ok_or(KernelError::TooManyNames)?,
+            self.scalar_ty,
+        )?;
+        let first_at_input = staged.app(first_denotation, input)?;
+        let first_returns = staged.app(first_at_input, intermediate)?;
+        let second_at_intermediate = staged.app(second_denotation, intermediate)?;
+        let second_returns = staged.app(second_at_intermediate, output)?;
+        let path = staged.op2(
+            covalence_logic_hol::builtin::Op2::And,
+            first_returns,
+            second_returns,
+        )?;
+        let path = staged.exists_tm(intermediate, path)?;
+        let by_output = staged.lam(output, path)?;
+        let semantic_composition = staged.lam(input, by_output)?;
+        require_classifier_mut(&mut staged, semantic_composition, self.relation_ty)?;
         let law = staged.eq(self.bool_ty, composed_denotation, semantic_composition)?;
         *kernel = staged;
         Ok(law)
@@ -297,7 +361,8 @@ impl PureWasmSemantics {
         })
     }
 
-    /// Specializes observational equivalence to equality at one scalar input.
+    /// Specializes observational equivalence to equality of return
+    /// propositions at one input/output pair.
     ///
     /// # Errors
     ///
@@ -311,8 +376,9 @@ impl PureWasmSemantics {
         left: PureWasmProgram,
         right: PureWasmProgram,
         input: WasmScalar,
+        output: WasmScalar,
     ) -> Result<Evidence, PureWasmProofError> {
-        if input.kind() != self.scalar_kind {
+        if input.kind() != self.scalar_kind || output.kind() != self.scalar_kind {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "pure Wasm equivalence scalar kind",
             }
@@ -321,7 +387,8 @@ impl PureWasmSemantics {
         let mut staged = kernel.fork();
         let expected = self.equivalent(&mut staged, left, right)?;
         let equivalence = align_positive(&mut staged, equivalence, expected)?;
-        let pointwise = staged.ap_thm(equivalence, input.term())?;
+        let at_input = staged.ap_thm(equivalence, input.term())?;
+        let pointwise = staged.ap_thm(at_input.theorem, output.term())?;
         *kernel = staged;
         Ok(Evidence {
             proposition: pointwise.equality,
@@ -354,7 +421,7 @@ impl ThreadedPureWasmSemantics {
         multi: Ref,
     ) -> Result<Self, KernelError> {
         let mut staged = kernel.fork();
-        let expected = staged.ty_arr(pure.program_ty, pure.function_ty)?;
+        let expected = staged.ty_arr(pure.program_ty, pure.relation_ty)?;
         require_classifier_mut(&mut staged, single, expected)?;
         require_classifier_mut(&mut staged, multi, expected)?;
         *kernel = staged;
@@ -536,6 +603,7 @@ mod tests {
     use crate::{EvidenceScope, WasmScalars};
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn pure_denotations_compose_observe_and_compare_thread_profiles() {
         let mut kernel = Kernel::new();
         let star = kernel.star().unwrap();
@@ -548,8 +616,11 @@ mod tests {
             f64: kernel.ty_fv(5, star).unwrap(),
             v128: kernel.ty_fv(6, star).unwrap(),
         };
-        let function_ty = kernel.ty_arr(scalar_types.i32, scalar_types.i32).unwrap();
-        let denotation_ty = kernel.ty_arr(program_ty, function_ty).unwrap();
+        let output_predicate_ty = kernel.ty_arr(scalar_types.i32, bool_ty).unwrap();
+        let relation_ty = kernel
+            .ty_arr(scalar_types.i32, output_predicate_ty)
+            .unwrap();
+        let denotation_ty = kernel.ty_arr(program_ty, relation_ty).unwrap();
         let denotation = kernel.tm_fv(10, denotation_ty).unwrap();
         let compose_tail = kernel.ty_arr(program_ty, program_ty).unwrap();
         let compose_ty = kernel.ty_arr(program_ty, compose_tail).unwrap();
@@ -611,8 +682,18 @@ mod tests {
         let input = scalars
             .scalar(&kernel, WasmScalarKind::I32, input_term)
             .unwrap();
+        let output_term = kernel.tm_fv(18, scalar_types.i32).unwrap();
+        let output = scalars
+            .scalar(&kernel, WasmScalarKind::I32, output_term)
+            .unwrap();
+        let does_not_return = semantics.does_not_return(&mut kernel, left, input).unwrap();
+        assert!(
+            kernel
+                .equivalent(kernel.classifier(does_not_return).unwrap(), bool_ty)
+                .unwrap()
+        );
         let observed = semantics
-            .prove_observation_equal(&mut kernel, reflexive.theorem, left, left, input)
+            .prove_observation_equal(&mut kernel, reflexive.theorem, left, left, input, output)
             .unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, observed)
@@ -638,7 +719,7 @@ mod tests {
             .scalar(&kernel, WasmScalarKind::I64, wrong_term)
             .unwrap();
         let before = kernel.arena().clone();
-        assert!(semantics.observe(&mut kernel, left, wrong).is_err());
+        assert!(semantics.returns(&mut kernel, left, wrong, output).is_err());
         assert_eq!(kernel.arena(), &before);
     }
 }
