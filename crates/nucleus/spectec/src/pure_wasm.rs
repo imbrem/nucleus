@@ -6,7 +6,7 @@
 //! Wasm or asserts that a supplied interpretation agrees with `SpecTec`.
 
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref, ThmId};
+use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, ThmId, builtin::Op2};
 use covalence_logic_hol_derived::{
     EqualityError, SyntaxError, equality_symmetry, equality_transitivity, join_alpha_equivalent,
     join_same_syntax,
@@ -169,6 +169,56 @@ impl PureWasmSemantics {
         let equivalent = staged.eq(self.bool_ty, left, right)?;
         *kernel = staged;
         Ok(equivalent)
+    }
+
+    /// Constructs extensional refinement of pure return behavior.
+    ///
+    /// `implementation` refines `specification` when every scalar pair returned
+    /// by the implementation is allowed by the specification. Unlike
+    /// equivalence, refinement intentionally permits the implementation to
+    /// return on fewer inputs; progress can be stated separately.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if checked application, implication, or quantification
+    /// fails. `kernel` is unchanged on failure.
+    pub fn refines(
+        self,
+        kernel: &mut Kernel,
+        implementation: PureWasmProgram,
+        specification: PureWasmProgram,
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let name = staged.fresh_name(&[
+            self.program_ty,
+            self.scalar_ty,
+            self.relation_ty,
+            self.denotation,
+            implementation.0,
+            specification.0,
+        ])?;
+        let input = staged.tm_fv(name, self.scalar_ty)?;
+        let output = staged.tm_fv(
+            name.checked_add(1).ok_or(KernelError::TooManyNames)?,
+            self.scalar_ty,
+        )?;
+        let implementation_returns = self.returns(
+            &mut staged,
+            implementation,
+            WasmScalar::from_checked(self.scalar_kind, input),
+            WasmScalar::from_checked(self.scalar_kind, output),
+        )?;
+        let specification_returns = self.returns(
+            &mut staged,
+            specification,
+            WasmScalar::from_checked(self.scalar_kind, input),
+            WasmScalar::from_checked(self.scalar_kind, output),
+        )?;
+        let implication = staged.op2(Op2::Imp, implementation_returns, specification_returns)?;
+        let by_output = staged.forall_tm(self.bool_ty, output, implication)?;
+        let proposition = staged.forall_tm(self.bool_ty, input, by_output)?;
+        *kernel = staged;
+        Ok(proposition)
     }
 
     /// Constructs the proposition that `program` has exactly `specification`
@@ -341,6 +391,54 @@ impl PureWasmSemantics {
         Ok(Evidence {
             proposition,
             theorem: reflexive.theorem,
+            holds: true,
+        })
+    }
+
+    /// Proves pure return-behavior refinement is reflexive.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if checked implication, universal introduction, or
+    /// formula alignment fails. `kernel` is unchanged on failure.
+    pub fn prove_refinement_reflexive(
+        self,
+        kernel: &mut Kernel,
+        program: PureWasmProgram,
+    ) -> Result<Evidence, PureWasmProofError> {
+        let mut staged = kernel.fork();
+        let name = staged.fresh_name(&[
+            self.program_ty,
+            self.scalar_ty,
+            self.relation_ty,
+            self.denotation,
+            program.0,
+        ])?;
+        let input = staged.tm_fv(name, self.scalar_ty)?;
+        let output = staged.tm_fv(
+            name.checked_add(1).ok_or(KernelError::TooManyNames)?,
+            self.scalar_ty,
+        )?;
+        let returns = self.returns(
+            &mut staged,
+            program,
+            WasmScalar::from_checked(self.scalar_kind, input),
+            WasmScalar::from_checked(self.scalar_kind, output),
+        )?;
+        let implication = staged.op2(Op2::Imp, returns, returns)?;
+        let assumed = staged.identity(Lit::positive(returns.get()))?;
+        let implication_fact = staged.imp_right(assumed, Lit::positive(implication.get()))?;
+        let by_output = staged.forall_tm(self.bool_ty, output, implication)?;
+        let by_output_fact = staged.forall_intro_at(implication_fact, output, by_output)?;
+        let universal = staged.forall_tm(self.bool_ty, input, by_output)?;
+        let theorem = staged.forall_intro_at(by_output_fact, input, universal)?;
+        let proposition = self.refines(&mut staged, program, program)?;
+        join_alpha_equivalent(&mut staged, universal, proposition)?;
+        staged.convert_conclusions(theorem, universal, proposition)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition,
+            theorem,
             holds: true,
         })
     }
@@ -752,6 +850,12 @@ mod tests {
         let reflexive = semantics.prove_reflexive(&mut kernel, left).unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, reflexive)
+            .unwrap();
+        let refinement = semantics
+            .prove_refinement_reflexive(&mut kernel, left)
+            .unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, refinement)
             .unwrap();
         let symmetric = semantics
             .prove_symmetric(&mut kernel, reflexive.theorem, left, left)
