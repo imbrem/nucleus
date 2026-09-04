@@ -56,7 +56,8 @@ pub use program_logic::{
     Proposition, ReachabilityProofError, SoundObservationTransformation,
 };
 pub use pure_wasm::{
-    PureWasmProgram, PureWasmProofError, PureWasmSemantics, ThreadedPureWasmSemantics,
+    PureWasmProgram, PureWasmProofError, PureWasmRelation, PureWasmSemantics,
+    ThreadedPureWasmSemantics,
 };
 pub use relational::{
     DefinitionProofError, OpenedRelationalProduction, RelationProofError, RelationalCall,

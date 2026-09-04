@@ -26,6 +26,18 @@ impl PureWasmProgram {
     }
 }
 
+/// A checked input/output relation used as a pure program specification.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PureWasmRelation(Ref);
+
+impl PureWasmRelation {
+    /// Returns the underlying `scalar -> scalar -> bool` term.
+    #[must_use]
+    pub const fn term(self) -> Ref {
+        self.0
+    }
+}
+
 /// Checked denotational vocabulary for pure scalar input/output relations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PureWasmSemantics {
@@ -90,6 +102,17 @@ impl PureWasmSemantics {
         Ok(PureWasmProgram(term))
     }
 
+    /// Checks and wraps an input/output specification relation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `term` has classifier
+    /// `scalar -> scalar -> bool` for this semantics.
+    pub fn relation(self, kernel: &Kernel, term: Ref) -> Result<PureWasmRelation, KernelError> {
+        require_classifier(kernel, term, self.relation_ty)?;
+        Ok(PureWasmRelation(term))
+    }
+
     /// Composes `first` followed by `second` as structural program syntax.
     ///
     /// # Errors
@@ -146,6 +169,29 @@ impl PureWasmSemantics {
         let equivalent = staged.eq(self.bool_ty, left, right)?;
         *kernel = staged;
         Ok(equivalent)
+    }
+
+    /// Constructs the proposition that `program` has exactly `specification`
+    /// as its pure input/output relation.
+    ///
+    /// This is equality of checked HOL relation terms, not a Rust-side
+    /// comparison or an assumed interpretation fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if checked denotation or equality construction fails.
+    /// `kernel` is unchanged on failure.
+    pub fn specifies(
+        self,
+        kernel: &mut Kernel,
+        program: PureWasmProgram,
+        specification: PureWasmRelation,
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let denotation = self.denotation(&mut staged, program)?;
+        let proposition = staged.eq(self.bool_ty, denotation, specification.0)?;
+        *kernel = staged;
+        Ok(proposition)
     }
 
     /// Constructs the proposition that a pure program returns one scalar
@@ -393,6 +439,55 @@ impl PureWasmSemantics {
         Ok(Evidence {
             proposition: pointwise.equality,
             theorem: pointwise.theorem,
+            holds: true,
+        })
+    }
+
+    /// Transports a checked specification-return fact into a program-return
+    /// fact.
+    ///
+    /// `specification_fact` proves that the program's denotation equals the
+    /// supplied relation. `returns_fact` proves that relation at the concrete
+    /// input/output pair. Every premise of both facts remains visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless both theorems have their exact positive
+    /// conclusions, the scalar kinds match, or checked equality transport
+    /// fails. `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_returns_from_specification(
+        self,
+        kernel: &mut Kernel,
+        program: PureWasmProgram,
+        specification: PureWasmRelation,
+        input: WasmScalar,
+        output: WasmScalar,
+        specification_fact: ThmId,
+        returns_fact: ThmId,
+    ) -> Result<Evidence, PureWasmProofError> {
+        if input.kind() != self.scalar_kind || output.kind() != self.scalar_kind {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "pure Wasm specification scalar kind",
+            }
+            .into());
+        }
+        let mut staged = kernel.fork();
+        let specification_claim = self.specifies(&mut staged, program, specification)?;
+        let specification_fact =
+            align_positive(&mut staged, specification_fact, specification_claim)?;
+        let at_input = staged.ap_thm(specification_fact, input.term())?;
+        let at_output = staged.ap_thm(at_input.theorem, output.term())?;
+        let reversed = equality_symmetry(&mut staged, self.bool_ty, at_output.theorem)?;
+        let returns_fact = align_positive(&mut staged, returns_fact, reversed.left)?;
+        let theorem = staged.eq_mp(reversed.theorem, returns_fact)?;
+        let proposition = self.returns(&mut staged, program, input, output)?;
+        join_alpha_equivalent(&mut staged, at_output.left, proposition)?;
+        staged.convert_conclusions(theorem, at_output.left, proposition)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition,
+            theorem,
             holds: true,
         })
     }
@@ -697,6 +792,34 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, observed)
+            .unwrap();
+
+        let specification_term = kernel.tm_fv(19, relation_ty).unwrap();
+        let specification = semantics.relation(&kernel, specification_term).unwrap();
+        let specification_claim = semantics
+            .specifies(&mut kernel, left, specification)
+            .unwrap();
+        let relation_at_input = kernel.app(specification.term(), input.term()).unwrap();
+        let relation_returns = kernel.app(relation_at_input, output.term()).unwrap();
+        let specification_fact = kernel
+            .identity(Lit::positive(specification_claim.get()))
+            .unwrap();
+        let returns_fact = kernel
+            .identity(Lit::positive(relation_returns.get()))
+            .unwrap();
+        let program_returns = semantics
+            .prove_returns_from_specification(
+                &mut kernel,
+                left,
+                specification,
+                input,
+                output,
+                specification_fact,
+                returns_fact,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[specification_claim, relation_returns])
+            .check(&kernel, program_returns)
             .unwrap();
 
         let single = kernel.tm_fv(15, denotation_ty).unwrap();
