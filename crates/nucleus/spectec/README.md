@@ -141,7 +141,9 @@ explicit HOL obligations; they do not evaluate host integers or floats.
 supplies checked operations mapping structural pure unary programs to scalar
 input/output relations and composing program syntax. Missing outputs represent
 divergence, so partial programs and overflow-sensitive specifications do not
-need a fake result value. Observational equivalence is
+need a fake result value. Given the explicit composition-law theorem, checked
+witnesses for `P: x -> y` and `Q: y -> z` derive a witness for
+`P; Q: x -> z`. Observational equivalence is
 equality of those denotations, with checked reflexivity, symmetry,
 transitivity, pointwise observation, refinement, and the generic soundness
 schema `P ≈ Q -> T(P) ≈ T(Q)`. Guarded function relations have the form
