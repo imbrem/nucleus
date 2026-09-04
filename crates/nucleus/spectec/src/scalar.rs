@@ -147,6 +147,47 @@ impl WasmScalarBinary {
         Ok(proposition)
     }
 
+    /// Constructs the universally quantified associativity proposition.
+    ///
+    /// This states `(x op y) op z = x op (y op z)` as an obligation; it does
+    /// not assert that every Wasm operation is associative. In particular,
+    /// callers must supply appropriate checked evidence for the selected
+    /// integer, floating-point, or SIMD operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if checked application, equality, or quantification
+    /// fails. `kernel` is unchanged on failure.
+    pub fn associative(self, kernel: &mut Kernel) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let first = staged.fresh_name(&[self.scalar_ty, self.bool_ty, self.operation])?;
+        let x = WasmScalar::from_checked(self.kind, staged.tm_fv(first, self.scalar_ty)?);
+        let y = WasmScalar::from_checked(
+            self.kind,
+            staged.tm_fv(
+                first.checked_add(1).ok_or(KernelError::TooManyNames)?,
+                self.scalar_ty,
+            )?,
+        );
+        let z = WasmScalar::from_checked(
+            self.kind,
+            staged.tm_fv(
+                first.checked_add(2).ok_or(KernelError::TooManyNames)?,
+                self.scalar_ty,
+            )?,
+        );
+        let xy = self.apply(&mut staged, x, y)?;
+        let xy_z = self.apply(&mut staged, xy, z)?;
+        let yz = self.apply(&mut staged, y, z)?;
+        let x_yz = self.apply(&mut staged, x, yz)?;
+        let equality = staged.eq(self.bool_ty, xy_z.term, x_yz.term)?;
+        let by_z = staged.forall_tm(self.bool_ty, z.term, equality)?;
+        let by_y = staged.forall_tm(self.bool_ty, y.term, by_z)?;
+        let proposition = staged.forall_tm(self.bool_ty, x.term, by_y)?;
+        *kernel = staged;
+        Ok(proposition)
+    }
+
     /// Specializes a checked commutativity theorem to two scalar operands.
     ///
     /// Every premise of `commutativity` remains visible in the result. This
@@ -181,6 +222,47 @@ impl WasmScalarBinary {
         Ok(Evidence {
             proposition,
             theorem: at_right.theorem,
+            holds: true,
+        })
+    }
+
+    /// Specializes a checked associativity theorem to three scalar operands.
+    ///
+    /// Every premise of `associativity` remains visible in the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `associativity` proves this operation's exact
+    /// universally quantified law, all operands have the configured kind, or
+    /// checked specialization fails. `kernel` is unchanged on failure.
+    pub fn prove_associates(
+        self,
+        kernel: &mut Kernel,
+        associativity: ThmId,
+        x: WasmScalar,
+        y: WasmScalar,
+        z: WasmScalar,
+    ) -> Result<Evidence, WasmScalarProofError> {
+        require_kind(x, self.kind)?;
+        require_kind(y, self.kind)?;
+        require_kind(z, self.kind)?;
+        let mut staged = kernel.fork();
+        let law = self.associative(&mut staged)?;
+        let law = align_positive(&mut staged, associativity, law)?;
+        let at_x = forall_elim(&mut staged, law, x.term)?;
+        let at_y = forall_elim(&mut staged, at_x.theorem, y.term)?;
+        let at_z = forall_elim(&mut staged, at_y.theorem, z.term)?;
+        let xy = self.apply(&mut staged, x, y)?;
+        let xy_z = self.apply(&mut staged, xy, z)?;
+        let yz = self.apply(&mut staged, y, z)?;
+        let x_yz = self.apply(&mut staged, x, yz)?;
+        let proposition = staged.eq(self.bool_ty, xy_z.term, x_yz.term)?;
+        join_alpha_equivalent(&mut staged, at_z.proposition, proposition)?;
+        staged.convert_conclusions(at_z.theorem, at_z.proposition, proposition)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition,
+            theorem: at_z.theorem,
             holds: true,
         })
     }
@@ -377,6 +459,18 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[commutative])
             .check(&kernel, swapped)
+            .unwrap();
+        let third_term = kernel.tm_fv(14, types.i32).unwrap();
+        let third = scalars
+            .scalar(&kernel, WasmScalarKind::I32, third_term)
+            .unwrap();
+        let associative = operation.associative(&mut kernel).unwrap();
+        let associativity_fact = kernel.identity(Lit::positive(associative.get())).unwrap();
+        let reassociated = operation
+            .prove_associates(&mut kernel, associativity_fact, left, right, third)
+            .unwrap();
+        EvidenceScope::positive(&[associative])
+            .check(&kernel, reassociated)
             .unwrap();
 
         let wrong_term = kernel.tm_fv(13, types.i64).unwrap();
