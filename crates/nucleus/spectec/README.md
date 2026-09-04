@@ -136,7 +136,9 @@ equivalence.
 
 `WasmScalars` adds typed handles for `i32`, `i64`, `f32`, `f64`, and `v128`
 classifiers and kind-preserving scalar operations. Algebraic methods construct
-explicit HOL obligations; they do not evaluate host integers or floats.
+and specialize explicit commutativity and associativity obligations; they do
+not evaluate host integers or floats or claim laws inappropriate for a
+particular operation.
 `PureWasmSemantics` is the first small denotational experiment: a caller
 supplies checked operations mapping structural pure unary programs to scalar
 input/output relations and composing program syntax. Missing outputs represent
