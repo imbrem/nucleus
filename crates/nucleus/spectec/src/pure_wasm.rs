@@ -8,8 +8,9 @@
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, SynRel, ThmId, builtin::Op2};
 use covalence_logic_hol_derived::{
-    EqualityError, ForallError, ModelError, SyntaxError, equality_symmetry, equality_transitivity,
-    forall_elim, join_alpha_equivalent, join_same_syntax, substitute,
+    EqualityError, ExistsError, ForallError, ModelError, SyntaxError, equality_symmetry,
+    equality_transitivity, forall_elim, introduce_exists, join_alpha_equivalent, join_same_syntax,
+    substitute,
 };
 
 use crate::{Evidence, WasmScalar, WasmScalarKind, WasmScalarTypes};
@@ -506,6 +507,108 @@ impl PureWasmSemantics {
         let law = staged.eq(self.bool_ty, composed_denotation, semantic_composition)?;
         *kernel = staged;
         Ok(law)
+    }
+
+    /// Proves that two witnessed returns compose.
+    ///
+    /// Given the checked structural [`Self::composition_law`] and facts that
+    /// `first` returns `intermediate` from `input` and `second` returns
+    /// `output` from `intermediate`, derives that `first; second` returns
+    /// `output` from `input`. Every premise of all three facts remains visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the supplied theorems prove their exact
+    /// propositions, all scalars have the configured kind, or a checked
+    /// equality, conjunction, existential, or beta-conversion step fails.
+    /// `kernel` is unchanged on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_composed_return(
+        self,
+        kernel: &mut Kernel,
+        first: PureWasmProgram,
+        second: PureWasmProgram,
+        input: WasmScalar,
+        intermediate: WasmScalar,
+        output: WasmScalar,
+        composition_fact: ThmId,
+        first_fact: ThmId,
+        second_fact: ThmId,
+    ) -> Result<Evidence, PureWasmProofError> {
+        if input.kind() != self.scalar_kind
+            || intermediate.kind() != self.scalar_kind
+            || output.kind() != self.scalar_kind
+        {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "pure Wasm composition scalar kind",
+            }
+            .into());
+        }
+        let mut staged = kernel.fork();
+        let law = self.composition_law(&mut staged, first, second)?;
+        let operands = staged
+            .arena()
+            .children(law)
+            .ok_or(KernelError::InvalidTheoremRule {
+                rule: "pure Wasm composition equality",
+            })?
+            .collect::<Vec<_>>();
+        let [_, _, semantic_relation] = operands.as_slice() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "pure Wasm composition equality operands",
+            }
+            .into());
+        };
+        let composition_fact = align_positive(&mut staged, composition_fact, law)?;
+        let pointwise = staged.ap_thm(composition_fact, input.term())?;
+        let pointwise = staged.ap_thm(pointwise.theorem, output.term())?;
+
+        let first_returns = self.returns(&mut staged, first, input, intermediate)?;
+        let first_fact = align_positive(&mut staged, first_fact, first_returns)?;
+        let second_returns = self.returns(&mut staged, second, intermediate, output)?;
+        let second_fact = align_positive(&mut staged, second_fact, second_returns)?;
+        let path = staged.op2(Op2::And, first_returns, second_returns)?;
+        let path_fact = staged.and_right(first_fact, second_fact, Lit::positive(path.get()))?;
+
+        let name = staged.fresh_name(&[
+            self.scalar_ty,
+            law,
+            *semantic_relation,
+            input.term(),
+            intermediate.term(),
+            output.term(),
+        ])?;
+        let binder = staged.tm_fv(name, self.scalar_ty)?;
+        let first_at_input = self.denotation(&mut staged, first)?;
+        let first_at_input = staged.app(first_at_input, input.term())?;
+        let first_at_binder = staged.app(first_at_input, binder)?;
+        let second_at_binder = self.denotation(&mut staged, second)?;
+        let second_at_binder = staged.app(second_at_binder, binder)?;
+        let second_at_output = staged.app(second_at_binder, output.term())?;
+        let body = staged.op2(Op2::And, first_at_binder, second_at_output)?;
+        let exists = introduce_exists(&mut staged, path_fact, binder, body, intermediate.term())?;
+
+        let (application, reduced, beta) =
+            certify_binary_beta(&mut staged, *semantic_relation, input.term(), output.term())?;
+        let reduced_exists = join_alpha_equivalent(&mut staged, reduced, exists.proposition)?;
+        let same_application = join_same_syntax(&mut staged, pointwise.right, application)?;
+        let through_beta = staged.syn_trans(None, same_application, beta)?;
+        let alignment = staged.syn_trans(None, through_beta, reduced_exists)?;
+        staged.union_syn_fact(alignment)?;
+        let exists_fact = staged.copy_theorem(exists.theorem)?;
+        staged.convert_conclusions(exists_fact, exists.proposition, pointwise.right)?;
+        let reversed = equality_symmetry(&mut staged, self.bool_ty, pointwise.theorem)?;
+        let theorem = staged.eq_mp(reversed.theorem, exists_fact)?;
+        let composed = self.compose(&mut staged, first, second)?;
+        let proposition = self.returns(&mut staged, composed, input, output)?;
+        join_alpha_equivalent(&mut staged, pointwise.left, proposition)?;
+        staged.convert_conclusions(theorem, pointwise.left, proposition)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition,
+            theorem,
+            holds: true,
+        })
     }
 
     /// Proves observational equivalence is reflexive.
@@ -1100,6 +1203,12 @@ pub enum PureWasmProofError {
         /// Underlying specialization failure.
         source: ForallError,
     },
+    /// Existential witness introduction failed.
+    #[snafu(transparent)]
+    Exists {
+        /// Underlying existential derivation failure.
+        source: ExistsError,
+    },
     /// Capture-avoiding beta substitution failed.
     #[snafu(transparent)]
     Substitution {
@@ -1323,6 +1432,31 @@ mod tests {
         let output_term = kernel.tm_fv(18, scalar_types.i32).unwrap();
         let output = scalars
             .scalar(&kernel, WasmScalarKind::I32, output_term)
+            .unwrap();
+        let composition_fact = kernel.identity(Lit::positive(law.get())).unwrap();
+        let first_returns = semantics.returns(&mut kernel, left, input, output).unwrap();
+        let first_fact = kernel.identity(Lit::positive(first_returns.get())).unwrap();
+        let second_returns = semantics
+            .returns(&mut kernel, middle, output, input)
+            .unwrap();
+        let second_fact = kernel
+            .identity(Lit::positive(second_returns.get()))
+            .unwrap();
+        let composed_return = semantics
+            .prove_composed_return(
+                &mut kernel,
+                left,
+                middle,
+                input,
+                output,
+                input,
+                composition_fact,
+                first_fact,
+                second_fact,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[law, first_returns, second_returns])
+            .check(&kernel, composed_return)
             .unwrap();
         let does_not_return = semantics.does_not_return(&mut kernel, left, input).unwrap();
         assert!(
