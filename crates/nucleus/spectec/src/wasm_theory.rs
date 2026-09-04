@@ -10,8 +10,8 @@ use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, ThmId};
 
 use crate::{
     AssertionReachability, ClosedProgramObservation, Evidence, ObservationProofError,
-    ParameterizedDocument, ReachabilityProofError, WasmLogicError, empty_wasm_module,
-    forwarding_wasm_module,
+    ParameterizedDocument, ReachabilityProofError, WasmLogicError, WasmScalarTypes, WasmScalars,
+    empty_wasm_module, forwarding_wasm_module,
 };
 
 /// A checked term used as a structural Wasm module.
@@ -105,6 +105,27 @@ impl WasmEvidenceReport {
 }
 
 impl<'a> WasmTheory<'a> {
+    /// Returns provisional scalar handles over the lowering's erased value
+    /// carrier.
+    ///
+    /// The Rust kinds remain distinct, but all five classifiers are currently
+    /// the same HOL `SpecTec` value type. This method deliberately does not
+    /// claim that the lowering already exposes distinct scalar base types.
+    #[must_use]
+    pub fn provisional_scalars(self) -> WasmScalars {
+        let value = self.document.schema.value();
+        WasmScalars {
+            types: WasmScalarTypes {
+                i32: value,
+                i64: value,
+                f32: value,
+                f64: value,
+                v128: value,
+            },
+            bool_ty: self.document.schema.bool_ty(),
+        }
+    }
+
     /// Opens a typed view of one checked assertion-reachability interpretation.
     ///
     /// # Errors
