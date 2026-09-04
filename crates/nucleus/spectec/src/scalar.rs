@@ -4,8 +4,13 @@
 //! interpretation. Rust never evaluates an operation or turns a host result
 //! into theorem evidence.
 
-use covalence_logic_hol::{Kernel, KernelError, Ref};
-use covalence_logic_hol_derived::join_same_syntax;
+use covalence_lib_error::snafu::Snafu;
+use covalence_logic_hol::{Kernel, KernelError, Ref, ThmId};
+use covalence_logic_hol_derived::{
+    ForallError, SyntaxError, forall_elim, join_alpha_equivalent, join_same_syntax,
+};
+
+use crate::Evidence;
 
 /// One WebAssembly scalar type.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -86,6 +91,12 @@ pub struct WasmScalarBinary {
 }
 
 impl WasmScalarBinary {
+    /// Returns the scalar kind consumed and produced by this operation.
+    #[must_use]
+    pub const fn kind(self) -> WasmScalarKind {
+        self.kind
+    }
+
     /// Applies the operation to two same-kind scalar terms.
     ///
     /// # Errors
@@ -135,6 +146,68 @@ impl WasmScalarBinary {
         *kernel = staged;
         Ok(proposition)
     }
+
+    /// Specializes a checked commutativity theorem to two scalar operands.
+    ///
+    /// Every premise of `commutativity` remains visible in the result. This
+    /// method does not claim that an operation is commutative merely because
+    /// it is packaged as a WebAssembly scalar operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `commutativity` proves this operation's exact
+    /// universally quantified law, both operands have the configured kind, or
+    /// a checked specialization step fails. `kernel` is unchanged on failure.
+    pub fn prove_commutes(
+        self,
+        kernel: &mut Kernel,
+        commutativity: ThmId,
+        left: WasmScalar,
+        right: WasmScalar,
+    ) -> Result<Evidence, WasmScalarProofError> {
+        require_kind(left, self.kind)?;
+        require_kind(right, self.kind)?;
+        let mut staged = kernel.fork();
+        let law = self.commutative(&mut staged)?;
+        let law = align_positive(&mut staged, commutativity, law)?;
+        let at_left = forall_elim(&mut staged, law, left.term)?;
+        let at_right = forall_elim(&mut staged, at_left.theorem, right.term)?;
+        let left_right = self.apply(&mut staged, left, right)?;
+        let right_left = self.apply(&mut staged, right, left)?;
+        let proposition = staged.eq(self.bool_ty, left_right.term, right_left.term)?;
+        join_alpha_equivalent(&mut staged, at_right.proposition, proposition)?;
+        staged.convert_conclusions(at_right.theorem, at_right.proposition, proposition)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition,
+            theorem: at_right.theorem,
+            holds: true,
+        })
+    }
+}
+
+/// Failure to specialize a checked scalar-operation law.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum WasmScalarProofError {
+    /// A checked HOL construction failed.
+    #[snafu(transparent)]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+    /// Universal specialization failed.
+    #[snafu(transparent)]
+    Forall {
+        /// Underlying specialization failure.
+        source: ForallError,
+    },
+    /// Formula alignment failed.
+    #[snafu(transparent)]
+    Syntax {
+        /// Underlying syntax-certification failure.
+        source: SyntaxError,
+    },
 }
 
 /// Checked scalar vocabulary for one Wasm semantic interpretation.
@@ -222,9 +295,41 @@ fn require_classifier_mut(
     }
 }
 
+fn align_positive(kernel: &mut Kernel, theorem: ThmId, target: Ref) -> Result<ThmId, KernelError> {
+    let source = {
+        let theorem = kernel
+            .thm()
+            .get(theorem)
+            .ok_or(KernelError::MissingTheorem { id: theorem })?;
+        let mut rows = theorem.rhs.rows();
+        let Some([literal]) = rows.next() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "Wasm scalar law unit conclusion",
+            });
+        };
+        if rows.next().is_some() || !literal.is_positive() {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "Wasm scalar law positive conclusion",
+            });
+        }
+        Ref::new(literal.magnitude().cast_signed()).ok_or(KernelError::InvalidTheoremRule {
+            rule: "Wasm scalar law conclusion reference",
+        })?
+    };
+    join_alpha_equivalent(kernel, source, target).map_err(|_| KernelError::InvalidTheoremRule {
+        rule: "Wasm scalar law conclusion alignment",
+    })?;
+    let aligned = kernel.copy_theorem(theorem)?;
+    kernel.convert_conclusions(aligned, source, target)?;
+    Ok(aligned)
+}
+
 #[cfg(test)]
 mod tests {
+    use covalence_logic_hol::Lit;
+
     use super::*;
+    use crate::EvidenceScope;
 
     #[test]
     fn scalar_operations_are_typed_compositional_and_transactional() {
@@ -266,6 +371,13 @@ mod tests {
                 .equivalent(kernel.classifier(commutative).unwrap(), bool_ty)
                 .unwrap()
         );
+        let commutativity_fact = kernel.identity(Lit::positive(commutative.get())).unwrap();
+        let swapped = operation
+            .prove_commutes(&mut kernel, commutativity_fact, left, right)
+            .unwrap();
+        EvidenceScope::positive(&[commutative])
+            .check(&kernel, swapped)
+            .unwrap();
 
         let wrong_term = kernel.tm_fv(13, types.i64).unwrap();
         let wrong = scalars

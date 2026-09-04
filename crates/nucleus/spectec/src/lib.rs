@@ -74,7 +74,10 @@ pub use run::{
     RunTransformation, RunTransformationError, RunTypes, SoundRunTransformation,
     SoundRunTransformationError,
 };
-pub use scalar::{WasmScalar, WasmScalarBinary, WasmScalarKind, WasmScalarTypes, WasmScalars};
+pub use scalar::{
+    WasmScalar, WasmScalarBinary, WasmScalarKind, WasmScalarProofError, WasmScalarTypes,
+    WasmScalars,
+};
 pub use schema::{
     HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,
 };
