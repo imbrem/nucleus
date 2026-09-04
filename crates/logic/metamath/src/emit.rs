@@ -1,5 +1,5 @@
 //! A canonical `.mm` **emitter**: render a [`Database`] back to valid Metamath
-//! source that re-parses to a structurally-equivalent database.
+//! source that re-parses to a semantically-equivalent database.
 //!
 //! ## Why not just replay the statement list verbatim?
 //!
@@ -11,52 +11,33 @@
 //!
 //! ## The strategy
 //!
-//! Metamath's own scoping convention is: `$c`/`$v`/`$f` are (conventionally)
-//! *global*, while `$e`/`$d` are *scoped* to the assertion(s) that need them.
-//! The emitter mirrors that, and crucially **preserves the original `$f`/`$e`
-//! labels** so that normal proofs — which cite `$f`/`$e` labels by name — keep
-//! resolving:
+//! The emitter gives every assertion a self-contained scope containing its
+//! complete active `$f` context, mandatory `$e` context, and active `$d`
+//! context:
 //!
 //! 1. Emit all `$c` then all `$v` declarations (source order).
-//! 2. Emit every `$f` floating hypothesis **globally**, once per label, with its
-//!    original label. Floats are the "type signatures" proofs reference by name.
-//! 3. Emit each assertion inside its own `${ ... $}` block containing exactly its
-//!    mandatory `$e` essentials (in order) and its mandatory `$d` pairs, then the
-//!    `$a`/`$p`. Because `build_frame` recomputes the mandatory frame from the
-//!    active scope, and the globals + the block's `$e`/`$d` reproduce that frame
-//!    exactly, re-parsing yields an assertion with the **identical** frame — with
-//!    no dependence on recovering the original scope nesting.
+//! 2. Emit each assertion inside its own `${ ... $}` block containing all of its
+//!    active `$f`, `$e`, and `$d` data, then the `$a`/`$p`.
 //!
-//! Assertion labels and `$f` labels are preserved verbatim. A `$e` essential
-//! **shared** by several assertions in one original `${ $}` (e.g. `hol.mm`'s
-//! `ax-syl.1`, used by both `ax-syl` and `syl`) cannot keep one global label —
-//! each self-contained block would re-declare it and collide — so each block's
-//! essentials are **re-labelled uniquely** (`<assertion>__<orig>`). A theorem's
-//! own [`Proof::Normal`] label references to its essentials are rewritten to
-//! match; [`Proof::Compressed`] proofs address mandatory hypotheses *positionally*
-//! (never by label), so they are unaffected.
+//! Hypotheses shared by multiple original assertions are re-labelled uniquely
+//! (`<assertion>__<orig>`) in each self-contained block. Normal proof references
+//! are rewritten to match. Compressed proofs address mandatory hypotheses
+//! positionally and are unaffected.
 //!
 //! ## Proofs
 //!
 //! [`Proof::Normal`] renders as its RPN label sequence. [`Proof::Compressed`]
-//! renders as `( labels ) LETTERS` — the compressed form is emitted verbatim
-//! (the label block + letter block round-trip losslessly through the parser).
+//! renders as `( labels ) LETTERS`; its letters are preserved and any active
+//! hypothesis in its explicit label block follows the block-local rename.
 //! A compressed proof's letter block addresses *mandatory hypotheses by frame
-//! position*, so it stays valid as long as the emitted frame order matches the
-//! original — which it does (globals give the floats in database order, the
-//! block gives the essentials in order).
+//! position*, so it stays valid because each block preserves float and
+//! essential order.
 //!
 //! ## Limitations
 //!
-//! * **Global `$f` only.** A *scoped* `$f` that retypes the same variable
-//!   differently in two scopes is flattened to one global typing. Databases we
-//!   handle (demo0, `set.mm`-style) declare `$f` globally, so this is faithful in
-//!   practice; a database that relies on re-typing scoped floats is not
-//!   round-tripped. (Emitting such a `$f` twice with the same label would be a
-//!   duplicate-label error; different labels would break proof references — so
-//!   this is a genuine limitation, not a silent bug.)
-//! * **Essential re-labelling is not collision-checked.** Each block's `$e` is
-//!   re-labelled `<assertion>__<orig>`, and nothing verifies that name is free:
+//! * **Hypothesis re-labelling is not collision-checked.** Each block's `$f` and
+//!   `$e` labels are prefixed with the assertion label, and nothing verifies
+//!   that name is free:
 //!   a source database already containing a label of exactly that shape (say an
 //!   assertion `th` with essential `h`, alongside an unrelated `th__h`) would
 //!   have the generated label clash with it. The clash is loud rather than
@@ -72,9 +53,9 @@ use std::fmt::Write;
 use crate::database::{Assertion, Database, Proof, Statement};
 
 /// Render `db` to canonical `.mm` source. The result re-parses (via
-/// [`parse`](crate::parse())) to a database with the same symbols and the same assertion
-/// statements (labels, conclusions, and mandatory frames). See the module docs
-/// for the normalisation performed.
+/// [`parse`](crate::parse())) to a database with the same symbols and assertion
+/// semantics. Hypothesis labels are normalized. See the module docs for the
+/// normalization performed.
 #[must_use]
 pub fn to_mm_string(db: &Database) -> String {
     let mut out = String::new();
@@ -93,21 +74,7 @@ pub fn to_mm_string(db: &Database) -> String {
     }
     out.push('\n');
 
-    // 2. Global floating hypotheses, one per label (original labels preserved so
-    //    proofs that cite them still resolve). A given label appears once in the
-    //    statement list, so dedup-by-label is just a guard.
-    let mut seen: HashSet<&str> = HashSet::new();
-    for stmt in db.statements() {
-        if let Statement::Float(f) = stmt
-            && seen.insert(f.label.as_str())
-        {
-            let _ = writeln!(out, "{} $f {} {} $.", f.label, f.typecode, f.var);
-        }
-    }
-    out.push('\n');
-
-    // 3. Each assertion in its own scoped block (its essentials + $d, then the
-    //    $a/$p). Floats are already global.
+    // 2. Each assertion gets a self-contained active context.
     for a in db.assertions() {
         emit_assertion(&mut out, a);
     }
@@ -115,11 +82,8 @@ pub fn to_mm_string(db: &Database) -> String {
     out
 }
 
-/// Emit one assertion as `${ <essentials> <disjoints> <assert> $}`, or bare when
-/// it has neither essentials nor `$d` (its floats are global, so nothing needs
-/// scoping). Essential labels are re-labelled block-uniquely so a `$e` shared by
-/// several assertions in the original source does not collide across blocks; a
-/// normal proof's references to this assertion's own essentials are rewritten.
+/// Emit one assertion with a self-contained active context. Hypothesis labels
+/// are block-unique, and normal proof references are rewritten accordingly.
 fn emit_assertion(out: &mut String, a: &Assertion) {
     // The full in-scope `$d` set (`scope_disjoints`) is what a `$p` proof is
     // *checked against* — it may mention dummy/working variables beyond the
@@ -127,26 +91,27 @@ fn emit_assertion(out: &mut String, a: &Assertion) {
     // proofs valid; `build_frame` re-filters to the mandatory subset on re-parse,
     // so `frame.disjoints` is reproduced too.
     let dd = dedup_pairs(&a.scope_disjoints);
-    let needs_scope = !a.frame.essentials.is_empty() || !dd.is_empty();
+    out.push_str("${\n");
 
-    if needs_scope {
-        out.push_str("${\n");
-    }
-
-    // Block-unique essential labels: `<assertion>__<orig>`. Underscores keep the
+    // Block-unique hypothesis labels. Underscores keep the
     // label a valid Metamath token and make the provenance readable.
-    let mut ess_rename: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    let mut hyp_rename: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    for f in &a.scope_floats {
+        let new_label = format!("{}__{}", a.label, f.label);
+        let _ = writeln!(out, "  {new_label} $f {} {} $.", f.typecode, f.var);
+        hyp_rename.insert(f.label.as_str(), new_label);
+    }
     for h in &a.frame.essentials {
         let new_label = format!("{}__{}", a.label, h.label);
         let _ = writeln!(out, "  {} $e {} $.", new_label, h.expr.render());
-        ess_rename.insert(h.label.as_str(), new_label);
+        hyp_rename.insert(h.label.as_str(), new_label);
     }
     // Disjoint-variable conditions (one $d per pair; the parser expands pairs).
     for (x, y) in &dd {
         let _ = writeln!(out, "  $d {x} {y} $.");
     }
 
-    let indent = if needs_scope { "  " } else { "" };
+    let indent = "  ";
     let concl = a.conclusion.render();
     match &a.proof {
         None => {
@@ -157,7 +122,7 @@ fn emit_assertion(out: &mut String, a: &Assertion) {
             let steps: Vec<&str> = labels
                 .iter()
                 .map(|l| {
-                    ess_rename
+                    hyp_rename
                         .get(l.as_str())
                         .map_or(l.as_str(), String::as_str)
                 })
@@ -170,8 +135,17 @@ fn emit_assertion(out: &mut String, a: &Assertion) {
             );
         }
         Some(Proof::Compressed { labels, letters }) => {
-            // Compressed proofs address mandatory hyps positionally, so the
-            // essential re-labelling never appears in the label block.
+            // Mandatory hypotheses are positional, but active non-mandatory
+            // floats occur in the explicit label block and must follow the
+            // block-local rename.
+            let labels: Vec<&str> = labels
+                .iter()
+                .map(|label| {
+                    hyp_rename
+                        .get(label.as_str())
+                        .map_or(label.as_str(), String::as_str)
+                })
+                .collect();
             let _ = writeln!(
                 out,
                 "{indent}{} $p {concl} $= ( {} ) {} $.",
@@ -182,9 +156,7 @@ fn emit_assertion(out: &mut String, a: &Assertion) {
         }
     }
 
-    if needs_scope {
-        out.push_str("$}\n");
-    }
+    out.push_str("$}\n");
 }
 
 /// Deduplicate `$d` pairs (unordered), dropping any degenerate `(x, x)`.
@@ -265,9 +237,40 @@ mod tests {
         let db2 = parse(&to_mm_string(&db1)).unwrap();
         let a1 = assert_of(&db1, "ax");
         let a2 = assert_of(&db2, "ax");
-        // Frames are byte-identical here: floats keep their original labels.
-        assert_eq!(a1.frame, a2.frame);
+        assert_eq!(
+            a1.frame
+                .floats
+                .iter()
+                .map(|f| (&f.typecode, &f.var))
+                .collect::<Vec<_>>(),
+            a2.frame
+                .floats
+                .iter()
+                .map(|f| (&f.typecode, &f.var))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(a1.frame.disjoints, a2.frame.disjoints);
         assert_eq!(a2.frame.disjoints.len(), 1);
+    }
+
+    #[test]
+    fn round_trips_scoped_float_contexts_without_leaking() {
+        let src = "$c wff |- $.\n$v ph $.\n\
+                   ${ first $f wff ph $. a $a |- ph $. $}\n\
+                   ${ second $f wff ph $. b $a |- ph $. $}\n";
+        let db1 = parse(src).unwrap();
+        let db2 = parse(&to_mm_string(&db1)).unwrap();
+        for label in ["a", "b"] {
+            let before = assert_of(&db1, label);
+            let after = assert_of(&db2, label);
+            assert_eq!(before.scope_floats.len(), 1);
+            assert_eq!(after.scope_floats.len(), 1);
+            assert_eq!(
+                before.scope_floats[0].typecode,
+                after.scope_floats[0].typecode
+            );
+            assert_eq!(before.scope_floats[0].var, after.scope_floats[0].var);
+        }
     }
 
     #[test]
@@ -303,6 +306,20 @@ mod tests {
         assert_eq!(assertions_snapshot(&db1), assertions_snapshot(&db2));
         // The compressed encoding survived as-is.
         assert_eq!(assert_of(&db1, "id").proof, assert_of(&db2, "id").proof);
+    }
+
+    #[test]
+    fn compressed_dummy_float_round_trips() {
+        let src = "$c term |- $.\n$v x y $.\n\
+                   tx $f term x $. ty $f term y $.\n\
+                   ${ h $e term y $. ax $a |- x $. $}\n\
+                   th $p |- x $= ( ty ax ) ABBC $.\n";
+        let db1 = parse(src).unwrap();
+        assert_eq!(crate::verify_all(&db1).unwrap(), 1);
+        let emitted = to_mm_string(&db1);
+        let db2 = parse(&emitted).unwrap();
+        assert_eq!(crate::verify_all(&db2).unwrap(), 1);
+        assert!(emitted.contains("( th__ty ax )"), "{emitted}");
     }
 
     fn assert_of<'a>(db: &'a Database, label: &str) -> &'a Assertion {

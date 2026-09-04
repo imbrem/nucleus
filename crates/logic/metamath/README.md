@@ -11,15 +11,10 @@ checker—will carry authority.
 Because the whole database is parsed before anything is checked, the checker
 re-imposes by position what a read-as-you-go verifier gets for free: a proof may
 cite only labels declared **strictly earlier** than the theorem it proves
-(`MmError::ForwardReference`), and may cite only its own `$e` premises
+(`MmError::ForwardReference`), and may cite only active `$f`/`$e` hypotheses
 (`MmError::InactiveHypothesis`). Databases that relied on either being
 unchecked—a theorem citing itself, or another block's hypothesis—no longer
 validate.
-
-The current verifier does not yet enforce the corresponding active-scope rule
-for `$f` hypotheses. Active non-mandatory floats must remain usable because
-they introduce dummy variables, but an earlier float outside the theorem's
-scope must be rejected. This correctness gap is tracked in #1144.
 
 ```rust
 use covalence_logic_metamath::{parse, verify_all};
@@ -27,6 +22,11 @@ use covalence_logic_metamath::{parse, verify_all};
 let database = parse(source)?;
 let theorem_count = verify_all(&database)?;
 ```
+
+The deep Metamath-to-HOL-omega claim, its shallow-bridge boundary, and the
+signed-corpus provenance mapping are specified in
+[`docs/metamath-hol-embedding.md`](../../../docs/metamath-hol-embedding.md).
+The worked Lean slice is `Nucleus.Metamath.Embedding`.
 
 ## Deviations from the spec
 

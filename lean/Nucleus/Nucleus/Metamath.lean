@@ -3,6 +3,7 @@ import Nucleus.Metamath.Database
 import Nucleus.Metamath.Compress
 import Nucleus.Metamath.Verify
 import Nucleus.Metamath.VerifyTest
+import Nucleus.Metamath.Embedding
 import Nucleus.Metamath.HolMM
 
 /-!
@@ -23,19 +24,18 @@ re-deriving it — so the development starts from an already-parsed database.
 
 The soundness proof forced two side conditions into the checker: cited
 assertions must occur earlier in the database, and cited hypotheses must be
-active in the current frame. `crates/logic/metamath` enforces both, having
-accepted proofs of false statements without them.
+active in the current frame. `crates/logic/metamath` now enforces both, retaining
+the full active float and disjoint contexts alongside each assertion's
+mandatory frame.
 
-One gap remains, and it is a gap in the Rust data model rather than in its
-checker. `Assertion.context` here carries `scopeFloats`, the floating
-hypotheses active where an assertion is stated; the Rust `Database` retains the
-corresponding `scope_disjoints` but not `scope_floats`, so its activity test
-covers `$e` and not `$f`. Until that field exists the two check different
-predicates, and this specification is the stricter of the two.
+`Nucleus.Metamath.VerifyTest` exhibits the accepted and rejected boundary
+databases and is imported here rather than left standalone so that the
+regressions are checked on every build.
 
-`Nucleus.Metamath.VerifyTest` exhibits the databases that separate the
-behaviours, and is imported here rather than left standalone so that the
-separation is checked on every build.
+`Nucleus.Metamath.Embedding` packages a checked `demo0` derivation with the
+signed-corpus coordinates carried by replay output. The corresponding mapping,
+runtime representation commitments, and shallow-bridge boundary are specified
+in `docs/metamath-hol-embedding.md`.
 
 `Nucleus.Metamath.HolMM` asks the next question: are the things a Metamath
 database *asserts* true? It interprets `hol.mm`, Metamath's own higher-order

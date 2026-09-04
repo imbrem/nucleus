@@ -32,6 +32,16 @@ def test_invalid_proof_raises_metamath_error() -> None:
         database.validate()
 
 
+def test_assertion_exposes_active_floats() -> None:
+    database = Database.parse(
+        "$c term |- $. $v x y $. tx $f term x $. ty $f term y $. th $a |- x $."
+    )
+    assertion = database.assertion("th")
+    assert assertion is not None
+    assert assertion.hypothesis_labels == ["tx"]
+    assert assertion.active_float_labels == ["tx", "ty"]
+
+
 def test_load_resolves_includes(tmp_path) -> None:
     (tmp_path / "defs.mm").write_text("$c term 0 $. tze $a term 0 $.")
     root = tmp_path / "root.mm"

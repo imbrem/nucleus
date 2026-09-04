@@ -27,7 +27,7 @@
 //! [`replay`] restores the discipline positionally: a cited label must occur
 //! **strictly earlier** in the statement list than the theorem being proved.
 //!
-//! ## Why `$e` premises are checked for activity but `$f` floats are not
+//! ## Active hypotheses
 //!
 //! An essential hypothesis belongs to the `${ ... $}` block that declares it;
 //! a proof that helps itself to another block's premise proves anything. The
@@ -37,16 +37,9 @@
 //! proof rejected.
 //!
 //! Floats are weaker. A proof may legitimately cite an active but *non*-mandatory
-//! `$f` to introduce a dummy (working) variable — `set.mm` does so around
-//! 200 000 times — so frame membership is the wrong test for them, and a parsed
-//! [`Database`] does not retain `${ ... $}` markers (they leave no
-//! [`Statement`]), so the float's original scope cannot be recovered here.
-//! Floats are therefore held to the ordering check alone. That leaves one
-//! residual gap: a database that gives the *same* variable two different
-//! typecodes in two disjoint scopes could cite the out-of-scope typing. Dummy
-//! variables remain constrained by the `$d` check below, which consults the
-//! proving theorem's own in-scope `$d` set, so a foreign float buys nothing
-//! wherever distinctness is required.
+//! `$f` to introduce a dummy (working) variable, so mandatory-frame membership
+//! would reject valid databases. Assertions therefore retain the complete
+//! active float set separately, and replay checks citations against that set.
 
 use std::collections::BTreeSet;
 
@@ -218,6 +211,8 @@ struct Context<'a> {
     /// of `db` (a synthetic assertion — then nothing in `db` is a forward
     /// reference).
     position: usize,
+    /// Labels of every `$f` active where `current` is asserted.
+    floats: BTreeSet<&'a str>,
     /// `current.scope_disjoints` as a set of normalised unordered pairs.
     disjoints: BTreeSet<(&'a str, &'a str)>,
 }
@@ -228,6 +223,11 @@ impl<'a> Context<'a> {
             db,
             current,
             position: db.statement_index(&current.label).unwrap_or(usize::MAX),
+            floats: current
+                .scope_floats
+                .iter()
+                .map(|float| float.label.as_str())
+                .collect(),
             disjoints: current
                 .scope_disjoints
                 .iter()
@@ -272,6 +272,12 @@ fn step_label(
 
     match &ctx.db.statements()[position] {
         Statement::Float(f) => {
+            if !ctx.floats.contains(label) {
+                return Err(MmError::InactiveHypothesis {
+                    theorem: theorem.to_string(),
+                    label: label.to_string(),
+                });
+            }
             stack.push(crate::expr::make_expr(&f.typecode, [f.var.as_str()]));
             obs.float_hyp(label, stack.last().unwrap(), stack.len());
         }

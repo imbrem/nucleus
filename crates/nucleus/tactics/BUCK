@@ -29,8 +29,10 @@ rust_library(
     tests = [":covalence_nucleus_tactics-unit-test"],
     named_deps = {
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
         "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
+        "covalence_logic_metamath": "nucleus//crates/logic/metamath:covalence_logic_metamath",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -60,8 +62,10 @@ rust_test(
     srcs = _RUST_SOURCES,
     named_deps = {
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
         "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
+        "covalence_logic_metamath": "nucleus//crates/logic/metamath:covalence_logic_metamath",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

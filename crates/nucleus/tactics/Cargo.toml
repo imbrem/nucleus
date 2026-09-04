@@ -9,8 +9,10 @@ publish = false
 
 [dependencies]
 covalence-lib-error = { path = "../../lib/error" }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false }
 covalence-logic-hol = { path = "../../logic/hol" }
 covalence-logic-hol-derived = { path = "../../logic/hol-derived" }
+covalence-logic-metamath = { path = "../../logic/metamath" }
 
 [lints]
 workspace = true

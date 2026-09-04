@@ -119,9 +119,8 @@ thousands of such citations.
 Essentials are the one component where the two coincide, because an assertion's
 mandatory essentials are *all* the active ones.
 
-The Rust `Database` at `crates/logic/metamath` currently retains
-`scope_disjoints` but not `scope_floats`, which is why its checker cannot fully
-enforce that a cited `$f` is active: it has kept half of this distinction. -/
+The Rust `Database` at `crates/logic/metamath` mirrors this distinction with
+`frame`, `scope_floats`, and `scope_disjoints`. -/
 def Assertion.context (a : Assertion) : Frame :=
   { floats := a.scopeFloats
     essentials := a.frame.essentials

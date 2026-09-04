@@ -682,6 +682,7 @@ class Assertion:
     label: str
     conclusion: Expression
     hypothesis_labels: list[str]
+    active_float_labels: list[str]
     disjoint_pairs: list[tuple[str, str]]
     proof_encoding: str | None
     is_theorem: bool

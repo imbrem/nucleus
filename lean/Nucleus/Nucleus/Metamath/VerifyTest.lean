@@ -8,10 +8,10 @@ kinds:
 
 * `demo0`, the database from the Metamath book, whose theorem `th1` checks —
   the same fixture `crates/logic/metamath/tests/fixtures/demo0.mm` uses; and
-* three databases that the Rust checker at `crates/logic/metamath` accepts and
-  this one rejects. Each is a proof of a statement that does not follow, so
-  these are not style disagreements: they are the counterexamples that motivate
-  the two side conditions in `Nucleus.Metamath.Verify`.
+* counterexample databases that both the Rust checker at
+  `crates/logic/metamath` and this specification reject. Each would prove a
+  statement that does not follow, so these are regression witnesses for the two
+  side conditions in `Nucleus.Metamath.Verify`.
 
 Frames are given explicitly rather than derived from `${ … $}` scoping, because
 scope resolution is the parser's job and the parser is deliberately not
@@ -83,7 +83,7 @@ set_option maxRecDepth 100000 in
 /-- `demo0` checks. -/
 example : verifyDatabase demo0 = .ok () := by decide
 
-/-! ## Databases the Rust checker wrongly accepts
+/-! ## Rejected databases
 
 Each is minimal: one variable, one floating hypothesis, and a "proof" of the
 unrestricted `|- ph`. If any of them checked, every statement would. -/
@@ -102,13 +102,12 @@ private def theorem' (label : Sym) (proof : List Sym) (frame : Frame) : Statemen
 
 /-- A theorem citing itself.
 
-`covalence-logic-metamath` returns `Ok(1)` for the `.mm` source
+The corresponding Rust fixture rejects the `.mm` source
 ```metamath
 $c wff |- $.  $v ph $.  wph $f wff ph $.
 a $p |- ph $= wph a $.
 ```
-because `step_label` looks every label up in the finished database, so a
-theorem is in scope during its own proof. -/
+with `MmError::ForwardReference`. -/
 def selfCiting : Database where
   symbols := wffPh
   statements :=
@@ -117,8 +116,7 @@ def selfCiting : Database where
 
 example : verifyDatabase selfCiting = .error (.forwardReference "a") := by decide
 
-/-- Two theorems citing each other. The Rust checker returns `Ok(2)`: neither
-proof is well founded, but each is individually locally consistent. -/
+/-- Two theorems citing each other. Neither proof is well founded. -/
 def mutuallyCiting : Database where
   symbols := wffPh
   statements :=
@@ -131,9 +129,9 @@ example : verifyDatabase mutuallyCiting = .error (.forwardReference "b") := by d
 /-- A theorem helping itself to another block's premise.
 
 The `$e` belongs to the `${ … $}` block around `mp`; `bad` is outside it, so
-`h1` is not among `bad`'s mandatory hypotheses. The Rust checker returns
-`Ok(1)`, discharging `bad` by assuming what it set out to prove. Note the
-citation-order check does not catch this — `h1` *is* earlier. -/
+`h1` is not among `bad`'s mandatory hypotheses. Note the citation-order check
+does not catch this — `h1` *is* earlier — so both checkers perform a separate
+active-hypothesis test. -/
 def outOfScopeHypothesis : Database where
   symbols := wffPh
   statements :=
