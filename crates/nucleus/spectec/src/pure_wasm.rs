@@ -6,10 +6,10 @@
 //! Wasm or asserts that a supplied interpretation agrees with `SpecTec`.
 
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, ThmId, builtin::Op2};
+use covalence_logic_hol::{Kernel, KernelError, Lit, Ref, SynRel, ThmId, builtin::Op2};
 use covalence_logic_hol_derived::{
-    EqualityError, ForallError, SyntaxError, equality_symmetry, equality_transitivity, forall_elim,
-    join_alpha_equivalent, join_same_syntax,
+    EqualityError, ForallError, ModelError, SyntaxError, equality_symmetry, equality_transitivity,
+    forall_elim, join_alpha_equivalent, join_same_syntax, substitute,
 };
 
 use crate::{Evidence, WasmScalar, WasmScalarKind, WasmScalarTypes};
@@ -111,6 +111,51 @@ impl PureWasmSemantics {
     pub fn relation(self, kernel: &Kernel, term: Ref) -> Result<PureWasmRelation, KernelError> {
         require_classifier(kernel, term, self.relation_ty)?;
         Ok(PureWasmRelation(term))
+    }
+
+    /// Constructs the graph of a guarded pure scalar function.
+    ///
+    /// The resulting relation is `fun input output =>
+    /// defined input /\ output = function input`. An input outside `defined`
+    /// therefore has no related return value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `defined` has classifier `scalar -> bool`,
+    /// `function` has classifier `scalar -> scalar`, or checked construction
+    /// fails. `kernel` is unchanged on failure.
+    pub fn guarded_function(
+        self,
+        kernel: &mut Kernel,
+        defined: Ref,
+        function: Ref,
+    ) -> Result<PureWasmRelation, KernelError> {
+        let mut staged = kernel.fork();
+        let predicate_ty = staged.ty_arr(self.scalar_ty, self.bool_ty)?;
+        require_classifier_mut(&mut staged, defined, predicate_ty)?;
+        let function_ty = staged.ty_arr(self.scalar_ty, self.scalar_ty)?;
+        require_classifier_mut(&mut staged, function, function_ty)?;
+        let name = staged.fresh_name(&[
+            self.scalar_ty,
+            self.bool_ty,
+            self.relation_ty,
+            defined,
+            function,
+        ])?;
+        let input = staged.tm_fv(name, self.scalar_ty)?;
+        let output = staged.tm_fv(
+            name.checked_add(1).ok_or(KernelError::TooManyNames)?,
+            self.scalar_ty,
+        )?;
+        let in_domain = staged.app(defined, input)?;
+        let expected_output = staged.app(function, input)?;
+        let output_matches = staged.eq(self.bool_ty, output, expected_output)?;
+        let body = staged.op2(Op2::And, in_domain, output_matches)?;
+        let by_output = staged.lam(output, body)?;
+        let relation = staged.lam(input, by_output)?;
+        require_classifier_mut(&mut staged, relation, self.relation_ty)?;
+        *kernel = staged;
+        Ok(PureWasmRelation(relation))
     }
 
     /// Composes `first` followed by `second` as structural program syntax.
@@ -356,6 +401,52 @@ impl PureWasmSemantics {
         let returns = self.returns(&mut staged, program, input, output)?;
         let does_not_return = staged.op1(covalence_logic_hol::builtin::Op1::Not, returns)?;
         let proposition = staged.forall_tm(self.bool_ty, output.term(), does_not_return)?;
+        *kernel = staged;
+        Ok(proposition)
+    }
+
+    /// Constructs partial functional correctness for `program` and `function`.
+    ///
+    /// The proposition is `forall input output. returns program input output ->
+    /// output = function input`. It deliberately says nothing about whether
+    /// the program returns.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `function` has classifier `scalar -> scalar`,
+    /// or checked construction fails. `kernel` is unchanged on failure.
+    pub fn returns_only(
+        self,
+        kernel: &mut Kernel,
+        program: PureWasmProgram,
+        function: Ref,
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let function_ty = staged.ty_arr(self.scalar_ty, self.scalar_ty)?;
+        require_classifier_mut(&mut staged, function, function_ty)?;
+        let name = staged.fresh_name(&[
+            self.program_ty,
+            self.scalar_ty,
+            self.denotation,
+            program.0,
+            function,
+        ])?;
+        let input = staged.tm_fv(name, self.scalar_ty)?;
+        let output = staged.tm_fv(
+            name.checked_add(1).ok_or(KernelError::TooManyNames)?,
+            self.scalar_ty,
+        )?;
+        let returns = self.returns(
+            &mut staged,
+            program,
+            WasmScalar::from_checked(self.scalar_kind, input),
+            WasmScalar::from_checked(self.scalar_kind, output),
+        )?;
+        let expected = staged.app(function, input)?;
+        let correct = staged.eq(self.bool_ty, output, expected)?;
+        let implication = staged.op2(Op2::Imp, returns, correct)?;
+        let by_output = staged.forall_tm(self.bool_ty, output, implication)?;
+        let proposition = staged.forall_tm(self.bool_ty, input, by_output)?;
         *kernel = staged;
         Ok(proposition)
     }
@@ -763,15 +854,91 @@ impl PureWasmSemantics {
             Lit::positive(relation_returns.get()),
         )?;
         staged.not_right(contradiction, Lit::positive(at_output.left.get()))?;
-        let implementation_denied = staged.op1(
-            covalence_logic_hol::builtin::Op1::Not,
-            at_output.left,
-        )?;
+        let implementation_denied =
+            staged.op1(covalence_logic_hol::builtin::Op1::Not, at_output.left)?;
         let theorem =
             staged.fold_conclusion(contradiction, Lit::positive(implementation_denied.get()))?;
         let universal = staged.forall_tm(self.bool_ty, output, implementation_denied)?;
         let theorem = staged.forall_intro_at(theorem, output, universal)?;
         let proposition = self.does_not_return(&mut staged, program, input)?;
+        join_alpha_equivalent(&mut staged, universal, proposition)?;
+        staged.convert_conclusions(theorem, universal, proposition)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Derives partial functional correctness from an exact guarded-function
+    /// denotation.
+    ///
+    /// From a checked theorem that `program` denotes
+    /// [`Self::guarded_function`], this proves [`Self::returns_only`]. The
+    /// domain guard controls progress but is not needed in the result: any
+    /// actual return must equal `function input`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `specification_fact` proves the exact guarded
+    /// denotation, the supplied terms have the required classifiers, or a
+    /// checked equality, implication, conjunction, or quantifier step fails.
+    /// `kernel` is unchanged on failure.
+    pub fn prove_guarded_function_correct(
+        self,
+        kernel: &mut Kernel,
+        program: PureWasmProgram,
+        defined: Ref,
+        function: Ref,
+        specification_fact: ThmId,
+    ) -> Result<Evidence, PureWasmProofError> {
+        let mut staged = kernel.fork();
+        let relation = self.guarded_function(&mut staged, defined, function)?;
+        let specification = self.specifies(&mut staged, program, relation)?;
+        let specification_fact = align_positive(&mut staged, specification_fact, specification)?;
+        let name = staged.fresh_name(&[
+            self.program_ty,
+            self.scalar_ty,
+            self.relation_ty,
+            self.denotation,
+            program.0,
+            defined,
+            function,
+            relation.0,
+            specification,
+        ])?;
+        let input = staged.tm_fv(name, self.scalar_ty)?;
+        let output = staged.tm_fv(
+            name.checked_add(1).ok_or(KernelError::TooManyNames)?,
+            self.scalar_ty,
+        )?;
+        let at_input = staged.ap_thm(specification_fact, input)?;
+        let at_output = staged.ap_thm(at_input.theorem, output)?;
+        let assumed_return = staged.identity(Lit::positive(at_output.left.get()))?;
+        let relation_fact = staged.eq_mp(at_output.theorem, assumed_return)?;
+
+        let in_domain = staged.app(defined, input)?;
+        let expected_output = staged.app(function, input)?;
+        let output_matches = staged.eq(self.bool_ty, output, expected_output)?;
+        let guarded = staged.op2(Op2::And, in_domain, output_matches)?;
+        let (application, reduced, beta) =
+            certify_binary_beta(&mut staged, relation.0, input, output)?;
+        let reduced_guarded = join_alpha_equivalent(&mut staged, reduced, guarded)?;
+        let same_application = join_same_syntax(&mut staged, at_output.right, application)?;
+        let through_beta = staged.syn_trans(None, same_application, beta)?;
+        let alignment = staged.syn_trans(None, through_beta, reduced_guarded)?;
+        staged.union_syn_fact(alignment)?;
+        staged.convert_conclusions(relation_fact, at_output.right, guarded)?;
+        let output_fact =
+            staged.expand_conclusion(relation_fact, Lit::positive(guarded.get()), Some(true))?;
+        let implication = staged.op2(Op2::Imp, at_output.left, output_matches)?;
+        let implication_fact = staged.imp_right(output_fact, Lit::positive(implication.get()))?;
+        let by_output = staged.forall_tm(self.bool_ty, output, implication)?;
+        let by_output_fact = staged.forall_intro_at(implication_fact, output, by_output)?;
+        let universal = staged.forall_tm(self.bool_ty, input, by_output)?;
+        let theorem = staged.forall_intro_at(by_output_fact, input, universal)?;
+        let proposition = self.returns_only(&mut staged, program, function)?;
         join_alpha_equivalent(&mut staged, universal, proposition)?;
         staged.convert_conclusions(theorem, universal, proposition)?;
         *kernel = staged;
@@ -933,6 +1100,65 @@ pub enum PureWasmProofError {
         /// Underlying specialization failure.
         source: ForallError,
     },
+    /// Capture-avoiding beta substitution failed.
+    #[snafu(transparent)]
+    Substitution {
+        /// Underlying substitution failure.
+        source: ModelError,
+    },
+}
+
+fn reduce_unary_lambda(
+    kernel: &mut Kernel,
+    function: Ref,
+    argument: Ref,
+) -> Result<(Ref, Ref, covalence_logic_hol::SynFactId), PureWasmProofError> {
+    let children = kernel
+        .arena()
+        .children(function)
+        .ok_or(KernelError::InvalidTheoremRule {
+            rule: "guarded function lambda",
+        })?
+        .collect::<Vec<_>>();
+    let [binder, body] = children.as_slice() else {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "guarded function lambda operands",
+        }
+        .into());
+    };
+    let application = kernel.app(function, argument)?;
+    let reduced = substitute(kernel, *binder, argument, *body)?;
+    let beta = kernel.tm_beta_fact(None, application, reduced.fact)?;
+    kernel.union_syn_fact(beta)?;
+    Ok((application, reduced.output, beta))
+}
+
+fn certify_binary_beta(
+    kernel: &mut Kernel,
+    function: Ref,
+    left: Ref,
+    right: Ref,
+) -> Result<(Ref, Ref, covalence_logic_hol::SynFactId), PureWasmProofError> {
+    let (partial, inner, outer_beta) = reduce_unary_lambda(kernel, function, left)?;
+    let application = kernel.app(partial, right)?;
+    let reduced_application = kernel.app(inner, right)?;
+    let right_refl = kernel.syn_refl(None, SynRel::Syn, right)?;
+    let lifted = kernel.syn_congr(
+        None,
+        SynRel::Conv,
+        None,
+        None,
+        application,
+        reduced_application,
+        &[outer_beta, right_refl],
+    )?;
+    kernel.union_syn_fact(lifted)?;
+    let (inner_application, reduced, inner_beta) = reduce_unary_lambda(kernel, inner, right)?;
+    let same_middle = join_same_syntax(kernel, reduced_application, inner_application)?;
+    let prefix = kernel.syn_trans(None, lifted, same_middle)?;
+    let conversion = kernel.syn_trans(None, prefix, inner_beta)?;
+    kernel.union_syn_fact(conversion)?;
+    Ok((application, reduced, conversion))
 }
 
 fn align_positive(kernel: &mut Kernel, theorem: ThmId, target: Ref) -> Result<ThmId, KernelError> {
@@ -1163,6 +1389,24 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[specification_claim, relation_non_return])
             .check(&kernel, program_non_return)
+            .unwrap();
+
+        let predicate_ty = kernel.ty_arr(scalar_types.i32, bool_ty).unwrap();
+        let defined = kernel.tm_fv(22, predicate_ty).unwrap();
+        let scalar_function_ty = kernel.ty_arr(scalar_types.i32, scalar_types.i32).unwrap();
+        let function = kernel.tm_fv(23, scalar_function_ty).unwrap();
+        let guarded = semantics
+            .guarded_function(&mut kernel, defined, function)
+            .unwrap();
+        let guarded_specification = semantics.specifies(&mut kernel, left, guarded).unwrap();
+        let guarded_fact = kernel
+            .identity(Lit::positive(guarded_specification.get()))
+            .unwrap();
+        let partial_correctness = semantics
+            .prove_guarded_function_correct(&mut kernel, left, defined, function, guarded_fact)
+            .unwrap();
+        EvidenceScope::positive(&[guarded_specification])
+            .check(&kernel, partial_correctness)
             .unwrap();
 
         let single = kernel.tm_fv(15, denotation_ty).unwrap();
