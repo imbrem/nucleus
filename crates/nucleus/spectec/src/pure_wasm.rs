@@ -171,6 +171,53 @@ impl PureWasmSemantics {
         Ok(equivalent)
     }
 
+    /// Constructs soundness of a program transformation.
+    ///
+    /// Here soundness means preservation of observational equivalence:
+    /// `forall p q. p ≈ q -> transform p ≈ transform q`. This is a generic
+    /// schema; the returned proposition is an obligation, not an asserted
+    /// theorem.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `transform` has classifier
+    /// `program -> program`, or checked application, implication, or
+    /// quantification fails. `kernel` is unchanged on failure.
+    pub fn preserves_equivalence(
+        self,
+        kernel: &mut Kernel,
+        transform: Ref,
+    ) -> Result<Ref, KernelError> {
+        let mut staged = kernel.fork();
+        let transform_ty = staged.ty_arr(self.program_ty, self.program_ty)?;
+        require_classifier_mut(&mut staged, transform, transform_ty)?;
+        let name = staged.fresh_name(&[
+            self.program_ty,
+            self.scalar_ty,
+            self.relation_ty,
+            self.denotation,
+            transform,
+        ])?;
+        let left_term = staged.tm_fv(name, self.program_ty)?;
+        let right_term = staged.tm_fv(
+            name.checked_add(1).ok_or(KernelError::TooManyNames)?,
+            self.program_ty,
+        )?;
+        let left = PureWasmProgram(left_term);
+        let right = PureWasmProgram(right_term);
+        let before = self.equivalent(&mut staged, left, right)?;
+        let transformed_left = staged.app(transform, left_term)?;
+        let transformed_right = staged.app(transform, right_term)?;
+        let transformed_left = PureWasmProgram(transformed_left);
+        let transformed_right = PureWasmProgram(transformed_right);
+        let after = self.equivalent(&mut staged, transformed_left, transformed_right)?;
+        let preservation = staged.op2(Op2::Imp, before, after)?;
+        let by_right = staged.forall_tm(self.bool_ty, right_term, preservation)?;
+        let proposition = staged.forall_tm(self.bool_ty, left_term, by_right)?;
+        *kernel = staged;
+        Ok(proposition)
+    }
+
     /// Constructs extensional refinement of pure return behavior.
     ///
     /// `implementation` refines `specification` when every scalar pair returned
@@ -890,6 +937,15 @@ mod tests {
         let middle_term = kernel.tm_fv(13, program_ty).unwrap();
         let middle = semantics.program(&kernel, middle_term).unwrap();
         let composed = semantics.compose(&mut kernel, left, middle).unwrap();
+        let transform = kernel.tm_fv(20, compose_tail).unwrap();
+        let soundness = semantics
+            .preserves_equivalence(&mut kernel, transform)
+            .unwrap();
+        assert!(
+            kernel
+                .equivalent(kernel.classifier(soundness).unwrap(), bool_ty)
+                .unwrap()
+        );
         let law = semantics
             .composition_law(&mut kernel, left, middle)
             .unwrap();
