@@ -10,6 +10,7 @@ mod equality;
 mod exists;
 mod forall;
 mod infinity;
+mod lambda_seq;
 mod model;
 mod natural;
 mod natural_arithmetic;
@@ -33,6 +34,13 @@ pub use exists::{
 pub use forall::{ForallError, ProvedTerm, forall_elim};
 pub use infinity::{
     Infinity, InfinityAxiomDecl, InfinityDecl, InfinityError, InfinityExt, InfinityProof,
+};
+pub use lambda_seq::{
+    Binding as LambdaSeqBinding, Denotation as LambdaSeqDenotation, Equation as LambdaSeqEquation,
+    EquationalLaw as LambdaSeqEquationalLaw, FiniteMonadModel as LambdaSeqFiniteMonadModel,
+    Instruction as LambdaSeqInstruction, LambdaSeqError, MonadModel as LambdaSeqMonadModel,
+    NamedContext as LambdaSeqNamedContext, NamedTerm as LambdaSeqNamedTerm, Term as LambdaSeqTerm,
+    TypedTerm as LambdaSeqTypedTerm, equation as lambda_seq_equation,
 };
 pub use model::{
     ChosenModel, ChosenModelDecl, ChosenModelProof, ModelError, ModelExt, Substitution,
