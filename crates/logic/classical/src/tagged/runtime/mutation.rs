@@ -1,22 +1,23 @@
 impl Checked {
     pub(crate) fn demorgan_path(&mut self, path: &FormulaPath) -> Result<(), RuntimeError> {
-        let reference = self.make_path_unique(path)?;
-        if !reference.word().is_negative() {
+        let original = self.resolve_path(path)?;
+        if !original.word().is_negative() {
             return Err(RuntimeError::Shape);
         }
-        let block = self
+        let original_tag = self
             .arena
-            .live_block(reference.word().base())
+            .live_tag(original.word().base())
             .ok_or(RuntimeError::Shape)?;
-        let tag = self
-            .arena
-            .live_tag(reference.word().base())
-            .ok_or(RuntimeError::Shape)?;
-        let replacement_tag = match tag {
+        let replacement_tag = match original_tag {
             0 => 1,
             1 => 0,
             _ => return Err(RuntimeError::Shape),
         };
+        let reference = self.make_path_unique(path)?;
+        let block = self
+            .arena
+            .live_block(reference.word().base())
+            .ok_or(RuntimeError::Shape)?;
         let range = self.child_range(reference).ok_or(RuntimeError::Shape)?;
         for word in &mut self.arena.words[range] {
             *word = word.negated();
@@ -61,13 +62,13 @@ impl Checked {
         remove: usize,
         retain: usize,
     ) -> Result<(), RuntimeError> {
-        let reference = self.make_path_unique(path)?;
-        let range = self.child_range(reference).ok_or(RuntimeError::Shape)?;
-        if remove == retain || remove >= range.len() || retain >= range.len() {
+        let original = self.resolve_path(path)?;
+        let original_range = self.child_range(original).ok_or(RuntimeError::Shape)?;
+        if remove == retain || remove >= original_range.len() || retain >= original_range.len() {
             return Err(RuntimeError::Index);
         }
-        let removed = Ref::new(self.arena.words[range.start + remove])?;
-        let retained = Ref::new(self.arena.words[range.start + retain])?;
+        let removed = Ref::new(self.arena.words[original_range.start + remove])?;
+        let retained = Ref::new(self.arena.words[original_range.start + retain])?;
         let equal = FormulaView {
             checked: self,
             reference: removed,
@@ -79,6 +80,9 @@ impl Checked {
         if !equal {
             return Err(RuntimeError::Shape);
         }
+        let reference = self.make_path_unique(path)?;
+        let range = self.child_range(reference).ok_or(RuntimeError::Shape)?;
+        let removed = Ref::new(self.arena.words[range.start + remove])?;
         self.arena
             .words
             .copy_within(range.start + remove + 1..range.end, range.start + remove);
@@ -97,16 +101,13 @@ impl Checked {
         first: usize,
         second: usize,
     ) -> Result<(), RuntimeError> {
-        let reference = self.make_path_unique(path)?;
-        self.arena
-            .live_block(reference.word().base())
-            .ok_or(RuntimeError::Shape)?;
-        let range = self.child_range(reference).ok_or(RuntimeError::Shape)?;
-        if first == second || first >= range.len() || second >= range.len() {
+        let original = self.resolve_path(path)?;
+        let original_range = self.child_range(original).ok_or(RuntimeError::Shape)?;
+        if first == second || first >= original_range.len() || second >= original_range.len() {
             return Err(RuntimeError::Index);
         }
-        let left = Ref::new(self.arena.words[range.start + first])?;
-        let right = Ref::new(self.arena.words[range.start + second])?;
+        let left = Ref::new(self.arena.words[original_range.start + first])?;
+        let right = Ref::new(self.arena.words[original_range.start + second])?;
         let complements = left.word().is_negative() != right.word().is_negative()
             && (FormulaView {
                 checked: self,
@@ -121,13 +122,14 @@ impl Checked {
         }
         let tag = self
             .arena
-            .live_tag(reference.word().base())
+            .live_tag(original.word().base())
             .ok_or(RuntimeError::Shape)?;
         let constant_tag = match tag {
             1 => 0,
             0 | 2 => 1,
             _ => return Err(RuntimeError::Shape),
         };
+        let reference = self.make_path_unique(path)?;
         let replacement_block = self.arena.allocate(0)?;
         self.arena.words[replacement_block.base] = Arena::live_metadata(constant_tag, 0, 1)?;
         self.arena.set_child_len(replacement_block, 0)?;
