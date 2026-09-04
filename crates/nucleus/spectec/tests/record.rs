@@ -46,6 +46,8 @@ impl RelationalResolver for TestRelationalResolver {
         child
     }
 
+    fn restore_scope(&mut self, _scope: Self) {}
+
     fn enter_expression(
         &mut self,
         _kernel: &mut Kernel,

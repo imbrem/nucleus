@@ -138,6 +138,7 @@ where
                 premises.push(algebra.type_membership(alias, formal_value)?);
                 actual.push(formal_value);
                 next_name = algebra.next_name();
+                resolver.restore_scope(algebra.into_resolver());
                 branches.push(HolFamilyBranch {
                     binders,
                     arguments: actual,
@@ -173,6 +174,7 @@ where
                     )?;
                     actual.push(algebra.variant_value(case.name(), payload)?);
                     next_name = algebra.next_name();
+                    resolver.restore_scope(algebra.into_resolver());
                     branches.push(HolFamilyBranch {
                         binders,
                         arguments: actual,
@@ -221,6 +223,7 @@ where
                 }
                 actual.push(algebra.struct_value(&values)?);
                 next_name = algebra.next_name();
+                resolver.restore_scope(algebra.into_resolver());
                 branches.push(HolFamilyBranch {
                     binders,
                     arguments: actual,

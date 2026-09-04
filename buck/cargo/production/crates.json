@@ -1887,6 +1887,13 @@
     },
     {
       "source": "workspace#covalence-nucleus-spectec@0.0.0",
+      "target": "workspace#covalence-data-basic@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus-spectec@0.0.0",
       "target": "workspace#covalence-data-cbor@0.0.0",
       "kinds": [
         "normal"

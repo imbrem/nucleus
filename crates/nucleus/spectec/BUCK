@@ -28,6 +28,7 @@ rust_library(
     srcs = _RUST_SOURCES,
     tests = [":covalence_nucleus_spectec-unit-test"],
     named_deps = {
+        "covalence_data_basic": "nucleus//crates/data/basic:covalence_data_basic",
         "covalence_data_cbor": "nucleus//crates/data/cbor:covalence_data_cbor",
         "covalence_data_spectec": "nucleus//crates/data/spectec:covalence_data_spectec",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
@@ -60,6 +61,7 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
+        "covalence_data_basic": "nucleus//crates/data/basic:covalence_data_basic",
         "covalence_data_cbor": "nucleus//crates/data/cbor:covalence_data_cbor",
         "covalence_data_spectec": "nucleus//crates/data/spectec:covalence_data_spectec",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
@@ -92,6 +94,7 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
+        "covalence_data_basic": "nucleus//crates/data/basic:covalence_data_basic",
         "covalence_data_cbor": "nucleus//crates/data/cbor:covalence_data_cbor",
         "covalence_data_spectec": "nucleus//crates/data/spectec:covalence_data_spectec",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",

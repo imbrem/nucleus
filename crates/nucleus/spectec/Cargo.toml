@@ -8,6 +8,7 @@ description = "Semi-trusted SpecTec-to-HOL compilation records"
 publish = false
 
 [dependencies]
+covalence-data-basic = { path = "../../data/basic" }
 covalence-data-cbor = { path = "../../data/cbor" }
 covalence-data-spectec = { path = "../../data/spectec" }
 covalence-lib-error = { path = "../../lib/error" }

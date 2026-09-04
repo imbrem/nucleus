@@ -350,6 +350,11 @@ pub trait RelationalResolver {
     where
         Self: Sized;
 
+    /// Restores global resolver state after an isolated clause has completed.
+    fn restore_scope(&mut self, scope: Self)
+    where
+        Self: Sized;
+
     /// Establishes any lexical bindings introduced by an expression before
     /// its semantic children are visited.
     ///
@@ -651,6 +656,7 @@ where
         );
         cases.push(algebra.clause(clause, source.formal_inputs, source.formal_result)?);
         next_name = algebra.next_name();
+        resolver.restore_scope(algebra.into_resolver());
     }
     let body = crate::ordered_cases(&mut staged, source.bool_ty, &cases)
         .map_err(|source| resolver.kernel_error(source))?;
@@ -932,6 +938,7 @@ where
                     RelationalExpressionAlgebra::new(staged, rule_resolver, bool_ty, next_name);
                 let (mut rule, otherwise) = algebra.ordered_rule(schema)?;
                 next_name = algebra.next_name();
+                scoped.restore_scope(algebra.into_resolver());
                 if otherwise {
                     if preceding.is_some_and(|guard| depends_on_any(staged, guard, candidates)) {
                         return Err(resolver.relation_otherwise());
@@ -951,8 +958,10 @@ where
                 );
             }
         }
-        close_hol_rules(staged, bool_ty, &closures)
-            .map_err(|source| resolver.kernel_error(source))?
+        let closure = close_hol_rules(staged, bool_ty, &closures)
+            .map_err(|source| resolver.kernel_error(source))?;
+        resolver.restore_scope(scoped);
+        closure
     };
     let family = builder
         .finish(closure)
