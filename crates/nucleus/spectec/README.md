@@ -155,7 +155,10 @@ positive returns and non-return. This is the shape intended for bounded
 factorial: the guard says its mathematical result fits the selected scalar.
 `ThreadedPureWasmSemantics` proves a
 single-threaded denotation equal to a multi-threaded one through two visible
-agreement facts with the shared pure denotation. None of these wrappers claims
+agreement facts with the shared pure denotation. It also transports pure
+equivalence of different programs into cross-profile equivalence, so
+single-threaded `P` and multi-threaded `Q` agree whenever both profiles agree
+with the pure semantics and `P ≈ Q`. None of these wrappers claims
 that the supplied denotation or composition law already agrees with SpecTec;
 that correspondence remains ordinary proof evidence.
 
