@@ -443,6 +443,63 @@ impl PureWasmSemantics {
         })
     }
 
+    /// Derives directional return refinement from denotational equivalence.
+    ///
+    /// Every premise of `equivalence` remains visible. Applying this method in
+    /// both directions (using [`Self::prove_symmetric`]) yields mutual
+    /// refinement without redefining equivalence as a pair of implications.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `equivalence` proves the exact denotational
+    /// equality or checked application, implication, quantification, or formula
+    /// alignment fails. `kernel` is unchanged on failure.
+    pub fn prove_equivalence_refines(
+        self,
+        kernel: &mut Kernel,
+        equivalence: ThmId,
+        implementation: PureWasmProgram,
+        specification: PureWasmProgram,
+    ) -> Result<Evidence, PureWasmProofError> {
+        let mut staged = kernel.fork();
+        let expected = self.equivalent(&mut staged, implementation, specification)?;
+        let equivalence = align_positive(&mut staged, equivalence, expected)?;
+        let name = staged.fresh_name(&[
+            self.program_ty,
+            self.scalar_ty,
+            self.relation_ty,
+            self.denotation,
+            implementation.0,
+            specification.0,
+            expected,
+        ])?;
+        let input = staged.tm_fv(name, self.scalar_ty)?;
+        let output = staged.tm_fv(
+            name.checked_add(1).ok_or(KernelError::TooManyNames)?,
+            self.scalar_ty,
+        )?;
+        let at_input = staged.ap_thm(equivalence, input)?;
+        let at_output = staged.ap_thm(at_input.theorem, output)?;
+        let assumed = staged.identity(Lit::positive(at_output.left.get()))?;
+        let specification_returns = staged.eq_mp(at_output.theorem, assumed)?;
+        let implication = staged.op2(Op2::Imp, at_output.left, at_output.right)?;
+        let implication_fact =
+            staged.imp_right(specification_returns, Lit::positive(implication.get()))?;
+        let by_output = staged.forall_tm(self.bool_ty, output, implication)?;
+        let by_output_fact = staged.forall_intro_at(implication_fact, output, by_output)?;
+        let universal = staged.forall_tm(self.bool_ty, input, by_output)?;
+        let theorem = staged.forall_intro_at(by_output_fact, input, universal)?;
+        let proposition = self.refines(&mut staged, implementation, specification)?;
+        join_alpha_equivalent(&mut staged, universal, proposition)?;
+        staged.convert_conclusions(theorem, universal, proposition)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition,
+            theorem,
+            holds: true,
+        })
+    }
+
     /// Reverses checked positive observational equivalence.
     ///
     /// # Errors
@@ -853,6 +910,12 @@ mod tests {
             .unwrap();
         let refinement = semantics
             .prove_refinement_reflexive(&mut kernel, left)
+            .unwrap();
+        let refinement_from_equivalence = semantics
+            .prove_equivalence_refines(&mut kernel, reflexive.theorem, left, left)
+            .unwrap();
+        EvidenceScope::positive(&[])
+            .check(&kernel, refinement_from_equivalence)
             .unwrap();
         EvidenceScope::positive(&[])
             .check(&kernel, refinement)
