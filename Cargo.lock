@@ -1365,6 +1365,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-nucleus-spectec"
+version = "0.0.0"
+dependencies = [
+ "covalence-data-cbor",
+ "covalence-data-spectec",
+ "covalence-lib-error",
+ "covalence-logic-hol",
+]
+
+[[package]]
 name = "covalence-nucleus-tactics"
 version = "0.0.0"
 dependencies = [
