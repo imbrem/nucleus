@@ -1,18 +1,24 @@
 //! Relational HOL expression lowering over the generic expression fold.
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::Arc};
 
 use covalence_data_spectec::{
     DeclarationId, IlArgument, IlBinding, IlClauseSchema, IlDeclarationBody, IlDomain,
     IlExpression, IlExpressionView, IlIteration, IlKind, IlPremise, IlRuleSchema, IlSchemaError,
 };
 use covalence_lib_error::snafu::Snafu;
-use covalence_logic_hol::{Kernel, KernelError, Ref, Tag, TyTag, builtin::Op1, builtin::Op2};
+use covalence_logic_hol::{
+    Kernel, KernelError, Lit, Ref, Tag, ThmId, TyTag, builtin::Op1, builtin::Op2,
+};
+use covalence_logic_hol_derived::{
+    EqualityError, ExistsError, ForallError, ModelError, SyntaxError, equality_symmetry,
+    forall_elim, introduce_exists, join_alpha_equivalent, open_exists, substitute,
+};
 
 use crate::{
-    ExpressionAlgebra, HolCase, HolFamilyError, HolRule, HolSchema, HolTheoryError, LeastPredicate,
-    LeastPredicateError, Source, begin_least_closed_family_avoiding, close_hol_rule,
-    close_hol_rules, existential_case, fold_expression,
+    Evidence, ExpressionAlgebra, HolCase, HolFamilyError, HolRule, HolSchema, HolTheoryError,
+    LeastPredicate, LeastPredicateError, Source, begin_least_closed_family_avoiding,
+    close_hol_rule, close_hol_rules, existential_case, fold_expression,
 };
 
 /// Relational meaning of one expression.
@@ -117,12 +123,840 @@ pub struct RelationalDefinition {
     pub formal_result: Ref,
     /// Exact source-ordered cases.
     pub cases: Vec<HolCase>,
+    /// Witness and conjunct structure retained for proving each case.
+    pub case_artifacts: Vec<RelationalCaseArtifact>,
     /// Ordered disjunction used as the graph body.
     pub body: Ref,
     /// Universally closed exact graph equation.
     pub equation: Ref,
     /// First unused deterministic free-variable name.
     pub next_name: u64,
+}
+
+/// One exact checked application of a relational definition graph.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelationalDefinitionApplication {
+    inputs: Arc<[Ref]>,
+    result: Ref,
+}
+
+impl RelationalDefinitionApplication {
+    /// Returns the definition inputs in declaration order.
+    #[must_use]
+    pub fn inputs(&self) -> &[Ref] {
+        &self.inputs
+    }
+
+    /// Returns the graph result argument.
+    #[must_use]
+    pub const fn result(&self) -> Ref {
+        self.result
+    }
+}
+
+/// One definition graph specialized at concrete inputs and a concrete result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelationalDefinitionInstance {
+    /// Source-ordered specialized cases.
+    pub cases: Vec<HolCase>,
+    /// Specialized witness and conjunct structure for each case.
+    pub case_artifacts: Vec<RelationalCaseArtifact>,
+    /// Exact ordered disjunction of the specialized cases.
+    pub body: Ref,
+}
+
+/// Exact existential structure used to construct one definition case.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelationalCaseArtifact {
+    /// Public ordered-case proposition.
+    pub case: HolCase,
+    /// Lowered left-hand-side pattern values in declaration-input order.
+    pub pattern_values: Vec<Ref>,
+    /// Lowered right-hand-side result value before graph-result equality.
+    pub result_value: Ref,
+    /// Existential binders of `case.applicable`.
+    pub applicable_binders: Vec<Ref>,
+    /// Conjuncts inside `case.applicable`.
+    pub applicable_conditions: Vec<Ref>,
+    /// Existential binders of `case.produces`.
+    pub production_binders: Vec<Ref>,
+    /// Conjuncts inside `case.produces`.
+    pub production_conditions: Vec<Ref>,
+}
+
+/// Checked witnesses and elementary facts obtained by opening one production.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenedRelationalProduction {
+    /// Hilbert-choice witnesses encoded by the production existentials.
+    pub witnesses: Vec<Ref>,
+    /// Specialized elementary conditions in source order.
+    pub conditions: Vec<Ref>,
+    /// Theorem facts proving the corresponding [`conditions`](Self::conditions).
+    pub facts: Vec<ThmId>,
+}
+
+impl RelationalDefinition {
+    /// Matches one checked proposition as an application of `predicate`.
+    ///
+    /// A successful match returns exactly this definition's inputs followed by
+    /// its graph result. This is immutable syntax inspection only; it neither
+    /// evaluates the definition nor creates a theorem fact. A different head
+    /// or arity is the expected `None` outcome.
+    #[must_use]
+    pub fn match_application(
+        &self,
+        kernel: &Kernel,
+        predicate: Ref,
+        proposition: Ref,
+    ) -> Option<RelationalDefinitionApplication> {
+        let mut current = proposition;
+        let mut arguments = Vec::with_capacity(self.formal_inputs.len() + 1);
+        while kernel.arena().tag(current) == Some(Tag::Tm(covalence_logic_hol::TmTag::App)) {
+            let children = kernel.arena().children(current)?.collect::<Vec<_>>();
+            let [function, argument] = children.as_slice() else {
+                return None;
+            };
+            arguments.push(*argument);
+            current = *function;
+        }
+        arguments.reverse();
+        if current != predicate || arguments.len() != self.formal_inputs.len() + 1 {
+            return None;
+        }
+        let result = arguments.pop()?;
+        Some(RelationalDefinitionApplication {
+            inputs: Arc::from(arguments),
+            result,
+        })
+    }
+
+    /// Chooses production witnesses by structurally matching clause patterns.
+    ///
+    /// Pattern binders are unified with corresponding subterms of `inputs`.
+    /// Repeated binders must match structurally identical subterms. Any
+    /// production binder not mentioned by a pattern is filled with a fresh term
+    /// of its exact retained classifier. This is syntax-directed witness
+    /// selection only; it does not decide a semantic premise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a missing case, wrong input arity, name exhaustion,
+    /// or a rejected checked classifier/syntax operation. A structural mismatch
+    /// returns `Ok(None)`. `kernel` is unchanged on failure or mismatch.
+    pub fn match_production_witnesses(
+        &self,
+        kernel: &mut Kernel,
+        index: usize,
+        inputs: &[Ref],
+    ) -> Result<Option<Vec<Ref>>, DefinitionProofError> {
+        if inputs.len() != self.formal_inputs.len() {
+            return Err(DefinitionProofError::Arity {
+                expected: self.formal_inputs.len(),
+                actual: inputs.len(),
+            });
+        }
+        let artifact = self
+            .case_artifacts
+            .get(index)
+            .ok_or(DefinitionProofError::MissingCase { index })?;
+        if artifact.pattern_values.len() != inputs.len() {
+            return Err(DefinitionProofError::ConditionShape);
+        }
+        let mut staged = kernel.fork();
+        let mut assignments = vec![None; artifact.production_binders.len()];
+        for (&pattern, &input) in artifact.pattern_values.iter().zip(inputs) {
+            if !match_pattern_term(
+                &mut staged,
+                pattern,
+                input,
+                &artifact.production_binders,
+                &mut assignments,
+            )? {
+                return Ok(None);
+            }
+        }
+        let roots = artifact
+            .production_binders
+            .iter()
+            .chain(artifact.pattern_values.iter())
+            .chain(inputs.iter())
+            .copied()
+            .collect::<Vec<_>>();
+        let first = staged.fresh_name(&roots)?;
+        for (index, assignment) in assignments.iter_mut().enumerate() {
+            if assignment.is_none() {
+                let offset = u64::try_from(index).map_err(|_| KernelError::TooManyNames)?;
+                let name = first.checked_add(offset).ok_or(KernelError::TooManyNames)?;
+                let classifier = staged.classifier(artifact.production_binders[index])?;
+                *assignment = Some(staged.tm_fv(name, classifier)?);
+            }
+        }
+        let witnesses = assignments
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or(DefinitionProofError::ConditionShape)?;
+        *kernel = staged;
+        Ok(Some(witnesses))
+    }
+
+    /// Constructs a clause's lowered right-hand-side result at chosen values.
+    ///
+    /// The result expression is retained as the right operand of the final
+    /// production condition `formal_result = result`. This method substitutes
+    /// concrete declaration inputs and clause witnesses without evaluating the
+    /// expression. Using the returned term as the graph result makes that final
+    /// condition reflexive by construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a missing case, mismatched input or witness arity,
+    /// or failed checked substitution.
+    /// `kernel` is unchanged on failure.
+    pub fn production_result(
+        &self,
+        kernel: &mut Kernel,
+        index: usize,
+        inputs: &[Ref],
+        witnesses: &[Ref],
+    ) -> Result<Ref, DefinitionProofError> {
+        if inputs.len() != self.formal_inputs.len() {
+            return Err(DefinitionProofError::Arity {
+                expected: self.formal_inputs.len(),
+                actual: inputs.len(),
+            });
+        }
+        let artifact = self
+            .case_artifacts
+            .get(index)
+            .ok_or(DefinitionProofError::MissingCase { index })?;
+        if witnesses.len() != artifact.production_binders.len() {
+            return Err(DefinitionProofError::WitnessArity {
+                expected: artifact.production_binders.len(),
+                actual: witnesses.len(),
+            });
+        }
+        let mut staged = kernel.fork();
+        let mut result = artifact.result_value;
+        for (variable, value) in self
+            .formal_inputs
+            .iter()
+            .copied()
+            .zip(inputs.iter().copied())
+            .chain(
+                artifact
+                    .production_binders
+                    .iter()
+                    .copied()
+                    .zip(witnesses.iter().copied()),
+            )
+        {
+            result = substitute(&mut staged, variable, value, result)
+                .map_err(|source| DefinitionProofError::Substitute { source })?
+                .output;
+        }
+        *kernel = staged;
+        Ok(result)
+    }
+
+    /// Specializes every retained case at concrete graph inputs and result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for the wrong input arity or if checked substitution or
+    /// ordered-body reconstruction fails. `kernel` is unchanged on failure.
+    pub fn specialize(
+        &self,
+        kernel: &mut Kernel,
+        bool_ty: Ref,
+        inputs: &[Ref],
+        result: Ref,
+    ) -> Result<RelationalDefinitionInstance, DefinitionProofError> {
+        if inputs.len() != self.formal_inputs.len() {
+            return Err(DefinitionProofError::Arity {
+                expected: self.formal_inputs.len(),
+                actual: inputs.len(),
+            });
+        }
+        let mut staged = kernel.fork();
+        let substitutions = self
+            .formal_inputs
+            .iter()
+            .copied()
+            .zip(inputs.iter().copied())
+            .chain(std::iter::once((self.formal_result, result)))
+            .collect::<Vec<_>>();
+        let specialize =
+            |kernel: &mut Kernel, mut proposition: Ref| -> Result<Ref, DefinitionProofError> {
+                for &(variable, value) in &substitutions {
+                    proposition = substitute(kernel, variable, value, proposition)
+                        .map_err(|source| DefinitionProofError::Substitute { source })?
+                        .output;
+                }
+                Ok(proposition)
+            };
+        let case_artifacts = self
+            .case_artifacts
+            .iter()
+            .map(|artifact| {
+                let applicable_conditions = artifact
+                    .applicable_conditions
+                    .iter()
+                    .map(|&condition| specialize(&mut staged, condition))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let production_conditions = artifact
+                    .production_conditions
+                    .iter()
+                    .map(|&condition| specialize(&mut staged, condition))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let applicable = crate::existential_case(
+                    &mut staged,
+                    bool_ty,
+                    &artifact.applicable_binders,
+                    &applicable_conditions,
+                )?;
+                let produces = crate::existential_case(
+                    &mut staged,
+                    bool_ty,
+                    &artifact.production_binders,
+                    &production_conditions,
+                )?;
+                let case = HolCase {
+                    applicable,
+                    produces,
+                    otherwise: artifact.case.otherwise,
+                };
+                Ok(RelationalCaseArtifact {
+                    case,
+                    pattern_values: artifact
+                        .pattern_values
+                        .iter()
+                        .map(|&pattern| specialize(&mut staged, pattern))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    result_value: specialize(&mut staged, artifact.result_value)?,
+                    applicable_binders: artifact.applicable_binders.clone(),
+                    applicable_conditions,
+                    production_binders: artifact.production_binders.clone(),
+                    production_conditions,
+                })
+            })
+            .collect::<Result<Vec<_>, DefinitionProofError>>()?;
+        let cases = case_artifacts
+            .iter()
+            .map(|artifact| artifact.case)
+            .collect::<Vec<_>>();
+        let body = crate::ordered_cases(&mut staged, bool_ty, &cases)
+            .map_err(|source| DefinitionProofError::Kernel { source })?;
+        *kernel = staged;
+        Ok(RelationalDefinitionInstance {
+            cases,
+            case_artifacts,
+            body,
+        })
+    }
+}
+
+fn match_pattern_term(
+    kernel: &mut Kernel,
+    pattern: Ref,
+    input: Ref,
+    binders: &[Ref],
+    assignments: &mut [Option<Ref>],
+) -> Result<bool, DefinitionProofError> {
+    if let Some(index) = binders.iter().position(|&binder| binder == pattern) {
+        if let Some(existing) = assignments[index] {
+            return match covalence_logic_hol_derived::join_same_syntax(kernel, existing, input) {
+                Ok(_) => Ok(true),
+                Err(SyntaxError::Different) => Ok(false),
+                Err(SyntaxError::Kernel { source }) => Err(DefinitionProofError::Kernel { source }),
+            };
+        }
+        let pattern_ty = kernel.classifier(pattern)?;
+        let input_ty = kernel.classifier(input)?;
+        match covalence_logic_hol_derived::join_same_syntax(kernel, pattern_ty, input_ty) {
+            Ok(_) => {
+                assignments[index] = Some(input);
+                return Ok(true);
+            }
+            Err(SyntaxError::Different) => return Ok(false),
+            Err(SyntaxError::Kernel { source }) => {
+                return Err(DefinitionProofError::Kernel { source });
+            }
+        }
+    }
+    if pattern == input {
+        return Ok(true);
+    }
+    if kernel.arena().tag(pattern) != kernel.arena().tag(input)
+        || kernel.arena().name(pattern) != kernel.arena().name(input)
+        || kernel.arena().bool_value(pattern) != kernel.arena().bool_value(input)
+        || kernel.arena().op1(pattern) != kernel.arena().op1(input)
+        || kernel.arena().op2(pattern) != kernel.arena().op2(input)
+    {
+        return Ok(false);
+    }
+    let pattern_children = kernel
+        .arena()
+        .children(pattern)
+        .ok_or(DefinitionProofError::ConditionShape)?
+        .collect::<Vec<_>>();
+    let input_children = kernel
+        .arena()
+        .children(input)
+        .ok_or(DefinitionProofError::ConditionShape)?
+        .collect::<Vec<_>>();
+    if pattern_children.len() != input_children.len() {
+        return Ok(false);
+    }
+    for (&pattern_child, &input_child) in pattern_children.iter().zip(&input_children) {
+        if !match_pattern_term(kernel, pattern_child, input_child, binders, assignments)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+impl RelationalDefinitionInstance {
+    /// Extracts the sole ordinary production from a proved definition body.
+    ///
+    /// This is intentionally limited to a one-case, non-`otherwise`
+    /// definition, where no case choice or negated applicability evidence is
+    /// required. It eliminates the ordered body's initial `false` branch with
+    /// ordinary checked propositional rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless this instance has exactly one ordinary case and
+    /// `body_fact` proves its exact body. `kernel` is unchanged on failure.
+    pub fn prove_only_production_from_body(
+        &self,
+        kernel: &mut Kernel,
+        bool_ty: Ref,
+        body_fact: ThmId,
+    ) -> Result<Evidence, DefinitionProofError> {
+        if self.cases.len() != 1 || self.cases[0].otherwise {
+            return Err(DefinitionProofError::MissingCase { index: 1 });
+        }
+        let mut staged = kernel.fork();
+        let source = definition_positive_conclusion(&staged, body_fact)?;
+        join_alpha_equivalent(&mut staged, source, self.body)?;
+        let body_fact = staged.copy_theorem(body_fact)?;
+        staged.convert_conclusions(body_fact, source, self.body)?;
+        let expanded = staged.expand_conclusion(body_fact, positive(self.body), None)?;
+        let falsehood = staged
+            .arena()
+            .children(self.body)
+            .and_then(|mut children| children.next())
+            .ok_or(DefinitionProofError::ConditionShape)?;
+        if staged.classifier(falsehood)? != bool_ty {
+            return Err(DefinitionProofError::ConditionShape);
+        }
+        let false_left = staged.false_left(positive(falsehood))?;
+        let theorem = staged.cut(expanded, false_left, positive(falsehood))?;
+        let production = self.cases[0].produces;
+        let actual = definition_positive_conclusion(&staged, theorem)?;
+        join_alpha_equivalent(&mut staged, actual, production)?;
+        staged.convert_conclusions(theorem, actual, production)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: production,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Opens one proved case production into witnesses and elementary facts.
+    ///
+    /// Existentials are eliminated at their encoded Hilbert-choice witnesses;
+    /// the resulting left-associated conjunction is projected into facts in
+    /// the retained source order. Every returned fact preserves the premises
+    /// of `production_fact`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an absent case, a mismatched theorem, malformed
+    /// existential/conjunction structure, or a rejected checked proof step.
+    /// `kernel` is unchanged on failure.
+    pub fn open_production(
+        &self,
+        kernel: &mut Kernel,
+        index: usize,
+        production_fact: ThmId,
+    ) -> Result<OpenedRelationalProduction, DefinitionProofError> {
+        let artifact = self
+            .case_artifacts
+            .get(index)
+            .ok_or(DefinitionProofError::MissingCase { index })?;
+        let mut staged = kernel.fork();
+        let source = definition_positive_conclusion(&staged, production_fact)?;
+        join_alpha_equivalent(&mut staged, source, artifact.case.produces)?;
+        let mut working = staged.copy_theorem(production_fact)?;
+        staged.convert_conclusions(working, source, artifact.case.produces)?;
+        let mut proposition = artifact.case.produces;
+        let mut witnesses = Vec::with_capacity(artifact.production_binders.len());
+        for _ in &artifact.production_binders {
+            let opened = open_exists(&mut staged, proposition)
+                .map_err(|source| DefinitionProofError::Exists { source })?;
+            staged.convert_conclusions(working, proposition, opened.body)?;
+            witnesses.push(opened.witness);
+            proposition = opened.body;
+        }
+        let conditions = instantiate_case_conditions(
+            &mut staged,
+            &artifact.production_conditions,
+            &artifact.production_binders,
+            &witnesses,
+        )?;
+        let mut reversed_facts = Vec::with_capacity(conditions.len());
+        let mut conjunction = proposition;
+        for &condition in conditions.iter().rev() {
+            let fact = staged.copy_theorem(working)?;
+            let right = staged.expand_conclusion(fact, positive(conjunction), Some(true))?;
+            let actual = definition_positive_conclusion(&staged, right)?;
+            join_alpha_equivalent(&mut staged, actual, condition)?;
+            staged.convert_conclusions(right, actual, condition)?;
+            reversed_facts.push(right);
+            working = staged.expand_conclusion(working, positive(conjunction), Some(false))?;
+            conjunction = definition_positive_conclusion(&staged, working)?;
+        }
+        reversed_facts.reverse();
+        *kernel = staged;
+        Ok(OpenedRelationalProduction {
+            witnesses,
+            conditions,
+            facts: reversed_facts,
+        })
+    }
+
+    /// Constructs the elementary obligations for a case's production witnesses.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `index` is absent, the witness count differs from
+    /// the retained existential binders, or checked substitution fails.
+    /// `kernel` is unchanged on failure.
+    pub fn production_obligations(
+        &self,
+        kernel: &mut Kernel,
+        index: usize,
+        witnesses: &[Ref],
+    ) -> Result<Vec<Ref>, DefinitionProofError> {
+        let artifact = self
+            .case_artifacts
+            .get(index)
+            .ok_or(DefinitionProofError::MissingCase { index })?;
+        if witnesses.len() != artifact.production_binders.len() {
+            return Err(DefinitionProofError::WitnessArity {
+                expected: artifact.production_binders.len(),
+                actual: witnesses.len(),
+            });
+        }
+        let mut staged = kernel.fork();
+        let obligations = instantiate_case_conditions(
+            &mut staged,
+            &artifact.production_conditions,
+            &artifact.production_binders,
+            witnesses,
+        )?;
+        *kernel = staged;
+        Ok(obligations)
+    }
+
+    /// Proves a case's existential production from elementary condition facts.
+    ///
+    /// Each theorem in `condition_facts` must prove the corresponding result of
+    /// [`Self::production_obligations`]. The method conjoins those facts and
+    /// introduces the retained witnesses using checked HOL rules. All premises
+    /// remain visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`Self::production_obligations`], when the fact count or conclusions do
+    /// not match, or if checked conjunction or existential introduction fails.
+    /// `kernel` is unchanged on failure.
+    pub fn prove_production(
+        &self,
+        kernel: &mut Kernel,
+        bool_ty: Ref,
+        index: usize,
+        witnesses: &[Ref],
+        condition_facts: &[ThmId],
+    ) -> Result<Evidence, DefinitionProofError> {
+        let artifact = self
+            .case_artifacts
+            .get(index)
+            .ok_or(DefinitionProofError::MissingCase { index })?;
+        let mut staged = kernel.fork();
+        let obligations = self.production_obligations(&mut staged, index, witnesses)?;
+        if condition_facts.len() != obligations.len() {
+            return Err(DefinitionProofError::ConditionArity {
+                expected: obligations.len(),
+                actual: condition_facts.len(),
+            });
+        }
+        let truth = staged.bool(bool_ty, true)?;
+        let mut proposition = truth;
+        let mut theorem = staged.true_right(positive(truth))?;
+        for (&condition, &fact) in obligations.iter().zip(condition_facts) {
+            let source = definition_positive_conclusion(&staged, fact)?;
+            join_alpha_equivalent(&mut staged, source, condition)?;
+            let aligned = staged.copy_theorem(fact)?;
+            staged.convert_conclusions(aligned, source, condition)?;
+            proposition = staged.op2(Op2::And, proposition, condition)?;
+            theorem = staged.and_right(theorem, aligned, positive(proposition))?;
+        }
+
+        let mut current_values = witnesses.to_vec();
+        for binder_index in (0..artifact.production_binders.len()).rev() {
+            current_values[binder_index] = artifact.production_binders[binder_index];
+            let conditions = instantiate_case_conditions(
+                &mut staged,
+                &artifact.production_conditions,
+                &artifact.production_binders,
+                &current_values,
+            )?;
+            let mut opened = crate::existential_case(&mut staged, bool_ty, &[], &conditions)?;
+            for &inner in artifact.production_binders[binder_index + 1..].iter().rev() {
+                opened = staged.exists_tm(inner, opened)?;
+            }
+            let introduced = introduce_exists(
+                &mut staged,
+                theorem,
+                artifact.production_binders[binder_index],
+                opened,
+                witnesses[binder_index],
+            )
+            .map_err(|source| DefinitionProofError::Exists { source })?;
+            theorem = introduced.theorem;
+            proposition = introduced.proposition;
+        }
+        join_alpha_equivalent(&mut staged, proposition, artifact.case.produces)?;
+        staged.convert_conclusions(theorem, proposition, artifact.case.produces)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: artifact.case.produces,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Derives the complete ordered body from one checked case-branch fact.
+    ///
+    /// For an ordinary case the branch is `case.produces`. For an `otherwise`
+    /// case it is `not prior_applicability /\ case.produces`. The method then
+    /// injects that branch into the exact source-ordered disjunction. All input
+    /// theorem premises remain visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `index` is absent, `branch_fact` proves a different
+    /// proposition, or checked alignment or disjunction introduction fails.
+    /// `kernel` is unchanged on failure.
+    pub fn prove_body_case(
+        &self,
+        kernel: &mut Kernel,
+        bool_ty: Ref,
+        index: usize,
+        branch_fact: ThmId,
+    ) -> Result<Evidence, DefinitionProofError> {
+        if index >= self.cases.len() {
+            return Err(DefinitionProofError::MissingCase { index });
+        }
+        let mut staged = kernel.fork();
+        let mut prior = staged.bool(bool_ty, false)?;
+        let mut body = staged.bool(bool_ty, false)?;
+        let mut theorem = None;
+        for (case_index, case) in self.cases.iter().enumerate() {
+            let branch = if case.otherwise {
+                let no_prior = staged.op1(Op1::Not, prior)?;
+                staged.op2(Op2::And, no_prior, case.produces)?
+            } else {
+                case.produces
+            };
+            let next = staged.op2(Op2::Or, body, branch)?;
+            if case_index == index {
+                let source = definition_positive_conclusion(&staged, branch_fact)?;
+                join_alpha_equivalent(&mut staged, source, branch)?;
+                let selected = staged.copy_theorem(branch_fact)?;
+                staged.convert_conclusions(selected, source, branch)?;
+                staged.weaken(selected, &[], &[positive(body)])?;
+                theorem = Some(staged.or_right(selected, positive(next))?);
+            } else if let Some(selected) = theorem {
+                staged.weaken(selected, &[], &[positive(branch)])?;
+                theorem = Some(staged.or_right(selected, positive(next))?);
+            }
+            prior = staged.op2(Op2::Or, prior, case.applicable)?;
+            body = next;
+        }
+        join_alpha_equivalent(&mut staged, body, self.body)?;
+        let theorem = theorem.ok_or(DefinitionProofError::MissingCase { index })?;
+        staged.convert_conclusions(theorem, body, self.body)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: self.body,
+            theorem,
+            holds: true,
+        })
+    }
+}
+
+fn instantiate_case_conditions(
+    kernel: &mut Kernel,
+    conditions: &[Ref],
+    binders: &[Ref],
+    values: &[Ref],
+) -> Result<Vec<Ref>, DefinitionProofError> {
+    conditions
+        .iter()
+        .map(|&condition| {
+            binders
+                .iter()
+                .copied()
+                .zip(values.iter().copied())
+                .try_fold(condition, |proposition, (binder, value)| {
+                    substitute(kernel, binder, value, proposition)
+                        .map(|result| result.output)
+                        .map_err(|source| DefinitionProofError::Substitute { source })
+                })
+        })
+        .collect()
+}
+
+fn definition_positive_conclusion(
+    kernel: &Kernel,
+    theorem: ThmId,
+) -> Result<Ref, DefinitionProofError> {
+    let theorem = kernel
+        .thm()
+        .get(theorem)
+        .ok_or(KernelError::MissingTheorem { id: theorem })?;
+    let mut conclusions = theorem.rhs.rows();
+    let Some([literal]) = conclusions.next() else {
+        return Err(DefinitionProofError::BranchFact);
+    };
+    if conclusions.next().is_some() || !literal.is_positive() {
+        return Err(DefinitionProofError::BranchFact);
+    }
+    Ref::new(literal.magnitude().cast_signed()).ok_or(DefinitionProofError::BranchFact)
+}
+
+/// Why a retained definition case could not be specialized or proved.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+#[snafu(module)]
+pub enum DefinitionProofError {
+    /// Concrete inputs did not match the definition arity.
+    #[snafu(display("definition has {expected} inputs, found {actual}"))]
+    Arity {
+        /// Required input count.
+        expected: usize,
+        /// Supplied input count.
+        actual: usize,
+    },
+    /// The selected source case is absent.
+    #[snafu(display("definition has no case at index {index}"))]
+    MissingCase {
+        /// Requested source-order index.
+        index: usize,
+    },
+    /// Production witnesses did not match the retained existential arity.
+    #[snafu(display("definition production has {expected} witnesses, found {actual}"))]
+    WitnessArity {
+        /// Required witness count.
+        expected: usize,
+        /// Supplied witness count.
+        actual: usize,
+    },
+    /// Condition facts did not match the production conjunction arity.
+    #[snafu(display("definition production has {expected} conditions, found {actual} facts"))]
+    ConditionArity {
+        /// Required condition count.
+        expected: usize,
+        /// Supplied fact count.
+        actual: usize,
+    },
+    /// A row tagged as equality did not have its checked three-child shape.
+    #[snafu(display("malformed elementary definition equality"))]
+    ConditionShape,
+    /// The supplied theorem is not one positive case-branch fact.
+    #[snafu(display("theorem does not prove the selected definition branch"))]
+    BranchFact,
+    /// Checked capture-avoiding specialization failed.
+    #[snafu(display("could not specialize a retained definition case: {source}"))]
+    Substitute {
+        /// Underlying checked substitution failure.
+        source: ModelError,
+    },
+    /// Checked existential introduction failed.
+    #[snafu(display("could not introduce a retained definition witness: {source}"))]
+    Exists {
+        /// Underlying checked existential proof failure.
+        source: ExistsError,
+    },
+    /// Checked syntax alignment failed.
+    #[snafu(display("could not align a retained definition case: {source}"))]
+    Syntax {
+        /// Underlying checked syntax failure.
+        source: SyntaxError,
+    },
+    /// A checked HOL construction or theorem rule failed.
+    #[snafu(transparent)]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+}
+
+impl From<SyntaxError> for DefinitionProofError {
+    fn from(source: SyntaxError) -> Self {
+        Self::Syntax { source }
+    }
+}
+
+/// Proves an elementary definition condition when it is reflexive equality.
+///
+/// This recognizes only checked equality syntax whose two operands are
+/// structurally identical (up to already checked syntax sharing). It performs
+/// no evaluation. Non-equalities and genuinely different operands return
+/// `Ok(None)` and remain explicit semantic obligations.
+///
+/// # Errors
+///
+/// Returns an error if malformed equality syntax or a checked syntax/theorem
+/// operation fails. `kernel` is unchanged on both failure and `Ok(None)`.
+pub fn prove_reflexive_condition(
+    kernel: &mut Kernel,
+    condition: Ref,
+) -> Result<Option<Evidence>, DefinitionProofError> {
+    if kernel.arena().tag(condition) != Some(Tag::Tm(covalence_logic_hol::TmTag::Eq)) {
+        return Ok(None);
+    }
+    let children = kernel
+        .arena()
+        .children(condition)
+        .ok_or(DefinitionProofError::ConditionShape)?
+        .collect::<Vec<_>>();
+    let [_operand_ty, left, right] = children.as_slice() else {
+        return Err(DefinitionProofError::ConditionShape);
+    };
+    let mut staged = kernel.fork();
+    match covalence_logic_hol_derived::join_same_syntax(&mut staged, *left, *right) {
+        Ok(_) => {}
+        Err(SyntaxError::Different) => return Ok(None),
+        Err(SyntaxError::Kernel { source }) => {
+            return Err(DefinitionProofError::Kernel { source });
+        }
+    }
+    let bool_ty = staged.classifier(condition)?;
+    let reflexive = staged.refl(bool_ty, *left)?;
+    covalence_logic_hol_derived::join_same_syntax(&mut staged, reflexive.equality, condition)?;
+    staged.convert_conclusions(reflexive.theorem, reflexive.equality, condition)?;
+    *kernel = staged;
+    Ok(Some(Evidence {
+        proposition: condition,
+        theorem: reflexive.theorem,
+        holds: true,
+    }))
 }
 
 /// Minimal inputs for lowering one complete checked definition schema.
@@ -167,14 +1001,436 @@ pub struct RelationalRelation<'a> {
 }
 
 /// Exact definition of one schema relation slot by a least-family member.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelationalRelationDefinition {
     /// Free semantic slot supplied by the checked schema.
     pub predicate: Ref,
     /// Direct impredicative least predicate generated from the relation rules.
     pub least: LeastPredicate,
+    /// Source-ordered universally closed rule propositions for this member.
+    pub rules: Arc<[Ref]>,
+    /// Source-ordered lowered rule ingredients before universal closure.
+    pub rule_schemas: Arc<[HolRule]>,
+    /// Source-ordered rules for the complete mutually recursive family.
+    pub family_rules: Arc<[Ref]>,
+    /// Candidate predicates quantified by the least-family definition.
+    pub family_candidates: Arc<[Ref]>,
     /// Checked proposition `predicate = least.predicate`.
     pub equation: Ref,
+}
+
+impl RelationalRelationDefinition {
+    /// Constructs a rule's elementary premises at chosen binder values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an absent rule, wrong witness arity, or failed
+    /// checked substitution. `kernel` is unchanged on failure.
+    pub fn rule_obligations(
+        &self,
+        kernel: &mut Kernel,
+        index: usize,
+        witnesses: &[Ref],
+    ) -> Result<Vec<Ref>, RelationProofError> {
+        let rule = self
+            .rule_schemas
+            .get(index)
+            .ok_or(RelationProofError::Missing { index })?;
+        if witnesses.len() != rule.binders.len() {
+            return Err(RelationProofError::WitnessArity {
+                expected: rule.binders.len(),
+                actual: witnesses.len(),
+            });
+        }
+        let mut staged = kernel.fork();
+        let obligations = rule
+            .premises
+            .iter()
+            .map(|&premise| {
+                rule.binders
+                    .iter()
+                    .copied()
+                    .zip(witnesses.iter().copied())
+                    .try_fold(premise, |current, (binder, witness)| {
+                        substitute(&mut staged, binder, witness, current)
+                            .map(|result| result.output)
+                            .map_err(|source| RelationProofError::Substitute { source })
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        *kernel = staged;
+        Ok(obligations)
+    }
+
+    /// Proves a specialized rule's complete premise conjunction.
+    ///
+    /// Each theorem must prove the corresponding result of
+    /// [`Self::rule_obligations`]. All input premises remain visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an absent rule, wrong witness/fact arity,
+    /// mismatched conclusions, or a rejected checked conjunction step.
+    /// `kernel` is unchanged on failure.
+    pub fn prove_rule_obligations(
+        &self,
+        kernel: &mut Kernel,
+        bool_ty: Ref,
+        index: usize,
+        witnesses: &[Ref],
+        facts: &[ThmId],
+    ) -> Result<Evidence, RelationProofError> {
+        let mut staged = kernel.fork();
+        let obligations = self.rule_obligations(&mut staged, index, witnesses)?;
+        if facts.len() != obligations.len() {
+            return Err(RelationProofError::PremiseArity {
+                expected: obligations.len(),
+                actual: facts.len(),
+            });
+        }
+        let (mut proposition, theorem) = if let Some((&first, tail)) = obligations.split_first() {
+            let first_source = sole_positive_conclusion(&staged, facts[0])?;
+            join_alpha_equivalent(&mut staged, first_source, first)
+                .map_err(|source| RelationProofError::Syntax { source })?;
+            let first_fact = staged.copy_theorem(facts[0])?;
+            staged.convert_conclusions(first_fact, first_source, first)?;
+            let mut proposition = first;
+            let mut theorem = first_fact;
+            for (&right, &fact) in tail.iter().zip(&facts[1..]) {
+                let source = sole_positive_conclusion(&staged, fact)?;
+                join_alpha_equivalent(&mut staged, source, right)
+                    .map_err(|source| RelationProofError::Syntax { source })?;
+                let aligned = staged.copy_theorem(fact)?;
+                staged.convert_conclusions(aligned, source, right)?;
+                proposition = staged.op2(Op2::And, proposition, right)?;
+                theorem = staged.and_right(theorem, aligned, positive(proposition))?;
+            }
+            (proposition, theorem)
+        } else {
+            let truth = staged.bool(bool_ty, true)?;
+            (truth, staged.true_right(positive(truth))?)
+        };
+        let specialized = self.specialize_rule(&mut staged, index, witnesses)?;
+        let antecedent = staged
+            .arena()
+            .children(specialized.proposition)
+            .and_then(|mut children| children.next())
+            .ok_or(RelationProofError::NotImplication)?;
+        join_alpha_equivalent(&mut staged, proposition, antecedent)
+            .map_err(|source| RelationProofError::Syntax { source })?;
+        staged.convert_conclusions(theorem, proposition, antecedent)?;
+        proposition = antecedent;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Derives one member rule from the complete family closure.
+    ///
+    /// The resulting theorem has `least.closure` as its single visible premise
+    /// and the selected universally closed rule as its conclusion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `index` is absent, the retained rule is inconsistent
+    /// with the family closure, or a checked theorem step fails. `kernel` is
+    /// unchanged on failure.
+    pub fn derive_rule(
+        &self,
+        kernel: &mut Kernel,
+        index: usize,
+    ) -> Result<Evidence, RelationProofError> {
+        let target = *self
+            .rules
+            .get(index)
+            .ok_or(RelationProofError::Missing { index })?;
+        let family_index = self
+            .family_rules
+            .iter()
+            .position(|&rule| rule == target)
+            .ok_or(RelationProofError::Inconsistent)?;
+        let mut staged = kernel.fork();
+        let mut theorem = staged.identity(positive(target))?;
+        for (candidate_index, &rule) in self.family_rules.iter().enumerate() {
+            if candidate_index != family_index {
+                staged.weaken(theorem, &[positive(rule)], &[])?;
+            }
+        }
+        if self.family_rules.len() > 1 {
+            theorem = staged.fold_premise(theorem, positive(self.least.closure))?;
+        } else if self.family_rules.first().copied() != Some(self.least.closure) {
+            return Err(RelationProofError::Inconsistent);
+        }
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: target,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Derives and specializes one member rule at checked arguments.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`derive_rule`](Self::derive_rule), or if an argument does not match the
+    /// next universal binder. `kernel` is unchanged on failure.
+    pub fn specialize_rule(
+        &self,
+        kernel: &mut Kernel,
+        index: usize,
+        arguments: &[Ref],
+    ) -> Result<Evidence, RelationProofError> {
+        let mut staged = kernel.fork();
+        let mut evidence = self.derive_rule(&mut staged, index)?;
+        for &argument in arguments {
+            let specialized = forall_elim(&mut staged, evidence.theorem, argument)
+                .map_err(|source| RelationProofError::Specialize { source })?;
+            evidence = Evidence {
+                proposition: specialized.proposition,
+                theorem: specialized.theorem,
+                holds: true,
+            };
+        }
+        *kernel = staged;
+        Ok(evidence)
+    }
+
+    /// Applies a fully specialized member rule to its checked premise fact.
+    ///
+    /// `rule` is normally returned by [`Self::specialize_rule`] after passing
+    /// one argument for every retained [`HolRule::binders`] entry. Its theorem
+    /// must conclude `premises -> candidate conclusion` under the family
+    /// closure. The result concludes `candidate conclusion`, preserving both
+    /// the closure and all premises of `premises_fact` visibly.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `rule` is a positive implication and
+    /// `premises_fact` proves its exact antecedent, or a checked theorem step
+    /// fails. `kernel` is unchanged on failure.
+    pub fn apply_specialized_rule(
+        &self,
+        kernel: &mut Kernel,
+        rule: Evidence,
+        premises_fact: covalence_logic_hol::ThmId,
+    ) -> Result<Evidence, RelationProofError> {
+        if !rule.holds || kernel.arena().op2(rule.proposition) != Some(Op2::Imp) {
+            return Err(RelationProofError::NotImplication);
+        }
+        let mut operands = kernel
+            .arena()
+            .children(rule.proposition)
+            .ok_or(RelationProofError::NotImplication)?;
+        let antecedent = operands.next().ok_or(RelationProofError::NotImplication)?;
+        let consequent = operands.next().ok_or(RelationProofError::NotImplication)?;
+        drop(operands);
+        let mut staged = kernel.fork();
+        let premise_source = sole_positive_conclusion(&staged, premises_fact)?;
+        join_alpha_equivalent(&mut staged, premise_source, antecedent)
+            .map_err(|source| RelationProofError::Syntax { source })?;
+        let aligned_premises = staged.copy_theorem(premises_fact)?;
+        staged.convert_conclusions(aligned_premises, premise_source, antecedent)?;
+        let consequence_identity = staged.identity(positive(consequent))?;
+        let use_rule = staged.imp_left(
+            aligned_premises,
+            consequence_identity,
+            positive(rule.proposition),
+        )?;
+        let theorem = staged.cut(rule.theorem, use_rule, positive(rule.proposition))?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: consequent,
+            theorem,
+            holds: true,
+        })
+    }
+
+    /// Closes a candidate rule fact into the public least-defined relation.
+    ///
+    /// `candidate_fact` must conclude this member candidate applied to the
+    /// single erased relation argument, with the shared family closure as a
+    /// premise. `equation_fact` must prove this relation's checked defining
+    /// equation. Other visible premises, such as grounding laws, are retained.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed candidate fact, a candidate-dependent
+    /// residual premise, a mismatched defining equation, or a rejected checked
+    /// quantification, beta-conversion, or equality step. `kernel` is unchanged
+    /// on failure.
+    pub fn close_rule_instance(
+        &self,
+        kernel: &mut Kernel,
+        candidate_fact: Evidence,
+        equation_fact: covalence_logic_hol::ThmId,
+    ) -> Result<Evidence, RelationProofError> {
+        if !candidate_fact.holds {
+            return Err(RelationProofError::CandidateFact);
+        }
+        let mut candidate_children = kernel
+            .arena()
+            .children(candidate_fact.proposition)
+            .ok_or(RelationProofError::CandidateFact)?;
+        let function = candidate_children
+            .next()
+            .ok_or(RelationProofError::CandidateFact)?;
+        let argument = candidate_children
+            .next()
+            .ok_or(RelationProofError::CandidateFact)?;
+        drop(candidate_children);
+        if function != self.least.candidate {
+            return Err(RelationProofError::CandidateFact);
+        }
+
+        let mut staged = kernel.fork();
+        let implication = staged.op2(Op2::Imp, self.least.closure, candidate_fact.proposition)?;
+        let mut theorem = staged.copy_theorem(candidate_fact.theorem)?;
+        theorem = staged.imp_right(theorem, positive(implication))?;
+        let mut characterization = implication;
+        for &candidate in self.family_candidates.iter().rev() {
+            let bool_ty = staged.classifier(characterization)?;
+            characterization = staged.forall_tm(bool_ty, candidate, characterization)?;
+            theorem = staged.forall_intro_at(theorem, candidate, characterization)?;
+        }
+
+        let least_application = staged.app(self.least.predicate, argument)?;
+        let mut lambda_children = staged
+            .arena()
+            .children(self.least.predicate)
+            .ok_or(RelationProofError::CandidateFact)?;
+        let binder = lambda_children
+            .next()
+            .ok_or(RelationProofError::CandidateFact)?;
+        let body = lambda_children
+            .next()
+            .ok_or(RelationProofError::CandidateFact)?;
+        drop(lambda_children);
+        let reduced = substitute(&mut staged, binder, argument, body)
+            .map_err(|source| RelationProofError::Substitute { source })?;
+        let beta = staged.tm_beta_fact(None, least_application, reduced.fact)?;
+        staged.union_syn_fact(beta)?;
+        join_alpha_equivalent(&mut staged, characterization, reduced.output)
+            .map_err(|source| RelationProofError::Syntax { source })?;
+        staged.convert_conclusions(theorem, characterization, least_application)?;
+
+        let equation_source = sole_positive_conclusion(&staged, equation_fact)?;
+        join_alpha_equivalent(&mut staged, equation_source, self.equation)
+            .map_err(|source| RelationProofError::Syntax { source })?;
+        let aligned_equation = staged.copy_theorem(equation_fact)?;
+        staged.convert_conclusions(aligned_equation, equation_source, self.equation)?;
+        let applied_equation = staged.ap_thm(aligned_equation, argument)?;
+        join_alpha_equivalent(&mut staged, least_application, applied_equation.right)
+            .map_err(|source| RelationProofError::Syntax { source })?;
+        staged.convert_conclusions(theorem, least_application, applied_equation.right)?;
+        let bool_ty = staged.classifier(applied_equation.left)?;
+        let reversed = equality_symmetry(&mut staged, bool_ty, applied_equation.theorem)
+            .map_err(|source| RelationProofError::Equality { source })?;
+        let theorem = staged.eq_mp(reversed.theorem, theorem)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition: applied_equation.left,
+            theorem,
+            holds: true,
+        })
+    }
+}
+
+fn sole_positive_conclusion(
+    kernel: &Kernel,
+    theorem: covalence_logic_hol::ThmId,
+) -> Result<Ref, RelationProofError> {
+    let theorem = kernel
+        .thm()
+        .get(theorem)
+        .ok_or(KernelError::MissingTheorem { id: theorem })?;
+    let mut conclusions = theorem.rhs.rows();
+    let Some([literal]) = conclusions.next() else {
+        return Err(RelationProofError::PremiseFact);
+    };
+    if conclusions.next().is_some() || !literal.is_positive() {
+        return Err(RelationProofError::PremiseFact);
+    }
+    Ref::new(literal.magnitude().cast_signed()).ok_or(RelationProofError::PremiseFact)
+}
+
+fn positive(reference: Ref) -> Lit {
+    Lit::positive(reference.get())
+}
+
+/// Why a checked relation rule could not be derived or specialized.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+#[snafu(module)]
+pub enum RelationProofError {
+    /// The member has no rule at the requested source index.
+    #[snafu(display("SpecTec relation rule index {index} is absent"))]
+    Missing {
+        /// Requested member-local rule index.
+        index: usize,
+    },
+    /// Chosen rule witnesses did not match the retained binder arity.
+    #[snafu(display("SpecTec relation rule has {expected} witnesses, found {actual}"))]
+    WitnessArity {
+        /// Required witness count.
+        expected: usize,
+        /// Supplied witness count.
+        actual: usize,
+    },
+    /// Supplied facts did not match the rule premise arity.
+    #[snafu(display("SpecTec relation rule has {expected} premises, found {actual} facts"))]
+    PremiseArity {
+        /// Required premise count.
+        expected: usize,
+        /// Supplied fact count.
+        actual: usize,
+    },
+    /// Retained member and family rule metadata disagree.
+    #[snafu(display("retained SpecTec relation rules are inconsistent with their closure"))]
+    Inconsistent,
+    /// The specialized rule is not a positive implication.
+    #[snafu(display("specialized SpecTec relation rule is not an implication"))]
+    NotImplication,
+    /// The supplied premise theorem is not one positive fact.
+    #[snafu(display("SpecTec relation rule premises are not one positive fact"))]
+    PremiseFact,
+    /// The supplied fact is not an application of this least-family candidate.
+    #[snafu(display("SpecTec relation candidate fact has the wrong shape"))]
+    CandidateFact,
+    /// A checked theorem step failed.
+    #[snafu(transparent)]
+    Kernel {
+        /// Underlying checked failure.
+        source: KernelError,
+    },
+    /// Universal specialization failed.
+    #[snafu(display("could not specialize a SpecTec relation rule: {source}"))]
+    Specialize {
+        /// Underlying checked derived-rule failure.
+        source: ForallError,
+    },
+    /// A supplied premise fact could not be aligned with the rule antecedent.
+    #[snafu(display("could not align SpecTec relation rule premises: {source}"))]
+    Syntax {
+        /// Underlying checked syntax failure.
+        source: SyntaxError,
+    },
+    /// Capture-avoiding beta substitution failed.
+    #[snafu(display("could not beta-reduce a least SpecTec relation: {source}"))]
+    Substitute {
+        /// Underlying checked substitution failure.
+        source: ModelError,
+    },
+    /// Equality transport from the least predicate to the public relation failed.
+    #[snafu(display("could not rewrite a least SpecTec relation fact: {source}"))]
+    Equality {
+        /// Underlying checked derived equality failure.
+        source: EqualityError,
+    },
 }
 
 impl RelationalCondition {
@@ -284,6 +1540,14 @@ pub fn relational_hol_case(
     bool_ty: Ref,
     clause: &RelationalClause<'_>,
 ) -> Result<HolCase, RelationalCaseError> {
+    relational_hol_case_artifact(kernel, bool_ty, clause).map(|artifact| artifact.case)
+}
+
+fn relational_hol_case_artifact(
+    kernel: &mut Kernel,
+    bool_ty: Ref,
+    clause: &RelationalClause<'_>,
+) -> Result<RelationalCaseArtifact, RelationalCaseError> {
     if clause.formal_inputs.len() != clause.patterns.len() {
         return Err(RelationalCaseError::Arity {
             expected: clause.formal_inputs.len(),
@@ -313,9 +1577,9 @@ pub fn relational_hol_case(
     let applicable = existential_case(kernel, bool_ty, &locals, &applicability)
         .map_err(|source| RelationalCaseError::Kernel { source })?;
 
-    let mut production_locals = locals;
+    let mut production_locals = locals.clone();
     production_locals.extend_from_slice(clause.result.binders());
-    let mut production = applicability;
+    let mut production = applicability.clone();
     production.extend_from_slice(clause.result.premises());
     production.push(
         kernel
@@ -329,10 +1593,19 @@ pub fn relational_hol_case(
     let produces = existential_case(kernel, bool_ty, &production_locals, &production)
         .map_err(|source| RelationalCaseError::Kernel { source })?;
 
-    Ok(HolCase {
+    let case = HolCase {
         applicable,
         produces,
         otherwise: clause.otherwise,
+    };
+    Ok(RelationalCaseArtifact {
+        case,
+        pattern_values: clause.patterns.iter().map(RelationalTerm::value).collect(),
+        result_value: clause.result.value(),
+        applicable_binders: locals,
+        applicable_conditions: applicability,
+        production_binders: production_locals,
+        production_conditions: production,
     })
 }
 
@@ -644,7 +1917,7 @@ where
     R: RelationalResolver,
 {
     let mut staged = kernel.fork();
-    let mut cases = Vec::with_capacity(source.clauses.len());
+    let mut case_artifacts = Vec::with_capacity(source.clauses.len());
     let mut next_name = source.first_name;
     for clause in source.clauses {
         let clause_resolver = resolver.clause_scope();
@@ -654,10 +1927,18 @@ where
             source.bool_ty,
             next_name,
         );
-        cases.push(algebra.clause(clause, source.formal_inputs, source.formal_result)?);
+        case_artifacts.push(algebra.clause_artifact(
+            clause,
+            source.formal_inputs,
+            source.formal_result,
+        )?);
         next_name = algebra.next_name();
         resolver.restore_scope(algebra.into_resolver());
     }
+    let cases = case_artifacts
+        .iter()
+        .map(|artifact| artifact.case)
+        .collect::<Vec<_>>();
     let body = crate::ordered_cases(&mut staged, source.bool_ty, &cases)
         .map_err(|source| resolver.kernel_error(source))?;
     let mut arguments = source.formal_inputs.to_vec();
@@ -676,6 +1957,7 @@ where
         formal_inputs: source.formal_inputs.to_vec(),
         formal_result: source.formal_result,
         cases,
+        case_artifacts,
         body,
         equation,
         next_name,
@@ -917,7 +2199,9 @@ where
     let mut builder =
         begin_least_closed_family_avoiding(&mut staged, bool_ty, &predicate_types, &predicates)
             .map_err(|source| resolver.least_error(source))?;
-    let closure = {
+    let mut relation_rules = Vec::with_capacity(relations.len());
+    let mut relation_rule_schemas = Vec::with_capacity(relations.len());
+    let (closure, family_rules, family_candidates) = {
         let (staged, candidates) = builder.parts();
         let candidate_names = relations
             .iter()
@@ -931,6 +2215,8 @@ where
             .map_err(|source| resolver.kernel_error(source))?;
         let mut closures = Vec::new();
         for (relation, &candidate) in relations.iter().zip(candidates) {
+            let first_rule = closures.len();
+            let mut member_schemas = Vec::with_capacity(relation.rules.len());
             let mut preceding = None;
             for schema in relation.rules {
                 let rule_resolver = scoped.clause_scope();
@@ -947,6 +2233,7 @@ where
                         .map_err(|source| resolver.kernel_error(source))?;
                     rule.premises.push(guard);
                 }
+                member_schemas.push(rule.clone());
                 closures.push(
                     close_hol_rule(staged, bool_ty, candidate, &rule)
                         .map_err(|source| resolver.kernel_error(source))?,
@@ -957,11 +2244,14 @@ where
                         .map_err(|source| resolver.kernel_error(source))?,
                 );
             }
+            relation_rules.push(Arc::from(&closures[first_rule..]));
+            relation_rule_schemas.push(Arc::from(member_schemas));
         }
         let closure = close_hol_rules(staged, bool_ty, &closures)
             .map_err(|source| resolver.kernel_error(source))?;
+        let family_rules = Arc::from(closures);
         resolver.restore_scope(scoped);
-        closure
+        (closure, family_rules, Arc::from(candidates))
     };
     let family = builder
         .finish(closure)
@@ -969,12 +2259,18 @@ where
     let definitions = relations
         .iter()
         .zip(family)
-        .map(|(relation, least)| {
+        .zip(relation_rules)
+        .zip(relation_rule_schemas)
+        .map(|(((relation, least), rules), rule_schemas)| {
             staged
                 .eq(bool_ty, relation.predicate, least.predicate)
                 .map(|equation| RelationalRelationDefinition {
                     predicate: relation.predicate,
                     least,
+                    rules,
+                    rule_schemas,
+                    family_rules: Arc::clone(&family_rules),
+                    family_candidates: Arc::clone(&family_candidates),
                     equation,
                 })
                 .map_err(|source| resolver.kernel_error(source))
@@ -1444,6 +2740,19 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
     where
         R: RelationalResolver,
     {
+        self.clause_artifact(schema, formal_inputs, formal_result)
+            .map(|artifact| artifact.case)
+    }
+
+    fn clause_artifact(
+        &mut self,
+        schema: &IlClauseSchema<'_>,
+        formal_inputs: &[Ref],
+        formal_result: Ref,
+    ) -> Result<RelationalCaseArtifact, R::Error>
+    where
+        R: RelationalResolver,
+    {
         let explicit_locals = self.bindings(schema.bindings())?;
         let binding_premises = self.take_binding_premises();
         let patterns = schema
@@ -1471,7 +2780,7 @@ impl<'a, R> RelationalExpressionAlgebra<'a, R> {
             )
             .collect::<Vec<_>>();
         let otherwise = conditions.iter().any(RelationalCondition::otherwise);
-        relational_hol_case(
+        relational_hol_case_artifact(
             self.kernel,
             self.bool_ty,
             &RelationalClause {

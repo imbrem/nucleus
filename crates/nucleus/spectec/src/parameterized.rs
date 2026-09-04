@@ -11,10 +11,10 @@ use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{Kernel, KernelError, Ref, Tag, TyTag};
 
 use crate::{
-    HolEmbedding, HolFamilyError, HolSchema, HolSchemaError, HolTheoryError, LeastPredicateError,
-    RelationalCall, RelationalCaseError, RelationalCondition, RelationalDocumentDefinition,
-    RelationalResolver, RelationalTerm, Source, declare_hol_schema, existential_case,
-    relational_document,
+    EvidenceScope, HolEmbedding, HolFamilyError, HolSchema, HolSchemaError, HolTheoryError,
+    LeastPredicateError, RelationalCall, RelationalCaseError, RelationalCondition,
+    RelationalDocumentDefinition, RelationalResolver, RelationalTerm, Source, declare_hol_schema,
+    existential_case, relational_document,
 };
 
 const LOCAL_NAME_BLOCK: u64 = 1 << 32;
@@ -22,12 +22,77 @@ const LOCAL_NAME_BLOCK: u64 = 1 << 32;
 /// One explicit free interpretation symbol introduced by parameterized lowering.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InterpretationSymbol {
-    /// Stable structural description and checked signature discriminator.
-    pub label: String,
+    /// Stable operation and checked argument/result signature.
+    pub signature: InterpretationSignature,
     /// Checked free term.
     pub reference: Ref,
     /// Checked classifier of `reference`.
     pub classifier: Ref,
+}
+
+/// One overload-safe request for a value-level semantic operation.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct InterpretationSignature {
+    /// Stable structural operation name.
+    pub label: Symbol,
+    /// Checked argument classifiers in application order.
+    pub domains: Arc<[Ref]>,
+    /// Checked result classifier.
+    pub codomain: Ref,
+}
+
+/// The semantic obligation represented by a free interpretation symbol.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum InterpretationKind {
+    /// Membership in a nontrivially embedded `SpecTec` type.
+    Membership,
+    /// A tuple constructor.
+    Tuple,
+    /// A tagged variant constructor.
+    Variant,
+    /// A record constructor.
+    Struct,
+    /// A grammar constructor or reference.
+    Grammar,
+    /// A non-Boolean `SpecTec` expression operation.
+    Expression,
+    /// A repeated relational premise.
+    IteratedPremise,
+    /// A non-expression grammar argument.
+    GrammarArgument,
+    /// An operation introduced by a newer or external lowering vocabulary.
+    Other,
+}
+
+impl InterpretationSymbol {
+    /// Classifies the concrete semantic implementation still owed by this
+    /// parameterized symbol.
+    #[must_use]
+    pub fn kind(&self) -> InterpretationKind {
+        interpretation_kind(&self.signature.label)
+    }
+}
+
+fn interpretation_kind(label: &str) -> InterpretationKind {
+    if label.starts_with("membership:") {
+        InterpretationKind::Membership
+    } else if label.starts_with("tuple:") {
+        InterpretationKind::Tuple
+    } else if label.starts_with("variant:") {
+        InterpretationKind::Variant
+    } else if label.starts_with("struct:") {
+        InterpretationKind::Struct
+    } else if label.starts_with("grammar-argument:") {
+        InterpretationKind::GrammarArgument
+    } else if label.starts_with("grammar:") {
+        InterpretationKind::Grammar
+    } else if label.starts_with("expression:") {
+        InterpretationKind::Expression
+    } else if label.starts_with("iterated-premise:") {
+        InterpretationKind::IteratedPremise
+    } else {
+        InterpretationKind::Other
+    }
 }
 
 /// Complete parameterized semantics of one exact `SpecTec` document.
@@ -37,8 +102,56 @@ pub struct ParameterizedDocument {
     pub schema: HolSchema,
     /// Explicit primitive/constructor interpretation parameters.
     pub interpretation: Vec<InterpretationSymbol>,
+    /// Every supplied or generated value-level operation actually used.
+    pub operations: Vec<InterpretationSymbol>,
     /// Exact declaration constraints and their complete conjunction.
     pub semantics: RelationalDocumentDefinition,
+}
+
+impl ParameterizedDocument {
+    /// Returns the concrete semantic operations still required before this
+    /// document can ground claims about particular `SpecTec` values.
+    ///
+    /// An empty iterator is necessary, but not by itself sufficient, for a
+    /// closed program theorem: the complete theory must also occur as checked
+    /// proof evidence rather than merely as syntax.
+    #[must_use]
+    pub fn grounding_obligations(&self) -> impl ExactSizeIterator<Item = &InterpretationSymbol> {
+        self.interpretation.iter()
+    }
+
+    /// Returns every supplied or generated value-level operation actually used.
+    #[must_use]
+    pub fn operations(&self) -> impl ExactSizeIterator<Item = &InterpretationSymbol> {
+        self.operations.iter()
+    }
+
+    /// Returns whether the lowering generated no missing value-level
+    /// interpretation operations.
+    ///
+    /// Supplied implementations can themselves contain free variables, so
+    /// this is not a claim that the resulting HOL theory is closed.
+    #[must_use]
+    pub fn has_no_missing_interpretations(&self) -> bool {
+        self.interpretation.is_empty()
+    }
+
+    /// Creates the assumption boundary for proofs from this exact theory.
+    ///
+    /// The complete source-ordered theory and each of its declaration
+    /// constraints are admitted, so checked proof steps may either preserve or
+    /// decompose the conjunction. Callers must enumerate any additional
+    /// representation or byte-decoding laws; runtime observations are
+    /// deliberately not added implicitly.
+    #[must_use]
+    pub fn evidence_scope(&self, grounding_laws: &[Ref]) -> EvidenceScope {
+        let mut assumptions =
+            Vec::with_capacity(grounding_laws.len() + self.semantics.constraints().len() + 1);
+        assumptions.push(self.semantics.theory().proposition());
+        assumptions.extend(self.semantics.constraints().values().copied());
+        assumptions.extend_from_slice(grounding_laws);
+        EvidenceScope::positive(&assumptions)
+    }
 }
 
 /// Why a complete parameterized document could not be lowered.
@@ -106,13 +219,14 @@ pub enum ParameterizedError {
 #[derive(Debug, Default)]
 struct SharedInterpretation {
     next_name: u64,
-    symbols: BTreeMap<String, InterpretationSymbol>,
+    symbols: BTreeMap<InterpretationSignature, InterpretationSymbol>,
+    operations: BTreeMap<InterpretationSignature, InterpretationSymbol>,
     canonical_types: BTreeMap<(Ref, Ref), Ref>,
     canonical_type_refs: BTreeMap<Ref, Ref>,
 }
 
 #[derive(Debug)]
-struct ParameterizedResolver {
+struct ParameterizedResolver<'a> {
     embedding: HolEmbedding,
     schema: Arc<HolSchema>,
     bindings: BTreeMap<Symbol, Ref>,
@@ -123,6 +237,7 @@ struct ParameterizedResolver {
     expression_scopes: Vec<Vec<(Symbol, Option<Ref>, Ref)>>,
     implicit_binders: Vec<Ref>,
     interpretation: SharedInterpretation,
+    provided: &'a BTreeMap<InterpretationSignature, Ref>,
 }
 
 /// Transactionally declares generic slots and lowers an entire exact document
@@ -141,6 +256,30 @@ pub fn parameterized_document(
     kernel: &mut Kernel,
     value: Ref,
     bool_ty: Ref,
+) -> Result<ParameterizedDocument, ParameterizedError> {
+    parameterized_document_with(source, kernel, value, bool_ty, &BTreeMap::new())
+}
+
+/// Transactionally lowers a document using immutable concrete implementations
+/// for any named value-level interpretation operations supplied by the caller.
+///
+/// Each map key is the overload-safe [`InterpretationSignature`] that an
+/// ordinary parameterized pass would emit. A supplied term is used only after its
+/// classifier is checked against the requested operation signature. Missing
+/// entries remain explicit in [`ParameterizedDocument::grounding_obligations`].
+/// This function constructs syntax and constraints; it does not assume the
+/// resulting theory or mint theorem facts.
+///
+/// # Errors
+///
+/// Returns the first schema, name-resolution, interpretation-classifier,
+/// declaration, or checked theory failure. `kernel` is unchanged on failure.
+pub fn parameterized_document_with(
+    source: &Source,
+    kernel: &mut Kernel,
+    value: Ref,
+    bool_ty: Ref,
+    provided: &BTreeMap<InterpretationSignature, Ref>,
 ) -> Result<ParameterizedDocument, ParameterizedError> {
     let mut staged = kernel.fork();
     let schema = declare_hol_schema(source, &mut staged, value, bool_ty)
@@ -162,6 +301,7 @@ pub fn parameterized_document(
     let interpretation = SharedInterpretation {
         next_name,
         symbols: BTreeMap::new(),
+        operations: BTreeMap::new(),
         canonical_types: BTreeMap::new(),
         canonical_type_refs: BTreeMap::new(),
     };
@@ -176,6 +316,7 @@ pub fn parameterized_document(
         expression_scopes: Vec::new(),
         implicit_binders: Vec::new(),
         interpretation,
+        provided,
     };
     for (_, declaration) in schema.declarations() {
         let classifier = staged
@@ -185,10 +326,17 @@ pub fn parameterized_document(
     }
     let semantics = relational_document(&mut staged, &mut resolver, source, &schema, &[])?;
     let interpretation = resolver.interpretation.symbols.values().cloned().collect();
+    let operations = resolver
+        .interpretation
+        .operations
+        .values()
+        .cloned()
+        .collect();
     *kernel = staged;
     Ok(ParameterizedDocument {
         schema,
         interpretation,
+        operations,
         semantics,
     })
 }
@@ -215,7 +363,7 @@ fn arrow_children(
     Ok(Some((*domain, *codomain)))
 }
 
-impl ParameterizedResolver {
+impl ParameterizedResolver<'_> {
     fn canonical_type(
         &mut self,
         kernel: &Kernel,
@@ -268,12 +416,17 @@ impl ParameterizedResolver {
     fn primitive(
         &mut self,
         kernel: &mut Kernel,
-        label: String,
+        label: impl Into<Symbol>,
         domains: &[Ref],
         codomain: Ref,
     ) -> Result<Ref, ParameterizedError> {
-        let key = format!("{label}|{domains:?}->{codomain:?}");
-        if let Some(symbol) = self.interpretation.symbols.get(&key) {
+        let label = label.into();
+        let signature = InterpretationSignature {
+            label: label.clone(),
+            domains: Arc::from(domains),
+            codomain,
+        };
+        if let Some(symbol) = self.interpretation.symbols.get(&signature) {
             return Ok(symbol.reference);
         }
         let classifier = domains.iter().rev().try_fold(codomain, |tail, &domain| {
@@ -282,17 +435,42 @@ impl ParameterizedResolver {
                 .map_err(|source| ParameterizedError::Kernel { source })?;
             self.canonical_type(kernel, arrow)
         })?;
+        if let Some(&reference) = self.provided.get(&signature) {
+            let actual = kernel
+                .classifier(reference)
+                .map_err(|source| ParameterizedError::Kernel { source })?;
+            let compatible = kernel
+                .equivalent(actual, classifier)
+                .map_err(|source| ParameterizedError::Kernel { source })?;
+            if !compatible {
+                return Err(ParameterizedError::Resolve {
+                    message: format!(
+                        "provided interpretation {label:?} has classifier {actual:?}, expected {classifier:?}"
+                    ),
+                });
+            }
+            self.interpretation.operations.insert(
+                signature.clone(),
+                InterpretationSymbol {
+                    signature,
+                    reference,
+                    classifier,
+                },
+            );
+            return Ok(reference);
+        }
         let reference = kernel
             .tm_fv(self.take_name()?, classifier)
             .map_err(|source| ParameterizedError::Kernel { source })?;
-        self.interpretation.symbols.insert(
-            key,
-            InterpretationSymbol {
-                label,
-                reference,
-                classifier,
-            },
-        );
+        let symbol = InterpretationSymbol {
+            signature: signature.clone(),
+            reference,
+            classifier,
+        };
+        self.interpretation
+            .symbols
+            .insert(signature.clone(), symbol.clone());
+        self.interpretation.operations.insert(signature, symbol);
         Ok(reference)
     }
 
@@ -401,7 +579,7 @@ impl ParameterizedResolver {
     }
 }
 
-impl RelationalResolver for ParameterizedResolver {
+impl RelationalResolver for ParameterizedResolver<'_> {
     type Error = ParameterizedError;
 
     fn declaration_error(&mut self, id: DeclarationId, source: Self::Error) -> Self::Error {
@@ -423,6 +601,7 @@ impl RelationalResolver for ParameterizedResolver {
             expression_scopes: Vec::new(),
             implicit_binders: Vec::new(),
             interpretation: std::mem::take(&mut self.interpretation),
+            provided: self.provided,
         }
     }
 
@@ -863,6 +1042,31 @@ impl RelationalResolver for ParameterizedResolver {
     fn relation_otherwise(&mut self) -> Self::Error {
         ParameterizedError::Resolve {
             message: "otherwise is not monotone in a relation rule".to_owned(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InterpretationKind, interpretation_kind};
+
+    #[test]
+    fn grounding_obligations_have_stable_categories() {
+        for (label, expected) in [
+            ("membership:Numeric(Nat)", InterpretationKind::Membership),
+            ("tuple:2", InterpretationKind::Tuple),
+            ("variant:MODULE", InterpretationKind::Variant),
+            ("struct:[\"FUNCS\"]", InterpretationKind::Struct),
+            ("grammar:Terminal", InterpretationKind::Grammar),
+            ("expression:Length", InterpretationKind::Expression),
+            ("iterated-premise:List", InterpretationKind::IteratedPremise),
+            (
+                "grammar-argument:Variable",
+                InterpretationKind::GrammarArgument,
+            ),
+            ("future:operation", InterpretationKind::Other),
+        ] {
+            assert_eq!(interpretation_kind(label), expected);
         }
     }
 }

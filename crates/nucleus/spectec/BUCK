@@ -33,6 +33,7 @@ rust_library(
         "covalence_data_spectec": "nucleus//crates/data/spectec:covalence_data_spectec",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
+        "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -65,7 +66,9 @@ rust_test(
         "covalence_data_cbor": "nucleus//crates/data/cbor:covalence_data_cbor",
         "covalence_data_spectec": "nucleus//crates/data/spectec:covalence_data_spectec",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_wasm": "nucleus//crates/lib/wasm:covalence_lib_wasm",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
+        "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -98,7 +101,9 @@ rust_test(
         "covalence_data_cbor": "nucleus//crates/data/cbor:covalence_data_cbor",
         "covalence_data_spectec": "nucleus//crates/data/spectec:covalence_data_spectec",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_wasm": "nucleus//crates/lib/wasm:covalence_lib_wasm",
         "covalence_logic_hol": "nucleus//crates/logic/hol:covalence_logic_hol",
+        "covalence_logic_hol_derived": "nucleus//crates/logic/hol-derived:covalence_logic_hol_derived",
         "covalence_nucleus_spectec": ":covalence_nucleus_spectec",
     },
     env = {

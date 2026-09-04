@@ -16,12 +16,17 @@ mod grammar;
 mod grammar_definition;
 mod parameterized;
 mod premise;
+mod program_logic;
 mod relational;
+mod run;
 mod schema;
 mod selected;
 mod theory;
 mod type_definition;
 mod types;
+mod value_algebra;
+mod wasm_logic;
+mod wasm_theory;
 
 pub use add_slice::{
     ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSliceError, AddSlicePlan,
@@ -38,16 +43,31 @@ pub use expression::{ExpressionAlgebra, fold_expression};
 pub use grammar::{GrammarAlgebra, GrammarArgument, GrammarChildren, fold_grammar};
 pub use grammar_definition::{RelationalGrammarDefinition, relational_grammar_declaration};
 pub use parameterized::{
-    InterpretationSymbol, ParameterizedDocument, ParameterizedError, parameterized_document,
+    InterpretationKind, InterpretationSignature, InterpretationSymbol, ParameterizedDocument,
+    ParameterizedError, parameterized_document, parameterized_document_with,
 };
 pub use premise::{PremiseAlgebra, PremiseChildren, fold_premise};
+pub use program_logic::{
+    AssertCombinator, AssertionReachability, CallsAssert, ClosedProgramObservation,
+    ContextualObservation, Established, Evidence, EvidenceScope, FunctionObservation,
+    ObservationProofError, ObservationTransformation, ProgramConnectives, ProgramLogicObligations,
+    Proposition, ReachabilityProofError, SoundObservationTransformation,
+};
 pub use relational::{
-    RelationalCall, RelationalCaseError, RelationalClause, RelationalCondition,
-    RelationalDefinition, RelationalDefinitionSchema, RelationalDefinitionSource,
-    RelationalExpressionAlgebra, RelationalRelation, RelationalRelationDefinition,
-    RelationalResolver, RelationalTerm, relational_definition, relational_definition_declaration,
+    DefinitionProofError, OpenedRelationalProduction, RelationProofError, RelationalCall,
+    RelationalCaseArtifact, RelationalCaseError, RelationalClause, RelationalCondition,
+    RelationalDefinition, RelationalDefinitionApplication, RelationalDefinitionInstance,
+    RelationalDefinitionSchema, RelationalDefinitionSource, RelationalExpressionAlgebra,
+    RelationalRelation, RelationalRelationDefinition, RelationalResolver, RelationalTerm,
+    prove_reflexive_condition, relational_definition, relational_definition_declaration,
     relational_definition_schema, relational_hol_case, relational_hol_rule,
     relational_relation_declaration, relational_relations, relational_relations_avoiding,
+};
+pub use run::{
+    BehaviorQuantifier, ClosedRunContext, RefinementDirection, RunCompositionError, RunContext,
+    RunDomain, RunObservation, RunObservationError, RunProofError, RunProperty, RunRelation,
+    RunTransformation, RunTransformationError, RunTypes, SoundRunTransformation,
+    SoundRunTransformationError,
 };
 pub use schema::{
     HolDeclaration, HolEmbedding, HolSchema, HolSchemaError, IndexErasure, declare_hol_schema,
@@ -55,11 +75,25 @@ pub use schema::{
 pub use selected::{SelectedCompileError, SelectedCompiler, SelectedKernel, SelectedRoot};
 pub use theory::{
     HolCase, HolFamilyBranch, HolFamilyDefinition, HolFamilyError, HolTheory, HolTheoryError,
-    close_family_definition, close_graph_equation, close_hol_theory, conjoin_constraints,
-    existential_case, ordered_cases,
+    HolTheoryProofError, close_family_definition, close_graph_equation, close_hol_theory,
+    conjoin_constraints, existential_case, ordered_cases,
 };
 pub use type_definition::{RelationalTypeDefinition, relational_type_declaration};
 pub use types::{TypeAlgebra, TypeArgument, TypeChildren, fold_type};
+pub use value_algebra::{
+    FiniteSequenceLaw, ProvedStructuralFieldPattern, StructuralConstructor,
+    StructuralConstructorLaws, StructuralFieldPattern, StructuralProjectionLaw,
+    StructuralSequenceAlgebra, StructuralValueAlgebra, StructuralValueProofError,
+};
+pub use wasm_logic::{
+    AdmissibleStartFacts, AdmissibleStartWitness, ExportedFunctionFacts, ExportedFunctionView,
+    ExportedFunctionWitness, SpecTecExecution, SpecTecValueBuilder, WasmLogicError,
+    empty_wasm_module, forwarding_wasm_module, prove_reflexive_binary_application,
+    spectec_execution,
+};
+pub use wasm_theory::{
+    WasmConfiguration, WasmEvidenceReport, WasmFunction, WasmModule, WasmTheory,
+};
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash, Policy, Value};
 use covalence_data_spectec::{

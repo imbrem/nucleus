@@ -6,20 +6,24 @@ use covalence_data_spectec::{
 };
 use covalence_logic_hol::{Kernel, Tag, TmTag};
 use covalence_nucleus_spectec::{
-    ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan, ArtifactError,
-    CompilationRecord, CompileError, Compiler, Coverage, CoverageArtifact, CoverageDisposition,
-    CoveragePlan, Disposition, ExpressionAlgebra, GrammarAlgebra, GrammarChildren, HolCase,
-    HolEmbedding, HolFamilyBranch, HolRule, HolTheoryError, IndexErasure, KernelRoot,
-    RelationalCall, RelationalClause, RelationalCondition, RelationalDefinitionSchema,
-    RelationalDefinitionSource, RelationalExpressionAlgebra, RelationalRelation,
-    RelationalResolver, RelationalTerm, SelectedCompileError, SelectedCompiler, Source, TYPE_NAME,
-    TranslationCase, TypeAlgebra, TypeChildren, begin_least_closed_family, close_family_definition,
-    close_graph_equation, close_hol_rule, close_hol_rules, close_hol_theory, declare_hol_schema,
-    fold_expression, fold_grammar, fold_type, least_closed_family, least_closed_predicate,
-    ordered_cases, parameterized_document, relational_definition,
-    relational_definition_declaration, relational_definition_schema, relational_document,
-    relational_grammar_declaration, relational_hol_case, relational_hol_rule,
+    ADD_SLICE_TYPE_NAME, AddSliceArtifact, AddSliceArtifactError, AddSlicePlan,
+    AdmissibleStartFacts, AdmissibleStartWitness, ArtifactError, CompilationRecord, CompileError,
+    Compiler, Coverage, CoverageArtifact, CoverageDisposition, CoveragePlan, Disposition,
+    ExportedFunctionFacts, ExportedFunctionView, ExportedFunctionWitness, ExpressionAlgebra,
+    GrammarAlgebra, GrammarChildren, HolCase, HolEmbedding, HolFamilyBranch, HolRule,
+    HolTheoryError, IndexErasure, InterpretationKind, KernelRoot, RelationalCall, RelationalClause,
+    RelationalCondition, RelationalDefinitionSchema, RelationalDefinitionSource,
+    RelationalExpressionAlgebra, RelationalRelation, RelationalResolver, RelationalTerm,
+    SelectedCompileError, SelectedCompiler, Source, SpecTecValueBuilder, TYPE_NAME,
+    TranslationCase, TypeAlgebra, TypeChildren, WasmTheory, begin_least_closed_family,
+    close_family_definition, close_graph_equation, close_hol_rule, close_hol_rules,
+    close_hol_theory, declare_hol_schema, empty_wasm_module, fold_expression, fold_grammar,
+    fold_type, forwarding_wasm_module, least_closed_family, least_closed_predicate, ordered_cases,
+    parameterized_document, parameterized_document_with, prove_reflexive_binary_application,
+    relational_definition, relational_definition_declaration, relational_definition_schema,
+    relational_document, relational_grammar_declaration, relational_hol_case, relational_hol_rule,
     relational_relation_declaration, relational_relations, relational_type_declaration,
+    spectec_execution,
 };
 
 #[derive(Clone)]
@@ -31,6 +35,32 @@ struct TestRelationalResolver {
     bool_ty: covalence_logic_hol::Ref,
     bound: std::collections::BTreeMap<String, covalence_logic_hol::Ref>,
     relations: std::collections::BTreeMap<String, covalence_logic_hol::Ref>,
+}
+
+fn elementary_condition_facts(
+    kernel: &mut Kernel,
+    conditions: &[covalence_logic_hol::Ref],
+) -> (
+    Vec<covalence_logic_hol::ThmId>,
+    Vec<covalence_logic_hol::Ref>,
+) {
+    let mut remaining = Vec::new();
+    let facts = conditions
+        .iter()
+        .map(|&condition| {
+            if let Some(proved) =
+                covalence_nucleus_spectec::prove_reflexive_condition(kernel, condition).unwrap()
+            {
+                proved.theorem
+            } else {
+                remaining.push(condition);
+                kernel
+                    .identity(covalence_logic_hol::Lit::positive(condition.get()))
+                    .unwrap()
+            }
+        })
+        .collect();
+    (facts, remaining)
 }
 
 impl RelationalResolver for TestRelationalResolver {
@@ -562,6 +592,7 @@ fn complete_clause_api_lowers_patterns_result_and_premises() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn exact_source_definition_lowers_from_selector_and_schema() {
     let bytes = b"(def \"id\" (exp \"x\" nat) nat (clause (exp (var \"x\")) (var \"x\"))) (typ \"T\" (inst (alias nat)))";
     let il = IlDocument::parse(bytes, Limits::default()).unwrap();
@@ -609,6 +640,55 @@ fn exact_source_definition_lowers_from_selector_and_schema() {
             .equivalent(kernel.classifier(definition.equation).unwrap(), bool_ty)
             .unwrap()
     );
+    let production_witnesses = definition
+        .match_production_witnesses(&mut kernel, 0, &[x])
+        .unwrap()
+        .unwrap();
+    let inferred_result = definition
+        .production_result(&mut kernel, 0, &[x], &production_witnesses)
+        .unwrap();
+    let definition_predicate = schema
+        .declaration(DeclarationId::new(1, None).unwrap())
+        .unwrap()
+        .reference();
+    let applied = kernel
+        .app(definition_predicate, x)
+        .and_then(|partial| kernel.app(partial, inferred_result))
+        .unwrap();
+    let matched = definition
+        .match_application(&kernel, definition_predicate, applied)
+        .unwrap();
+    assert_eq!(matched.inputs(), &[x]);
+    assert_eq!(matched.result(), inferred_result);
+    assert!(
+        definition
+            .match_application(&kernel, resolver.graph, applied)
+            .is_none()
+    );
+    let instance = definition
+        .specialize(&mut kernel, bool_ty, &[x], inferred_result)
+        .unwrap();
+    let production_obligations = instance
+        .production_obligations(&mut kernel, 0, &production_witnesses)
+        .unwrap();
+    let (production_facts, remaining) =
+        elementary_condition_facts(&mut kernel, &production_obligations);
+    let selected = instance
+        .prove_production(
+            &mut kernel,
+            bool_ty,
+            0,
+            &production_witnesses,
+            &production_facts,
+        )
+        .unwrap();
+    let body = instance
+        .prove_body_case(&mut kernel, bool_ty, 0, selected.theorem)
+        .unwrap();
+    assert!(remaining.len() < production_obligations.len());
+    covalence_nucleus_spectec::EvidenceScope::positive(&remaining)
+        .check(&kernel, body)
+        .unwrap();
     let before = kernel.arena().len();
     assert!(
         relational_definition_declaration(
@@ -1303,6 +1383,7 @@ fn whole_document_lowering_closes_every_declaration_constraint() {
     let document = relational_document(&mut kernel, &mut resolver, &source, &schema, &[x]).unwrap();
 
     assert_eq!(document.constraints().len(), source.declaration_count());
+    assert_eq!(document.definitions().len(), 1);
     assert_eq!(
         document.theory().constraints().len(),
         source.declaration_count()
@@ -1498,6 +1579,7 @@ fn generic_hol_schema_declares_every_wasm3_signature() {
 
 #[test]
 #[ignore = "exhaustive audit; run explicitly in the release profile"]
+#[allow(clippy::too_many_lines)] // Keeps one complete authority-boundary audit.
 fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
     let source = Source::wasm3().unwrap();
     let mut kernel = Kernel::new();
@@ -1512,8 +1594,899 @@ fn parameterized_lowering_covers_complete_pinned_wasm3_document() {
         document.semantics.constraints().len(),
         source.declaration_count()
     );
+    assert_eq!(
+        document.semantics.relations().len(),
+        source
+            .declarations()
+            .iter()
+            .filter(|declaration| declaration.kind() == IlKind::Relation)
+            .count()
+    );
+    assert_eq!(
+        document.semantics.definitions().len(),
+        source
+            .declarations()
+            .iter()
+            .filter(|declaration| declaration.kind() == IlKind::Definition)
+            .count()
+    );
     assert!(!document.interpretation.is_empty());
+    assert!(!document.has_no_missing_interpretations());
+    assert_eq!(
+        document.grounding_obligations().len(),
+        document.interpretation.len()
+    );
+    let kinds = document
+        .grounding_obligations()
+        .map(covalence_nucleus_spectec::InterpretationSymbol::kind)
+        .collect::<std::collections::BTreeSet<_>>();
+    for required in [
+        InterpretationKind::Membership,
+        InterpretationKind::Tuple,
+        InterpretationKind::Variant,
+        InterpretationKind::Struct,
+        InterpretationKind::Expression,
+        InterpretationKind::IteratedPremise,
+    ] {
+        assert!(
+            kinds.contains(&required),
+            "missing {required:?} in {kinds:?}"
+        );
+    }
     assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+    let [steps_id] = document.schema.named(IlKind::Relation, "Steps") else {
+        panic!("expected one Steps relation")
+    };
+    let steps_definition = document.semantics.relations().get(steps_id).unwrap();
+    assert_eq!(steps_definition.rules.len(), 2);
+    assert_eq!(steps_definition.rule_schemas.len(), 2);
+    assert!(!steps_definition.rule_schemas[0].binders.is_empty());
+    assert!(!steps_definition.rule_schemas[0].premises.is_empty());
+    assert_eq!(steps_definition.rule_schemas[0].binders.len(), 4);
+    assert_eq!(steps_definition.rule_schemas[0].premises.len(), 2);
+    for &rule in steps_definition.rules.iter() {
+        assert_eq!(kernel.classifier(rule).unwrap(), bool_ty);
+    }
+    assert_eq!(
+        kernel.classifier(steps_definition.least.closure).unwrap(),
+        bool_ty
+    );
+    assert_eq!(
+        kernel
+            .classifier(steps_definition.least.characterization)
+            .unwrap(),
+        bool_ty
+    );
+    let steps_constraint = document
+        .semantics
+        .theory()
+        .derive_constraint(&mut kernel, *steps_id)
+        .unwrap();
+    document
+        .evidence_scope(&[])
+        .check(&kernel, steps_constraint)
+        .unwrap();
+    let execution = spectec_execution(&mut kernel, &document).unwrap();
+    let rule_argument = steps_definition.rule_schemas[0].conclusion[0];
+    let partial_pair = kernel
+        .arena()
+        .children(rule_argument)
+        .unwrap()
+        .next()
+        .unwrap();
+    let exact_pair = kernel
+        .arena()
+        .children(partial_pair)
+        .unwrap()
+        .next()
+        .unwrap();
+    assert_eq!(execution.pair, exact_pair);
+    let state_name = kernel
+        .fresh_name(&[value, bool_ty, steps_constraint.proposition])
+        .unwrap();
+    let state = kernel.tm_fv(state_name, value).unwrap();
+    let builder = SpecTecValueBuilder::new(&document);
+    let instructions = builder.list(&mut kernel, &[]).unwrap();
+    let configuration = builder
+        .case_fields(&mut kernel, "%;%", &[state, instructions])
+        .unwrap();
+    let step_pair = execution
+        .step_pair(&mut kernel, configuration, configuration)
+        .unwrap();
+    let reflexive_witnesses = [state, instructions, configuration, configuration];
+    let reflexive_rule = steps_definition
+        .specialize_rule(&mut kernel, 0, &reflexive_witnesses)
+        .unwrap();
+    assert_eq!(
+        kernel.classifier(reflexive_rule.proposition).unwrap(),
+        bool_ty
+    );
+    let reflexive_obligations = steps_definition
+        .rule_obligations(&mut kernel, 0, &reflexive_witnesses)
+        .unwrap();
+    let (reflexive_condition_facts, reflexive_remaining) =
+        elementary_condition_facts(&mut kernel, &reflexive_obligations);
+    let reflexive_premises = steps_definition
+        .prove_rule_obligations(
+            &mut kernel,
+            bool_ty,
+            0,
+            &reflexive_witnesses,
+            &reflexive_condition_facts,
+        )
+        .unwrap();
+    let reflexive_candidate = steps_definition
+        .apply_specialized_rule(&mut kernel, reflexive_rule, reflexive_premises.theorem)
+        .unwrap();
+    document
+        .evidence_scope(
+            &std::iter::once(steps_definition.least.closure)
+                .chain(reflexive_remaining.iter().copied())
+                .collect::<Vec<_>>(),
+        )
+        .check(&kernel, reflexive_candidate)
+        .unwrap();
+    let reflexive_steps = steps_definition
+        .close_rule_instance(&mut kernel, reflexive_candidate, steps_constraint.theorem)
+        .unwrap();
+    document
+        .evidence_scope(&reflexive_remaining)
+        .check(&kernel, reflexive_steps)
+        .unwrap();
+    let reflexive_pair = kernel
+        .arena()
+        .children(reflexive_steps.proposition)
+        .unwrap()
+        .nth(1)
+        .unwrap();
+    let mut pair_children = kernel.arena().children(reflexive_pair).unwrap();
+    let reflexive_partial_pair = pair_children.next().unwrap();
+    let reflexive_after = pair_children.next().unwrap();
+    drop(pair_children);
+    let reflexive_before = kernel
+        .arena()
+        .children(reflexive_partial_pair)
+        .unwrap()
+        .nth(1)
+        .unwrap();
+    let curried_reflexive_steps = execution
+        .curry_steps_fact(
+            &mut kernel,
+            reflexive_before,
+            reflexive_after,
+            reflexive_steps,
+        )
+        .unwrap();
+    document
+        .evidence_scope(&reflexive_remaining)
+        .check(&kernel, curried_reflexive_steps)
+        .unwrap();
+    let specialized_steps = document
+        .semantics
+        .theory()
+        .specialize_constraint(&mut kernel, *steps_id, &[step_pair])
+        .unwrap();
+    document
+        .evidence_scope(&[])
+        .check(&kernel, specialized_steps)
+        .unwrap();
+    assert_eq!(
+        kernel.classifier(specialized_steps.proposition).unwrap(),
+        bool_ty
+    );
+    let wrong_argument = kernel.bool(bool_ty, false).unwrap();
+    let before = kernel.arena().clone();
+    assert!(
+        document
+            .semantics
+            .theory()
+            .specialize_constraint(&mut kernel, *steps_id, &[wrong_argument])
+            .is_err()
+    );
+    assert_eq!(kernel.arena(), &before);
+    assert!(kernel.thm().live_theorems().count() > theorem_count);
+    let empty_module = empty_wasm_module(&mut kernel, &document).unwrap();
+    assert_eq!(kernel.classifier(empty_module).unwrap(), value);
+    let name_base = kernel
+        .fresh_name(&[value, bool_ty, empty_module, execution.steps])
+        .unwrap();
+    let import_module = kernel.tm_fv(name_base, value).unwrap();
+    let assert_name = kernel.tm_fv(name_base + 1, value).unwrap();
+    let export_name = kernel.tm_fv(name_base + 2, value).unwrap();
+    let forwarding = forwarding_wasm_module(
+        &mut kernel,
+        &document,
+        import_module,
+        assert_name,
+        export_name,
+    )
+    .unwrap();
+    assert_eq!(kernel.classifier(forwarding).unwrap(), value);
+    assert_eq!(execution.state_ty, value);
+    assert_eq!(execution.bool_ty, bool_ty);
+    let steps_classifier = kernel.classifier(execution.steps).unwrap();
+    assert_eq!(steps_classifier, execution.steps_ty);
+
+    // End-to-end theorem assembly over the two actual structural module terms.
+    // These graph propositions are explicit grounding premises; the test does
+    // not turn the Wasmtime checks below into theorem authority.
+    let binary_tail = kernel.ty_arr(value, bool_ty).unwrap();
+    let binary_ty = kernel.ty_arr(value, binary_tail).unwrap();
+    let export_view = ExportedFunctionView {
+        value_ty: value,
+        bool_ty,
+        module_instance: execution.moduleinst,
+        exports: builder
+            .struct_field_graph(
+                &mut kernel,
+                &[
+                    "TYPES", "TAGS", "GLOBALS", "MEMS", "TABLES", "FUNCS", "DATAS", "ELEMS",
+                    "EXPORTS",
+                ],
+                "EXPORTS",
+            )
+            .unwrap(),
+        member: builder.membership_predicate().unwrap(),
+        function_address: builder
+            .struct_case_field_graph(&mut kernel, &["NAME", "ADDR"], "ADDR", "FUNC%")
+            .unwrap(),
+    };
+    let exported = export_view.predicate(&mut kernel).unwrap();
+    let [instantiate_id] = document.schema.named(IlKind::Definition, "instantiate") else {
+        panic!("expected one $instantiate definition")
+    };
+    let instantiate_definition = document
+        .semantics
+        .definitions()
+        .get(instantiate_id)
+        .unwrap();
+    let [allocmodule_id] = document.schema.named(IlKind::Definition, "allocmodule") else {
+        panic!("expected one $allocmodule definition")
+    };
+    let allocmodule_definition = document
+        .semantics
+        .definitions()
+        .get(allocmodule_id)
+        .unwrap();
+    let allocmodule_predicate = document
+        .schema
+        .declaration(*allocmodule_id)
+        .unwrap()
+        .reference();
+    let [store_id] = document.schema.named(IlKind::Definition, "store") else {
+        panic!("expected one $store definition")
+    };
+    let store_definition = document.semantics.definitions().get(store_id).unwrap();
+    let [moduleinst_id] = document.schema.named(IlKind::Definition, "moduleinst") else {
+        panic!("expected one $moduleinst definition")
+    };
+    let moduleinst_definition = document.semantics.definitions().get(moduleinst_id).unwrap();
+    let [invoke_id] = document.schema.named(IlKind::Definition, "invoke") else {
+        panic!("expected one $invoke definition")
+    };
+    let invoke_definition = document.semantics.definitions().get(invoke_id).unwrap();
+    let witnesses = (name_base + 5..name_base + 14)
+        .map(|name| kernel.tm_fv(name, value).unwrap())
+        .collect::<Vec<_>>();
+    let instantiate_binders = &instantiate_definition.case_artifacts[0].production_binders;
+    let instantiate_name = kernel
+        .fresh_name(&[
+            forwarding,
+            witnesses[1],
+            witnesses[2],
+            instantiate_definition.equation,
+        ])
+        .unwrap();
+    let instantiate_witnesses = instantiate_binders
+        .iter()
+        .enumerate()
+        .map(|(offset, &binder)| {
+            let name = instantiate_name + u64::try_from(offset).unwrap();
+            let classifier = kernel.classifier(binder).unwrap();
+            kernel.tm_fv(name, classifier).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let instantiation_start = instantiate_definition
+        .production_result(
+            &mut kernel,
+            0,
+            &[witnesses[1], forwarding, witnesses[2]],
+            &instantiate_witnesses,
+        )
+        .unwrap();
+    let initialized = builder
+        .case_fields(&mut kernel, "%;%", &[witnesses[7], witnesses[4]])
+        .unwrap();
+    let invoke_binders = &invoke_definition.case_artifacts[0].production_binders;
+    let invoke_name = kernel
+        .fresh_name(&[
+            forwarding,
+            witnesses[5],
+            witnesses[6],
+            witnesses[7],
+            invoke_definition.equation,
+        ])
+        .unwrap();
+    let invoke_witnesses = invoke_binders
+        .iter()
+        .enumerate()
+        .map(|(offset, &binder)| {
+            let name = invoke_name + u64::try_from(offset).unwrap();
+            let classifier = kernel.classifier(binder).unwrap();
+            kernel.tm_fv(name, classifier).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let initial = invoke_definition
+        .production_result(
+            &mut kernel,
+            0,
+            &[witnesses[7], witnesses[5], witnesses[6]],
+            &invoke_witnesses,
+        )
+        .unwrap();
+    let start = AdmissibleStartWitness {
+        program: forwarding,
+        initial,
+        store: witnesses[1],
+        externs: witnesses[2],
+        instantiation_start,
+        initialized,
+        function: witnesses[5],
+        arguments: witnesses[6],
+        initialized_store: witnesses[7],
+    };
+    let obligations = execution
+        .admissible_start_obligations(&mut kernel, exported, start)
+        .unwrap();
+    let mut obligation_facts = obligations.map(|proposition| {
+        kernel
+            .identity(covalence_logic_hol::Lit::positive(proposition.get()))
+            .unwrap()
+    });
+    let function_address = builder.case(&mut kernel, "FUNC%", start.function).unwrap();
+    let runtime_export = builder
+        .struct_value(
+            &mut kernel,
+            &["NAME", "ADDR"],
+            &[export_name, function_address],
+        )
+        .unwrap();
+    let runtime_exports = builder.list(&mut kernel, &[runtime_export]).unwrap();
+    let export_membership = builder
+        .list_membership_law(&mut kernel, &[runtime_export])
+        .unwrap();
+    covalence_logic_hol_derived::join_same_syntax(
+        &mut kernel,
+        export_membership.list(),
+        runtime_exports,
+    )
+    .unwrap();
+    let export_membership_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            export_membership.proposition().get(),
+        ))
+        .unwrap();
+    let contains_export = builder
+        .sequence_algebra(&mut kernel)
+        .unwrap()
+        .prove_member_at(&mut kernel, &export_membership, export_membership_fact, 0)
+        .unwrap();
+    document
+        .evidence_scope(&[export_membership.proposition()])
+        .check(&kernel, contains_export)
+        .unwrap();
+    let function_address_fact = builder
+        .prove_struct_case_field(
+            &mut kernel,
+            &["NAME", "ADDR"],
+            &[export_name, function_address],
+            "ADDR",
+            "FUNC%",
+            start.function,
+        )
+        .unwrap();
+    document
+        .evidence_scope(&[])
+        .check(&kernel, function_address_fact.evidence())
+        .unwrap();
+    let moduleinst_witnesses = moduleinst_definition
+        .match_production_witnesses(&mut kernel, 0, &[start.instantiation_start])
+        .unwrap()
+        .unwrap();
+    let module_instance = moduleinst_definition
+        .production_result(
+            &mut kernel,
+            0,
+            &[start.instantiation_start],
+            &moduleinst_witnesses,
+        )
+        .unwrap();
+    let moduleinst_instance = moduleinst_definition
+        .specialize(
+            &mut kernel,
+            bool_ty,
+            &[start.instantiation_start],
+            module_instance,
+        )
+        .unwrap();
+    assert_eq!(moduleinst_instance.cases.len(), 1);
+    let moduleinst_conditions = moduleinst_instance
+        .production_obligations(&mut kernel, 0, &moduleinst_witnesses)
+        .unwrap();
+    let (moduleinst_condition_facts, moduleinst_remaining) =
+        elementary_condition_facts(&mut kernel, &moduleinst_conditions);
+    let moduleinst_branch = moduleinst_instance
+        .prove_production(
+            &mut kernel,
+            bool_ty,
+            0,
+            &moduleinst_witnesses,
+            &moduleinst_condition_facts,
+        )
+        .unwrap();
+    let moduleinst_body = moduleinst_instance
+        .prove_body_case(&mut kernel, bool_ty, 0, moduleinst_branch.theorem)
+        .unwrap();
+    let moduleinst_fact = document
+        .semantics
+        .theory()
+        .prove_specialized_from_body(
+            &mut kernel,
+            *moduleinst_id,
+            &[start.instantiation_start, module_instance],
+            moduleinst_body.theorem,
+        )
+        .unwrap();
+    let export_witness = ExportedFunctionWitness {
+        configuration: start.instantiation_start,
+        function: start.function,
+        module_instance,
+        exports: runtime_exports,
+        export_instance: runtime_export,
+    };
+    let exports_graph = kernel
+        .app(export_view.exports, module_instance)
+        .and_then(|partial| kernel.app(partial, runtime_exports))
+        .unwrap();
+    let export_graphs = [exports_graph];
+    let export_graph_facts = export_graphs.map(|proposition| {
+        kernel
+            .identity(covalence_logic_hol::Lit::positive(proposition.get()))
+            .unwrap()
+    });
+    obligation_facts[2] = export_view
+        .prove_exported_function(
+            &mut kernel,
+            export_witness,
+            ExportedFunctionFacts {
+                module_instance: moduleinst_fact.theorem,
+                exports: export_graph_facts[0],
+                member: contains_export.theorem,
+                function_address: function_address_fact.evidence().theorem,
+            },
+        )
+        .unwrap()
+        .theorem;
+    let instantiate_instance = instantiate_definition
+        .specialize(
+            &mut kernel,
+            bool_ty,
+            &[start.store, start.program, start.externs],
+            start.instantiation_start,
+        )
+        .unwrap();
+    assert_eq!(instantiate_instance.cases.len(), 1);
+    let instantiate_conditions = instantiate_instance
+        .production_obligations(&mut kernel, 0, &instantiate_witnesses)
+        .unwrap();
+    let allocmodule_calls = instantiate_conditions
+        .iter()
+        .filter_map(|&condition| {
+            allocmodule_definition.match_application(&kernel, allocmodule_predicate, condition)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(allocmodule_calls.len(), 1);
+    assert_eq!(allocmodule_calls[0].inputs().len(), 6);
+    let (instantiate_condition_facts, instantiate_remaining) =
+        elementary_condition_facts(&mut kernel, &instantiate_conditions);
+    assert!(instantiate_remaining.len() < instantiate_conditions.len());
+    let instantiate_branch = instantiate_instance
+        .prove_production(
+            &mut kernel,
+            bool_ty,
+            0,
+            &instantiate_witnesses,
+            &instantiate_condition_facts,
+        )
+        .unwrap();
+    let instantiate_body = instantiate_instance
+        .prove_body_case(&mut kernel, bool_ty, 0, instantiate_branch.theorem)
+        .unwrap();
+    obligation_facts[0] = document
+        .semantics
+        .theory()
+        .prove_specialized_from_body(
+            &mut kernel,
+            *instantiate_id,
+            &[
+                start.store,
+                start.program,
+                start.externs,
+                start.instantiation_start,
+            ],
+            instantiate_body.theorem,
+        )
+        .unwrap()
+        .theorem;
+    let initialization_before_equality = kernel
+        .eq(bool_ty, reflexive_before, start.instantiation_start)
+        .unwrap();
+    let initialization_before_equality_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            initialization_before_equality.get(),
+        ))
+        .unwrap();
+    let initialization_after_equality = kernel
+        .eq(bool_ty, reflexive_after, start.initialized)
+        .unwrap();
+    let initialization_after_equality_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            initialization_after_equality.get(),
+        ))
+        .unwrap();
+    let initialization_at_start = execution
+        .transport_steps_before(
+            &mut kernel,
+            reflexive_before,
+            start.instantiation_start,
+            reflexive_after,
+            curried_reflexive_steps,
+            initialization_before_equality_fact,
+        )
+        .unwrap();
+    obligation_facts[1] = execution
+        .transport_steps_after(
+            &mut kernel,
+            start.instantiation_start,
+            reflexive_after,
+            start.initialized,
+            initialization_at_start,
+            initialization_after_equality_fact,
+        )
+        .unwrap()
+        .theorem;
+    let store_instance = store_definition
+        .specialize(
+            &mut kernel,
+            bool_ty,
+            &[start.initialized],
+            start.initialized_store,
+        )
+        .unwrap();
+    assert_eq!(store_instance.cases.len(), 1);
+    let store_witnesses = store_definition
+        .match_production_witnesses(&mut kernel, 0, &[start.initialized])
+        .unwrap()
+        .unwrap();
+    let store_conditions = store_instance
+        .production_obligations(&mut kernel, 0, &store_witnesses)
+        .unwrap();
+    let (store_condition_facts, store_remaining) =
+        elementary_condition_facts(&mut kernel, &store_conditions);
+    assert!(store_remaining.len() < store_conditions.len());
+    let store_branch = store_instance
+        .prove_production(
+            &mut kernel,
+            bool_ty,
+            0,
+            &store_witnesses,
+            &store_condition_facts,
+        )
+        .unwrap();
+    let store_body = store_instance
+        .prove_body_case(&mut kernel, bool_ty, 0, store_branch.theorem)
+        .unwrap();
+    obligation_facts[3] = document
+        .semantics
+        .theory()
+        .prove_specialized_from_body(
+            &mut kernel,
+            *store_id,
+            &[start.initialized, start.initialized_store],
+            store_body.theorem,
+        )
+        .unwrap()
+        .theorem;
+
+    let invoke_instance = invoke_definition
+        .specialize(
+            &mut kernel,
+            bool_ty,
+            &[start.initialized_store, start.function, start.arguments],
+            start.initial,
+        )
+        .unwrap();
+    assert_eq!(invoke_instance.cases.len(), 1);
+    let invoke_conditions = invoke_instance
+        .production_obligations(&mut kernel, 0, &invoke_witnesses)
+        .unwrap();
+    let (invoke_condition_facts, invoke_remaining) =
+        elementary_condition_facts(&mut kernel, &invoke_conditions);
+    assert!(invoke_remaining.len() < invoke_conditions.len());
+    let invoke_branch = invoke_instance
+        .prove_production(
+            &mut kernel,
+            bool_ty,
+            0,
+            &invoke_witnesses,
+            &invoke_condition_facts,
+        )
+        .unwrap();
+    let invoke_body = invoke_instance
+        .prove_body_case(&mut kernel, bool_ty, 0, invoke_branch.theorem)
+        .unwrap();
+    obligation_facts[4] = document
+        .semantics
+        .theory()
+        .prove_specialized_from_body(
+            &mut kernel,
+            *invoke_id,
+            &[
+                start.initialized_store,
+                start.function,
+                start.arguments,
+                start.initial,
+            ],
+            invoke_body.theorem,
+        )
+        .unwrap()
+        .theorem;
+    let host_name = kernel
+        .fresh_name(&[
+            start.initial,
+            start.initialized_store,
+            start.arguments,
+            invoke_definition.equation,
+        ])
+        .unwrap();
+    let host_configuration = kernel.tm_fv(host_name, value).unwrap();
+    let host_function = kernel.tm_fv(host_name + 1, value).unwrap();
+    let expected_host_configuration = invoke_definition
+        .production_result(
+            &mut kernel,
+            0,
+            &[start.initialized_store, host_function, start.arguments],
+            &invoke_witnesses,
+        )
+        .unwrap();
+    let host_body = kernel
+        .eq(bool_ty, host_configuration, expected_host_configuration)
+        .unwrap();
+    let host_by_function = kernel
+        .lam_at(binary_tail, host_function, host_body)
+        .unwrap();
+    let host_call = kernel
+        .lam_at(binary_ty, host_configuration, host_by_function)
+        .unwrap();
+    let starts = execution
+        .prove_admissible_start(
+            &mut kernel,
+            exported,
+            start,
+            AdmissibleStartFacts {
+                instantiated: obligation_facts[0],
+                initialized: obligation_facts[1],
+                exported: obligation_facts[2],
+                store: obligation_facts[3],
+                invoked: obligation_facts[4],
+            },
+        )
+        .unwrap();
+    let reachability = execution
+        .assertion_reachability(&mut kernel, exported, host_call)
+        .unwrap();
+    let wasm = WasmTheory::open(&mut kernel, &document, reachability, start.function).unwrap();
+    let true_module = wasm
+        .forwarding_module(&mut kernel, import_module, assert_name, export_name)
+        .unwrap();
+    let false_module = wasm.empty_module(&mut kernel).unwrap();
+    covalence_logic_hol_derived::join_same_syntax(&mut kernel, true_module.term(), forwarding)
+        .unwrap();
+    covalence_logic_hol_derived::join_same_syntax(&mut kernel, false_module.term(), empty_module)
+        .unwrap();
+    let true_initial = wasm.configuration(start.initial);
+    let final_state = start.initial;
+    let true_final = wasm.configuration(final_state);
+    let final_before_equality = kernel.eq(bool_ty, reflexive_before, start.initial).unwrap();
+    let final_before_equality_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            final_before_equality.get(),
+        ))
+        .unwrap();
+    let final_after_equality = kernel.eq(bool_ty, reflexive_after, final_state).unwrap();
+    let final_after_equality_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            final_after_equality.get(),
+        ))
+        .unwrap();
+    let final_at_initial = execution
+        .transport_steps_before(
+            &mut kernel,
+            reflexive_before,
+            start.initial,
+            reflexive_after,
+            curried_reflexive_steps,
+            final_before_equality_fact,
+        )
+        .unwrap();
+    let steps_fact = execution
+        .transport_steps_after(
+            &mut kernel,
+            start.initial,
+            reflexive_after,
+            final_state,
+            final_at_initial,
+            final_after_equality_fact,
+        )
+        .unwrap();
+    let calls_fact =
+        prove_reflexive_binary_application(&mut kernel, host_call, final_state, start.function)
+            .unwrap();
+    let true_calls = wasm
+        .prove_calls_assert(
+            &mut kernel,
+            true_module,
+            true_initial,
+            true_final,
+            starts.theorem,
+            steps_fact.theorem,
+            calls_fact.theorem,
+        )
+        .unwrap();
+
+    let false_export_lists = export_view
+        .program_export_lists_equal(&mut kernel, execution, empty_module, instructions)
+        .unwrap();
+    let empty_membership = builder.list_membership_law(&mut kernel, &[]).unwrap();
+    assert_eq!(empty_membership.list(), instructions);
+    let empty_membership_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(
+            empty_membership.proposition().get(),
+        ))
+        .unwrap();
+    let empty_has_no_members = builder
+        .sequence_algebra(&mut kernel)
+        .unwrap()
+        .prove_empty_has_no_members(&mut kernel, &empty_membership, empty_membership_fact)
+        .unwrap();
+    let false_export_lists_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(false_export_lists.get()))
+        .unwrap();
+    let no_export_entries = export_view
+        .prove_no_export_entries_from_list_invariant(
+            &mut kernel,
+            execution,
+            empty_module,
+            instructions,
+            false_export_lists_fact,
+            empty_has_no_members.theorem,
+        )
+        .unwrap();
+    let cannot_export = export_view
+        .prove_program_cannot_export_from_no_entries(
+            &mut kernel,
+            execution,
+            empty_module,
+            no_export_entries.theorem,
+        )
+        .unwrap();
+    let no_false_start = execution
+        .prove_no_admissible_start_from_no_export(
+            &mut kernel,
+            exported,
+            empty_module,
+            cannot_export.theorem,
+        )
+        .unwrap();
+    let false_does_not_call = wasm
+        .prove_never_calls_assert(&mut kernel, false_module, no_false_start.theorem)
+        .unwrap();
+    let preservation = wasm
+        .prove_calls_assert_preserved(&mut kernel, true_module, false_module)
+        .unwrap();
+    document
+        .evidence_scope(&[])
+        .check(&kernel, preservation)
+        .unwrap();
+    let reflexive = wasm.prove_reflexive(&mut kernel, true_module).unwrap();
+    let symmetric = wasm
+        .prove_symmetric(&mut kernel, reflexive.theorem, true_module, true_module)
+        .unwrap();
+    let transitive = wasm
+        .prove_transitive(
+            &mut kernel,
+            reflexive.theorem,
+            symmetric.theorem,
+            true_module,
+            true_module,
+            true_module,
+        )
+        .unwrap();
+    for law in [reflexive, symmetric, transitive] {
+        let report = wasm.inspect_evidence(&kernel, law, &[]).unwrap();
+        assert!(report.is_premise_free());
+    }
+    let true_not_false = wasm
+        .prove_distinct(
+            &mut kernel,
+            true_module,
+            false_module,
+            true_calls.theorem,
+            false_does_not_call.theorem,
+        )
+        .unwrap();
+    let mut grounding = export_graphs.to_vec();
+    grounding.extend(reflexive_remaining);
+    grounding.extend(moduleinst_remaining);
+    grounding.extend(instantiate_remaining);
+    grounding.extend(store_remaining);
+    grounding.extend(invoke_remaining);
+    grounding.extend([
+        initialization_before_equality,
+        initialization_after_equality,
+        final_before_equality,
+        final_after_equality,
+        false_export_lists,
+        export_membership.proposition(),
+        empty_membership.proposition(),
+    ]);
+    document
+        .evidence_scope(&grounding)
+        .check(&kernel, true_not_false)
+        .unwrap();
+    let preservation_report = wasm
+        .inspect_evidence(&kernel, preservation, &grounding)
+        .unwrap();
+    assert!(preservation_report.is_premise_free());
+    let true_report = wasm
+        .inspect_evidence(&kernel, true_calls, &grounding)
+        .unwrap();
+    let false_report = wasm
+        .inspect_evidence(&kernel, false_does_not_call, &grounding)
+        .unwrap();
+    let distinction_report = wasm
+        .inspect_evidence(&kernel, true_not_false, &grounding)
+        .unwrap();
+    assert!(!true_report.generated_theory.is_empty());
+    assert!(!true_report.grounding.is_empty());
+    assert!(!false_report.grounding.is_empty());
+    assert!(!distinction_report.generated_theory.is_empty());
+    for report in [
+        preservation_report,
+        true_report,
+        false_report,
+        distinction_report,
+    ] {
+        let summary = report.summary();
+        assert!(summary.starts_with("proposition="));
+        assert!(summary.contains(";generated_theory=["));
+        assert!(summary.contains(";grounding=["));
+    }
+    let closed_distinction = true_not_false.close_premises(&mut kernel).unwrap();
+    assert!(
+        kernel
+            .thm()
+            .get(closed_distinction.theorem)
+            .unwrap()
+            .lhs
+            .rows()
+            .next()
+            .is_none()
+    );
+    assert_eq!(
+        kernel.classifier(closed_distinction.proposition).unwrap(),
+        bool_ty
+    );
 }
 
 #[test]
@@ -1540,6 +2513,280 @@ fn parameterized_relations_encode_consecutive_otherwise_fallback() {
 
     assert_eq!(document.semantics.constraints().len(), 1);
     assert_eq!(kernel.thm().live_theorems().count(), theorem_count);
+}
+
+#[test]
+fn immutable_interpretations_discharge_checked_grounding_obligations() {
+    let bytes = b"(def \"zero\" nat (clause (num (nat 0))))";
+    let il = IlDocument::parse(bytes, Limits::default()).unwrap();
+    let source = Source::new(
+        drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle"),
+        drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        "test",
+        "revision",
+        &il,
+    )
+    .unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let parameterized = parameterized_document(&source, &mut kernel, value, bool_ty).unwrap();
+    let supplied = parameterized
+        .grounding_obligations()
+        .next()
+        .unwrap()
+        .clone();
+    assert!(parameterized.operations().len() >= parameterized.grounding_obligations().len());
+    let provided =
+        std::collections::BTreeMap::from([(supplied.signature.clone(), supplied.reference)]);
+
+    let interpreted =
+        parameterized_document_with(&source, &mut kernel, value, bool_ty, &provided).unwrap();
+
+    assert!(
+        interpreted
+            .grounding_obligations()
+            .all(|obligation| obligation.signature != supplied.signature)
+    );
+    assert!(interpreted.operations().any(|operation| {
+        operation.signature == supplied.signature && operation.reference == supplied.reference
+    }));
+
+    let wrong = kernel.bool(bool_ty, true).unwrap();
+    let incompatible = std::collections::BTreeMap::from([(supplied.signature, wrong)]);
+    let before = kernel.arena().clone();
+    assert!(
+        parameterized_document_with(&source, &mut kernel, value, bool_ty, &incompatible).is_err()
+    );
+    assert_eq!(kernel.arena(), &before);
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn empty_module_uses_exact_expression_constructor_vocabulary() {
+    let bytes = br#"(def "empty" nat
+        (clause (case "MODULE%%%%%%%%%%%" (tup
+            (list) (list) (list) (list) (list) (list)
+            (list) (list) (list) (opt) (list)))))"#;
+    let il = IlDocument::parse(bytes, Limits::default()).unwrap();
+    let source = Source::new(
+        drisl::address(CidCodec::Drisl, CidHash::Sha256, b"bundle"),
+        drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        "test",
+        "revision",
+        &il,
+    )
+    .unwrap();
+    let mut kernel = Kernel::new();
+    let star = kernel.star().unwrap();
+    let bool_ty = kernel.bool_ty(star).unwrap();
+    let value = kernel.ty_fv(0, star).unwrap();
+    let document = parameterized_document(&source, &mut kernel, value, bool_ty).unwrap();
+    let declaration = source.declarations()[0].id();
+    let evidence = document
+        .semantics
+        .theory()
+        .derive_constraint(&mut kernel, declaration)
+        .unwrap();
+    document
+        .evidence_scope(&[])
+        .check(&kernel, evidence)
+        .unwrap();
+    let before = kernel.arena().clone();
+    let foreign = DeclarationId::new(999, None).unwrap();
+    assert!(
+        document
+            .semantics
+            .theory()
+            .derive_constraint(&mut kernel, foreign)
+            .is_err()
+    );
+    assert_eq!(kernel.arena(), &before);
+
+    let builder = SpecTecValueBuilder::new(&document);
+    let empty = builder.list(&mut kernel, &[]).unwrap();
+    let before = kernel.arena().clone();
+    assert!(builder.list(&mut kernel, &[empty]).is_err());
+    assert_eq!(kernel.arena(), &before);
+
+    let module = empty_wasm_module(&mut kernel, &document).unwrap();
+
+    let empty_list_constructor = builder
+        .structural_constructor(&mut kernel, "expression:List", 0)
+        .unwrap();
+    let module_constructor = builder
+        .structural_constructor(&mut kernel, "expression:Case(\"MODULE%%%%%%%%%%%\")", 1)
+        .unwrap();
+    let constructor_laws = builder
+        .constructor_laws_for(&mut kernel, &[module])
+        .unwrap();
+    assert!(
+        constructor_laws
+            .constructors()
+            .contains(&empty_list_constructor)
+    );
+    assert!(
+        constructor_laws
+            .constructors()
+            .contains(&module_constructor)
+    );
+    let constructor_count = constructor_laws.constructors().len();
+    assert_eq!(constructor_count, 4);
+    assert_eq!(
+        constructor_laws.propositions().len(),
+        constructor_count * (constructor_count + 1) / 2
+    );
+    assert!(
+        constructor_laws
+            .propositions()
+            .iter()
+            .all(|&law| kernel.classifier(law).unwrap() == bool_ty)
+    );
+    let non_value = kernel.bool(bool_ty, true).unwrap();
+    let before = kernel.arena().clone();
+    assert!(
+        builder
+            .constructor_laws_for(&mut kernel, &[non_value])
+            .is_err()
+    );
+    assert_eq!(kernel.arena(), &before);
+
+    assert_eq!(kernel.classifier(module).unwrap(), value);
+    let module_fields = builder
+        .match_case_fields(&kernel, "MODULE%%%%%%%%%%%", 11, module)
+        .unwrap()
+        .unwrap();
+    assert_eq!(module_fields.len(), 11);
+    assert_eq!(module_fields[10], empty);
+    let before = kernel.arena().clone();
+    assert!(
+        builder
+            .match_case_fields(&kernel, "MODULE%%%%%%%%%%%", 11, empty)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(kernel.arena(), &before);
+    let specialized = document
+        .semantics
+        .theory()
+        .specialize_constraint(&mut kernel, declaration, &[module])
+        .unwrap();
+    let body = kernel
+        .arena()
+        .children(specialized.proposition)
+        .unwrap()
+        .nth(2)
+        .unwrap();
+    let body_fact = kernel
+        .identity(covalence_logic_hol::Lit::positive(body.get()))
+        .unwrap();
+    let graph = document
+        .semantics
+        .theory()
+        .prove_specialized_from_body(&mut kernel, declaration, &[module], body_fact)
+        .unwrap();
+    document
+        .evidence_scope(&[body])
+        .check(&kernel, graph)
+        .unwrap();
+    let unfolded = document
+        .semantics
+        .theory()
+        .prove_body_from_specialized(&mut kernel, declaration, &[module], graph.theorem)
+        .unwrap();
+    document
+        .evidence_scope(&[body])
+        .check(&kernel, unfolded)
+        .unwrap();
+    let definition = document.semantics.definitions().get(&declaration).unwrap();
+    let instance = definition
+        .specialize(&mut kernel, bool_ty, &[], module)
+        .unwrap();
+    let before = kernel.arena().clone();
+    assert!(
+        instance
+            .prove_only_production_from_body(&mut kernel, bool_ty, graph.theorem)
+            .is_err()
+    );
+    assert_eq!(kernel.arena(), &before);
+    let production = instance
+        .prove_only_production_from_body(&mut kernel, bool_ty, unfolded.theorem)
+        .unwrap();
+    let opened = instance
+        .open_production(&mut kernel, 0, production.theorem)
+        .unwrap();
+    assert_eq!(opened.conditions.len(), opened.facts.len());
+    assert!(!opened.conditions.is_empty());
+    for (&condition, &fact) in opened.conditions.iter().zip(&opened.facts) {
+        document
+            .evidence_scope(&[body])
+            .check(
+                &kernel,
+                covalence_nucleus_spectec::Evidence {
+                    proposition: condition,
+                    theorem: fact,
+                    holds: true,
+                },
+            )
+            .unwrap();
+    }
+    let before = kernel.arena().clone();
+    assert!(
+        document
+            .semantics
+            .theory()
+            .prove_body_from_specialized(&mut kernel, declaration, &[module], body_fact)
+            .is_err()
+    );
+    assert_eq!(kernel.arena(), &before);
+}
+
+#[test]
+fn empty_module_agrees_with_wasmtime_observation() {
+    use covalence_lib_wasm::wasmtime::{Engine, Linker, Module, Store};
+
+    // Canonical binary encoding of `(module)`. These bytes are deliberately
+    // only interpreter-test input: they do not become HOL evidence.
+    let bytes = b"\0asm\x01\0\0\0";
+    let engine = Engine::default();
+    let module = Module::new(&engine, bytes).unwrap();
+    assert_eq!(module.imports().count(), 0);
+    assert_eq!(module.exports().count(), 0);
+
+    let mut store = Store::new(&engine, ());
+    let linker = Linker::new(&engine);
+    let instance = linker.instantiate(&mut store, &module).unwrap();
+    assert_eq!(instance.exports(&mut store).count(), 0);
+}
+
+#[test]
+fn forwarding_module_calls_assert_in_wasmtime() {
+    use covalence_lib_wasm::wasmtime::{Caller, Engine, Func, Linker, Module, Store};
+
+    // `(module (type (func)) (import "env" "assert" (func (type 0)))
+    //          (export "run" (func 0)))`.
+    let bytes = [
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x04, 0x01, 0x60, 0x00, 0x00, 0x02,
+        0x0e, 0x01, 0x03, b'e', b'n', b'v', 0x06, b'a', b's', b's', b'e', b'r', b't', 0x00, 0x00,
+        0x07, 0x07, 0x01, 0x03, b'r', b'u', b'n', 0x00, 0x00,
+    ];
+    let engine = Engine::default();
+    let module = Module::new(&engine, bytes).unwrap();
+    let mut store = Store::new(&engine, false);
+    let mut linker = Linker::new(&engine);
+    let assert = Func::wrap(&mut store, |mut caller: Caller<'_, bool>| {
+        *caller.data_mut() = true;
+    });
+    linker.define(&mut store, "env", "assert", assert).unwrap();
+    let instance = linker.instantiate(&mut store, &module).unwrap();
+    let run = instance
+        .get_typed_func::<(), ()>(&mut store, "run")
+        .unwrap();
+
+    assert!(!*store.data());
+    run.call(&mut store, ()).unwrap();
+    assert!(*store.data());
 }
 
 #[test]

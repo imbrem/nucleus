@@ -1384,7 +1384,9 @@ dependencies = [
  "covalence-data-cbor",
  "covalence-data-spectec",
  "covalence-lib-error",
+ "covalence-lib-wasm",
  "covalence-logic-hol",
+ "covalence-logic-hol-derived",
 ]
 
 [[package]]

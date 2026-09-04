@@ -3,7 +3,7 @@
 //! Parsing and validation are userspace operations. They do not create theorem
 //! facts or establish that these bytes denote a term in a HOL semantics.
 
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use covalence_data_cbor::drisl::{self, Cid, CidCodec, CidHash};
 use covalence_lib_error::snafu::Snafu;
@@ -37,17 +37,39 @@ impl Default for Limits {
 pub struct Section {
     /// Binary section identifier.
     pub id: u8,
+    owner: Cid,
     /// Payload byte range in the original module.
-    pub payload: Range<usize>,
+    payload: Range<usize>,
+}
+
+impl Section {
+    /// Returns the exact module CID from which this section was parsed.
+    #[must_use]
+    pub const fn module_cid(&self) -> Cid {
+        self.owner
+    }
+
+    /// Returns the payload byte range in the exact module.
+    #[must_use]
+    pub fn range(&self) -> Range<usize> {
+        self.payload.clone()
+    }
 }
 
 /// One defined function body in function-index order after imports.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Function {
+    owner: Cid,
     body: Range<usize>,
 }
 
 impl Function {
+    /// Returns the exact module CID from which this function was parsed.
+    #[must_use]
+    pub const fn module_cid(&self) -> Cid {
+        self.owner
+    }
+
     /// Returns the body byte range, including locals and instructions but not
     /// its encoded size prefix.
     #[must_use]
@@ -107,17 +129,135 @@ impl<'a> Module<'a> {
     ///
     /// The reader uses exactly the WebAssembly 3.0 feature profile. This is a
     /// compositional view over the retained bytes, not a second semantic AST.
-    #[must_use]
-    pub fn function_body(&self, function: &Function) -> FunctionBody<'a> {
-        let mut reader = BinaryReader::new(&self.bytes[function.body.clone()], function.body.start);
+    /// # Errors
+    ///
+    /// Returns an error if `function` did not originate from this module and
+    /// its retained range is outside the exact bytes.
+    pub fn function_body(&self, function: &Function) -> Result<FunctionBody<'a>, Error> {
+        let bytes = checked_view(
+            self.bytes,
+            self.cid,
+            function.owner,
+            &function.body,
+            "function body",
+        )?;
+        let mut reader = BinaryReader::new(bytes, function.body.start);
         reader.set_features(WasmFeatures::WASM3);
-        FunctionBody::new(reader)
+        Ok(FunctionBody::new(reader))
     }
 
     /// Returns the exact payload bytes for a section from this module.
+    /// # Errors
+    ///
+    /// Returns an error if `section` did not originate from this module and
+    /// its retained range is outside the exact bytes.
+    pub fn payload(&self, section: &Section) -> Result<&'a [u8], Error> {
+        checked_view(
+            self.bytes,
+            self.cid,
+            section.owner,
+            &section.payload,
+            "section payload",
+        )
+    }
+
+    /// Copies the exact bytes into an immutable, shareable module artifact.
+    ///
+    /// The already validated section/function metadata and CID are retained;
+    /// this does not parse, validate, or assign semantic meaning a second time.
     #[must_use]
-    pub fn payload(&self, section: &Section) -> &'a [u8] {
-        &self.bytes[section.payload.clone()]
+    pub fn into_shared(self) -> SharedModule {
+        SharedModule {
+            bytes: Arc::from(self.bytes),
+            cid: self.cid,
+            sections: Arc::from(self.sections),
+            functions: Arc::from(self.functions),
+        }
+    }
+}
+
+/// A validated WebAssembly 3.0 core module with shared exact-byte ownership.
+///
+/// This is the portable/concurrent counterpart of borrowing [`Module`]. It is
+/// immutable and uses `Arc` only for storage ownership; neither validation nor
+/// a content address constitutes a semantic theorem.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SharedModule {
+    bytes: Arc<[u8]>,
+    cid: Cid,
+    sections: Arc<[Section]>,
+    functions: Arc<[Function]>,
+}
+
+impl SharedModule {
+    /// Returns the exact retained module bytes.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Returns the raw SHA-256 content address of the exact module bytes.
+    #[must_use]
+    pub const fn cid(&self) -> Cid {
+        self.cid
+    }
+
+    /// Returns all binary sections in source order.
+    #[must_use]
+    pub fn sections(&self) -> &[Section] {
+        &self.sections
+    }
+
+    /// Returns defined function bodies in binary order.
+    #[must_use]
+    pub fn functions(&self) -> &[Function] {
+        &self.functions
+    }
+
+    /// Streams parser payloads from the retained exact bytes.
+    ///
+    /// The parser uses the same WebAssembly 3.0 feature profile with which the
+    /// original borrowed module was validated.
+    pub fn payloads(
+        &self,
+    ) -> impl Iterator<Item = Result<Payload<'_>, covalence_lib_wasm::wasmparser::BinaryReaderError>>
+    {
+        let mut parser = Parser::new(0);
+        parser.set_features(WasmFeatures::WASM3);
+        parser.parse_all(&self.bytes)
+    }
+
+    /// Opens a typed reader for one retained function body.
+    /// # Errors
+    ///
+    /// Returns an error if `function` did not originate from this module and
+    /// its retained range is outside the exact bytes.
+    pub fn function_body(&self, function: &Function) -> Result<FunctionBody<'_>, Error> {
+        let bytes = checked_view(
+            &self.bytes,
+            self.cid,
+            function.owner,
+            &function.body,
+            "function body",
+        )?;
+        let mut reader = BinaryReader::new(bytes, function.body.start);
+        reader.set_features(WasmFeatures::WASM3);
+        Ok(FunctionBody::new(reader))
+    }
+
+    /// Returns the exact payload bytes for a retained section.
+    /// # Errors
+    ///
+    /// Returns an error if `section` did not originate from this module and
+    /// its retained range is outside the exact bytes.
+    pub fn payload(&self, section: &Section) -> Result<&[u8], Error> {
+        checked_view(
+            &self.bytes,
+            self.cid,
+            section.owner,
+            &section.payload,
+            "section payload",
+        )
     }
 }
 
@@ -145,6 +285,28 @@ pub enum Error {
         /// Configured limit.
         limit: usize,
     },
+    /// A retained view did not belong to the module on which it was used.
+    #[snafu(display("{kind} byte range {start}..{end} is outside module length {length}"))]
+    Range {
+        /// Kind of retained byte view.
+        kind: &'static str,
+        /// Inclusive start offset.
+        start: usize,
+        /// Exclusive end offset.
+        end: usize,
+        /// Exact module byte length.
+        length: usize,
+    },
+    /// A retained view belongs to different exact module bytes.
+    #[snafu(display("{kind} belongs to module {actual:?}, not requested module {expected:?}"))]
+    Foreign {
+        /// Kind of retained byte view.
+        kind: &'static str,
+        /// CID of the requested module.
+        expected: Cid,
+        /// CID stored in the view.
+        actual: Cid,
+    },
     /// Input used a non-module binary encoding.
     #[snafu(display("WebAssembly binary is not a core module"))]
     NotModule,
@@ -154,6 +316,28 @@ pub enum Error {
         /// Parser or validator failure.
         source: covalence_lib_wasm::wasmparser::BinaryReaderError,
     },
+}
+
+fn checked_view<'a>(
+    bytes: &'a [u8],
+    expected: Cid,
+    actual: Cid,
+    range: &Range<usize>,
+    kind: &'static str,
+) -> Result<&'a [u8], Error> {
+    if actual != expected {
+        return Err(Error::Foreign {
+            kind,
+            expected,
+            actual,
+        });
+    }
+    bytes.get(range.clone()).ok_or(Error::Range {
+        kind,
+        start: range.start,
+        end: range.end,
+        length: bytes.len(),
+    })
 }
 
 /// Recognizes and validates an exact WebAssembly 3.0 core module.
@@ -174,6 +358,7 @@ pub fn parse(bytes: &[u8], limits: Limits) -> Result<Module<'_>, Error> {
         });
     }
 
+    let cid = drisl::address(CidCodec::Raw, CidHash::Sha256, bytes);
     let mut sections = Vec::new();
     let mut functions = Vec::new();
     let mut is_module = false;
@@ -188,7 +373,10 @@ pub fn parse(bytes: &[u8], limits: Limits) -> Result<Module<'_>, Error> {
                     limit: limits.functions,
                 });
             }
-            functions.push(Function { body: body.range() });
+            functions.push(Function {
+                owner: cid,
+                body: body.range(),
+            });
         }
         if let Some((id, payload)) = payload.as_section() {
             if sections.len() == limits.sections {
@@ -196,7 +384,11 @@ pub fn parse(bytes: &[u8], limits: Limits) -> Result<Module<'_>, Error> {
                     limit: limits.sections,
                 });
             }
-            sections.push(Section { id, payload });
+            sections.push(Section {
+                id,
+                owner: cid,
+                payload,
+            });
         }
     }
     if !is_module {
@@ -209,21 +401,135 @@ pub fn parse(bytes: &[u8], limits: Limits) -> Result<Module<'_>, Error> {
 
     Ok(Module {
         bytes,
-        cid: drisl::address(CidCodec::Raw, CidHash::Sha256, bytes),
+        cid,
         sections,
         functions,
     })
 }
 
+/// Recognizes and validates an already shared exact WebAssembly module.
+///
+/// Unlike [`Module::into_shared`], this retains the caller's `Arc<[u8]>`
+/// allocation. Parsing and validation remain userspace operations and create
+/// no theorem fact.
+///
+/// # Errors
+///
+/// Returns under the same conditions as [`parse`].
+pub fn parse_shared(bytes: Arc<[u8]>, limits: Limits) -> Result<SharedModule, Error> {
+    let parsed = parse(&bytes, limits)?;
+    let Module {
+        cid,
+        sections,
+        functions,
+        ..
+    } = parsed;
+    Ok(SharedModule {
+        bytes,
+        cid,
+        sections: Arc::from(sections),
+        functions: Arc::from(functions),
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use covalence_lib_wasm::wasmparser::Operator;
 
     use covalence_data_cbor::drisl::{self, CidCodec, CidHash};
 
-    use super::{Error, Limits, parse};
+    use super::{Error, Limits, SharedModule, parse, parse_shared};
 
     const EMPTY_MODULE: &[u8] = b"\0asm\x01\0\0\0";
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn shared_modules_retain_exact_owned_bytes() {
+        assert_send_sync::<SharedModule>();
+        let bytes: Arc<[u8]> = Arc::from(EMPTY_MODULE);
+        let module = parse_shared(Arc::clone(&bytes), Limits::default()).unwrap();
+
+        assert!(Arc::ptr_eq(&bytes, &module.bytes));
+        assert_eq!(module.bytes(), EMPTY_MODULE);
+        assert_eq!(
+            module.cid(),
+            parse(EMPTY_MODULE, Limits::default()).unwrap().cid()
+        );
+        assert!(module.sections().is_empty());
+        assert!(module.functions().is_empty());
+        assert_eq!(
+            parse(EMPTY_MODULE, Limits::default())
+                .unwrap()
+                .into_shared(),
+            module
+        );
+
+        let cloned = module.clone();
+        std::thread::spawn(move || assert_eq!(cloned.bytes(), EMPTY_MODULE))
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn rejects_views_from_other_modules_without_panicking() {
+        let module = parse(EMPTY_MODULE, Limits::default()).unwrap();
+        let foreign_cid = drisl::address(CidCodec::Raw, CidHash::Sha256, b"foreign");
+        let foreign_section = super::Section {
+            id: 0,
+            owner: foreign_cid,
+            payload: 0..1,
+        };
+        let foreign_function = super::Function {
+            owner: foreign_cid,
+            body: 0..1,
+        };
+        let invalid_section = super::Section {
+            id: 0,
+            owner: module.cid(),
+            payload: 100..101,
+        };
+
+        assert!(matches!(
+            module.payload(&foreign_section),
+            Err(Error::Foreign {
+                kind: "section payload",
+                ..
+            })
+        ));
+        assert!(matches!(
+            module.function_body(&foreign_function),
+            Err(Error::Foreign {
+                kind: "function body",
+                ..
+            })
+        ));
+        assert!(matches!(
+            module.payload(&invalid_section),
+            Err(Error::Range {
+                kind: "section payload",
+                ..
+            })
+        ));
+
+        let shared = module.into_shared();
+        assert!(matches!(
+            shared.payload(&foreign_section),
+            Err(Error::Foreign {
+                kind: "section payload",
+                ..
+            })
+        ));
+        assert!(matches!(
+            shared.function_body(&foreign_function),
+            Err(Error::Foreign {
+                kind: "function body",
+                ..
+            })
+        ));
+    }
 
     #[test]
     fn retains_exact_bytes_and_ordered_section_payloads() {
@@ -237,9 +543,13 @@ mod tests {
         );
         assert_eq!(module.sections().len(), 2);
         assert_eq!(module.sections()[0].id, 0);
-        assert_eq!(module.payload(&module.sections()[0]), b"\x01x\x01y");
+        assert_eq!(module.sections()[0].module_cid(), module.cid());
+        assert_eq!(
+            module.payload(&module.sections()[0]).unwrap(),
+            b"\x01x\x01y"
+        );
         assert_eq!(module.sections()[1].id, 1);
-        assert_eq!(module.payload(&module.sections()[1]), b"\0");
+        assert_eq!(module.payload(&module.sections()[1]).unwrap(), b"\0");
     }
 
     #[test]
@@ -274,7 +584,8 @@ mod tests {
         let [function] = module.functions() else {
             panic!("expected one function")
         };
-        let body = module.function_body(function);
+        assert_eq!(function.module_cid(), module.cid());
+        let body = module.function_body(function).unwrap();
         assert_eq!(body.as_bytes(), b"\0\x0b");
         let mut operators = body.get_operators_reader().expect("locals decode");
         assert!(matches!(operators.read(), Ok(Operator::End)));
