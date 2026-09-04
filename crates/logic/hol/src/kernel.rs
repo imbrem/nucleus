@@ -1908,6 +1908,9 @@ impl Kernel {
         E: std::error::Error + 'static,
     {
         self.require_star_type(reference)?;
+        if matches!(self.row::<E>(reference)?.expr(), Node::BoolTy) {
+            return Ok(());
+        }
         let representative = self.find_as::<E>(reference)?;
         for candidate in self.references::<E>()? {
             if self.find_as::<E>(candidate)? == representative
@@ -1954,6 +1957,9 @@ impl Kernel {
         E: std::error::Error + 'static,
     {
         self.require_category(reference, Sort::Ty)?;
+        if let Node::TyArr(domain, codomain) = *self.row::<E>(reference)?.expr() {
+            return Ok((domain, codomain));
+        }
         let representative = self.find_as::<E>(reference)?;
         for candidate in self.references::<E>()? {
             if self.category_as::<E>(candidate)? == Sort::Ty
@@ -2348,6 +2354,33 @@ mod tests {
         assert_eq!(kernel.classifier(application).unwrap(), bool_ty);
         assert_eq!(kernel.arena().tag(identity), Some(Tag::Tm(TmTag::Lam)));
         assert_eq!(kernel.arena().context().collect::<Vec<_>>(), [equation]);
+    }
+
+    #[test]
+    fn direct_type_shapes_keep_equality_class_fallbacks() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let function_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+        let direct = kernel.tm_fv(0, function_ty).unwrap();
+        let argument = kernel.bool(bool_ty, true).unwrap();
+        let direct_application = kernel.app(direct, argument).unwrap();
+        assert_eq!(kernel.classifier(direct_application).unwrap(), bool_ty);
+
+        let function_alias = kernel.ty_fv(1, star).unwrap();
+        kernel
+            .union::<Infallible>(function_alias, function_ty)
+            .unwrap();
+        let indirect = kernel.tm_fv(2, function_alias).unwrap();
+        let indirect_application = kernel.app(indirect, argument).unwrap();
+        assert_eq!(kernel.classifier(indirect_application).unwrap(), bool_ty);
+
+        let bool_alias = kernel.ty_fv(3, star).unwrap();
+        kernel.union::<Infallible>(bool_alias, bool_ty).unwrap();
+        assert!(kernel.bool(bool_alias, false).is_ok());
+
+        let unrelated = kernel.ty_fv(4, star).unwrap();
+        assert!(kernel.bool(unrelated, false).is_err());
     }
 
     #[test]
