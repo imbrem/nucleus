@@ -1102,6 +1102,25 @@ impl ThreadedPureWasmSemantics {
         kernel.eq(self.pure.bool_ty, single, multi)
     }
 
+    /// Constructs cross-profile observational equivalence.
+    ///
+    /// This compares the single-threaded denotation of `single_program` with
+    /// the multi-threaded denotation of `multi_program`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if checked application or equality construction fails.
+    pub fn cross_equivalent(
+        self,
+        kernel: &mut Kernel,
+        single_program: PureWasmProgram,
+        multi_program: PureWasmProgram,
+    ) -> Result<Ref, KernelError> {
+        let single = kernel.app(self.single, single_program.0)?;
+        let multi = kernel.app(self.multi, multi_program.0)?;
+        kernel.eq(self.pure.bool_ty, single, multi)
+    }
+
     /// Constructs agreement of the single-threaded profile with the pure
     /// denotation.
     ///
@@ -1164,6 +1183,53 @@ impl ThreadedPureWasmSemantics {
             reverse_multi.theorem,
         )?;
         let proposition = self.equivalent(&mut staged, program)?;
+        join_alpha_equivalent(&mut staged, composed.equality, proposition)?;
+        staged.convert_conclusions(composed.theorem, composed.equality, proposition)?;
+        *kernel = staged;
+        Ok(Evidence {
+            proposition,
+            theorem: composed.theorem,
+            holds: true,
+        })
+    }
+
+    /// Transports pure observational equivalence across execution profiles.
+    ///
+    /// From single-profile agreement for `left`, pure denotational equivalence
+    /// of `left` and `right`, and multi-profile agreement for `right`, derives
+    /// [`Self::cross_equivalent`]. All three premise sets remain visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless each supplied theorem proves its exact
+    /// proposition or a checked equality step fails. `kernel` is unchanged on
+    /// failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prove_cross_equivalent(
+        self,
+        kernel: &mut Kernel,
+        left: PureWasmProgram,
+        right: PureWasmProgram,
+        single_agrees: ThmId,
+        pure_equivalence: ThmId,
+        multi_agrees: ThmId,
+    ) -> Result<Evidence, PureWasmProofError> {
+        let mut staged = kernel.fork();
+        let single_claim = self.single_agrees(&mut staged, left)?;
+        let single = align_positive(&mut staged, single_agrees, single_claim)?;
+        let pure_claim = self.pure.equivalent(&mut staged, left, right)?;
+        let pure = align_positive(&mut staged, pure_equivalence, pure_claim)?;
+        let multi_claim = self.multi_agrees(&mut staged, right)?;
+        let multi = align_positive(&mut staged, multi_agrees, multi_claim)?;
+        let through_pure = equality_transitivity(&mut staged, self.pure.bool_ty, single, pure)?;
+        let reverse_multi = equality_symmetry(&mut staged, self.pure.bool_ty, multi)?;
+        let composed = equality_transitivity(
+            &mut staged,
+            self.pure.bool_ty,
+            through_pure.theorem,
+            reverse_multi.theorem,
+        )?;
+        let proposition = self.cross_equivalent(&mut staged, left, right)?;
         join_alpha_equivalent(&mut staged, composed.equality, proposition)?;
         staged.convert_conclusions(composed.theorem, composed.equality, proposition)?;
         *kernel = staged;
@@ -1556,6 +1622,27 @@ mod tests {
             .unwrap();
         EvidenceScope::positive(&[single_claim, multi_claim])
             .check(&kernel, equivalent)
+            .unwrap();
+        let right_multi_claim = threaded.multi_agrees(&mut kernel, middle).unwrap();
+        let right_multi_fact = kernel
+            .identity(Lit::positive(right_multi_claim.get()))
+            .unwrap();
+        let pure_equivalence = semantics.equivalent(&mut kernel, left, middle).unwrap();
+        let pure_equivalence_fact = kernel
+            .identity(Lit::positive(pure_equivalence.get()))
+            .unwrap();
+        let cross_profile = threaded
+            .prove_cross_equivalent(
+                &mut kernel,
+                left,
+                middle,
+                single_fact,
+                pure_equivalence_fact,
+                right_multi_fact,
+            )
+            .unwrap();
+        EvidenceScope::positive(&[single_claim, pure_equivalence, right_multi_claim])
+            .check(&kernel, cross_profile)
             .unwrap();
 
         let wrong_term = kernel.tm_fv(17, scalar_types.i64).unwrap();
