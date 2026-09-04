@@ -134,6 +134,19 @@ has been discharged. Reflexivity, symmetry, and transitivity are exposed as
 checked facade proofs. The facade neither evaluates Wasm nor decides
 equivalence.
 
+`WasmScalars` adds typed handles for `i32`, `i64`, `f32`, `f64`, and `v128`
+classifiers and kind-preserving scalar operations. Algebraic methods construct
+explicit HOL obligations; they do not evaluate host integers or floats.
+`PureWasmSemantics` is the first small denotational experiment: a caller
+supplies checked operations mapping structural pure unary programs to scalar
+endofunctions and composing program syntax. Observational equivalence is
+equality of those denotations, with checked reflexivity, symmetry,
+transitivity, and pointwise observation. `ThreadedPureWasmSemantics` proves a
+single-threaded denotation equal to a multi-threaded one through two visible
+agreement facts with the shared pure denotation. None of these wrappers claims
+that the supplied denotation or composition law already agrees with SpecTec;
+that correspondence remains ordinary proof evidence.
+
 `SpecTecValueBuilder` is the corresponding generic structural API. It composes
 recorded number, list, optional, tuple, and tagged-case operations immutably and
 transactionally; `empty_wasm_module` and `forwarding_wasm_module` are
