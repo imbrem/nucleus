@@ -15,6 +15,12 @@ use covalence_data_sexpr::{
 };
 use covalence_lib_error::snafu::Snafu;
 
+mod il;
+mod wasm3;
+
+pub use il::{DeclarationId, IlDeclaration, IlDocument, IlError, IlKind, IlRoot, RootOrdinal};
+pub use wasm3::{WASM_3_AST_BYTES, WASM_3_MANIFEST_BYTES, Wasm3Bundle, Wasm3Error, wasm3_bundle};
+
 /// Schema discriminator for pinned `SpecTec` source bundles.
 pub const FORMAT: &str = "io.github.imbrem.nucleus.spectecBundleV1";
 

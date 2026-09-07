@@ -18,3 +18,8 @@ cargo run -p covalence-data-spectec --example generate-wasm3
 
 Successful parsing proves only that the artifact has recognized syntax. HOL
 validity and fidelity to the SpecTec source are separate checked obligations.
+
+`IlDocument` additionally inventories every top-level declaration and every
+member of a recursive group. It is the exhaustive source side of the
+semi-trusted correspondence API in `covalence-nucleus-spectec`; it still assigns
+no semantics and creates no theorem facts.

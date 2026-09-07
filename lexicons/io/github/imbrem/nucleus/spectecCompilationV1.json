@@ -1,0 +1,67 @@
+{
+  "lexicon": 1,
+  "id": "io.github.imbrem.nucleus.spectecCompilationV1",
+  "defs": {
+    "main": {
+      "type": "object",
+      "description": "An exhaustive SpecTec IL to checked HOL kernel compilation record.",
+      "required": [
+        "bundle",
+        "ast",
+        "kernel",
+        "kernelBlake3",
+        "release",
+        "revision",
+        "declarations"
+      ],
+      "properties": {
+        "bundle": {
+          "type": "cid-link",
+          "description": "Canonical SpecTec bundle manifest."
+        },
+        "ast": {
+          "type": "cid-link",
+          "description": "Exact elaborated SpecTec IL bytes."
+        },
+        "kernel": {
+          "type": "cid-link",
+          "description": "Exact canonical Ethane arena CBOR bytes."
+        },
+        "kernelBlake3": { "type": "bytes", "minLength": 32, "maxLength": 32 },
+        "release": { "type": "string" },
+        "revision": { "type": "string" },
+        "declarations": {
+          "type": "array",
+          "items": { "type": "ref", "ref": "#declaration" }
+        }
+      }
+    },
+    "declaration": {
+      "type": "object",
+      "required": ["root", "member", "kind", "name", "roots"],
+      "properties": {
+        "root": { "type": "integer", "minimum": 1 },
+        "member": { "type": "integer", "minimum": 0 },
+        "kind": {
+          "type": "string",
+          "knownValues": ["typ", "def", "gram", "rel"]
+        },
+        "name": { "type": "string" },
+        "roots": {
+          "type": "array",
+          "minLength": 1,
+          "items": { "type": "ref", "ref": "#root" }
+        }
+      }
+    },
+    "root": {
+      "type": "object",
+      "required": ["role", "ref", "sort"],
+      "properties": {
+        "role": { "type": "string", "minLength": 1 },
+        "ref": { "type": "integer", "minimum": 1 },
+        "sort": { "type": "string", "knownValues": ["kind", "type", "term"] }
+      }
+    }
+  }
+}
