@@ -24,9 +24,12 @@ pub(crate) enum EqColumn {
 }
 
 impl Dense {
-    pub(crate) fn row(&self, reference: Ref) -> Option<&Row> {
+    pub(crate) fn row(&self, reference: Ref) -> Option<Row> {
+        if reference.get() < 0 {
+            return crate::global::row(reference);
+        }
         let position = usize::try_from(reference.get() - 1).ok()?;
-        self.defs.get(position)
+        self.defs.get(position).copied()
     }
 
     pub(crate) fn position(&self, reference: Ref) -> Option<usize> {
@@ -64,6 +67,9 @@ impl Dense {
     /// link is the class classifier (`tm -> ty` or `ty -> kind`).  Malformed
     /// raw paths, including cycles and other category changes, have no sort.
     pub(crate) fn sort(&self, reference: Ref) -> Option<Ref> {
+        if reference.get() < 0 {
+            return crate::global::classifier(reference);
+        }
         let category = self.row(reference)?.tag().sort();
         let expected = match category {
             crate::Sort::Kind => return None,
@@ -76,7 +82,11 @@ impl Dense {
             if !seen.insert(current) {
                 return None;
             }
-            let parent = self.column(&self.conv, current)?;
+            let parent = if current.get() < 0 {
+                crate::global::classifier(current)?
+            } else {
+                self.column(&self.conv, current)?
+            };
             let parent_category = self.row(parent)?.tag().sort();
             if parent_category == category {
                 current = parent;

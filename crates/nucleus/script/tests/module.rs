@@ -51,7 +51,8 @@ fn delaborator_names_rows_and_marks_every_other_row_anonymous() {
     let module = compile_module(
         r"
         (namespace booleans
-          (define truth () bool true))
+          (define truth () bool true)
+          (define identity () (lambda x bool x)))
         ",
     )
     .expect("module");

@@ -3,7 +3,7 @@
 //! This is an explicit addition to the trusted rules under ax.inf. It does
 //! not claim opcode-free syntactic lowering. Raw rows never enter this rule:
 //! every reachable row and classifier is checked first.
-use super::{AX_INF, Kernel, KernelError, Node, Row};
+use super::{AX_INF, Kernel, KernelError, Node};
 use crate::{
     Ref, Sort, ThmId,
     literals::{Builtin, EvalError, EvalLimits, LiteralType, LiteralValue},
@@ -22,42 +22,23 @@ impl Kernel {
     /// # Errors
     /// Non-Boolean carriers require ax.inf; capacity failures leave no change.
     pub fn literal_ty(&mut self, ty: LiteralType) -> Result<Ref, KernelError> {
-        if ty != LiteralType::Bool {
-            self.require_literal_capability()?;
-        }
-        if let Some(reference) = self.literal_types[ty as usize] {
-            return Ok(reference);
-        }
-        for n in 1..=self.arena.len() {
-            let r = Ref::new(i32::try_from(n).map_err(|_| KernelError::TooManyDefinitions)?)
-                .ok_or(KernelError::TooManyDefinitions)?;
-            if self.arena.literal_type(r) == Some(ty) && self.arena.sort(r).is_some() {
-                self.require_star_type::<Infallible>(r)?;
-                self.literal_types[ty as usize] = Some(r);
-                return Ok(r);
-            }
-        }
-        self.literal_capacity(2)?;
-        let star = self.star()?;
-        let result = if ty == LiteralType::Bool {
-            self.bool_ty(star)?
-        } else {
-            self.push::<Infallible>(Row::new(Node::LiteralTy(ty)), Some(star))?
-        };
-        self.literal_types[ty as usize] = Some(result);
-        Ok(result)
+        let reference = crate::global::ty(ty);
+        self.row::<Infallible>(reference)?;
+        Ok(reference)
     }
     /// Constructs a canonical checked literal.
     /// # Errors
     /// Requires its carrier capability, a bounded value, and arena capacity.
     /// Failure leaves the kernel unchanged.
     pub fn literal(&mut self, value: LiteralValue) -> Result<Ref, KernelError> {
+        let ty = self.literal_ty(value.ty())?;
+        if let Some(reference) = crate::global::literal(&value) {
+            return Ok(reference);
+        }
         super::super::literals::check_size(&value, EvalLimits::default())?;
-        self.literal_capacity(3)?;
         if !self.arena.can_push_literal(&value) {
             return Err(EvalError::Resource.into());
         }
-        let ty = self.literal_ty(value.ty())?;
         let result = self
             .arena
             .push_literal(value)
@@ -72,9 +53,12 @@ impl Kernel {
     pub fn literal_type(&self, term: Ref) -> Result<LiteralType, KernelError> {
         self.require_category::<Infallible>(term, Sort::Tm)?;
         let ty = self.classifier(term)?;
-        self.arena.literal_type(ty).ok_or(KernelError::Literal {
-            source: EvalError::Signature,
-        })
+        self.arena
+            .literal_type(ty)
+            .or(self.arena.literal_type(self.find(ty)?))
+            .ok_or(KernelError::Literal {
+                source: EvalError::Signature,
+            })
     }
     /// Inspects a resident literal; symbolic expressions return None.
     /// # Errors
@@ -90,52 +74,37 @@ impl Kernel {
     /// # Errors
     /// Rejects invalid descriptors, missing ax.inf, or exhausted row capacity.
     pub fn builtin_const(&mut self, op: Builtin) -> Result<Ref, KernelError> {
-        self.require_literal_capability()?;
-        let (inputs, output) = op.signature()?;
-        self.literal_capacity(4 * inputs.len() + 4)?;
-        let inputs = inputs
-            .into_iter()
-            .map(|ty| self.literal_ty(ty))
-            .collect::<Result<Vec<_>, _>>()?;
-        self.builtin_const_at(op, &inputs, output)
-    }
-    fn builtin_const_at(
-        &mut self,
-        op: Builtin,
-        inputs: &[Ref],
-        output: LiteralType,
-    ) -> Result<Ref, KernelError> {
-        let mut ty = self.literal_ty(output)?;
-        for &input in inputs.iter().rev() {
-            ty = self.ty_arr(input, ty)?;
-        }
-        self.push::<Infallible>(Row::new(Node::Builtin(op)), Some(ty))
+        let reference = crate::global::builtin(op).ok_or(EvalError::Signature)?;
+        self.row::<Infallible>(reference)?;
+        Ok(reference)
     }
     /// Constructs a fully applied builtin using ordinary application rows.
     /// # Errors
-    /// Rejects wrong signatures, invalid descriptors, missing capability, or
-    /// arena capacity. Undefined closed operations remain constructible.
+    /// Rejects wrong signatures, missing capabilities, or exhausted capacity.
     pub fn builtin(&mut self, op: Builtin, args: &[Ref]) -> Result<Ref, KernelError> {
-        self.require_literal_capability()?;
-        let (inputs, output) = op.signature()?;
-        if args.len() != inputs.len() {
+        let (inputs, _) = op.signature()?;
+        if inputs.len() != args.len() {
             return Err(EvalError::Signature.into());
         }
-        let mut classifiers = Vec::with_capacity(args.len());
-        for (&arg, ty) in args.iter().zip(inputs) {
-            if self.literal_type(arg)? != ty {
+        let mut function = self.builtin_const(op)?;
+        for (&argument, input) in args.iter().zip(inputs) {
+            if self.literal_type(argument)? != input
+                || !self.equivalent(self.classifier(argument)?, crate::global::ty(input))?
+            {
                 return Err(EvalError::Signature.into());
             }
-            let classifier = self.classifier(arg)?;
-            self.require_star_type::<Infallible>(classifier)?;
-            classifiers.push(classifier);
         }
-        self.literal_capacity(4 * args.len() + 4)?;
-        let mut term = self.builtin_const_at(op, &classifiers, output)?;
-        for &arg in args {
-            term = self.app(term, arg)?;
+        if let Builtin::Cast(crate::literals::CastOp::WordWrap(from, to)) =
+            crate::global::canonical(op)
+            && from == to
+        {
+            return Ok(args[0]);
         }
-        Ok(term)
+        self.literal_capacity(args.len())?;
+        for &argument in args {
+            function = self.app(function, argument)?;
+        }
+        Ok(function)
     }
     /// Computes a closed literal expression and proves its exact equality.
     ///
@@ -150,8 +119,18 @@ impl Kernel {
         term: Ref,
         limits: EvalLimits,
     ) -> Result<(Ref, ThmId), KernelError> {
-        self.require_literal_capability()?;
         self.literal_type(term)?;
+        let mut staged = self.fork();
+        let result = staged.reduce_literal_value(term, limits)?;
+        let bool_ty = staged.literal_ty(LiteralType::Bool)?;
+        let ty = staged.classifier(term)?;
+        let equality = staged.eq_at(bool_ty, ty, term, result)?;
+        let theorem = staged.push_axiom(equality)?;
+        *self = staged;
+        Ok((result, theorem))
+    }
+
+    fn reduce_literal_value(&mut self, term: Ref, limits: EvalLimits) -> Result<Ref, KernelError> {
         let mut todo = vec![(term, false)];
         let mut values = BTreeMap::new();
         let mut active = std::collections::BTreeSet::new();
@@ -165,9 +144,11 @@ impl Kernel {
                 .filter(|n| *n <= limits.max_steps)
                 .ok_or(EvalError::Resource)?;
             self.validate_copy_row(r)?;
-            if let Some(value) = self.arena.literal_value(r) {
+            let root = self.find(r)?;
+            if let Some(value) = self.arena.literal_value(root) {
+                self.validate_copy_row(root)?;
                 super::super::literals::check_size(&value, limits)?;
-                values.insert(r, value);
+                values.insert(r, (root, value));
                 continue;
             }
             let node = *self.row::<Infallible>(r)?.expr();
@@ -182,14 +163,21 @@ impl Kernel {
             if visited {
                 let arguments = operands
                     .iter()
-                    .map(|child| values.get(child).cloned().ok_or(EvalError::Undefined))
+                    .map(|child| {
+                        values
+                            .get(child)
+                            .map(|(_, value)| value.clone())
+                            .ok_or(EvalError::Undefined)
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 let result = if let Some(op) = operation {
                     op.evaluate(&arguments, limits)?
                 } else {
                     LiteralValue::Bool(arguments[0] == arguments[1])
                 };
-                values.insert(r, result);
+                let result_ref = self.literal(result.clone())?;
+                self.union::<Infallible>(r, result_ref)?;
+                values.insert(r, (result_ref, result));
                 active.remove(&r);
             } else {
                 if !active.insert(r) {
@@ -201,26 +189,16 @@ impl Kernel {
                 }
             }
         }
-        let value = values.remove(&term).ok_or(EvalError::Undefined)?;
-        let mut staged = self.fork();
-        let result = staged.literal(value)?;
-        let bool_ty = staged.literal_ty(LiteralType::Bool)?;
-        let ty = staged.classifier(term)?;
-        // Imported/copied carriers may have distinct local rows but the same
-        // intrinsic meaning. Construct the result at the exact input carrier.
-        if staged.literal_type(term)? == staged.literal_type(result)? {
-            staged
-                .arena
-                .set_eq_column(crate::EqColumn::Conv, result, Some(ty));
-        }
-        let equality = staged.eq_at(bool_ty, ty, term, result)?;
-        let theorem = staged.push_axiom(equality)?;
-        *self = staged;
-        Ok((result, theorem))
+        values
+            .remove(&term)
+            .map(|(reference, _)| reference)
+            .ok_or_else(|| EvalError::Undefined.into())
     }
     pub(super) fn validate_literal_row(&self, r: Ref) -> Result<Ref, KernelError> {
-        self.require_literal_capability()?;
         let declared = self.literal_type(r)?;
+        if declared != LiteralType::Bool {
+            self.require_literal_capability()?;
+        }
         let actual = match *self.row::<Infallible>(r)?.expr() {
             Node::ConstRef(id) => self
                 .arena
@@ -240,7 +218,7 @@ impl Kernel {
     }
 
     pub(super) fn validate_builtin_const(&self, r: Ref, op: Builtin) -> Result<Ref, KernelError> {
-        self.require_literal_capability()?;
+        self.row::<Infallible>(r)?;
         let (inputs, output) = op.signature()?;
         let original = self.classifier(r)?;
         let mut ty = original;
@@ -294,6 +272,9 @@ impl Kernel {
         }
     }
     fn literal_capacity(&self, additional: usize) -> Result<(), KernelError> {
+        if additional == 0 {
+            return Ok(());
+        }
         let last = self
             .arena
             .len()
@@ -307,6 +288,7 @@ impl Kernel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Row;
     use crate::literals::{BytesOp, CastOp, Endian, IntOp, NatOp, WordOp, WordWidth};
     use covalence_data_num::{Int, Num};
 
@@ -347,7 +329,10 @@ mod tests {
     fn corrupted_builtin_function_signature_is_rejected_atomically() {
         for corrupt_domain in [true, false] {
             let mut k = kernel();
-            let successor = k.builtin_const(Builtin::Nat(NatOp::Succ)).unwrap();
+            let successor = k
+                .arena
+                .push_row(Row::new(Node::Builtin(Builtin::Nat(NatOp::Succ))), None)
+                .unwrap();
             let nat_ty = k.literal_ty(LiteralType::Nat).unwrap();
             let int_ty = k.literal_ty(LiteralType::Int).unwrap();
             let (domain, result) = if corrupt_domain {
@@ -418,6 +403,35 @@ mod tests {
             Some(LiteralValue::I32(924))
         );
         assert!(k.theorems().get(thm).is_some());
+    }
+    #[test]
+    fn resident_results_are_cached_without_an_auxiliary_value_table() {
+        let mut k = kernel();
+        let bytes = k
+            .literal(LiteralValue::Bytes(vec![1, 2, 3].into()))
+            .unwrap();
+        let doubled = k
+            .builtin(Builtin::Bytes(BytesOp::Append), &[bytes, bytes])
+            .unwrap();
+        let (result, _) = k.reduce_builtin(doubled, EvalLimits::default()).unwrap();
+        assert!(result.get() > 0);
+        assert_eq!(k.find(doubled).unwrap(), result);
+        let before = k.len();
+        let (again, _) = k
+            .reduce_builtin(
+                doubled,
+                EvalLimits {
+                    max_steps: 1,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(again, result);
+        assert_eq!(
+            k.len(),
+            before + 1,
+            "only the requested theorem proposition is appended"
+        );
     }
     #[test]
     fn arithmetic_and_bytes_produce_real_theorems() {
@@ -498,7 +512,10 @@ mod tests {
         assert!(k.literal(LiteralValue::Nat(Num::ZERO)).is_err());
         assert!(k.arena.is_empty());
         let mut k = kernel();
-        let value = k.literal(LiteralValue::I8(7)).unwrap();
+        let value = k
+            .arena
+            .push_row(Row::new(Node::Word(WordWidth::W8, 7)), None)
+            .unwrap();
         let wrong = k.literal_ty(LiteralType::Int).unwrap();
         k.arena
             .set_eq_column(crate::EqColumn::Conv, value, Some(wrong));
@@ -547,11 +564,11 @@ mod tests {
         destination
             .literal(LiteralValue::Nat(Num::from(100u8)))
             .unwrap();
-        assert_ne!(source.classifier(sum).unwrap(), cached_nat);
+        assert_eq!(source.classifier(sum).unwrap(), cached_nat);
         let copy = destination.copy_terms_from(&source, &[sum]).unwrap();
         let copied = copy.roots()[0];
         let copied_type = destination.classifier(copied).unwrap();
-        assert_ne!(copied_type, cached_nat);
+        assert_eq!(copied_type, cached_nat);
         let (result, theorem) = destination
             .reduce_builtin(copied, EvalLimits::default())
             .unwrap();

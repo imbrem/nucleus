@@ -2,8 +2,8 @@
 use covalence_data_num::{Int, Num};
 use covalence_lib_json::serde_json::{Value, json};
 use covalence_logic_hol::literals::{
-    Builtin, BytesOp, CastOp, Endian, EvalError, EvalLimits, IntOp, LiteralType, LiteralValue,
-    NatOp, WordOp, WordWidth,
+    BoolOp, Builtin, BytesOp, CastOp, Endian, EvalError, EvalLimits, IntOp, LiteralType,
+    LiteralValue, NatOp, WordOp, WordWidth,
 };
 fn name(ty: LiteralType) -> &'static str {
     match ty {
@@ -72,7 +72,8 @@ fn record(op: Builtin, args: Vec<LiteralValue>) -> Value {
         }
         Err(e) => panic!("unexpected fixture error {e:?} for {op:?}"),
     };
-    json!({"op":op,"inputs":inputs.into_iter().map(name).collect::<Vec<_>>(),"output":name(output),"args":args.into_iter().map(|v|value(&v)).collect::<Vec<_>>(),"result":result})
+    let builtin_ref = kernel.builtin_const(op).unwrap().get();
+    json!({"op":op,"builtin_ref":builtin_ref,"inputs":inputs.into_iter().map(name).collect::<Vec<_>>(),"output":name(output),"args":args.into_iter().map(|v|value(&v)).collect::<Vec<_>>(),"result":result})
 }
 #[allow(clippy::too_many_lines)]
 pub(crate) fn vectors() -> Vec<Value> {
@@ -83,6 +84,16 @@ pub(crate) fn vectors() -> Vec<Value> {
         WordWidth::W64,
     ];
     let mut ops = Vec::new();
+    ops.extend(
+        [
+            BoolOp::Not,
+            BoolOp::And,
+            BoolOp::Or,
+            BoolOp::Imp,
+            BoolOp::Iff,
+        ]
+        .map(Builtin::Bool),
+    );
     for w in widths {
         for op in [
             WordOp::Add,
@@ -478,6 +489,20 @@ pub(crate) fn vectors() -> Vec<Value> {
                 LiteralValue::Int(Int::from(7)),
             ],
         ));
+    }
+    for left in [false, true] {
+        vectors.push(record(
+            Builtin::Bool(BoolOp::Not),
+            vec![LiteralValue::Bool(left)],
+        ));
+        for right in [false, true] {
+            for op in [BoolOp::And, BoolOp::Or, BoolOp::Imp, BoolOp::Iff] {
+                vectors.push(record(
+                    Builtin::Bool(op),
+                    vec![LiteralValue::Bool(left), LiteralValue::Bool(right)],
+                ));
+            }
+        }
     }
     vectors
 }

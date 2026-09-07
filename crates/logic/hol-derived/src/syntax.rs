@@ -47,8 +47,8 @@ pub(crate) fn require_same_syntax(
             || tag != kernel.arena().tag(right)
             || kernel.arena().name(left) != kernel.arena().name(right)
             || kernel.arena().bool_value(left) != kernel.arena().bool_value(right)
-            || kernel.arena().op1(left) != kernel.arena().op1(right)
-            || kernel.arena().op2(left) != kernel.arena().op2(right)
+            || kernel.arena().builtin_op(left) != kernel.arena().builtin_op(right)
+            || kernel.arena().literal_value(left) != kernel.arena().literal_value(right)
         {
             return Err(SyntaxError::Different);
         }
@@ -121,8 +121,8 @@ pub fn join_same_syntax(
             || tag != kernel.arena().tag(right)
             || kernel.arena().name(left) != kernel.arena().name(right)
             || kernel.arena().bool_value(left) != kernel.arena().bool_value(right)
-            || kernel.arena().op1(left) != kernel.arena().op1(right)
-            || kernel.arena().op2(left) != kernel.arena().op2(right)
+            || kernel.arena().builtin_op(left) != kernel.arena().builtin_op(right)
+            || kernel.arena().literal_value(left) != kernel.arena().literal_value(right)
         {
             return Err(SyntaxError::Different);
         }
@@ -474,8 +474,8 @@ fn derive_alpha_congruence(
     }
     if kernel.arena().name(left) != kernel.arena().name(right)
         || kernel.arena().bool_value(left) != kernel.arena().bool_value(right)
-        || kernel.arena().op1(left) != kernel.arena().op1(right)
-        || kernel.arena().op2(left) != kernel.arena().op2(right)
+        || kernel.arena().builtin_op(left) != kernel.arena().builtin_op(right)
+        || kernel.arena().literal_value(left) != kernel.arena().literal_value(right)
     {
         return Err(SyntaxError::Different);
     }
@@ -824,21 +824,6 @@ impl<'a> Freshen<'a> {
                 .kernel
                 .tm_fv(name.ok_or(SyntaxError::Different)?, c[0])?,
             Tag::Tm(TmTag::App) => self.kernel.app(c[0], c[1])?,
-            Tag::Tm(TmTag::Op1) => self.kernel.op1(
-                self.kernel
-                    .arena()
-                    .op1(input)
-                    .ok_or(SyntaxError::Different)?,
-                c[0],
-            )?,
-            Tag::Tm(TmTag::Op2) => self.kernel.op2(
-                self.kernel
-                    .arena()
-                    .op2(input)
-                    .ok_or(SyntaxError::Different)?,
-                c[0],
-                c[1],
-            )?,
             Tag::Tm(TmTag::Eq) => {
                 self.kernel
                     .eq_at(self.kernel.classifier(input)?, c[0], c[1], c[2])?

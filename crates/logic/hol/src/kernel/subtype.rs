@@ -108,7 +108,7 @@ use std::convert::Infallible;
 use super::{Kernel, KernelError, ThmId};
 use crate::{
     Ref,
-    builtin::{Op1, Op2},
+    literals::{BoolOp, Builtin},
     row::Expr as Node,
 };
 
@@ -316,9 +316,9 @@ impl Kernel {
         let witness = self.tm_fv(base_name + Binder::Witness as u64, carrier)?;
         let holds_witness = self.app(predicate, witness)?;
         let inhabited = self.exists_tm(witness, holds_witness)?;
-        let empty = self.op1(Op1::Not, inhabited)?;
+        let empty = self.builtin(Builtin::Bool(BoolOp::Not), &[inhabited])?;
         let holds_value = self.app(predicate, value)?;
-        self.op2(Op2::Or, holds_value, empty)
+        self.builtin(Builtin::Bool(BoolOp::Or), &[holds_value, empty])
     }
 
     /// The three package laws for one candidate model type.
@@ -349,7 +349,7 @@ impl Kernel {
             let guard = self.guard_body(base_name, carrier, predicate, carrier_value)?;
             let applied = self.app(representation, abs_a)?;
             let equality = self.eq(bool_ty, applied, carrier_value)?;
-            let implication = self.op2(Op2::Imp, guard, equality)?;
+            let implication = self.builtin(Builtin::Bool(BoolOp::Imp), &[guard, equality])?;
             self.forall_tm(bool_ty, carrier_value, implication)?
         };
 
@@ -382,7 +382,7 @@ impl Kernel {
             representation,
             abstraction,
         )?;
-        let tail = self.op2(Op2::And, rep_abs, rep_guarded)?;
-        self.op2(Op2::And, abs_rep, tail)
+        let tail = self.builtin(Builtin::Bool(BoolOp::And), &[rep_abs, rep_guarded])?;
+        self.builtin(Builtin::Bool(BoolOp::And), &[abs_rep, tail])
     }
 }

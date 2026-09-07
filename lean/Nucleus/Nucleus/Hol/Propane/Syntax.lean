@@ -24,7 +24,7 @@ inductive Ty where
   | arr (domain codomain : Ty)
   deriving DecidableEq, Repr
 
-def Ty.ofLiteral : LiteralTy → Ty
+@[reducible] def Ty.ofLiteral : LiteralTy → Ty
   | .bool => .bool | .word width => .word width
   | .nat => .nat | .int => .int | .bytes => .bytes
 
@@ -43,7 +43,7 @@ def Ty.default : (type : Ty) → type.denote
 def Ty.literalValue (type : LiteralTy) (value : type.denote) : (ofLiteral type).denote :=
   (denote_ofLiteral type).symm ▸ value
 
-def Ty.arrows (inputs : List LiteralTy) (output : LiteralTy) : Ty :=
+@[reducible] def Ty.arrows (inputs : List LiteralTy) (output : LiteralTy) : Ty :=
   inputs.foldr (fun input rest => .arr (ofLiteral input) rest) (ofLiteral output)
 
 /-- A heterogeneous list containing exactly the specified literal carriers. -/

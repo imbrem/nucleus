@@ -211,7 +211,7 @@ mod tests {
         assert!(sequent.lhs.to_rows().is_empty());
         assert_eq!(
             sequent.rhs.to_rows()[0].as_slice(),
-            [covalence_logic_classical::Lit::positive(truth.get())],
+            [],
             "the conclusion is the predicate with the model substituted in"
         );
     }

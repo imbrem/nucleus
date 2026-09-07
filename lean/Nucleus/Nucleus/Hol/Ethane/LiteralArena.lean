@@ -1,6 +1,7 @@
 import Nucleus.Hol.Ethane.Literals
 import Nucleus.Hol.Propane.LiteralWire
 import Nucleus.Hol.Propane.Syntax
+import Nucleus.Hol.Propane.LiteralRegistry
 
 /-!
 # Checked literal DAG reduction
@@ -12,8 +13,10 @@ primitive/arrow type graph. Kind evidence and union-find transport belong to
 the existing kernel validation and are not represented or proved here. Thus
 this is not a verbatim model of every raw arena field or every Rust check.
 
-Term references obey Rust's one-based bounds, excluding the signed-32-bit
-maximum sentinel. Constant-table references are zero-based unsigned-32-bit
+Positive references obey Rust's one-based local bounds, excluding the signed-32-bit
+maximum sentinel. Negative references use the immutable arithmetic registry;
+their sign never encodes classical literal polarity. Constant-table references
+are zero-based unsigned-32-bit
 indices. The projected type graph and classifiers are checked separately from
 values. Existing nonliteral syntax is opaque to this reducer.
 
@@ -32,34 +35,56 @@ open Nucleus.HolE.Infinity
 
 inductive Node where
   | type (type : LiteralTy)
-  | arrow (domain codomain : Nat)
+  | arrow (domain codomain : Int)
   | bool (value : Bool)
   | natInline (value : Nat)
   | intInline (value : Int)
   | wordInline (width : Width) (value : Int)
   | constRef (index : Nat)
   | builtin (op : Builtin)
-  | app (function argument : Nat)
-  | eq (type left right : Nat)
+  | app (function argument : Int)
+  | eq (type left right : Int)
   | other
   deriving DecidableEq, Repr
 
 structure Row where
   node : Node
-  classifier : Nat
+  classifier : Int
   deriving DecidableEq, Repr
 
 structure Arena where
   rows : List Row
   constants : List RawConstant
 
-def Arena.lookup (arena : Arena) (reference : Nat) : Option Row :=
-  if 0 < reference ∧ reference < 2 ^ 31 - 1 then arena.rows[reference - 1]? else none
+def registryRow (entry : LiteralRegistry.Entry) : Row :=
+  ⟨match entry with
+    | .star => .other
+    | .type type => .type type
+    | .literal (.bool value) => .bool value
+    | .literal (.nat value) => .natInline value
+    | .literal (.int value) => .intInline value
+    | .literal (.word width value) => .wordInline width value.toInt
+    | .literal (.bytes _) => .other
+    | .builtin op => .builtin op
+    | .arrow (domain :: rest) =>
+        .arrow (LiteralRegistry.typeRef domain) (LiteralRegistry.signatureRef rest)
+    | .arrow [] => .other,
+    entry.classifier⟩
+
+def Arena.lookup (arena : Arena) (reference : Int) : Option Row :=
+  if reference < 0 then registryRow <$> LiteralRegistry.lookup reference
+  else if 0 < reference ∧ reference < 2 ^ 31 - 1 then
+    arena.rows[(reference - 1).toNat]? else none
+
+/-- No local arena write can replace an immutable registry row. -/
+theorem Arena.lookup_global_immutable (before after : Arena) (reference : Int)
+    (global : reference < 0) : before.lookup reference = after.lookup reference := by
+  simp only [lookup, global, ↓reduceIte]
 
 @[simp] theorem Arena.lookup_sentinel (arena : Arena) :
     arena.lookup (2 ^ 31 - 1) = none := by simp [lookup]
 
-def Arena.typeAtFuel (arena : Arena) : Nat → Nat → Option Propane.Ty
+def Arena.typeAtFuel (arena : Arena) : Nat → Int → Option Propane.Ty
   | 0, _ => none
   | fuel + 1, reference => do
       match (← arena.lookup reference).node with
@@ -68,10 +93,24 @@ def Arena.typeAtFuel (arena : Arena) : Nat → Nat → Option Propane.Ty
           return .arr (← arena.typeAtFuel fuel domain) (← arena.typeAtFuel fuel codomain)
       | _ => none
 
-def Arena.typeAt (arena : Arena) (reference : Nat) : Option Propane.Ty :=
-  arena.typeAtFuel (arena.rows.length + 1) reference
+def Arena.typeAt (arena : Arena) (reference : Int) : Option Propane.Ty :=
+  arena.typeAtFuel (arena.rows.length + 6) reference
 
-def Arena.classifierType (arena : Arena) (reference : Nat) : Option Propane.Ty := do
+/-- Every global scalar type has its concrete Propane carrier, independently of arena state. -/
+theorem Arena.global_type_meaning (arena : Arena) (type : LiteralTy) (fuel : Nat) :
+    arena.typeAtFuel (fuel + 1) (LiteralRegistry.typeRef type) = some (Ty.ofLiteral type) := by
+  have negative : LiteralRegistry.typeRef type < 0 := by
+    cases type with
+    | word width => cases width <;> decide
+    | _ => decide
+  have found : arena.lookup (LiteralRegistry.typeRef type) =
+      some (registryRow (.type type)) := by
+    simp only [Arena.lookup, negative, ↓reduceIte, LiteralRegistry.lookup_type]
+    rfl
+  simp only [Arena.typeAtFuel, found]
+  rfl
+
+def Arena.classifierType (arena : Arena) (reference : Int) : Option Propane.Ty := do
   arena.typeAt (← arena.lookup reference).classifier
 
 def scalarType : Propane.Ty → Option LiteralTy
@@ -79,7 +118,7 @@ def scalarType : Propane.Ty → Option LiteralTy
   | .nat => some .nat | .int => some .int | .bytes => some .bytes
   | .arr _ _ => none
 
-def Arena.literalType (arena : Arena) (reference : Nat) : Option LiteralTy := do
+def Arena.literalType (arena : Arena) (reference : Int) : Option LiteralTy := do
   scalarType (← arena.classifierType reference)
 
 def Node.leaf (constants : List RawConstant) : Node → Option LiteralValue
@@ -91,7 +130,7 @@ def Node.leaf (constants : List RawConstant) : Node → Option LiteralValue
   | _ => none
 
 /-- Input order and multiplicity are preserved, including shared references. -/
-def gather {α : Type} (lookup : Nat → Option α) : List Nat → Option (List α)
+def gather {α : Type} (lookup : Int → Option α) : List Int → Option (List α)
   | [] => some []
   | reference :: references => do return (← lookup reference) :: (← gather lookup references)
 
@@ -116,14 +155,14 @@ def Node.classify (arena : Arena) : Node → Option Propane.Ty
         then some .bool else none
   | _ => none
 
-def Arena.validRow (arena : Arena) (reference : Nat) : Bool :=
+def Arena.validRow (arena : Arena) (reference : Int) : Bool :=
   match arena.lookup reference, arena.classifierType reference with
   | some row, some type => row.node.classify arena == some type
   | _, _ => false
 
 /-- Inspect ordinary applications, checking every intermediate function row.
 Fuel only declines malformed/cyclic/overlong syntax; it is not a semantic value. -/
-def Arena.spineFuel (arena : Arena) : Nat → Nat → List Nat → Option (Builtin × List Nat)
+def Arena.spineFuel (arena : Arena) : Nat → Int → List Int → Option (Builtin × List Int)
   | 0, _, _ => none
   | fuel + 1, reference, arguments => do
       if !arena.validRow reference then none else
@@ -132,11 +171,11 @@ def Arena.spineFuel (arena : Arena) : Nat → Nat → List Nat → Option (Built
         | .app function argument => arena.spineFuel fuel function (argument :: arguments)
         | _ => none
 
-def Arena.spine (arena : Arena) (reference : Nat) : Option (Builtin × List Nat) :=
+def Arena.spine (arena : Arena) (reference : Int) : Option (Builtin × List Int) :=
   arena.spineFuel (arena.rows.length + 1) reference []
 
-theorem gather_some {α : Type} {lookup : Nat → Option α}
-    {references : List Nat} {values : List α} (found : gather lookup references = some values) :
+theorem gather_some {α : Type} {lookup : Int → Option α}
+    {references : List Int} {values : List α} (found : gather lookup references = some values) :
     List.Forall₂ (fun reference value => lookup reference = some value) references values := by
   induction references generalizing values with
   | nil => simpa [gather] using found
@@ -155,13 +194,13 @@ theorem gather_some {α : Type} {lookup : Nat → Option α}
 noncomputable section
 
 /-- Independent relational meaning of literal rows in the constructed carriers. -/
-inductive Denotes (naturals : CNatModel) (arena : Arena) : Nat → Value naturals → Prop
-  | leaf {reference : Nat} {row : Row} {value : LiteralValue}
+inductive Denotes (naturals : CNatModel) (arena : Arena) : Int → Value naturals → Prop
+  | leaf {reference : Int} {row : Row} {value : LiteralValue}
       (found : arena.lookup reference = some row)
       (valid : arena.validRow reference = true)
       (decoded : row.node.leaf arena.constants = some value) :
       Denotes naturals arena reference (quote naturals value)
-  | builtin {reference : Nat} {row : Row} {op : Builtin} {references : List Nat}
+  | builtin {reference : Int} {row : Row} {op : Builtin} {references : List Int}
       {values : List (Value naturals)} {value : Value naturals}
       (found : arena.lookup reference = some row)
       (resolved : arena.spine reference = some (op, references))
@@ -169,7 +208,7 @@ inductive Denotes (naturals : CNatModel) (arena : Arena) : Nat → Value natural
       (arguments : List.Forall₂ (Denotes naturals arena) references values)
       (computed : interpret naturals op values = some value) :
       Denotes naturals arena reference value
-  | eq {reference : Nat} {row : Row} {type left right : Nat}
+  | eq {reference : Int} {row : Row} {type left right : Int}
       {leftValue rightValue : LiteralValue}
       (found : arena.lookup reference = some row)
       (node : row.node = .eq type left right)
@@ -180,17 +219,17 @@ inductive Denotes (naturals : CNatModel) (arena : Arena) : Nat → Value natural
       Denotes naturals arena reference
         (quote naturals (.bool (decide (leftValue = rightValue))))
 
-abbrev Cache := Nat → Option LiteralValue
+abbrev Cache := Int → Option LiteralValue
 
 def Cache.Sound (naturals : CNatModel) (arena : Arena) (cache : Cache) : Prop :=
   ∀ reference value, cache reference = some value →
     Denotes naturals arena reference (quote naturals value)
 
-def Cache.insert (cache : Cache) (reference : Nat) (value : LiteralValue) : Cache :=
+def Cache.insert (cache : Cache) (reference : Int) (value : LiteralValue) : Cache :=
   fun candidate => if candidate = reference then some value else cache candidate
 
 theorem Cache.insert_sound {naturals : CNatModel} {arena : Arena} {cache : Cache}
-    {reference : Nat} {value : LiteralValue} (sound : cache.Sound naturals arena)
+    {reference : Int} {value : LiteralValue} (sound : cache.Sound naturals arena)
     (denotes : Denotes naturals arena reference (quote naturals value)) :
     (cache.insert reference value).Sound naturals arena := by
   intro candidate result found
@@ -203,7 +242,7 @@ theorem Cache.insert_sound {naturals : CNatModel} {arena : Arena} {cache : Cache
   · exact sound candidate result found
 
 theorem Cache.gather_sound {naturals : CNatModel} {arena : Arena} {cache : Cache}
-    {references : List Nat} {values : List LiteralValue}
+    {references : List Int} {values : List LiteralValue}
     (sound : cache.Sound naturals arena) (found : gather cache references = some values) :
     List.Forall₂ (Denotes naturals arena) references (values.map (quote naturals)) := by
   have relation := gather_some found
@@ -214,20 +253,20 @@ theorem Cache.gather_sound {naturals : CNatModel} {arena : Arena} {cache : Cache
 
 /-- Only these successful events can populate the evaluator's result cache. -/
 inductive Step (arena : Arena) : Cache → Cache → Prop
-  | leaf {cache : Cache} {reference : Nat} {row : Row} {value : LiteralValue}
+  | leaf {cache : Cache} {reference : Int} {row : Row} {value : LiteralValue}
       (found : arena.lookup reference = some row)
       (valid : arena.validRow reference = true)
       (decoded : row.node.leaf arena.constants = some value) :
       Step arena cache (cache.insert reference value)
-  | builtin {cache : Cache} {reference : Nat} {row : Row} {op : Builtin}
-      {references : List Nat} {values : List LiteralValue} {value : LiteralValue}
+  | builtin {cache : Cache} {reference : Int} {row : Row} {op : Builtin}
+      {references : List Int} {values : List LiteralValue} {value : LiteralValue}
       (found : arena.lookup reference = some row)
       (resolved : arena.spine reference = some (op, references))
       (valid : arena.validRow reference = true)
       (arguments : gather cache references = some values)
       (computed : op.eval values = some value) :
       Step arena cache (cache.insert reference value)
-  | eq {cache : Cache} {reference : Nat} {row : Row} {type left right : Nat}
+  | eq {cache : Cache} {reference : Int} {row : Row} {type left right : Int}
       {leftValue rightValue : LiteralValue}
       (found : arena.lookup reference = some row)
       (node : row.node = .eq type left right)
@@ -273,7 +312,7 @@ theorem Steps.trans {arena : Arena} {before middle after : Cache}
   | next steps step ih => exact .next ih step
 
 /-- Executable checking of one scheduled row, returning its cache-invariant proof. -/
-def visit (arena : Arena) (cache : Cache) (reference : Nat) :
+def visit (arena : Arena) (cache : Cache) (reference : Int) :
     Option { after : Cache // Step arena cache after } :=
   match found : arena.lookup reference with
   | none => none
@@ -302,7 +341,7 @@ def visit (arena : Arena) (cache : Cache) (reference : Nat) :
       else none
 
 /-- A schedule is untrusted. Every visited row must pass all checks. -/
-def replay (arena : Arena) : (schedule : List Nat) → (before : Cache) →
+def replay (arena : Arena) : (schedule : List Int) → (before : Cache) →
     Option { after : Cache // Steps arena before after }
   | [], before => some ⟨before, .refl before⟩
   | reference :: rest, before => do
@@ -310,20 +349,20 @@ def replay (arena : Arena) : (schedule : List Nat) → (before : Cache) →
       let result ← replay arena rest next.val
       return ⟨result.val, (Steps.next (.refl before) next.property).trans result.property⟩
 
-def check (arena : Arena) (schedule : List Nat) (reference : Nat) : Option LiteralValue := do
+def check (arena : Arena) (schedule : List Int) (reference : Int) : Option LiteralValue := do
   let result ← replay arena schedule (fun _ => none)
   result.val reference
 
 /-- Exact reference and exact result of successful nested reduction. -/
-theorem reduction_sound {arena : Arena} {cache : Cache} {reference : Nat}
+theorem reduction_sound {arena : Arena} {cache : Cache} {reference : Int}
     {value : LiteralValue} (naturals : CNatModel)
     (steps : Steps arena (fun _ => none) cache) (result : cache reference = some value) :
     Denotes naturals arena reference (quote naturals value) :=
   steps.preserves naturals (by intro _ _ rejected; contradiction) reference value result
 
 /-- Successful execution of the concrete reference checker yields the semantic fact. -/
-theorem check_sound (naturals : CNatModel) {arena : Arena} {schedule : List Nat}
-    {reference : Nat} {value : LiteralValue}
+theorem check_sound (naturals : CNatModel) {arena : Arena} {schedule : List Int}
+    {reference : Int} {value : LiteralValue}
     (checked : check arena schedule reference = some value) :
     Denotes naturals arena reference (quote naturals value) := by
   unfold check at checked

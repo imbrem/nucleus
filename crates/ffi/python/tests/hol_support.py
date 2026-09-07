@@ -47,7 +47,28 @@ __all__ = [
     "unify",
 ]
 
-LEAF_TAGS = frozenset({"kind.star", "ty.bool", "tm.bool"})
+LEAF_TAGS = frozenset(
+    {
+        "kind.star",
+        "ty.bool",
+        "ty.i8",
+        "ty.i16",
+        "ty.i32",
+        "ty.i64",
+        "ty.nat",
+        "ty.int",
+        "ty.bytes",
+        "tm.bool",
+        "tm.i8",
+        "tm.i16",
+        "tm.i32",
+        "tm.i64",
+        "tm.nat",
+        "tm.int",
+        "tm.const",
+        "tm.builtin",
+    }
+)
 VARIABLE_TAGS = frozenset({"ty.fv", "tm.fv"})
 BINDER_TAGS = frozenset({"ty.lam", "tm.lam"})
 IMPLICIT_BINDER_TAGS = frozenset({"ty.model", "tm.ty_exists", "tm.ty_forall"})
@@ -168,8 +189,14 @@ class Rows:
     def __getitem__(self, reference: int) -> Definition:
         row = self._rows.get(reference)
         if row is None:
-            self.refresh()
-            row = self._rows[reference]
+            if reference < 0:
+                row = self._kernel.arena.definition(reference)
+                if row is None:
+                    raise KeyError(reference)
+                self._rows[reference] = row
+            else:
+                self.refresh()
+                row = self._rows[reference]
         return row
 
     def __len__(self) -> int:
@@ -264,9 +291,7 @@ def implicit_binder(kernel: Kernel, name: int | None, rows: Rows) -> int:
     """
     if name is None:
         raise CannotProveError("row has no binder name")
-    star = next((row.reference for row in rows if row.tag == "kind.star"), None)
-    if star is None:
-        raise CannotProveError("kernel has no kind.star row")
+    star = kernel.star()
     for row in rows:
         if (
             row.tag == "ty.fv"

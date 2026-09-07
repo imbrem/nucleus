@@ -1,4 +1,8 @@
-"""Raw and checked one-based Ethane arenas, plus reusable proof components."""
+"""Raw and checked Ethane arenas, plus reusable proof components.
+
+Positive references name stored local rows; negative references name immutable
+builtins. Theorem literals have a separate polarity and name only local rows.
+"""
 
 from __future__ import annotations
 

@@ -137,6 +137,16 @@ pub struct Expr {
 }
 
 impl Expr {
+    /// Descriptor of a builtin constant at this cursor.
+    #[must_use]
+    pub fn builtin_op(&self) -> Option<crate::literals::Builtin> {
+        self.arena().builtin_op(self.reference)
+    }
+    /// Resident literal value at this cursor.
+    #[must_use]
+    pub fn literal_value(&self) -> Option<crate::literals::LiteralValue> {
+        self.arena().literal_value(self.reference)
+    }
     /// Returns the local reference within [`Self::table`].
     #[must_use]
     pub const fn reference(&self) -> Ref {
@@ -201,18 +211,6 @@ impl Expr {
     #[must_use]
     pub fn bool_value(&self) -> Option<bool> {
         self.arena().bool_value(self.reference)
-    }
-
-    /// Returns the unary builtin carried by this row.
-    #[must_use]
-    pub fn op1(&self) -> Option<crate::builtin::Op1> {
-        self.arena().op1(self.reference)
-    }
-
-    /// Returns the binary builtin carried by this row.
-    #[must_use]
-    pub fn op2(&self) -> Option<crate::builtin::Op2> {
-        self.arena().op2(self.reference)
     }
 
     /// Returns the source and index carried by a proxy row.

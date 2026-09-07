@@ -1,4 +1,5 @@
 import Nucleus.Hol.Propane.Builtin
+import Nucleus.Hol.Propane.LiteralRegistry
 import Lean.Data.Json.Parser
 
 /-!
@@ -108,6 +109,8 @@ private def castOp (json : Json) : Except String CastOp := do
 private def builtin (json : Json) : Except String Builtin := do
   let (name, args) ← tagged json
   match name, args with
+  | "Bool", [op] => return .bool (← named [("Not", .not), ("And", .and),
+      ("Or", .or), ("Imp", .imp), ("Iff", .iff)] (← op.getStr?))
   | "Word", [bits, op] => return .word (← width bits) (← wordOp op)
   | "Nat", [op] => return .nat (← natOp op)
   | "Int", [op] => return .int (← intOp op)
@@ -153,6 +156,11 @@ private def literal (json : Json) : Except String LiteralValue := do
 def checkFixture (entry : Json) : Except String Unit := do
   let descriptor ← entry.getObjVal? "op"
   let op ← builtin descriptor
+  let reference ← (← entry.getObjVal? "builtin_ref").getInt?
+  unless LiteralRegistry.builtinRef op = reference do
+    throw s!"canonical registry reference mismatch: {descriptor.compress}"
+  unless LiteralRegistry.lookup reference = some (.builtin (LiteralRegistry.canonicalBuiltin op)) do
+    throw s!"registry decoding mismatch: {descriptor.compress}"
   let args ← (← (← entry.getObjVal? "args").getArr?).toList.mapM literal
   let result ← entry.getObjVal? "result"
   let expected ← if result.isNull then pure none else some <$> literal result

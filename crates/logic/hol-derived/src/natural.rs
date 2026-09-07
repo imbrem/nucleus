@@ -11,8 +11,7 @@ use std::ops::Deref;
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    AX_INF, AX_SUB, Kernel, KernelError, Lit, Ref, SynRel, Tag, ThmId, TmTag,
-    builtin::{Op1, Op2},
+    AX_INF, AX_SUB, Kernel, KernelError, Lit, Ref, SynRel, Tag, ThmId, TmTag, literals::BoolOp,
 };
 
 use crate::{
@@ -255,8 +254,8 @@ impl Naturals {
         step_theorem: ThmId,
     ) -> Result<NaturalInduction, NaturalError> {
         let specialized = forall_elim(kernel, self.proof.induction, predicate)?;
-        let [premises, universal] = exact_op2(kernel, specialized.proposition, Op2::Imp)?;
-        let [base, step] = exact_op2(kernel, premises, Op2::And)?;
+        let [premises, universal] = exact_op2(kernel, specialized.proposition, BoolOp::Imp)?;
+        let [base, step] = exact_op2(kernel, premises, BoolOp::And)?;
 
         let base_copy = exact_premise_free_copy(kernel, base_theorem, base)?;
         let step_copy = exact_premise_free_copy(kernel, step_theorem, step)?;
@@ -678,7 +677,7 @@ fn prove_zero_ne_successor(
     let mapped_to_missed = equality_symmetry(kernel, bool_ty, missed_to_mapped.theorem)?;
 
     let avoided = forall_elim(kernel, infinity.avoids_missed_theorem, represented_natural)?;
-    let [_avoided_bool, forbidden_equality, falsehood] =
+    let [_avoided_bool, forbidden_equality, _falsehood] =
         exact_children(kernel, avoided.proposition, Tag::Tm(TmTag::Eq))?;
     join_same_syntax(kernel, mapped_to_missed.equality, forbidden_equality)?;
     kernel.convert_conclusions(
@@ -686,11 +685,10 @@ fn prove_zero_ne_successor(
         mapped_to_missed.equality,
         forbidden_equality,
     )?;
-    let false_theorem = kernel.eq_mp(avoided.theorem, mapped_to_missed.theorem)?;
-    let false_left = kernel.false_left(positive(falsehood))?;
-    let contradiction = kernel.cut(false_theorem, false_left, positive(falsehood))?;
+    // EQ_MP normalizes false to an empty conclusion; no false theorem atom exists.
+    let contradiction = kernel.eq_mp(avoided.theorem, mapped_to_missed.theorem)?;
     kernel.not_right(contradiction, positive(natural_equality))?;
-    let separation = kernel.op1(Op1::Not, natural_equality)?;
+    let separation = kernel.not(natural_equality)?;
     let separation_theorem = kernel.fold_conclusion(contradiction, positive(separation))?;
     let generalized = kernel.forall_intro(separation_theorem, natural)?;
     Ok((generalized.universal, generalized.theorem))
@@ -859,7 +857,7 @@ fn prove_successor_injective(
         right_abs_rep.theorem,
     )?;
 
-    let implication = kernel.op2(Op2::Imp, successor_equality, natural_equality.equality)?;
+    let implication = kernel.implies(successor_equality, natural_equality.equality)?;
     let implication_theorem = kernel.imp_right(natural_equality.theorem, positive(implication))?;
     kernel.contract_theorem(implication_theorem)?;
     let inner = kernel.forall_intro(implication_theorem, right)?;
@@ -877,7 +875,7 @@ fn prove_mapped_rep_member(
 ) -> Result<ThmId, NaturalError> {
     let represented_member = forall_elim(kernel, rep_member_theorem, natural)?;
     let closure = forall_elim(kernel, member_succ_theorem, represented)?;
-    let [source, target] = exact_op2(kernel, closure.proposition, Op2::Imp)?;
+    let [source, target] = exact_op2(kernel, closure.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, represented_member.proposition, source)?;
     let represented_member_theorem = kernel.copy_theorem(represented_member.theorem)?;
     kernel.convert_conclusions(
@@ -911,8 +909,8 @@ fn prove_guarded_round_trip(
         })?,
         value,
     )?;
-    let [guard, _equality] = exact_op2(kernel, specialized.proposition, Op2::Imp)?;
-    let [member, empty] = exact_op2(kernel, guard, Op2::Or)?;
+    let [guard, _equality] = exact_op2(kernel, specialized.proposition, BoolOp::Imp)?;
+    let [member, empty] = exact_op2(kernel, guard, BoolOp::Or)?;
     let source_member = sole_conclusion(kernel, member_theorem)?;
     join_same_syntax(kernel, source_member, member)?;
     let guard_theorem = kernel.copy_theorem(member_theorem)?;
@@ -1032,8 +1030,8 @@ fn prove_induction(
     induction: Ref,
 ) -> Result<ThmId, NaturalError> {
     let (predicate, principle) = universal_parts(kernel, induction)?;
-    let [premises, conclusion] = exact_op2(kernel, principle, Op2::Imp)?;
-    let [base, _natural_step] = exact_op2(kernel, premises, Op2::And)?;
+    let [premises, conclusion] = exact_op2(kernel, principle, BoolOp::Imp)?;
+    let [base, _natural_step] = exact_op2(kernel, premises, BoolOp::And)?;
     let (natural, at_n) = universal_parts(kernel, conclusion)?;
     let represented = kernel.app(subtype.rep, natural)?;
 
@@ -1063,7 +1061,7 @@ fn prove_induction(
     let member_at_value = kernel.app(member, carrier_value)?;
     let abstracted_value = kernel.app(subtype.abs, carrier_value)?;
     let property_at_value = kernel.app(predicate, abstracted_value)?;
-    let strengthened_body = kernel.op2(Op2::And, member_at_value, property_at_value)?;
+    let strengthened_body = kernel.and(member_at_value, property_at_value)?;
     let strengthened = kernel.lam_at(
         kernel.classifier(member_predicate)?,
         carrier_value,
@@ -1074,8 +1072,9 @@ fn prove_induction(
             expected: "membership specialized at the strengthened predicate",
         })?;
     let [strengthened_closure, strengthened_at_rep] =
-        exact_op2(kernel, represented_closed.proposition, Op2::Imp)?;
-    let [strengthened_base, strengthened_step] = exact_op2(kernel, strengthened_closure, Op2::And)?;
+        exact_op2(kernel, represented_closed.proposition, BoolOp::Imp)?;
+    let [strengthened_base, strengthened_step] =
+        exact_op2(kernel, strengthened_closure, BoolOp::And)?;
 
     // Base: zero membership is already exact, while the user's base premise
     // supplies `P (abs ind.zero)`.
@@ -1090,7 +1089,7 @@ fn prove_induction(
         beta_application(kernel, strengthened, carrier_zero)?;
     join_same_syntax(kernel, strengthened_base_application, strengthened_base)?;
     let [target_zero_member, target_zero_property] =
-        exact_op2(kernel, expanded_strengthened_base, Op2::And)?;
+        exact_op2(kernel, expanded_strengthened_base, BoolOp::And)?;
     join_same_syntax(kernel, zero_member, target_zero_member)?;
     let zero_membership = kernel.copy_theorem(zero_member_theorem)?;
     kernel.convert_conclusions(zero_membership, zero_member, target_zero_member)?;
@@ -1214,7 +1213,7 @@ fn prove_strengthened_step(
     strengthened_step: Ref,
 ) -> Result<ThmId, NaturalError> {
     let (carrier_value, step_body) = universal_parts(kernel, strengthened_step)?;
-    let [at_value, at_next] = exact_op2(kernel, step_body, Op2::Imp)?;
+    let [at_value, at_next] = exact_op2(kernel, step_body, BoolOp::Imp)?;
     let (at_value_application, expanded_at_value) =
         beta_application(kernel, strengthened, carrier_value)?;
     join_same_syntax(kernel, at_value_application, at_value)?;
@@ -1222,8 +1221,8 @@ fn prove_strengthened_step(
     let (at_next_application, expanded_at_next) =
         beta_application(kernel, strengthened, carrier_next)?;
     join_same_syntax(kernel, at_next_application, at_next)?;
-    let [member_at_value, property_at_value] = exact_op2(kernel, expanded_at_value, Op2::And)?;
-    let [member_at_next, property_at_next] = exact_op2(kernel, expanded_at_next, Op2::And)?;
+    let [member_at_value, property_at_value] = exact_op2(kernel, expanded_at_value, BoolOp::And)?;
+    let [member_at_next, property_at_next] = exact_op2(kernel, expanded_at_next, BoolOp::And)?;
 
     let membership_assumption = project_and_left(kernel, expanded_at_value)?;
     let member_step = forall_elim(kernel, member_succ_theorem, carrier_value).map_err(|_| {
@@ -1232,7 +1231,7 @@ fn prove_strengthened_step(
         }
     })?;
     let [member_step_source, member_step_target] =
-        exact_op2(kernel, member_step.proposition, Op2::Imp)?;
+        exact_op2(kernel, member_step.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, member_at_value, member_step_source)?;
     join_same_syntax(kernel, member_at_next, member_step_target)?;
     kernel.convert_conclusions(membership_assumption, member_at_value, member_step_source)?;
@@ -1254,7 +1253,7 @@ fn prove_strengthened_step(
             }
         })?;
     let [natural_step_source, natural_step_target] =
-        exact_op2(kernel, natural_step_at.proposition, Op2::Imp)?;
+        exact_op2(kernel, natural_step_at.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, property_at_value, natural_step_source)?;
     kernel.convert_conclusions(property_assumption, property_at_value, natural_step_source)?;
     let property_of_natural_successor = modus_ponens(
@@ -1274,8 +1273,8 @@ fn prove_strengthened_step(
     .map_err(|_| NaturalError::WrongForm {
         expected: "specializable subtype rep-abs theorem",
     })?;
-    let [guard, _representation_equality] = exact_op2(kernel, rep_abs.proposition, Op2::Imp)?;
-    let [guard_member, guard_empty] = exact_op2(kernel, guard, Op2::Or)?;
+    let [guard, _representation_equality] = exact_op2(kernel, rep_abs.proposition, BoolOp::Imp)?;
+    let [guard_member, guard_empty] = exact_op2(kernel, guard, BoolOp::Or)?;
     join_same_syntax(kernel, member_at_value, guard_member)?;
     let guard_proof = project_and_left(kernel, expanded_at_value)?;
     kernel.convert_conclusions(guard_proof, member_at_value, guard_member)?;
@@ -1350,7 +1349,7 @@ fn prove_member_successor(
     let member_at_value = kernel.app(member, value)?;
     let next = kernel.app(successor, value)?;
     let member_at_next = kernel.app(member, next)?;
-    let implication = kernel.op2(Op2::Imp, member_at_value, member_at_next)?;
+    let implication = kernel.implies(member_at_value, member_at_next)?;
     let statement = kernel.forall_tm(kernel.classifier(member_at_value)?, value, implication)?;
 
     let (next_application, expanded_next) = beta_application(kernel, member, next)?;
@@ -1365,7 +1364,7 @@ fn prove_member_successor(
             expected: "the successor membership universal",
         });
     }
-    let [closure, at_next] = exact_op2(kernel, closure_implication, Op2::Imp)?;
+    let [closure, at_next] = exact_op2(kernel, closure_implication, BoolOp::Imp)?;
 
     let member_assumption = kernel.identity(positive(member_at_value))?;
     let (value_application, expanded_value) = beta_application(kernel, member, value)?;
@@ -1376,7 +1375,7 @@ fn prove_member_successor(
             expected: "specializable membership at the predecessor",
         })?;
     let [specialized_closure, at_value] =
-        exact_op2(kernel, specialized_member.proposition, Op2::Imp)?;
+        exact_op2(kernel, specialized_member.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, closure, specialized_closure)?;
     let closure_proof = kernel.identity(positive(closure))?;
     kernel.convert_conclusions(closure_proof, closure, specialized_closure)?;
@@ -1392,7 +1391,7 @@ fn prove_member_successor(
         forall_elim(kernel, step_proof, value).map_err(|_| NaturalError::WrongForm {
             expected: "specializable successor-closure premise",
         })?;
-    let [step_at, step_next] = exact_op2(kernel, step_at_value.proposition, Op2::Imp)?;
+    let [step_at, step_next] = exact_op2(kernel, step_at_value.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, at_value, step_at)?;
     join_same_syntax(kernel, step_next, at_next)?;
     kernel.convert_conclusions(at_value_proof, at_value, step_at)?;
@@ -1420,7 +1419,7 @@ fn modus_ponens(
     antecedent_theorem: ThmId,
     implication: Ref,
 ) -> Result<ThmId, NaturalError> {
-    let [_antecedent, consequent] = exact_op2(kernel, implication, Op2::Imp)?;
+    let [_antecedent, consequent] = exact_op2(kernel, implication, BoolOp::Imp)?;
     let consequence = kernel.identity(positive(consequent))?;
     let use_implication =
         kernel.imp_left(antecedent_theorem, consequence, positive(implication))?;
@@ -1428,14 +1427,14 @@ fn modus_ponens(
 }
 
 fn project_and_right(kernel: &mut Kernel, conjunction: Ref) -> Result<ThmId, NaturalError> {
-    let [left, right] = exact_op2(kernel, conjunction, Op2::And)?;
+    let [left, right] = exact_op2(kernel, conjunction, BoolOp::And)?;
     let theorem = kernel.identity(positive(right))?;
     kernel.weaken(theorem, &[positive(left)], &[])?;
     Ok(kernel.and_left(theorem, positive(conjunction))?)
 }
 
 fn project_and_left(kernel: &mut Kernel, conjunction: Ref) -> Result<ThmId, NaturalError> {
-    let [left, right] = exact_op2(kernel, conjunction, Op2::And)?;
+    let [left, right] = exact_op2(kernel, conjunction, BoolOp::And)?;
     let theorem = kernel.identity(positive(left))?;
     kernel.weaken(theorem, &[positive(right)], &[])?;
     Ok(kernel.and_left(theorem, positive(conjunction))?)
@@ -1470,8 +1469,8 @@ fn prove_representations_are_members(
         })?,
         natural,
     )?;
-    let [represented_member, empty] = exact_op2(kernel, guarded.proposition, Op2::Or)?;
-    let [inhabited] = exact_op1(kernel, empty, covalence_logic_hol::builtin::Op1::Not)?;
+    let [represented_member, empty] = exact_op2(kernel, guarded.proposition, BoolOp::Or)?;
+    let [inhabited] = exact_op1(kernel, empty, covalence_logic_hol::literals::BoolOp::Not)?;
 
     // Prove the exact existential already embedded in the guard, rather than
     // constructing a parallel choice term and relying on hash-consing.
@@ -1531,8 +1530,8 @@ fn prove_member_zero(
             expected: "an equality-encoded universal",
         });
     }
-    let [premises, consequence] = exact_op2(kernel, implication, Op2::Imp)?;
-    let [base, step] = exact_op2(kernel, premises, Op2::And)?;
+    let [premises, consequence] = exact_op2(kernel, implication, BoolOp::Imp)?;
+    let [base, step] = exact_op2(kernel, premises, BoolOp::And)?;
 
     // `base` and `consequence` are separately elaborated applications of the
     // same predicate to zero. Certify that fact instead of assuming physical
@@ -1549,29 +1548,25 @@ fn prove_member_zero(
 }
 
 fn positive(reference: Ref) -> Lit {
-    Lit::positive(reference.get())
+    reference
+        .positive()
+        .expect("theorem atom is a local proposition")
 }
 
-fn exact_op2(kernel: &Kernel, reference: Ref, op: Op2) -> Result<[Ref; 2], NaturalError> {
-    if kernel.arena().op2(reference) != Some(op) {
-        return Err(NaturalError::WrongForm {
-            expected: "a compact logical opcode",
-        });
-    }
-    exact_children(kernel, reference, Tag::Tm(TmTag::Op2))
+fn exact_op2(kernel: &Kernel, reference: Ref, op: BoolOp) -> Result<[Ref; 2], NaturalError> {
+    crate::boolean_args(kernel, reference, op).ok_or(NaturalError::WrongForm {
+        expected: "a binary Boolean builtin application",
+    })
 }
 
 fn exact_op1(
     kernel: &Kernel,
     reference: Ref,
-    op: covalence_logic_hol::builtin::Op1,
+    op: covalence_logic_hol::literals::BoolOp,
 ) -> Result<[Ref; 1], NaturalError> {
-    if kernel.arena().op1(reference) != Some(op) {
-        return Err(NaturalError::WrongForm {
-            expected: "a compact unary logical opcode",
-        });
-    }
-    exact_children(kernel, reference, Tag::Tm(TmTag::Op1))
+    crate::boolean_args(kernel, reference, op).ok_or(NaturalError::WrongForm {
+        expected: "a unary Boolean builtin application",
+    })
 }
 
 fn universal_parts(kernel: &Kernel, universal: Ref) -> Result<(Ref, Ref), NaturalError> {
@@ -1669,11 +1664,11 @@ fn induction_member(
     let at_k = kernel.app(predicate, k)?;
     let next_k = kernel.app(infinity.map, k)?;
     let at_next = kernel.app(predicate, next_k)?;
-    let closed_step = kernel.op2(Op2::Imp, at_k, at_next)?;
+    let closed_step = kernel.implies(at_k, at_next)?;
     let closed = kernel.forall_tm(bool_ty, k, closed_step)?;
-    let base_and_closed = kernel.op2(Op2::And, at_zero, closed)?;
+    let base_and_closed = kernel.and(at_zero, closed)?;
     let at_n = kernel.app(predicate, n)?;
-    let entails_n = kernel.op2(Op2::Imp, base_and_closed, at_n)?;
+    let entails_n = kernel.implies(base_and_closed, at_n)?;
     let every_predicate = kernel.forall_tm(bool_ty, predicate, entails_n)?;
     kernel.lam(n, every_predicate)
 }
@@ -1692,10 +1687,10 @@ fn induction_statement(
     let at_n = kernel.app(predicate, n)?;
     let next = kernel.app(succ, n)?;
     let at_next = kernel.app(predicate, next)?;
-    let step = kernel.op2(Op2::Imp, at_n, at_next)?;
+    let step = kernel.implies(at_n, at_next)?;
     let every_step = kernel.forall_tm(bool_ty, n, step)?;
-    let premises = kernel.op2(Op2::And, at_zero, every_step)?;
+    let premises = kernel.and(at_zero, every_step)?;
     let conclusion = kernel.forall_tm(bool_ty, n, at_n)?;
-    let principle = kernel.op2(Op2::Imp, premises, conclusion)?;
+    let principle = kernel.implies(premises, conclusion)?;
     kernel.forall_tm(bool_ty, predicate, principle)
 }

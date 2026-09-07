@@ -13,6 +13,10 @@ absent: they may prevent evaluation but cannot change its mathematical result.
 
 namespace Nucleus.Hol.Propane
 
+inductive BoolOp where
+  | not | and | or | imp | iff
+  deriving DecidableEq, Repr
+
 inductive WordOp where
   | add | sub | mul | divU | divS | remU | remS | and | or | xor | not
   | shl | shrU | shrS | rotl | rotr | clz | ctz | popcnt | eqz
@@ -53,6 +57,7 @@ inductive CastOp where
   deriving DecidableEq, Repr
 
 inductive Builtin where
+  | bool (op : BoolOp)
   | word (width : Width) (op : WordOp)
   | nat (op : NatOp) | int (op : IntOp) | bytes (op : BytesOp) | cast (op : CastOp)
   deriving DecidableEq, Repr
@@ -74,6 +79,7 @@ def IntOp.comparison : IntOp → Bool
   | _ => false
 
 def Builtin.signature : Builtin → Option (List LiteralTy × LiteralTy)
+  | .bool op => some (List.replicate (if op = .not then 1 else 2) .bool, .bool)
   | .word width op => do
       if let .extendSign source := op then
         if source.bits ≥ width.bits then none else pure ()
@@ -120,6 +126,17 @@ def Builtin.signature : Builtin → Option (List LiteralTy × LiteralTy)
 
 private def operand (args : List LiteralValue) (type : LiteralTy) (index : Nat) :
     Option type.denote := do (← args[index]?).as type
+
+def BoolOp.eval (op : BoolOp) (args : List LiteralValue) : Option LiteralValue := do
+  let left ← operand args .bool 0
+  if op = .not then return .bool (!left)
+  let right ← operand args .bool 1
+  return .bool (match op with
+    | .not => !left
+    | .and => left && right
+    | .or => left || right
+    | .imp => !left || right
+    | .iff => left == right)
 
 def WordOp.eval (width : Width) (op : WordOp) (args : List LiteralValue) :
     Option LiteralValue := do
@@ -342,6 +359,7 @@ def CastOp.eval (op : CastOp) (args : List LiteralValue) : Option LiteralValue :
           (← operand args (.word source) 0).toInt) else none
 
 def Builtin.evalRaw : Builtin → List LiteralValue → Option LiteralValue
+  | .bool op => op.eval
   | .word width op => op.eval width
   | .nat op => op.eval
   | .int op => op.eval
@@ -376,5 +394,25 @@ theorem Builtin.eval_typed {op : Builtin} {args : List LiteralValue} {result : L
               cases Option.some.inj evaluates
               simp_all
             · contradiction
+
+theorem BoolOp.checked_not (value : Bool) :
+    Builtin.eval (.bool .not) [.bool value] = some (.bool (!value)) := by
+  cases value <;> rfl
+
+theorem BoolOp.checked_and (left right : Bool) :
+    Builtin.eval (.bool .and) [.bool left, .bool right] = some (.bool (left && right)) := by
+  cases left <;> cases right <;> rfl
+
+theorem BoolOp.checked_or (left right : Bool) :
+    Builtin.eval (.bool .or) [.bool left, .bool right] = some (.bool (left || right)) := by
+  cases left <;> cases right <;> rfl
+
+theorem BoolOp.checked_imp (left right : Bool) :
+    Builtin.eval (.bool .imp) [.bool left, .bool right] = some (.bool (!left || right)) := by
+  cases left <;> cases right <;> rfl
+
+theorem BoolOp.checked_iff (left right : Bool) :
+    Builtin.eval (.bool .iff) [.bool left, .bool right] = some (.bool (left == right)) := by
+  cases left <;> cases right <;> rfl
 
 end Nucleus.Hol.Propane

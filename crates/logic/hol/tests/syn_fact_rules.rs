@@ -258,13 +258,12 @@ fn substitution_needs_a_variable_and_a_compatible_replacement() {
 #[test]
 fn substitution_of_a_replacement_at_the_wrong_type_is_rejected() {
     let mut fix = Fix::new();
-    let star = fix.star;
-    let bool_ty = fix.bool_ty;
-    let other_bool = fix.bool_ty(star).expect("second bool type");
+    let bool_ty = fix.ty_var(0);
+    let other_bool = fix.ty_var(0);
     let variable = fix.tm_fv(0, bool_ty).expect("variable");
-    let value = fix.bool(other_bool, true).expect("literal");
+    let value = fix.tm_fv(1, other_bool).expect("replacement variable");
 
-    // Duplicate `ty.bool` rows are distinct until userspace unions them.
+    // Duplicate type-variable rows are distinct until userspace unions them.
     assert!(matches!(
         fix.syn_sub_var(None, variable, value),
         Err(KernelError::ClassifierMismatch { .. })
@@ -751,25 +750,27 @@ fn congruence_composes_a_substitution_without_walking_the_tree() {
 #[test]
 fn congruence_requires_endpoints_with_compatible_classifiers() {
     let mut fix = Fix::new();
-    let star = fix.star;
-    let bool_ty = fix.bool_ty;
-    let other_bool = fix.bool_ty(star).expect("second bool type");
-    let left = fix.bool(bool_ty, true).expect("literal");
+    let bool_ty = fix.ty_var(0);
+    let other_bool = fix.ty_var(0);
+    let left = fix.tm_fv(1, bool_ty).expect("variable");
     let right = fix
-        .bool(other_bool, true)
-        .expect("literal at the twin type");
+        .tm_fv(1, other_bool)
+        .expect("duplicate variable at twin type");
+    let prover = fix.prover();
+    let classifier = prover
+        .syn_equal(&mut fix.kernel, SynRel::Syn, bool_ty, other_bool)
+        .unwrap();
 
     assert!(matches!(
-        fix.syn_congr(None, SynRel::Syn, None, None, left, right, &[]),
+        fix.syn_congr(None, SynRel::Syn, None, None, left, right, &[classifier]),
         Err(KernelError::ClassifierMismatch { .. })
     ));
 
-    let prover = fix.prover();
     prover
         .union_equal(&mut fix.kernel, bool_ty, other_bool)
         .expect("merge the duplicate type rows");
     assert!(
-        fix.syn_congr(None, SynRel::Syn, None, None, left, right, &[])
+        fix.syn_congr(None, SynRel::Syn, None, None, left, right, &[classifier])
             .is_ok()
     );
 }

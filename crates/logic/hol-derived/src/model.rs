@@ -512,6 +512,9 @@ impl TypeSubstitution<'_> {
             .ok_or(KernelError::MissingDefinition { reference: input })?
             .collect();
 
+        if children.is_empty() {
+            return self.unchanged_leaf(input);
+        }
         match tag {
             Tag::Kind(KindTag::Star) | Tag::Ty(TyTag::Bool) | Tag::Tm(TmTag::Bool) => {
                 self.unchanged_leaf(input)
@@ -523,30 +526,6 @@ impl TypeSubstitution<'_> {
             Tag::Ty(TyTag::Arr) => self.binary(input, &children, Kernel::ty_arr),
             Tag::Ty(TyTag::App) => self.binary(input, &children, Kernel::ty_app),
             Tag::Tm(TmTag::App) => self.binary(input, &children, Kernel::app),
-            Tag::Tm(TmTag::Op2) => {
-                let op = self
-                    .kernel
-                    .arena()
-                    .op2(input)
-                    .ok_or(ModelError::UnsupportedSyntax {
-                        reference: input,
-                        tag,
-                    })?;
-                self.binary(input, &children, |kernel, left, right| {
-                    kernel.op2(op, left, right)
-                })
-            }
-            Tag::Tm(TmTag::Op1) => {
-                let op = self
-                    .kernel
-                    .arena()
-                    .op1(input)
-                    .ok_or(ModelError::UnsupportedSyntax {
-                        reference: input,
-                        tag,
-                    })?;
-                self.unary(input, &children, |kernel, child| kernel.op1(op, child))
-            }
             Tag::Tm(TmTag::Fv) => {
                 let name = self.name(input, tag)?;
                 self.unary(input, &children, |kernel, ty| kernel.tm_fv(name, ty))

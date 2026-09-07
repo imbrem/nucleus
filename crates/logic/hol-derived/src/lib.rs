@@ -17,6 +17,19 @@ mod natural_rec;
 mod subtype;
 mod syntax;
 
+/// Recognizes a fully applied Boolean primitive without depending on row layout.
+fn boolean_args<const N: usize>(
+    kernel: &covalence_logic_hol::Kernel,
+    reference: covalence_logic_hol::Ref,
+    op: covalence_logic_hol::literals::BoolOp,
+) -> Option<[covalence_logic_hol::Ref; N]> {
+    let (actual, arguments) = kernel.arena().builtin_application(reference)?;
+    if actual != covalence_logic_hol::literals::Builtin::Bool(op) {
+        return None;
+    }
+    arguments.try_into().ok()
+}
+
 pub use coproduct::{
     Coproduct, CoproductBranch, CoproductCandidate, CoproductCandidateLaws, CoproductCases,
     CoproductComputation, CoproductEliminator, CoproductError, CoproductExhaustiveness,

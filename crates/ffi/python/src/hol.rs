@@ -1,4 +1,4 @@
-//! The one-based Ethane arena and checked kernel at the Python boundary.
+//! Ethane arenas and the checked kernel at the Python boundary.
 
 #![allow(clippy::needless_pass_by_value)]
 
@@ -20,7 +20,7 @@ use covalence_lib_python::pyo3::{
 use covalence_logic_hol::{
     AmbPred, Arena, Import, ImportId, Kernel, Link, LinkFormat, Lit, LitVec, Ref, RowId, Sort,
     SynFact, SynFactId, SynRel, ThmId,
-    builtin::{Op1, Op2},
+    literals::{BoolOp, Builtin},
     wire,
 };
 
@@ -31,7 +31,9 @@ fn value_error(error: impl ToString) -> PyErr {
 }
 
 fn reference(value: i32) -> PyResult<Ref> {
-    Ref::new(value).ok_or_else(|| PyValueError::new_err("references are one-based"))
+    Ref::new(value).ok_or_else(|| {
+        PyValueError::new_err("reference must be nonzero and within the supported range")
+    })
 }
 
 fn source(value: i32) -> PyResult<ImportId> {
@@ -932,22 +934,11 @@ impl PyKernel {
         self.kernel.add_axiom(name).map_err(value_error)
     }
 
-    /// Encodes a Boolean term reference as a positive or negated i32 literal.
+    /// Encodes a local Boolean reference with an independent theorem polarity.
     #[pyo3(signature = (reference_value, negated=false))]
-    #[allow(
-        clippy::unused_self,
-        reason = "the Python API scopes literals by kernel flavor"
-    )]
     fn lit(&self, reference_value: i32, negated: bool) -> PyResult<i32> {
         let reference = reference(reference_value)?;
-        let magnitude = reference.get();
-        if magnitude == i32::MAX {
-            return Err(PyValueError::new_err(
-                "literal magnitude must be below i32::MAX",
-            ));
-        }
-        // Rule application performs the authoritative resident Boolean check.
-        let positive = Lit::positive(magnitude);
+        let positive = self.kernel.lit(reference).map_err(value_error)?;
         Ok(if negated {
             positive.negated()
         } else {
@@ -958,28 +949,37 @@ impl PyKernel {
 
     fn logical_not(&mut self, operand: i32) -> PyResult<i32> {
         self.kernel
-            .op1(Op1::Not, reference(operand)?)
+            .builtin(Builtin::Bool(BoolOp::Not), &[reference(operand)?])
             .map(Ref::get)
             .map_err(value_error)
     }
 
     fn logical_and(&mut self, left: i32, right: i32) -> PyResult<i32> {
         self.kernel
-            .op2(Op2::And, reference(left)?, reference(right)?)
+            .builtin(
+                Builtin::Bool(BoolOp::And),
+                &[reference(left)?, reference(right)?],
+            )
             .map(Ref::get)
             .map_err(value_error)
     }
 
     fn logical_or(&mut self, left: i32, right: i32) -> PyResult<i32> {
         self.kernel
-            .op2(Op2::Or, reference(left)?, reference(right)?)
+            .builtin(
+                Builtin::Bool(BoolOp::Or),
+                &[reference(left)?, reference(right)?],
+            )
             .map(Ref::get)
             .map_err(value_error)
     }
 
     fn logical_imp(&mut self, left: i32, right: i32) -> PyResult<i32> {
         self.kernel
-            .op2(Op2::Imp, reference(left)?, reference(right)?)
+            .builtin(
+                Builtin::Bool(BoolOp::Imp),
+                &[reference(left)?, reference(right)?],
+            )
             .map(Ref::get)
             .map_err(value_error)
     }
@@ -1091,16 +1091,16 @@ impl PyKernel {
             .map_err(value_error)
     }
 
-    fn false_left(&mut self, falsehood: i32) -> PyResult<i32> {
+    fn false_left(&mut self) -> PyResult<i32> {
         self.kernel
-            .false_left(literal(falsehood)?)
+            .false_left()
             .map(ThmId::get)
             .map_err(value_error)
     }
 
-    fn true_right(&mut self, truth: i32) -> PyResult<i32> {
+    fn true_right(&mut self) -> PyResult<i32> {
         self.kernel
-            .true_right(literal(truth)?)
+            .true_right()
             .map(ThmId::get)
             .map_err(value_error)
     }
@@ -1710,7 +1710,9 @@ impl PyArena {
 
     fn definition(&self, reference_value: i32) -> PyResult<Option<PyDefinition>> {
         if reference_value == 0 {
-            return Err(PyValueError::new_err("references are one-based"));
+            return Err(PyValueError::new_err(
+                "reference must be nonzero and within the supported range",
+            ));
         }
         let Some(reference) = Ref::new(reference_value) else {
             return Ok(None);

@@ -190,9 +190,9 @@ def _attempt(kernel: Kernel, rows: dict[str, int], name: str):
             "conv", model, model, witness, body
         )
     if name == "trans-broken-middle":
-        twin = kernel.bool(bool_ty, True)
-        left = congruent(kernel, truth, twin)
-        right = kernel.syn_refl("syn", truth)
+        twin = kernel.tm_fv(1, bool_ty)
+        left = congruent(kernel, variable, twin)
+        right = kernel.syn_refl("syn", variable)
         return lambda: kernel.syn_trans(left, right)
     if name == "symm-of-substitution":
         active = kernel.syn_sub_var(variable, truth)
@@ -320,17 +320,17 @@ def test_an_unvalidated_import_cannot_reach_the_checked_rows() -> None:
 
 def test_importing_a_kernel_snapshot_does_not_import_its_conclusions() -> None:
     proved, rows = loaded_kernel()
-    twin = proved.bool(rows["bool_ty"], True)
-    proved.union_syn_fact(congruent(proved, rows["truth"], twin))
-    assert proved.equivalent(rows["truth"], twin)
+    twin = proved.tm_fv(1, rows["bool_ty"])
+    proved.union_syn_fact(congruent(proved, rows["variable"], twin))
+    assert proved.equivalent(rows["variable"], twin)
 
     consumer, consumer_rows = loaded_kernel()
-    consumer_twin = consumer.bool(consumer_rows["bool_ty"], True)
+    consumer_twin = consumer.tm_fv(1, consumer_rows["bool_ty"])
     assert consumer_twin == twin
     consumer.import_literal(proved.arena)
 
     # Same reference numbers, same syntax, different kernel: no shared equality.
-    assert not consumer.equivalent(consumer_rows["truth"], consumer_twin)
+    assert not consumer.equivalent(consumer_rows["variable"], consumer_twin)
     assert_kernel_invariants(consumer)
 
 
@@ -342,7 +342,8 @@ def test_reference_numbers_are_not_capabilities() -> None:
 
     with pytest.raises(ValueError, match="does not name a kernel row"):
         small.category(rows["identity"])
-    assert large.category(1) == small.category(1) == "kind"
+    assert large.star() == small.star()
+    assert large.category(large.star()) == small.category(small.star()) == "kind"
 
 
 def test_opaque_handles_are_not_accepted_where_references_are() -> None:
@@ -386,7 +387,8 @@ def test_two_kernels_share_nothing() -> None:
 # Constructors safe to call with arbitrary existing references: each either
 # appends a row or raises, and none can be made to do anything else.
 def _random_step(kernel: Kernel, chance: random.Random) -> None:
-    references = list(range(1, len(kernel) + 1))
+    star = kernel.star()
+    references = [star, kernel.bool_ty(star), *range(1, len(kernel) + 1)]
     pick = lambda: chance.choice(references)  # noqa: E731
     facts = []
     for slot in range(1, kernel.syn_fact_len() + 1):

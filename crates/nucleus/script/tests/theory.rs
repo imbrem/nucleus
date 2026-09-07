@@ -150,7 +150,11 @@ fn userspace_derivation_proves_the_independently_compiled_coproduct_schema() {
     assert_eq!(theorem.lhs.rows().count(), 0);
     assert_eq!(
         theorem.rhs.rows().collect::<Vec<_>>(),
-        [[covalence_logic_hol::Lit::positive(proof.proposition.get())].as_slice()]
+        [[proof
+            .proposition
+            .positive()
+            .expect("theorem atom is a local proposition")]
+        .as_slice()]
     );
     assert_eq!(kernel.category(proof.proposition).unwrap(), Sort::Tm);
     let classifier = kernel.classifier(proof.proposition).unwrap();
@@ -288,10 +292,13 @@ fn canonical_init_compilation_is_opcode_free() {
     let last = i32::try_from(compiled.kernel().arena().len()).expect("arena fits Ref");
     for index in 1..=last {
         let reference = covalence_logic_hol::Ref::new(index).expect("positive index");
-        assert!(!matches!(
-            compiled.kernel().arena().tag(reference),
-            Some(Tag::Tm(TmTag::Op1 | TmTag::Op2))
-        ));
+        assert!(
+            compiled
+                .kernel()
+                .arena()
+                .builtin_application(reference)
+                .is_none()
+        );
     }
     assert!(compiled.kernel().arena().axioms().next().is_none());
 }
@@ -317,7 +324,7 @@ fn equality_only_source_uses_the_authoritative_logical_lowering() {
     let compact = compile_theory_with_init(
         source,
         TheoryOptions {
-            logic: LogicEncoding::Compact,
+            logic: LogicEncoding::Builtins,
         },
         &init,
     )
@@ -330,9 +337,9 @@ fn equality_only_source_uses_the_authoritative_logical_lowering() {
         .expect("copy raw expansion into compact kernel");
     let copied_raw = copied.roots()[0];
     let expansion = compact_kernel
-        .lower_logical(&init, compact_root)
+        .lower_logical_tree(compact_root)
         .expect("canonical compact lowering");
-    join_same_syntax(&mut compact_kernel, expansion, copied_raw)
+    join_same_syntax(&mut compact_kernel, expansion.raw, copied_raw)
         .expect("lowering equals direct source elaboration");
 
     let canonical = compile_init(&init).expect("canonical source over logical prefix");
@@ -340,10 +347,13 @@ fn equality_only_source_uses_the_authoritative_logical_lowering() {
     let last = i32::try_from(canonical.kernel().arena().len()).expect("arena fits Ref");
     for index in 1..=last {
         let reference = covalence_logic_hol::Ref::new(index).expect("positive index");
-        assert!(!matches!(
-            canonical.kernel().arena().tag(reference),
-            Some(Tag::Tm(TmTag::Op1 | TmTag::Op2))
-        ));
+        assert!(
+            canonical
+                .kernel()
+                .arena()
+                .builtin_application(reference)
+                .is_none()
+        );
     }
 }
 
@@ -353,7 +363,7 @@ fn compiled_nat_member_drives_the_userspace_natural_package() {
     let compiled = compile_theory_with_init(
         INIT_SOURCE,
         TheoryOptions {
-            logic: LogicEncoding::Compact,
+            logic: LogicEncoding::Builtins,
         },
         &init,
     )
@@ -390,7 +400,7 @@ fn compiled_recursion_schemata_drive_the_complete_checked_package() {
     let compiled = compile_theory_with_init(
         INIT_SOURCE,
         TheoryOptions {
-            logic: LogicEncoding::Compact,
+            logic: LogicEncoding::Builtins,
         },
         &init,
     )
@@ -455,7 +465,9 @@ fn compiled_recursion_schemata_drive_the_complete_checked_package() {
         assert_eq!(conclusions.len(), 1);
         assert_eq!(
             conclusions[0],
-            [covalence_logic_hol::Lit::positive(proposition.get())]
+            [proposition
+                .positive()
+                .expect("theorem atom is a local proposition")]
         );
     }
     for (proposition, theorem) in [
@@ -466,7 +478,11 @@ fn compiled_recursion_schemata_drive_the_complete_checked_package() {
         assert!(theorem.lhs.rows().next().is_none());
         assert_eq!(
             theorem.rhs.rows().collect::<Vec<_>>(),
-            vec![&[covalence_logic_hol::Lit::positive(proposition.get())][..]]
+            vec![
+                &[proposition
+                    .positive()
+                    .expect("theorem atom is a local proposition")][..]
+            ]
         );
     }
 
@@ -549,16 +565,13 @@ fn projected_init_slice_is_deterministic_complete_and_opcode_free() {
     let arena = first.prefix().arena();
     for position in 1..=arena.len() {
         let reference = covalence_logic_hol::Ref::new(i32::try_from(position).unwrap()).unwrap();
-        assert!(!matches!(
-            arena.tag(reference),
-            Some(Tag::Tm(TmTag::Op1 | TmTag::Op2))
-        ));
+        assert!(arena.builtin_application(reference).is_none());
     }
     let fork = first.kernel();
     assert_eq!(
-        fork.init_prefix(),
-        Some((arena.addr(), arena.len())),
-        "the complete projected slice is the fork identity"
+        fork.arena(),
+        arena,
+        "forking preserves the complete checked arena"
     );
     assert_eq!(fork.arena().axioms().collect::<Vec<_>>(), [AX_INF, AX_SUB]);
     let coproduct = first.coproduct_schema();
@@ -606,22 +619,21 @@ fn projected_init_slice_has_stable_natural_semantic_identity() {
     let init = logical_init();
     let slice = compile_init_slice(&init).expect("projected slice");
     let naturals = slice.naturals();
-
-    assert_eq!(slice.prefix().len(), 1_331);
+    assert_eq!(slice.prefix().len(), 1_333);
     assert_eq!(
         slice.prefix().addr().as_bytes(),
         &[
-            0x08, 0xb5, 0x77, 0x10, 0x99, 0x51, 0x88, 0x7e, 0x8a, 0xcc, 0xa5, 0xa3, 0x03, 0x9d,
-            0x7e, 0x0d, 0x1a, 0x32, 0x4f, 0x1b, 0x0a, 0xad, 0x02, 0xda, 0x12, 0x09, 0x93, 0xbc,
-            0xef, 0xf1, 0x89, 0x53,
+            0xfa, 0xd2, 0x65, 0x22, 0x27, 0x47, 0x56, 0xde, 0x5f, 0x7d, 0x2f, 0xea, 0x57, 0xe4,
+            0x78, 0x33, 0xf7, 0x67, 0xf3, 0xc4, 0x32, 0xcc, 0x2e, 0xd0, 0x13, 0xd7, 0x7e, 0x4e,
+            0x8e, 0x73, 0x6e, 0x11,
         ],
     );
-    assert_eq!(naturals.ty.get(), 433);
-    assert_eq!(naturals.zero.get(), 502);
-    assert_eq!(naturals.succ.get(), 517);
-    assert_eq!(naturals.induction.get(), 654);
-    assert_eq!(naturals.succ_injective.get(), 783);
-    assert_eq!(naturals.zero_ne_succ.get(), 793);
+    assert_eq!(naturals.ty.get(), 476);
+    assert_eq!(naturals.zero.get(), 543);
+    assert_eq!(naturals.succ.get(), 560);
+    assert_eq!(naturals.induction.get(), 687);
+    assert_eq!(naturals.succ_injective.get(), 809);
+    assert_eq!(naturals.zero_ne_succ.get(), 818);
 }
 
 #[test]
@@ -630,7 +642,7 @@ fn frozen_member_schema_replays_through_a_checked_compact_alias() {
     let slice = compile_init_slice(&init).expect("projected slice");
     let mut certificate = slice.kernel();
     let member = certificate
-        .compact_logical_tree(&init, slice.get("NatMember").unwrap())
+        .compact_logical_tree(slice.get("NatMember").unwrap())
         .expect("checked compact schema alias");
     let replayed = certificate
         .choose_naturals_from_member_schema(
@@ -647,7 +659,7 @@ fn frozen_member_schema_replays_through_a_checked_compact_alias() {
         .map(|(_, frozen)| *frozen)
         .collect::<Vec<_>>();
     let frozen_aliases = certificate
-        .compact_logical_trees(&init, &roots)
+        .compact_logical_trees(&roots)
         .expect("compact frozen natural declaration");
     let frozen = frozen_symbols
         .into_iter()
@@ -661,10 +673,22 @@ fn frozen_member_schema_replays_through_a_checked_compact_alias() {
     )
     .expect("retarget selected carrier to frozen syntax");
     assert!(certificate.arena().len() > slice.prefix().len());
-    assert_eq!(
-        certificate.init_prefix(),
-        Some((slice.prefix().addr(), slice.prefix().len()))
-    );
+    for index in 1..=slice.prefix().len() {
+        let reference = covalence_logic_hol::Ref::new(i32::try_from(index).unwrap()).unwrap();
+        assert_eq!(
+            certificate.tag(reference),
+            slice.prefix().arena().tag(reference)
+        );
+        assert_eq!(
+            certificate.children(reference).unwrap().collect::<Vec<_>>(),
+            slice
+                .prefix()
+                .arena()
+                .children(reference)
+                .unwrap()
+                .collect::<Vec<_>>(),
+        );
+    }
 }
 
 #[test]
@@ -680,7 +704,7 @@ fn frozen_infinity_binder_plan_materializes_one_coherent_checked_package() {
             .expect("unrelated ambient suffix");
     }
     let package = slice
-        .prove_infinity(&init, &mut certificate)
+        .prove_infinity(&mut certificate)
         .expect("exact userspace infinity replay");
     assert_eq!(package.declaration(), declaration);
     for (theorem, proposition) in [
@@ -735,7 +759,7 @@ fn frozen_infinity_replay_rejects_the_wrong_prefix_transactionally() {
     wrong.star().expect("unrelated kernel");
     let before = wrong.fork();
 
-    assert!(slice.prove_infinity(&init, &mut wrong).is_err());
+    assert!(slice.prove_infinity(&mut wrong).is_err());
     assert_eq!(wrong.arena(), before.arena());
     assert_eq!(
         wrong.thm().live_theorems().count(),
@@ -756,7 +780,7 @@ fn frozen_subtype_package_replays_to_exact_statement_rows() {
             .expect("unrelated ambient suffix");
     }
     let package = slice
-        .prove_subtype(&init, &mut certificate)
+        .prove_subtype(&mut certificate)
         .expect("exact userspace subtype replay");
 
     assert_eq!(package.declaration(), declaration);
@@ -785,7 +809,7 @@ fn frozen_subtype_replay_rejects_the_wrong_prefix_transactionally() {
     wrong.star().expect("unrelated kernel");
     let before = wrong.fork();
 
-    assert!(slice.prove_subtype(&init, &mut wrong).is_err());
+    assert!(slice.prove_subtype(&mut wrong).is_err());
     assert_eq!(wrong.arena(), before.arena());
     assert_eq!(
         wrong.thm().live_theorems().count(),
@@ -806,7 +830,7 @@ fn frozen_natural_package_replays_to_exact_statement_rows() {
             .expect("unrelated ambient suffix");
     }
     let package = slice
-        .prove_naturals(&init, &mut certificate)
+        .prove_naturals(&mut certificate)
         .expect("exact userspace natural replay");
 
     assert_eq!(package.declaration, declaration);
@@ -831,7 +855,7 @@ fn frozen_natural_replay_rejects_the_wrong_prefix_transactionally() {
     wrong.star().expect("unrelated kernel");
     let before = wrong.fork();
 
-    assert!(slice.prove_naturals(&init, &mut wrong).is_err());
+    assert!(slice.prove_naturals(&mut wrong).is_err());
     assert_eq!(wrong.arena(), before.arena());
     assert_eq!(
         wrong.thm().live_theorems().count(),
@@ -852,7 +876,7 @@ fn frozen_arithmetic_package_replays_to_exact_statement_rows() {
             .expect("unrelated ambient suffix");
     }
     let arithmetic = slice
-        .prove_arithmetic(&init, &mut certificate)
+        .prove_arithmetic(&mut certificate)
         .expect("exact userspace arithmetic replay");
 
     assert_eq!(arithmetic.declaration, declaration);
@@ -886,7 +910,7 @@ fn frozen_arithmetic_replay_rejects_the_wrong_prefix_transactionally() {
     wrong.star().expect("unrelated kernel");
     let before = wrong.fork();
 
-    assert!(slice.prove_arithmetic(&init, &mut wrong).is_err());
+    assert!(slice.prove_arithmetic(&mut wrong).is_err());
     assert_eq!(wrong.arena(), before.arena());
     assert_eq!(
         wrong.thm().live_theorems().count(),
@@ -903,7 +927,11 @@ fn check_exact_theorem(
     assert!(theorem.lhs.rows().next().is_none());
     assert_eq!(
         theorem.rhs.rows().collect::<Vec<_>>(),
-        vec![&[covalence_logic_hol::Lit::positive(proposition.get())][..]]
+        vec![
+            &[proposition
+                .positive()
+                .expect("theorem atom is a local proposition")][..]
+        ]
     );
 }
 
@@ -934,7 +962,11 @@ fn check_primitive_arithmetic(
         assert!(theorem.lhs.rows().next().is_none());
         assert_eq!(
             theorem.rhs.rows().collect::<Vec<_>>(),
-            vec![&[covalence_logic_hol::Lit::positive(proposition.get())][..]]
+            vec![
+                &[proposition
+                    .positive()
+                    .expect("theorem atom is a local proposition")][..]
+            ]
         );
     }
     assert_eq!(arithmetic.get("nat.add"), Some(declaration.add));

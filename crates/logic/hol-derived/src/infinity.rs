@@ -2,7 +2,7 @@
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    InfinityAxiom, Kernel, KernelError, Lit, Ref, Sort, SynFactId, ThmId, builtin::Op2,
+    InfinityAxiom, Kernel, KernelError, Ref, Sort, SynFactId, ThmId, literals::BoolOp,
 };
 
 use crate::{
@@ -282,19 +282,11 @@ fn project_infinity(
         .into());
     }
 
-    if kernel.arena().op2(missed.body) != Some(Op2::And) {
-        return Err(KernelError::InvalidTheoremRule {
+    let properties: [Ref; 2] = crate::boolean_args(kernel, missed.body, BoolOp::And).ok_or(
+        KernelError::InvalidTheoremRule {
             rule: "infinity package conjunction",
-        }
-        .into());
-    }
-    let properties: Vec<_> = kernel
-        .arena()
-        .children(missed.body)
-        .ok_or(KernelError::MissingDefinition {
-            reference: missed.body,
-        })?
-        .collect();
+        },
+    )?;
     let [reflects_equality, avoids_missed] = properties.as_slice() else {
         return Err(KernelError::InvalidTheoremRule {
             rule: "infinity package conjunction",
@@ -307,7 +299,10 @@ fn project_infinity(
     // the beta-opened conjunction.
     let theorem = kernel.copy_theorem(model.theorem)?;
     kernel.convert_theorem(theorem, model.specification, missed.body)?;
-    let property = Lit::positive(missed.body.get());
+    let property = missed
+        .body
+        .positive()
+        .expect("theorem atom is a local proposition");
     let reflects_equality_theorem = kernel.expand_conclusion(theorem, property, Some(false))?;
     let avoids_missed_theorem = kernel.expand_conclusion(theorem, property, Some(true))?;
 

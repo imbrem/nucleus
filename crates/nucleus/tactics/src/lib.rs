@@ -58,7 +58,7 @@ pub enum TacticError {
         /// Underlying userspace-derived equality failure.
         source: EqualityError,
     },
-    /// A theorem does not have one positive proposition as its conclusion.
+    /// A theorem concludes neither one positive atom nor a canonical constant.
     #[snafu(display("theorem {theorem:?} does not have one positive conclusion"))]
     NonUnitConclusion {
         /// Rejected theorem slot.
@@ -128,7 +128,7 @@ impl From<EqualityError> for TacticError {
 /// # Errors
 ///
 /// Returns an error unless `equality` proves a Boolean equality whose selected
-/// source is the sole positive conclusion of `premise`, or if any checked
+/// source is the sole positive conclusion or canonical truth/falsity of `premise`, or if any checked
 /// equality step rejects the derivation.
 pub fn rewrite_proposition(
     kernel: &mut Kernel,
@@ -142,9 +142,9 @@ pub fn rewrite_proposition(
         RewriteDirection::Forward => equality,
         RewriteDirection::Backward => equality_symmetry(&mut staged, bool_ty, equality)?.theorem,
     };
-    let source = unit_conclusion(&staged, premise)?;
+    let source = unit_conclusion(&mut staged, premise)?;
     let theorem = staged.eq_mp(equality, premise)?;
-    let target = unit_conclusion(&staged, theorem)?;
+    let target = unit_conclusion(&mut staged, theorem)?;
     *kernel = staged;
     Ok(RewriteResult {
         source,
@@ -153,16 +153,22 @@ pub fn rewrite_proposition(
     })
 }
 
-fn unit_conclusion(kernel: &Kernel, theorem: ThmId) -> Result<Ref, TacticError> {
+fn unit_conclusion(kernel: &mut Kernel, theorem: ThmId) -> Result<Ref, TacticError> {
     let row = kernel
         .thm()
         .get(theorem)
         .ok_or(TacticError::NonUnitConclusion { theorem })?;
     let mut conclusions = row.rhs.rows();
     let Some(literals) = conclusions.next() else {
-        return Err(TacticError::NonUnitConclusion { theorem });
+        return Ok(kernel.literal(covalence_logic_hol::literals::LiteralValue::Bool(false))?);
     };
-    if conclusions.next().is_some() || literals.len() != 1 || !literals[0].is_positive() {
+    if conclusions.next().is_some() {
+        return Err(TacticError::NonUnitConclusion { theorem });
+    }
+    if literals.is_empty() {
+        return Ok(kernel.literal(covalence_logic_hol::literals::LiteralValue::Bool(true))?);
+    }
+    if literals.len() != 1 || !literals[0].is_positive() {
         return Err(TacticError::NonUnitConclusion { theorem });
     }
     Ref::new(
@@ -197,6 +203,33 @@ mod tests {
             assert_eq!(result.source(), result.target());
             assert!(kernel.thm().get(result.theorem()).is_some());
         }
+    }
+
+    #[test]
+    fn rewriting_truth_uses_empty_cubes_without_a_builtin_theorem_atom() {
+        let mut kernel = Kernel::new();
+        let boolean = kernel
+            .literal_ty(covalence_logic_hol::literals::LiteralType::Bool)
+            .unwrap();
+        let truth = kernel
+            .literal(covalence_logic_hol::literals::LiteralValue::Bool(true))
+            .unwrap();
+        let equality = kernel.refl(boolean, truth).unwrap();
+        let premise = kernel.true_right().unwrap();
+        let result = rewrite_proposition(
+            &mut kernel,
+            boolean,
+            equality.theorem,
+            premise,
+            RewriteDirection::Forward,
+        )
+        .unwrap();
+        assert_eq!(result.source(), truth);
+        assert_eq!(result.target(), truth);
+        assert!(truth.get() < 0);
+        let conclusions = kernel.thm().get(result.theorem()).unwrap().rhs.to_rows();
+        assert_eq!(conclusions.len(), 1);
+        assert!(conclusions[0].is_empty());
     }
 
     #[test]

@@ -8,7 +8,7 @@ inductive Width where
   | i8 | i16 | i32 | i64
   deriving DecidableEq, Repr
 
-def Width.bits : Width → Nat
+@[reducible] def Width.bits : Width → Nat
   | .i8 => 8 | .i16 => 16 | .i32 => 32 | .i64 => 64
 
 inductive LiteralTy where

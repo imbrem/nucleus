@@ -210,6 +210,95 @@ theorem Tm.eval_applyLiterals {Γ : List Ty} {inputs : List LiteralTy}
       rw [List.append_assoc] at result
       exact result
 
+@[simp] theorem Tm.eval_booleanNot (term : Tm Γ .bool) (valuation : Valuation) (env : Env Γ) :
+    term.booleanNot.eval valuation env = !(term.eval valuation env) := by
+  simp only [Tm.booleanNot, Tm.eval]
+  cases term.eval valuation env <;> simp
+
+@[simp] theorem Tm.eval_booleanAnd (left right : Tm Γ .bool)
+    (valuation : Valuation) (env : Env Γ) :
+    (left.booleanAnd right).eval valuation env =
+      (left.eval valuation env && right.eval valuation env) := by
+  classical
+  apply Bool.eq_iff_iff.mpr
+  change decide (_ = _) = true ↔ _
+  rw [decide_eq_true_eq, Bool.and_eq_true]
+  constructor
+  · intro equal
+    have first := congrFun equal (fun left _ => left)
+    have second := congrFun equal (fun _ right => right)
+    change (left.rename weakenRen).eval valuation
+      (.cons (A := .arr .bool (.arr .bool .bool)) (fun left _ => left) env) = true
+      at first
+    change (right.rename weakenRen).eval valuation
+      (.cons (A := .arr .bool (.arr .bool .bool)) (fun _ right => right) env) = true
+      at second
+    exact ⟨(Tm.eval_weaken left _).symm.trans first, (Tm.eval_weaken right _).symm.trans second⟩
+  · rintro ⟨leftTrue, rightTrue⟩
+    funext function
+    change function ((left.rename weakenRen).eval valuation (.cons function env))
+      ((right.rename weakenRen).eval valuation (.cons function env)) = function true true
+    rw [Tm.eval_weaken, Tm.eval_weaken, leftTrue, rightTrue]
+
+@[simp] theorem Tm.eval_booleanOr (left right : Tm Γ .bool)
+    (valuation : Valuation) (env : Env Γ) :
+    (left.booleanOr right).eval valuation env =
+      (left.eval valuation env || right.eval valuation env) := by
+  simp [Tm.booleanOr]
+
+@[simp] theorem Tm.eval_booleanImp (left right : Tm Γ .bool)
+    (valuation : Valuation) (env : Env Γ) :
+    (left.booleanImp right).eval valuation env =
+      (!(left.eval valuation env) || right.eval valuation env) := by
+  simp [Tm.booleanImp]
+
+/-- Equality with the exact closed HOL definition, for arbitrary arguments. -/
+theorem BoolOp.definition_sound (op : BoolOp) : SemEq (op.term (Γ := Γ)) op.definition := by
+  intro valuation env
+  cases op with
+  | not =>
+      funext left
+      change Ty.literalValue .bool
+        ((((Builtin.bool .not).eval [.bool left]).bind (LiteralValue.as .bool)).getD false) =
+        (Tm.booleanNot (.bv .zero)).eval valuation (.cons left env)
+      rw [Tm.eval_booleanNot, BoolOp.checked_not]
+      rfl
+  | and =>
+      funext left right
+      change Ty.literalValue .bool
+        ((((Builtin.bool .and).eval [.bool left, .bool right]).bind
+          (LiteralValue.as .bool)).getD false) =
+        (Tm.booleanAnd (.bv (.succ .zero)) (.bv .zero)).eval valuation
+          (.cons right (.cons left env))
+      rw [Tm.eval_booleanAnd, BoolOp.checked_and]
+      rfl
+  | or =>
+      funext left right
+      change Ty.literalValue .bool
+        ((((Builtin.bool .or).eval [.bool left, .bool right]).bind
+          (LiteralValue.as .bool)).getD false) =
+        (Tm.booleanOr (.bv (.succ .zero)) (.bv .zero)).eval valuation
+          (.cons right (.cons left env))
+      rw [Tm.eval_booleanOr, BoolOp.checked_or]
+      rfl
+  | imp =>
+      funext left right
+      change Ty.literalValue .bool
+        ((((Builtin.bool .imp).eval [.bool left, .bool right]).bind
+          (LiteralValue.as .bool)).getD false) =
+        (Tm.booleanImp (.bv (.succ .zero)) (.bv .zero)).eval valuation
+          (.cons right (.cons left env))
+      rw [Tm.eval_booleanImp, BoolOp.checked_imp]
+      rfl
+  | iff =>
+      funext left right
+      change Ty.literalValue .bool
+        ((((Builtin.bool .iff).eval [.bool left, .bool right]).bind
+          (LiteralValue.as .bool)).getD false) =
+        @decide (left = right) (Classical.propDecidable _)
+      rw [BoolOp.checked_iff]
+      cases left <;> cases right <;> simp [Ty.literalValue] <;> rfl
+
 theorem EqTm.sound {Γ : List Ty} {A : Ty} {left right : Tm Γ A}
     (equality : EqTm left right) : SemEq left right := by
   induction equality with
@@ -240,6 +329,7 @@ theorem EqTm.sound {Γ : List Ty} {A : Ty} {left right : Tm Γ A}
   | eta function =>
       intro valuation env
       simp only [Tm.eval, Tm.eval_weaken, Env.lookup]
+  | boolUnfold op => exact op.definition_sound
   | builtinReduce op signature args result checked =>
       intro valuation env
       rw [Tm.eval_applyLiterals op [] _ args valuation env rfl]

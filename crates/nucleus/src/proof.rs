@@ -110,10 +110,10 @@ fn u64_from_usize(value: usize, what: &str) -> wasmtime::Result<u64> {
 /// Resolve the four references a binary connective takes, reporting the first
 /// failure.
 fn binary_logic(
-    bool_type: u64,
-    binder: u64,
-    left: u64,
-    right: u64,
+    bool_type: i32,
+    binder: i32,
+    left: i32,
+    right: i32,
 ) -> Result<(Ref, Ref, Ref, Ref), String> {
     Ok((
         reference(bool_type)?,
@@ -128,8 +128,8 @@ fn infinity_axiom(
     axiom: covalence_logic_hol::InfinityAxiom,
 ) -> nucleus::proof::host::InfinityAxiom {
     nucleus::proof::host::InfinityAxiom {
-        exists_type: u64_from_ref(axiom.exists_type),
-        body: u64_from_ref(axiom.body),
+        exists_type: ref_index(axiom.exists_type),
+        body: ref_index(axiom.body),
         carrier_name: axiom.carrier_name,
         base_name: axiom.base_name,
         theorem: axiom.theorem.get().unsigned_abs().into(),
@@ -139,23 +139,18 @@ fn infinity_axiom(
 /// Marshal a built subtype axiom out to the component ABI.
 fn subtype_axiom(axiom: covalence_logic_hol::SubtypeAxiom) -> nucleus::proof::host::SubtypeAxiom {
     nucleus::proof::host::SubtypeAxiom {
-        carrier: u64_from_ref(axiom.carrier),
-        predicate: u64_from_ref(axiom.predicate),
-        exists_type: u64_from_ref(axiom.exists_type),
-        package_body: u64_from_ref(axiom.package_body),
+        carrier: ref_index(axiom.carrier),
+        predicate: ref_index(axiom.predicate),
+        exists_type: ref_index(axiom.exists_type),
+        package_body: ref_index(axiom.package_body),
         model_name: axiom.model_name,
         base_name: axiom.base_name,
         theorem: axiom.theorem.get().unsigned_abs().into(),
     }
 }
 
-fn u64_from_ref(reference: Ref) -> u64 {
-    reference.get().unsigned_abs().into()
-}
-
-fn reference(value: u64) -> Result<Ref, String> {
-    let value = i32::try_from(value).map_err(|_| "reference exceeds i32".to_owned())?;
-    Ref::new(value).ok_or_else(|| "references are one-based".to_owned())
+fn reference(value: i32) -> Result<Ref, String> {
+    Ref::new(value).ok_or_else(|| "invalid signed term reference".to_owned())
 }
 
 fn fact_id(value: u64) -> Result<SynFactId, String> {
@@ -177,7 +172,7 @@ fn optional_fact_id(value: Option<u64>) -> Result<Option<SynFactId>, String> {
     value.map(fact_id).transpose()
 }
 
-fn pushed(value: Option<Ref>, what: &str) -> Result<u64, String> {
+fn pushed(value: Option<Ref>, what: &str) -> Result<i32, String> {
     value
         .map(ref_index)
         .ok_or_else(|| format!("{what} exceeds the arena's index space"))
@@ -189,8 +184,8 @@ fn pushed_import(value: Option<covalence_logic_hol::ImportId>) -> Result<u64, St
         .ok_or_else(|| "import exceeds the arena's index space".to_owned())
 }
 
-fn ref_index(value: Ref) -> u64 {
-    u64::try_from(value.get()).expect("resident references are positive")
+fn ref_index(value: Ref) -> i32 {
+    value.get()
 }
 
 fn import_index(value: covalence_logic_hol::ImportId) -> u64 {
@@ -436,7 +431,7 @@ impl nucleus::proof::host::HostArena for ProofState {
         u64_from_usize(self.table.get(&arena)?.0.len(), "arena length")
     }
 
-    fn kind_star(&mut self, arena: Resource<HostArena>) -> wasmtime::Result<Result<u64, String>> {
+    fn kind_star(&mut self, arena: Resource<HostArena>) -> wasmtime::Result<Result<i32, String>> {
         Ok(pushed(
             self.table.get_mut(&arena)?.0.push_kind_star(),
             "definition",
@@ -446,9 +441,9 @@ impl nucleus::proof::host::HostArena for ProofState {
     fn kind_arr(
         &mut self,
         arena: Resource<HostArena>,
-        domain: u64,
-        codomain: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        domain: i32,
+        codomain: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(domain), reference(codomain)) {
             (Ok(domain), Ok(codomain)) => pushed(
                 self.table
@@ -461,7 +456,7 @@ impl nucleus::proof::host::HostArena for ProofState {
         })
     }
 
-    fn bool_type(&mut self, arena: Resource<HostArena>) -> wasmtime::Result<Result<u64, String>> {
+    fn bool_type(&mut self, arena: Resource<HostArena>) -> wasmtime::Result<Result<i32, String>> {
         Ok(pushed(
             self.table.get_mut(&arena)?.0.push_bool_ty(),
             "definition",
@@ -471,9 +466,9 @@ impl nucleus::proof::host::HostArena for ProofState {
     fn ty_arr(
         &mut self,
         arena: Resource<HostArena>,
-        domain: u64,
-        codomain: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        domain: i32,
+        codomain: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(domain), reference(codomain)) {
             (Ok(domain), Ok(codomain)) => pushed(
                 self.table.get_mut(&arena)?.0.push_ty_arr(domain, codomain),
@@ -486,9 +481,9 @@ impl nucleus::proof::host::HostArena for ProofState {
     fn ty_app(
         &mut self,
         arena: Resource<HostArena>,
-        function: u64,
-        argument: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        function: i32,
+        argument: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(function), reference(argument)) {
             (Ok(function), Ok(argument)) => pushed(
                 self.table
@@ -504,9 +499,9 @@ impl nucleus::proof::host::HostArena for ProofState {
     fn ty_lam(
         &mut self,
         arena: Resource<HostArena>,
-        binder: u64,
-        body: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        binder: i32,
+        body: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(binder), reference(body)) {
             (Ok(binder), Ok(body)) => pushed(
                 self.table.get_mut(&arena)?.0.push_ty_lam(binder, body),
@@ -520,8 +515,8 @@ impl nucleus::proof::host::HostArena for ProofState {
         &mut self,
         arena: Resource<HostArena>,
         name: u64,
-        kind: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        kind: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         let kind = match reference(kind) {
             Ok(kind) => kind,
             Err(error) => return Ok(Err(error)),
@@ -536,8 +531,8 @@ impl nucleus::proof::host::HostArena for ProofState {
         &mut self,
         arena: Resource<HostArena>,
         name: u64,
-        predicate: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        predicate: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         let predicate = match reference(predicate) {
             Ok(predicate) => predicate,
             Err(error) => return Ok(Err(error)),
@@ -555,8 +550,8 @@ impl nucleus::proof::host::HostArena for ProofState {
         &mut self,
         arena: Resource<HostArena>,
         name: u64,
-        predicate: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        predicate: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         let predicate = match reference(predicate) {
             Ok(predicate) => predicate,
             Err(error) => return Ok(Err(error)),
@@ -574,8 +569,8 @@ impl nucleus::proof::host::HostArena for ProofState {
         &mut self,
         arena: Resource<HostArena>,
         name: u64,
-        predicate: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        predicate: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         let predicate = match reference(predicate) {
             Ok(predicate) => predicate,
             Err(error) => return Ok(Err(error)),
@@ -590,8 +585,8 @@ impl nucleus::proof::host::HostArena for ProofState {
         &mut self,
         arena: Resource<HostArena>,
         name: u64,
-        ty: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        ty: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         let ty = match reference(ty) {
             Ok(ty) => ty,
             Err(error) => return Ok(Err(error)),
@@ -605,9 +600,9 @@ impl nucleus::proof::host::HostArena for ProofState {
     fn app(
         &mut self,
         arena: Resource<HostArena>,
-        function: u64,
-        argument: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        function: i32,
+        argument: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(function), reference(argument)) {
             (Ok(function), Ok(argument)) => pushed(
                 self.table.get_mut(&arena)?.0.push_app(function, argument),
@@ -620,9 +615,9 @@ impl nucleus::proof::host::HostArena for ProofState {
     fn lam(
         &mut self,
         arena: Resource<HostArena>,
-        binder: u64,
-        body: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        binder: i32,
+        body: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(binder), reference(body)) {
             (Ok(binder), Ok(body)) => pushed(
                 self.table.get_mut(&arena)?.0.push_lam(binder, body),
@@ -636,7 +631,7 @@ impl nucleus::proof::host::HostArena for ProofState {
         &mut self,
         arena: Resource<HostArena>,
         value: bool,
-    ) -> wasmtime::Result<Result<u64, String>> {
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(pushed(
             self.table.get_mut(&arena)?.0.push_bool(value),
             "definition",
@@ -646,9 +641,9 @@ impl nucleus::proof::host::HostArena for ProofState {
     fn tm_eq(
         &mut self,
         arena: Resource<HostArena>,
-        left: u64,
-        right: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        left: i32,
+        right: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(left), reference(right)) {
             (Ok(left), Ok(right)) => pushed(
                 self.table.get_mut(&arena)?.0.push_tm_eq(left, right),
@@ -661,9 +656,9 @@ impl nucleus::proof::host::HostArena for ProofState {
     fn eps(
         &mut self,
         arena: Resource<HostArena>,
-        ty: u64,
-        predicate: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        ty: i32,
+        predicate: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(ty), reference(predicate)) {
             (Ok(ty), Ok(predicate)) => pushed(
                 self.table.get_mut(&arena)?.0.push_eps(ty, predicate),
@@ -677,8 +672,8 @@ impl nucleus::proof::host::HostArena for ProofState {
         &mut self,
         arena: Resource<HostArena>,
         source: u64,
-        foreign: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        foreign: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (import_id(source), reference(foreign)) {
             (Ok(source), Ok(foreign)) => pushed(
                 self.table.get_mut(&arena)?.0.push_kind_ref(source, foreign),
@@ -692,8 +687,8 @@ impl nucleus::proof::host::HostArena for ProofState {
         &mut self,
         arena: Resource<HostArena>,
         source: u64,
-        foreign: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        foreign: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (import_id(source), reference(foreign)) {
             (Ok(source), Ok(foreign)) => pushed(
                 self.table.get_mut(&arena)?.0.push_ty_ref(source, foreign),
@@ -707,8 +702,8 @@ impl nucleus::proof::host::HostArena for ProofState {
         &mut self,
         arena: Resource<HostArena>,
         source: u64,
-        foreign: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        foreign: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (import_id(source), reference(foreign)) {
             (Ok(source), Ok(foreign)) => pushed(
                 self.table.get_mut(&arena)?.0.push_tm_ref(source, foreign),
@@ -758,7 +753,7 @@ impl nucleus::proof::host::HostArena for ProofState {
     fn add_context(
         &mut self,
         arena: Resource<HostArena>,
-        proposition: u64,
+        proposition: i32,
     ) -> wasmtime::Result<Result<(), String>> {
         let proposition = match reference(proposition) {
             Ok(proposition) => proposition,
@@ -834,7 +829,7 @@ fn wit_sort(value: HolSort) -> nucleus::proof::host::Sort {
     }
 }
 
-fn checked_ref(value: Result<Ref, covalence_logic_hol::KernelError>) -> Result<u64, String> {
+fn checked_ref(value: Result<Ref, covalence_logic_hol::KernelError>) -> Result<i32, String> {
     value.map(ref_index).map_err(|error| error.to_string())
 }
 
@@ -863,7 +858,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn category(
         &mut self,
         kernel: Resource<HostKernel>,
-        value: u64,
+        value: i32,
     ) -> wasmtime::Result<Result<nucleus::proof::host::Sort, String>> {
         Ok(reference(value).and_then(|value| {
             self.table
@@ -879,8 +874,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn classifier(
         &mut self,
         kernel: Resource<HostKernel>,
-        value: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        value: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(reference(value).and_then(|value| {
             checked_ref(
                 self.table
@@ -895,8 +890,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn find(
         &mut self,
         kernel: Resource<HostKernel>,
-        value: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        value: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(reference(value).and_then(|value| {
             checked_ref(
                 self.table
@@ -911,8 +906,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn find_mut(
         &mut self,
         kernel: Resource<HostKernel>,
-        value: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        value: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(reference(value).and_then(|value| {
             checked_ref(
                 self.table
@@ -927,8 +922,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn equivalent(
         &mut self,
         kernel: Resource<HostKernel>,
-        left: u64,
-        right: u64,
+        left: i32,
+        right: i32,
     ) -> wasmtime::Result<Result<bool, String>> {
         Ok(match (reference(left), reference(right)) {
             (Ok(left), Ok(right)) => self
@@ -944,8 +939,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn equivalent_mut(
         &mut self,
         kernel: Resource<HostKernel>,
-        left: u64,
-        right: u64,
+        left: i32,
+        right: i32,
     ) -> wasmtime::Result<Result<bool, String>> {
         Ok(match (reference(left), reference(right)) {
             (Ok(left), Ok(right)) => self
@@ -958,16 +953,16 @@ impl nucleus::proof::host::HostKernel for ProofState {
         })
     }
 
-    fn kind_star(&mut self, kernel: Resource<HostKernel>) -> wasmtime::Result<Result<u64, String>> {
+    fn kind_star(&mut self, kernel: Resource<HostKernel>) -> wasmtime::Result<Result<i32, String>> {
         Ok(checked_ref(self.table.get_mut(&kernel)?.0.star()))
     }
 
     fn kind_arr(
         &mut self,
         kernel: Resource<HostKernel>,
-        domain: u64,
-        codomain: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        domain: i32,
+        codomain: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(domain), reference(codomain)) {
             (Ok(domain), Ok(codomain)) => {
                 checked_ref(self.table.get_mut(&kernel)?.0.kind_arr(domain, codomain))
@@ -979,8 +974,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn bool_type(
         &mut self,
         kernel: Resource<HostKernel>,
-        star: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        star: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         let star = match reference(star) {
             Ok(star) => star,
             Err(error) => return Ok(Err(error)),
@@ -991,9 +986,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn ty_arr(
         &mut self,
         kernel: Resource<HostKernel>,
-        domain: u64,
-        codomain: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        domain: i32,
+        codomain: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(domain), reference(codomain)) {
             (Ok(domain), Ok(codomain)) => {
                 checked_ref(self.table.get_mut(&kernel)?.0.ty_arr(domain, codomain))
@@ -1005,9 +1000,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn ty_app(
         &mut self,
         kernel: Resource<HostKernel>,
-        function: u64,
-        argument: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        function: i32,
+        argument: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(function), reference(argument)) {
             (Ok(function), Ok(argument)) => {
                 checked_ref(self.table.get_mut(&kernel)?.0.ty_app(function, argument))
@@ -1019,9 +1014,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn ty_lam(
         &mut self,
         kernel: Resource<HostKernel>,
-        binder: u64,
-        body: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        binder: i32,
+        body: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(binder), reference(body)) {
             (Ok(binder), Ok(body)) => {
                 checked_ref(self.table.get_mut(&kernel)?.0.ty_lam(binder, body))
@@ -1034,8 +1029,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         name: u64,
-        kind: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        kind: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         let kind = match reference(kind) {
             Ok(kind) => kind,
             Err(error) => return Ok(Err(error)),
@@ -1049,8 +1044,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         name: u64,
-        predicate: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        predicate: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         let predicate = match reference(predicate) {
             Ok(predicate) => predicate,
             Err(error) => return Ok(Err(error)),
@@ -1064,8 +1059,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         name: u64,
-        predicate: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        predicate: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         let predicate = match reference(predicate) {
             Ok(predicate) => predicate,
             Err(error) => return Ok(Err(error)),
@@ -1079,8 +1074,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         name: u64,
-        predicate: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        predicate: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         let predicate = match reference(predicate) {
             Ok(predicate) => predicate,
             Err(error) => return Ok(Err(error)),
@@ -1094,8 +1089,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         name: u64,
-        ty: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        ty: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         let ty = match reference(ty) {
             Ok(ty) => ty,
             Err(error) => return Ok(Err(error)),
@@ -1106,9 +1101,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn app(
         &mut self,
         kernel: Resource<HostKernel>,
-        function: u64,
-        argument: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        function: i32,
+        argument: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(function), reference(argument)) {
             (Ok(function), Ok(argument)) => {
                 checked_ref(self.table.get_mut(&kernel)?.0.app(function, argument))
@@ -1120,9 +1115,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn lam(
         &mut self,
         kernel: Resource<HostKernel>,
-        binder: u64,
-        body: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        binder: i32,
+        body: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(binder), reference(body)) {
             (Ok(binder), Ok(body)) => checked_ref(self.table.get_mut(&kernel)?.0.lam(binder, body)),
             (Err(error), _) | (_, Err(error)) => Err(error),
@@ -1132,9 +1127,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn bool_lit(
         &mut self,
         kernel: Resource<HostKernel>,
-        bool_type: u64,
+        bool_type: i32,
         value: bool,
-    ) -> wasmtime::Result<Result<u64, String>> {
+    ) -> wasmtime::Result<Result<i32, String>> {
         let bool_type = match reference(bool_type) {
             Ok(bool_type) => bool_type,
             Err(error) => return Ok(Err(error)),
@@ -1147,10 +1142,10 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn tm_eq(
         &mut self,
         kernel: Resource<HostKernel>,
-        bool_type: u64,
-        left: u64,
-        right: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        bool_type: i32,
+        left: i32,
+        right: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(
             match (reference(bool_type), reference(left), reference(right)) {
                 (Ok(bool_type), Ok(left), Ok(right)) => {
@@ -1164,9 +1159,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn eps(
         &mut self,
         kernel: Resource<HostKernel>,
-        ty: u64,
-        predicate: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        ty: i32,
+        predicate: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(ty), reference(predicate)) {
             (Ok(ty), Ok(predicate)) => {
                 checked_ref(self.table.get_mut(&kernel)?.0.eps(ty, predicate))
@@ -1225,8 +1220,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         source: u64,
-        foreign: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        foreign: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         let parsed = import_id(source).and_then(|source| Ok((source, reference(foreign)?)));
         let (table, cas) = (&mut self.table, &self.cas);
         Ok(match parsed {
@@ -1247,9 +1242,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         source: u64,
-        foreign: u64,
-        kind: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        foreign: i32,
+        kind: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         let parsed = (|| Ok((import_id(source)?, reference(foreign)?, reference(kind)?)))();
         let (table, cas) = (&mut self.table, &self.cas);
         Ok(match parsed {
@@ -1270,9 +1265,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         source: u64,
-        foreign: u64,
-        ty: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        foreign: i32,
+        ty: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         let parsed = (|| Ok((import_id(source)?, reference(foreign)?, reference(ty)?)))();
         let (table, cas) = (&mut self.table, &self.cas);
         Ok(match parsed {
@@ -1292,7 +1287,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn add_context(
         &mut self,
         kernel: Resource<HostKernel>,
-        proposition: u64,
+        proposition: i32,
     ) -> wasmtime::Result<Result<(), String>> {
         Ok(reference(proposition).and_then(|proposition| {
             self.table
@@ -1320,9 +1315,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn not_tm(
         &mut self,
         kernel: Resource<HostKernel>,
-        bool_type: u64,
-        proposition: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        bool_type: i32,
+        proposition: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(bool_type), reference(proposition)) {
             (Ok(bool_type), Ok(proposition)) => checked_ref(
                 self.table
@@ -1337,10 +1332,10 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn forall_tm(
         &mut self,
         kernel: Resource<HostKernel>,
-        bool_type: u64,
-        binder: u64,
-        body: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        bool_type: i32,
+        binder: i32,
+        body: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(
             match (reference(bool_type), reference(binder), reference(body)) {
                 (Ok(bool_type), Ok(binder), Ok(body)) => checked_ref(
@@ -1357,9 +1352,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn exists_tm(
         &mut self,
         kernel: Resource<HostKernel>,
-        binder: u64,
-        body: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        binder: i32,
+        body: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match (reference(binder), reference(body)) {
             (Ok(binder), Ok(body)) => {
                 checked_ref(self.table.get_mut(&kernel)?.0.exists_tm(binder, body))
@@ -1371,11 +1366,11 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn and_tm(
         &mut self,
         kernel: Resource<HostKernel>,
-        bool_type: u64,
-        binder: u64,
-        left: u64,
-        right: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        bool_type: i32,
+        binder: i32,
+        left: i32,
+        right: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match binary_logic(bool_type, binder, left, right) {
             Ok((bool_type, binder, left, right)) => checked_ref(
                 self.table
@@ -1390,11 +1385,11 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn or_tm(
         &mut self,
         kernel: Resource<HostKernel>,
-        bool_type: u64,
-        binder: u64,
-        left: u64,
-        right: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        bool_type: i32,
+        binder: i32,
+        left: i32,
+        right: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match binary_logic(bool_type, binder, left, right) {
             Ok((bool_type, binder, left, right)) => checked_ref(
                 self.table
@@ -1409,11 +1404,11 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn imp_tm(
         &mut self,
         kernel: Resource<HostKernel>,
-        bool_type: u64,
-        binder: u64,
-        left: u64,
-        right: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+        bool_type: i32,
+        binder: i32,
+        left: i32,
+        right: i32,
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok(match binary_logic(bool_type, binder, left, right) {
             Ok((bool_type, binder, left, right)) => checked_ref(
                 self.table
@@ -1428,7 +1423,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn fresh_name(
         &mut self,
         kernel: Resource<HostKernel>,
-        roots: Vec<u64>,
+        roots: Vec<i32>,
     ) -> wasmtime::Result<Result<u64, String>> {
         let mut resolved = Vec::with_capacity(roots.len());
         for root in roots {
@@ -1466,8 +1461,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn refl(
         &mut self,
         kernel: Resource<HostKernel>,
-        bool_ty: u64,
-        term: u64,
+        bool_ty: i32,
+        term: i32,
     ) -> wasmtime::Result<Result<nucleus::proof::host::ReflThm, String>> {
         Ok(match (reference(bool_ty), reference(term)) {
             (Ok(bool_ty), Ok(term)) => self
@@ -1476,7 +1471,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
                 .0
                 .refl(bool_ty, term)
                 .map(|result| nucleus::proof::host::ReflThm {
-                    equality: u64::from(result.equality.get().unsigned_abs()),
+                    equality: ref_index(result.equality),
                     theorem: u64::from(result.theorem.get().unsigned_abs()),
                 })
                 .map_err(|error| error.to_string()),
@@ -1488,7 +1483,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         theorem: u64,
-        argument: u64,
+        argument: i32,
     ) -> wasmtime::Result<Result<nucleus::proof::host::ApThm, String>> {
         Ok(match (theorem_id(theorem), reference(argument)) {
             (Ok(theorem), Ok(argument)) => self
@@ -1497,9 +1492,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
                 .0
                 .ap_thm(theorem, argument)
                 .map(|result| nucleus::proof::host::ApThm {
-                    left: u64::from(result.left.get().unsigned_abs()),
-                    right: u64::from(result.right.get().unsigned_abs()),
-                    equality: u64::from(result.equality.get().unsigned_abs()),
+                    left: ref_index(result.left),
+                    right: ref_index(result.right),
+                    equality: ref_index(result.equality),
                     theorem: u64::from(result.theorem.get().unsigned_abs()),
                 })
                 .map_err(|error| error.to_string()),
@@ -1511,7 +1506,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         theorem: u64,
-        function: u64,
+        function: i32,
     ) -> wasmtime::Result<Result<nucleus::proof::host::ApThm, String>> {
         Ok(match (theorem_id(theorem), reference(function)) {
             (Ok(theorem), Ok(function)) => self
@@ -1520,9 +1515,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
                 .0
                 .ap_term(theorem, function)
                 .map(|result| nucleus::proof::host::ApThm {
-                    left: u64::from(result.left.get().unsigned_abs()),
-                    right: u64::from(result.right.get().unsigned_abs()),
-                    equality: u64::from(result.equality.get().unsigned_abs()),
+                    left: ref_index(result.left),
+                    right: ref_index(result.right),
+                    equality: ref_index(result.equality),
                     theorem: u64::from(result.theorem.get().unsigned_abs()),
                 })
                 .map_err(|error| error.to_string()),
@@ -1552,7 +1547,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         theorem: u64,
-        binder: u64,
+        binder: i32,
     ) -> wasmtime::Result<Result<nucleus::proof::host::ForallThm, String>> {
         Ok(match (theorem_id(theorem), reference(binder)) {
             (Ok(theorem), Ok(binder)) => self
@@ -1561,7 +1556,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
                 .0
                 .forall_intro(theorem, binder)
                 .map(|result| nucleus::proof::host::ForallThm {
-                    universal: u64::from(result.universal.get().unsigned_abs()),
+                    universal: ref_index(result.universal),
                     theorem: u64::from(result.theorem.get().unsigned_abs()),
                 })
                 .map_err(|error| error.to_string()),
@@ -1573,8 +1568,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         theorem: u64,
-        binder: u64,
-        universal: u64,
+        binder: i32,
+        universal: i32,
     ) -> wasmtime::Result<Result<u64, String>> {
         let (theorem, binder, universal) =
             match (theorem_id(theorem), reference(binder), reference(universal)) {
@@ -1604,8 +1599,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
                 .0
                 .choice_intro(theorem)
                 .map(|result| nucleus::proof::host::ChoiceThm {
-                    witness: u64::from(result.witness.get().unsigned_abs()),
-                    proposition: u64::from(result.proposition.get().unsigned_abs()),
+                    witness: ref_index(result.witness),
+                    proposition: ref_index(result.proposition),
                     theorem: u64::from(result.theorem.get().unsigned_abs()),
                 })
                 .map_err(|error| error.to_string()),
@@ -1617,7 +1612,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         theorem: u64,
-        target: u64,
+        target: i32,
     ) -> wasmtime::Result<Result<u64, String>> {
         Ok(match (theorem_id(theorem), reference(target)) {
             (Ok(theorem), Ok(target)) => self
@@ -1635,8 +1630,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         theorem: u64,
-        source: u64,
-        target: u64,
+        source: i32,
+        target: i32,
     ) -> wasmtime::Result<Result<(), String>> {
         let (theorem, source, target) =
             match (theorem_id(theorem), reference(source), reference(target)) {
@@ -1657,8 +1652,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         theorem: u64,
-        source: u64,
-        target: u64,
+        source: i32,
+        target: i32,
     ) -> wasmtime::Result<Result<(), String>> {
         let (theorem, source, target) =
             match (theorem_id(theorem), reference(source), reference(target)) {
@@ -1711,7 +1706,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn inf_exists(
         &mut self,
         kernel: Resource<HostKernel>,
-        bool_type: u64,
+        bool_type: i32,
     ) -> wasmtime::Result<Result<nucleus::proof::host::InfinityAxiom, String>> {
         let bool_type = match reference(bool_type) {
             Ok(bool_type) => bool_type,
@@ -1729,9 +1724,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn sub_exists(
         &mut self,
         kernel: Resource<HostKernel>,
-        bool_type: u64,
-        carrier: u64,
-        predicate: u64,
+        bool_type: i32,
+        carrier: i32,
+        predicate: i32,
     ) -> wasmtime::Result<Result<nucleus::proof::host::SubtypeAxiom, String>> {
         let (bool_type, carrier, predicate) = match (
             reference(bool_type),
@@ -1787,7 +1782,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         relation: nucleus::proof::host::SynRel,
-        input: u64,
+        input: i32,
         target: Option<u64>,
     ) -> wasmtime::Result<Result<u64, String>> {
         Ok(match (reference(input), optional_fact_id(target)) {
@@ -1854,8 +1849,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn syn_sub_var(
         &mut self,
         kernel: Resource<HostKernel>,
-        var: u64,
-        val: u64,
+        var: i32,
+        val: i32,
         target: Option<u64>,
     ) -> wasmtime::Result<Result<u64, String>> {
         Ok(
@@ -1871,9 +1866,9 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn syn_sub_leaf(
         &mut self,
         kernel: Resource<HostKernel>,
-        var: u64,
-        val: u64,
-        input: u64,
+        var: i32,
+        val: i32,
+        input: i32,
         target: Option<u64>,
     ) -> wasmtime::Result<Result<u64, String>> {
         Ok(
@@ -1900,8 +1895,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn syn_sub_leaf_forall(
         &mut self,
         kernel: Resource<HostKernel>,
-        var: u64,
-        input: u64,
+        var: i32,
+        input: i32,
         target: Option<u64>,
     ) -> wasmtime::Result<Result<u64, String>> {
         Ok(
@@ -1921,10 +1916,10 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn syn_sub_identity(
         &mut self,
         kernel: Resource<HostKernel>,
-        var: u64,
-        val: u64,
-        input: u64,
-        output: u64,
+        var: i32,
+        val: i32,
+        input: i32,
+        output: i32,
         variable_equality: u64,
         body_equality: u64,
         target: Option<u64>,
@@ -1961,10 +1956,10 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         relation: nucleus::proof::host::SynRel,
-        var: Option<u64>,
-        val: Option<u64>,
-        input: u64,
-        output: u64,
+        var: Option<i32>,
+        val: Option<i32>,
+        input: i32,
+        output: i32,
         children: Vec<u64>,
         target: Option<u64>,
     ) -> wasmtime::Result<Result<u64, String>> {
@@ -2001,10 +1996,10 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         relation: nucleus::proof::host::SynRel,
-        var: Option<u64>,
-        val: Option<u64>,
-        input: u64,
-        output: u64,
+        var: Option<i32>,
+        val: Option<i32>,
+        input: i32,
+        output: i32,
         binder: u64,
         body: u64,
         target: Option<u64>,
@@ -2042,11 +2037,11 @@ impl nucleus::proof::host::HostKernel for ProofState {
         &mut self,
         kernel: Resource<HostKernel>,
         relation: nucleus::proof::host::SynRel,
-        var: Option<u64>,
-        val: Option<u64>,
-        input: u64,
-        output: u64,
-        binder: u64,
+        var: Option<i32>,
+        val: Option<i32>,
+        input: i32,
+        output: i32,
+        binder: i32,
         body: u64,
         target: Option<u64>,
     ) -> wasmtime::Result<Result<u64, String>> {
@@ -2081,8 +2076,8 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn syn_alpha_binder(
         &mut self,
         kernel: Resource<HostKernel>,
-        input: u64,
-        output: u64,
+        input: i32,
+        output: i32,
         binder_classifier: u64,
         body_substitution: u64,
         target: Option<u64>,
@@ -2114,10 +2109,10 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn syn_alpha_implicit_binder(
         &mut self,
         kernel: Resource<HostKernel>,
-        input: u64,
-        output: u64,
-        input_binder: u64,
-        output_binder: u64,
+        input: i32,
+        output: i32,
+        input_binder: i32,
+        output_binder: i32,
         body_substitution: u64,
         target: Option<u64>,
     ) -> wasmtime::Result<Result<u64, String>> {
@@ -2149,7 +2144,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn tm_beta(
         &mut self,
         kernel: Resource<HostKernel>,
-        source: u64,
+        source: i32,
         substitution: u64,
         target: Option<u64>,
     ) -> wasmtime::Result<Result<u64, String>> {
@@ -2173,7 +2168,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn ty_beta(
         &mut self,
         kernel: Resource<HostKernel>,
-        source: u64,
+        source: i32,
         substitution: u64,
         target: Option<u64>,
     ) -> wasmtime::Result<Result<u64, String>> {
@@ -2197,7 +2192,7 @@ impl nucleus::proof::host::HostKernel for ProofState {
     fn tm_eta(
         &mut self,
         kernel: Resource<HostKernel>,
-        source: u64,
+        source: i32,
         target: Option<u64>,
     ) -> wasmtime::Result<Result<u64, String>> {
         Ok(match (reference(source), optional_fact_id(target)) {
@@ -2359,10 +2354,10 @@ impl nucleus::proof::tactics::Host for ProofState {
     fn iterate_unary(
         &mut self,
         kernel: Resource<HostKernel>,
-        zero: u64,
-        successor: u64,
+        zero: i32,
+        successor: i32,
         count: u64,
-    ) -> wasmtime::Result<Result<u64, String>> {
+    ) -> wasmtime::Result<Result<i32, String>> {
         Ok((|| {
             let result = crate::tactics::iterate_unary(
                 &mut self
@@ -2375,14 +2370,14 @@ impl nucleus::proof::tactics::Host for ProofState {
                 count,
             )
             .map_err(|error| error.to_string())?;
-            Ok(u64_from_ref(result))
+            Ok(ref_index(result))
         })())
     }
 
     fn rewrite_proposition(
         &mut self,
         kernel: Resource<HostKernel>,
-        bool_type: u64,
+        bool_type: i32,
         equality: u64,
         premise: u64,
         direction: nucleus::proof::tactics::RewriteDirection,
@@ -2409,8 +2404,8 @@ impl nucleus::proof::tactics::Host for ProofState {
             )
             .map_err(|error| error.to_string())?;
             Ok(nucleus::proof::tactics::RewriteResult {
-                source: u64_from_ref(result.source()),
-                target: u64_from_ref(result.target()),
+                source: ref_index(result.source()),
+                target: ref_index(result.target()),
                 theorem: u64::from(result.theorem().get().unsigned_abs()),
             })
         })())
@@ -2706,6 +2701,65 @@ pub async fn load_proof_with_cas_async(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn component_term_references_preserve_builtin_sign_without_theorem_polarity() {
+        let mut state = ProofState::default();
+        let mut kernel = HolKernel::new();
+        let star = kernel.star().unwrap();
+        let boolean = kernel.bool_ty(star).unwrap();
+        let truth = kernel.bool(boolean, true).unwrap();
+        let local = kernel.tm_fv(0, boolean).unwrap();
+        assert!(truth.get() < 0);
+        assert!(local.get() > 0);
+        assert!(kernel.lit(truth).is_err());
+        assert!(kernel.lit(local).unwrap().is_positive());
+        for term in [star, boolean, truth, local] {
+            assert_eq!(reference(ref_index(term)).unwrap(), term);
+        }
+        for invalid in [0, i32::MIN, i32::MAX] {
+            assert!(reference(invalid).is_err());
+        }
+        let resource = state.table.push(HostKernel(kernel)).unwrap();
+        let classifier = <ProofState as nucleus::proof::host::HostKernel>::classifier(
+            &mut state,
+            Resource::new_borrow(resource.rep()),
+            local.get(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(classifier, boolean.get());
+
+        // A signed number can be well-shaped but absent from the fixed registry.
+        let before = state.table.get(&resource).unwrap().0.arena().clone();
+        for invalid in [0, i32::MIN, i32::MAX, -12] {
+            let rejected = <ProofState as nucleus::proof::host::HostKernel>::classifier(
+                &mut state,
+                Resource::new_borrow(resource.rep()),
+                invalid,
+            )
+            .unwrap();
+            assert!(rejected.is_err());
+        }
+        assert_eq!(state.table.get(&resource).unwrap().0.arena(), &before);
+
+        // Knowing a globally stable numeric type ID grants no axiom capability.
+        let mut licensed = HolKernel::new();
+        licensed.add_axiom(covalence_logic_hol::AX_INF).unwrap();
+        let natural = licensed
+            .literal_ty(covalence_logic_hol::literals::LiteralType::Nat)
+            .unwrap();
+        let before = state.table.get(&resource).unwrap().0.arena().clone();
+        let rejected = <ProofState as nucleus::proof::host::HostKernel>::tm_fv(
+            &mut state,
+            Resource::new_borrow(resource.rep()),
+            1,
+            natural.get(),
+        )
+        .unwrap();
+        assert!(rejected.is_err());
+        assert_eq!(state.table.get(&resource).unwrap().0.arena(), &before);
+    }
     use nucleus::proof::host::{Host, HostBlob, HostBytes, HostIndexCas};
 
     #[test]
@@ -2755,7 +2809,7 @@ mod tests {
         let result = <ProofState as nucleus::proof::tactics::Host>::rewrite_proposition(
             &mut state,
             Resource::new_borrow(resource.rep()),
-            u64_from_ref(bool_ty),
+            ref_index(bool_ty),
             u64::from(equality.theorem.get().unsigned_abs()),
             u64::from(proposition.theorem.get().unsigned_abs()),
             nucleus::proof::tactics::RewriteDirection::Forward,
@@ -2790,8 +2844,8 @@ mod tests {
         let result = <ProofState as nucleus::proof::tactics::Host>::iterate_unary(
             &mut state,
             Resource::new_borrow(resource.rep()),
-            u64_from_ref(zero),
-            u64_from_ref(successor),
+            ref_index(zero),
+            ref_index(successor),
             3,
         )
         .expect("host call")
@@ -2808,8 +2862,8 @@ mod tests {
         let rejected = <ProofState as nucleus::proof::tactics::Host>::iterate_unary(
             &mut state,
             Resource::new_borrow(resource.rep()),
-            u64_from_ref(zero),
-            u64_from_ref(malformed),
+            ref_index(zero),
+            ref_index(malformed),
             0,
         )
         .expect("host call");

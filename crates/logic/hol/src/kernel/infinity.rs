@@ -38,7 +38,10 @@
 use std::convert::Infallible;
 
 use super::{Kernel, KernelError, ThmId};
-use crate::{Ref, builtin::Op2};
+use crate::{
+    Ref,
+    literals::{BoolOp, Builtin},
+};
 
 /// The name of the axiom capability [`Kernel::inf_exists`] consumes.
 pub const AX_INF: &str = "ax.inf";
@@ -158,13 +161,10 @@ impl Kernel {
             self.forall_tm(bool_ty, left, body)?
         };
 
-        // The sentence may use the compact connective even though the init
-        // slice defining its meaning remains opcode-free. `tm.op2.and` is a
-        // macro whose resolved HOL expression is that direct definition, and
-        // using it here makes the proved conjunction available to the checked
-        // Gentzen projection rules without a trusted pattern matcher for the
-        // expanded lambda/equality tree.
-        let infinite = self.op2(Op2::And, reflects, avoids_point)?;
+        // The fixed Boolean builtin exposes the conjunction to the checked
+        // Gentzen rules. Its closed HOL definition uses the same encoding as
+        // `and_tm`; no userspace declaration supplies its meaning.
+        let infinite = self.builtin(Builtin::Bool(BoolOp::And), &[reflects, avoids_point])?;
         let choose_missed = self.exists_tm(missed, infinite)?;
         let body = self.exists_tm(map, choose_missed)?;
         let exists_type = self.ty_exists(carrier_name, body)?;

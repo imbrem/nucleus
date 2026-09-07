@@ -1,6 +1,6 @@
 //! End-to-end userspace opening of type-existential model packages.
 
-use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Lit, Ref, Sort, SynRel, Tag};
+use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Ref, Sort, SynRel, Tag};
 use covalence_logic_hol_derived::{
     ModelError, ModelExt, introduce_exists, join_alpha_equivalent, join_same_syntax, open_exists,
     substitute,
@@ -18,7 +18,12 @@ fn assert_specification_theorem(kernel: &Kernel, theorem: covalence_logic_hol::T
     assert!(sequent.lhs.rows().next().is_none());
     let rows: Vec<_> = sequent.rhs.rows().collect();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0], [Lit::positive(term.get())]);
+    assert_eq!(
+        rows[0],
+        [term
+            .positive()
+            .expect("theorem atom is a local proposition")]
+    );
 }
 
 #[test]
@@ -75,11 +80,8 @@ fn the_full_infinity_body_can_be_opened_in_userspace() {
 
 #[test]
 fn a_non_existential_theorem_is_rejected_before_model_construction() {
-    let (mut kernel, _star, bool_ty) = prelude();
-    let truth = kernel.bool(bool_ty, true).expect("truth");
-    let theorem = kernel
-        .identity(Lit::positive(truth.get()))
-        .expect("identity");
+    let (mut kernel, _star, _bool_ty) = prelude();
+    let theorem = kernel.true_right().expect("truth");
     let before = kernel.arena().len();
 
     assert!(matches!(

@@ -247,11 +247,21 @@ pub enum CastOp {
 /// Closed regular builtin vocabulary.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub enum Builtin {
+    Bool(BoolOp),
     Word(WordWidth, WordOp),
     Nat(NatOp),
     Int(IntOp),
     Bytes(BytesOp),
     Cast(CastOp),
+}
+/// Boolean functions; equality and equivalence share `Iff`.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub enum BoolOp {
+    Not,
+    And,
+    Or,
+    Imp,
+    Iff,
 }
 /// Resource bounds for one concrete evaluation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -288,9 +298,14 @@ impl Builtin {
     /// Exact operand and result carriers.
     /// # Errors
     /// Rejects impossible width-extension descriptors.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one exhaustive, auditable builtin signature inventory"
+    )]
     pub fn signature(self) -> Result<(Vec<LiteralType>, LiteralType), EvalError> {
         use LiteralType::{Bool, Bytes, I8, Int, Nat};
         let pair = match self {
+            Self::Bool(op) => (vec![Bool; if op == BoolOp::Not { 1 } else { 2 }], Bool),
             Self::Word(w, op) => {
                 use WordOp::*;
                 if let ExtendSign(from) = op
@@ -406,6 +421,23 @@ impl Builtin {
             check_size(arg, limits)?;
         }
         let result = match self {
+            Self::Bool(op) => {
+                let LiteralValue::Bool(left) = args[0] else {
+                    return Err(EvalError::Signature);
+                };
+                let right = if let Some(LiteralValue::Bool(value)) = args.get(1) {
+                    *value
+                } else {
+                    false
+                };
+                LiteralValue::Bool(match op {
+                    BoolOp::Not => !left,
+                    BoolOp::And => left && right,
+                    BoolOp::Or => left || right,
+                    BoolOp::Imp => !left || right,
+                    BoolOp::Iff => left == right,
+                })
+            }
             Self::Word(w, o) => eval_word(w, o, args)?,
             Self::Nat(o) => eval_nat(o, args, limits)?,
             Self::Int(o) => eval_int(o, args, limits)?,

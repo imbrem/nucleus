@@ -4,7 +4,7 @@
 //! avoids ambient parameters and leaves the kernel to check only ordinary HOL
 //! construction, conversion, equality, and universal rules.
 
-use covalence_logic_hol::{Kernel, Lit, Ref, SynFactId, SynRel, Tag, ThmId, TmTag, builtin::Op2};
+use covalence_logic_hol::{Kernel, Lit, Ref, SynFactId, SynRel, Tag, ThmId, TmTag};
 
 use crate::{
     NaturalError, NaturalNameSupply, NaturalRecExt, NaturalRecSchemas, NaturalRecursor,
@@ -503,7 +503,7 @@ fn prove_add_right_zero(
 
     let at_natural = predicate_application(kernel, natural, predicate, body, natural, body)?;
     kernel.convert_theorem(transitive.theorem, body, at_natural)?;
-    let step_implication = kernel.op2(Op2::Imp, at_natural, at_successor)?;
+    let step_implication = kernel.implies(at_natural, at_successor)?;
     let step = kernel.imp_right(transitive.theorem, positive(step_implication))?;
     let step = kernel.forall_intro(step, natural)?;
     let induction = naturals.induct(kernel, predicate, zero_at_zero.theorem, step.theorem)?;
@@ -576,7 +576,7 @@ fn prove_add_right_successor(
 
     let at_natural = predicate_application(kernel, natural, predicate, body, natural, body)?;
     kernel.convert_theorem(step_proof.theorem, body, at_natural)?;
-    let step_implication = kernel.op2(Op2::Imp, at_natural, at_successor)?;
+    let step_implication = kernel.implies(at_natural, at_successor)?;
     let step = kernel.imp_right(step_proof.theorem, positive(step_implication))?;
     let step = kernel.forall_intro(step, natural)?;
     let induction = naturals.induct(kernel, predicate, base_proof.theorem, step.theorem)?;
@@ -659,7 +659,7 @@ fn prove_add_commutative(
 
     let at_natural = predicate_application(kernel, natural, predicate, body, natural, body)?;
     kernel.convert_theorem(step_proof.theorem, body, at_natural)?;
-    let step_implication = kernel.op2(Op2::Imp, at_natural, at_successor)?;
+    let step_implication = kernel.implies(at_natural, at_successor)?;
     let step = kernel.imp_right(step_proof.theorem, positive(step_implication))?;
     let step = kernel.forall_intro(step, natural)?;
     let induction = naturals.induct(kernel, predicate, base_proof.theorem, step.theorem)?;
@@ -1014,5 +1014,7 @@ fn apply2(kernel: &mut Kernel, function: Ref, left: Ref, right: Ref) -> Result<R
 }
 
 fn positive(reference: Ref) -> Lit {
-    Lit::positive(reference.get())
+    reference
+        .positive()
+        .expect("theorem atom is a local proposition")
 }

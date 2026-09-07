@@ -114,10 +114,10 @@ impl Guest for Component {
 impl GuestTactics for Component {
     fn iterate_unary(
         kernel: bindings::exports::nucleus::proof::host::KernelBorrow<'_>,
-        zero: u64,
-        successor: u64,
+        zero: i32,
+        successor: i32,
         count: u64,
-    ) -> Result<u64, String> {
+    ) -> Result<i32, String> {
         iterate_unary(
             &mut kernel.get::<HostKernel>().0.borrow_mut(),
             reference(zero)?,
@@ -130,7 +130,7 @@ impl GuestTactics for Component {
 
     fn rewrite_proposition(
         kernel: bindings::exports::nucleus::proof::host::KernelBorrow<'_>,
-        bool_type: u64,
+        bool_type: i32,
         equality: u64,
         premise: u64,
         direction: WitRewriteDirection,
@@ -266,11 +266,11 @@ impl GuestArena for HostArena {
         u64::try_from(self.0.borrow().len()).unwrap_or(u64::MAX)
     }
 
-    fn kind_star(&self) -> Result<u64, String> {
+    fn kind_star(&self) -> Result<i32, String> {
         pushed(self.0.borrow_mut().push_kind_star(), "definition")
     }
 
-    fn kind_arr(&self, domain: u64, codomain: u64) -> Result<u64, String> {
+    fn kind_arr(&self, domain: i32, codomain: i32) -> Result<i32, String> {
         pushed(
             self.0
                 .borrow_mut()
@@ -279,11 +279,11 @@ impl GuestArena for HostArena {
         )
     }
 
-    fn bool_type(&self) -> Result<u64, String> {
+    fn bool_type(&self) -> Result<i32, String> {
         pushed(self.0.borrow_mut().push_bool_ty(), "definition")
     }
 
-    fn ty_arr(&self, domain: u64, codomain: u64) -> Result<u64, String> {
+    fn ty_arr(&self, domain: i32, codomain: i32) -> Result<i32, String> {
         pushed(
             self.0
                 .borrow_mut()
@@ -292,7 +292,7 @@ impl GuestArena for HostArena {
         )
     }
 
-    fn ty_app(&self, function: u64, argument: u64) -> Result<u64, String> {
+    fn ty_app(&self, function: i32, argument: i32) -> Result<i32, String> {
         pushed(
             self.0
                 .borrow_mut()
@@ -301,7 +301,7 @@ impl GuestArena for HostArena {
         )
     }
 
-    fn ty_lam(&self, binder: u64, body: u64) -> Result<u64, String> {
+    fn ty_lam(&self, binder: i32, body: i32) -> Result<i32, String> {
         pushed(
             self.0
                 .borrow_mut()
@@ -310,14 +310,14 @@ impl GuestArena for HostArena {
         )
     }
 
-    fn ty_fv(&self, name: u64, kind: u64) -> Result<u64, String> {
+    fn ty_fv(&self, name: u64, kind: i32) -> Result<i32, String> {
         pushed(
             self.0.borrow_mut().push_ty_fv(name, reference(kind)?),
             "definition",
         )
     }
 
-    fn ty_exists(&self, name: u64, predicate: u64) -> Result<u64, String> {
+    fn ty_exists(&self, name: u64, predicate: i32) -> Result<i32, String> {
         pushed(
             self.0
                 .borrow_mut()
@@ -326,7 +326,7 @@ impl GuestArena for HostArena {
         )
     }
 
-    fn ty_forall(&self, name: u64, predicate: u64) -> Result<u64, String> {
+    fn ty_forall(&self, name: u64, predicate: i32) -> Result<i32, String> {
         pushed(
             self.0
                 .borrow_mut()
@@ -335,21 +335,21 @@ impl GuestArena for HostArena {
         )
     }
 
-    fn model(&self, name: u64, predicate: u64) -> Result<u64, String> {
+    fn model(&self, name: u64, predicate: i32) -> Result<i32, String> {
         pushed(
             self.0.borrow_mut().push_model(name, reference(predicate)?),
             "definition",
         )
     }
 
-    fn tm_fv(&self, name: u64, ty: u64) -> Result<u64, String> {
+    fn tm_fv(&self, name: u64, ty: i32) -> Result<i32, String> {
         pushed(
             self.0.borrow_mut().push_tm_fv(name, reference(ty)?),
             "definition",
         )
     }
 
-    fn app(&self, function: u64, argument: u64) -> Result<u64, String> {
+    fn app(&self, function: i32, argument: i32) -> Result<i32, String> {
         pushed(
             self.0
                 .borrow_mut()
@@ -358,7 +358,7 @@ impl GuestArena for HostArena {
         )
     }
 
-    fn lam(&self, binder: u64, body: u64) -> Result<u64, String> {
+    fn lam(&self, binder: i32, body: i32) -> Result<i32, String> {
         pushed(
             self.0
                 .borrow_mut()
@@ -367,11 +367,11 @@ impl GuestArena for HostArena {
         )
     }
 
-    fn bool_lit(&self, value: bool) -> Result<u64, String> {
+    fn bool_lit(&self, value: bool) -> Result<i32, String> {
         pushed(self.0.borrow_mut().push_bool(value), "definition")
     }
 
-    fn tm_eq(&self, left: u64, right: u64) -> Result<u64, String> {
+    fn tm_eq(&self, left: i32, right: i32) -> Result<i32, String> {
         pushed(
             self.0
                 .borrow_mut()
@@ -380,7 +380,7 @@ impl GuestArena for HostArena {
         )
     }
 
-    fn eps(&self, ty: u64, predicate: u64) -> Result<u64, String> {
+    fn eps(&self, ty: i32, predicate: i32) -> Result<i32, String> {
         pushed(
             self.0
                 .borrow_mut()
@@ -389,7 +389,7 @@ impl GuestArena for HostArena {
         )
     }
 
-    fn kind_ref(&self, source: u64, foreign: u64) -> Result<u64, String> {
+    fn kind_ref(&self, source: u64, foreign: i32) -> Result<i32, String> {
         pushed(
             self.0
                 .borrow_mut()
@@ -398,7 +398,7 @@ impl GuestArena for HostArena {
         )
     }
 
-    fn ty_ref(&self, source: u64, foreign: u64) -> Result<u64, String> {
+    fn ty_ref(&self, source: u64, foreign: i32) -> Result<i32, String> {
         pushed(
             self.0
                 .borrow_mut()
@@ -407,7 +407,7 @@ impl GuestArena for HostArena {
         )
     }
 
-    fn tm_ref(&self, source: u64, foreign: u64) -> Result<u64, String> {
+    fn tm_ref(&self, source: u64, foreign: i32) -> Result<i32, String> {
         pushed(
             self.0
                 .borrow_mut()
@@ -437,7 +437,7 @@ impl GuestArena for HostArena {
         )
     }
 
-    fn add_context(&self, proposition: u64) -> Result<(), String> {
+    fn add_context(&self, proposition: i32) -> Result<(), String> {
         self.0.borrow_mut().insert_context(reference(proposition)?);
         Ok(())
     }
@@ -486,7 +486,7 @@ impl GuestKernel for HostKernel {
         u64::try_from(self.0.borrow().len()).unwrap_or(u64::MAX)
     }
 
-    fn category(&self, reference_value: u64) -> Result<Sort, String> {
+    fn category(&self, reference_value: i32) -> Result<Sort, String> {
         self.0
             .borrow()
             .category(reference(reference_value)?)
@@ -494,37 +494,37 @@ impl GuestKernel for HostKernel {
             .map_err(|error| error.to_string())
     }
 
-    fn classifier(&self, reference_value: u64) -> Result<u64, String> {
+    fn classifier(&self, reference_value: i32) -> Result<i32, String> {
         checked_ref(self.0.borrow().classifier(reference(reference_value)?))
     }
 
-    fn find(&self, reference_value: u64) -> Result<u64, String> {
+    fn find(&self, reference_value: i32) -> Result<i32, String> {
         checked_ref(self.0.borrow().find(reference(reference_value)?))
     }
 
-    fn find_mut(&self, reference_value: u64) -> Result<u64, String> {
+    fn find_mut(&self, reference_value: i32) -> Result<i32, String> {
         checked_ref(self.0.borrow_mut().find_mut(reference(reference_value)?))
     }
 
-    fn equivalent(&self, left: u64, right: u64) -> Result<bool, String> {
+    fn equivalent(&self, left: i32, right: i32) -> Result<bool, String> {
         self.0
             .borrow()
             .equivalent(reference(left)?, reference(right)?)
             .map_err(|error| error.to_string())
     }
 
-    fn equivalent_mut(&self, left: u64, right: u64) -> Result<bool, String> {
+    fn equivalent_mut(&self, left: i32, right: i32) -> Result<bool, String> {
         self.0
             .borrow_mut()
             .equivalent_mut(reference(left)?, reference(right)?)
             .map_err(|error| error.to_string())
     }
 
-    fn kind_star(&self) -> Result<u64, String> {
+    fn kind_star(&self) -> Result<i32, String> {
         checked_ref(self.0.borrow_mut().star())
     }
 
-    fn kind_arr(&self, domain: u64, codomain: u64) -> Result<u64, String> {
+    fn kind_arr(&self, domain: i32, codomain: i32) -> Result<i32, String> {
         checked_ref(
             self.0
                 .borrow_mut()
@@ -532,11 +532,11 @@ impl GuestKernel for HostKernel {
         )
     }
 
-    fn bool_type(&self, star: u64) -> Result<u64, String> {
+    fn bool_type(&self, star: i32) -> Result<i32, String> {
         checked_ref(self.0.borrow_mut().bool_ty(reference(star)?))
     }
 
-    fn ty_arr(&self, domain: u64, codomain: u64) -> Result<u64, String> {
+    fn ty_arr(&self, domain: i32, codomain: i32) -> Result<i32, String> {
         checked_ref(
             self.0
                 .borrow_mut()
@@ -544,7 +544,7 @@ impl GuestKernel for HostKernel {
         )
     }
 
-    fn ty_app(&self, function: u64, argument: u64) -> Result<u64, String> {
+    fn ty_app(&self, function: i32, argument: i32) -> Result<i32, String> {
         checked_ref(
             self.0
                 .borrow_mut()
@@ -552,7 +552,7 @@ impl GuestKernel for HostKernel {
         )
     }
 
-    fn ty_lam(&self, binder: u64, body: u64) -> Result<u64, String> {
+    fn ty_lam(&self, binder: i32, body: i32) -> Result<i32, String> {
         checked_ref(
             self.0
                 .borrow_mut()
@@ -560,27 +560,27 @@ impl GuestKernel for HostKernel {
         )
     }
 
-    fn ty_fv(&self, name: u64, kind: u64) -> Result<u64, String> {
+    fn ty_fv(&self, name: u64, kind: i32) -> Result<i32, String> {
         checked_ref(self.0.borrow_mut().ty_fv(name, reference(kind)?))
     }
 
-    fn ty_exists(&self, name: u64, predicate: u64) -> Result<u64, String> {
+    fn ty_exists(&self, name: u64, predicate: i32) -> Result<i32, String> {
         checked_ref(self.0.borrow_mut().ty_exists(name, reference(predicate)?))
     }
 
-    fn ty_forall(&self, name: u64, predicate: u64) -> Result<u64, String> {
+    fn ty_forall(&self, name: u64, predicate: i32) -> Result<i32, String> {
         checked_ref(self.0.borrow_mut().ty_forall(name, reference(predicate)?))
     }
 
-    fn model(&self, name: u64, predicate: u64) -> Result<u64, String> {
+    fn model(&self, name: u64, predicate: i32) -> Result<i32, String> {
         checked_ref(self.0.borrow_mut().model(name, reference(predicate)?))
     }
 
-    fn tm_fv(&self, name: u64, ty: u64) -> Result<u64, String> {
+    fn tm_fv(&self, name: u64, ty: i32) -> Result<i32, String> {
         checked_ref(self.0.borrow_mut().tm_fv(name, reference(ty)?))
     }
 
-    fn app(&self, function: u64, argument: u64) -> Result<u64, String> {
+    fn app(&self, function: i32, argument: i32) -> Result<i32, String> {
         checked_ref(
             self.0
                 .borrow_mut()
@@ -588,7 +588,7 @@ impl GuestKernel for HostKernel {
         )
     }
 
-    fn lam(&self, binder: u64, body: u64) -> Result<u64, String> {
+    fn lam(&self, binder: i32, body: i32) -> Result<i32, String> {
         checked_ref(
             self.0
                 .borrow_mut()
@@ -596,11 +596,11 @@ impl GuestKernel for HostKernel {
         )
     }
 
-    fn bool_lit(&self, bool_type: u64, value: bool) -> Result<u64, String> {
+    fn bool_lit(&self, bool_type: i32, value: bool) -> Result<i32, String> {
         checked_ref(self.0.borrow_mut().bool(reference(bool_type)?, value))
     }
 
-    fn tm_eq(&self, bool_type: u64, left: u64, right: u64) -> Result<u64, String> {
+    fn tm_eq(&self, bool_type: i32, left: i32, right: i32) -> Result<i32, String> {
         checked_ref(self.0.borrow_mut().eq(
             reference(bool_type)?,
             reference(left)?,
@@ -608,7 +608,7 @@ impl GuestKernel for HostKernel {
         ))
     }
 
-    fn eps(&self, ty: u64, predicate: u64) -> Result<u64, String> {
+    fn eps(&self, ty: i32, predicate: i32) -> Result<i32, String> {
         checked_ref(
             self.0
                 .borrow_mut()
@@ -642,7 +642,7 @@ impl GuestKernel for HostKernel {
             .map_err(|error| error.to_string())
     }
 
-    fn kind_ref(&self, source: u64, foreign: u64) -> Result<u64, String> {
+    fn kind_ref(&self, source: u64, foreign: i32) -> Result<i32, String> {
         DEFAULT_CAS.with_borrow(|cas| {
             let mut resolver = CasResolver(cas);
             self.0
@@ -653,7 +653,7 @@ impl GuestKernel for HostKernel {
         })
     }
 
-    fn ty_ref(&self, source: u64, foreign: u64, kind: u64) -> Result<u64, String> {
+    fn ty_ref(&self, source: u64, foreign: i32, kind: i32) -> Result<i32, String> {
         DEFAULT_CAS.with_borrow(|cas| {
             let mut resolver = CasResolver(cas);
             self.0
@@ -669,7 +669,7 @@ impl GuestKernel for HostKernel {
         })
     }
 
-    fn tm_ref(&self, source: u64, foreign: u64, ty: u64) -> Result<u64, String> {
+    fn tm_ref(&self, source: u64, foreign: i32, ty: i32) -> Result<i32, String> {
         DEFAULT_CAS.with_borrow(|cas| {
             let mut resolver = CasResolver(cas);
             self.0
@@ -685,7 +685,7 @@ impl GuestKernel for HostKernel {
         })
     }
 
-    fn not_tm(&self, bool_type: u64, proposition: u64) -> Result<u64, String> {
+    fn not_tm(&self, bool_type: i32, proposition: i32) -> Result<i32, String> {
         checked_ref(
             self.0
                 .borrow_mut()
@@ -693,7 +693,7 @@ impl GuestKernel for HostKernel {
         )
     }
 
-    fn forall_tm(&self, bool_type: u64, binder: u64, body: u64) -> Result<u64, String> {
+    fn forall_tm(&self, bool_type: i32, binder: i32, body: i32) -> Result<i32, String> {
         checked_ref(self.0.borrow_mut().forall_tm(
             reference(bool_type)?,
             reference(binder)?,
@@ -701,7 +701,7 @@ impl GuestKernel for HostKernel {
         ))
     }
 
-    fn exists_tm(&self, binder: u64, body: u64) -> Result<u64, String> {
+    fn exists_tm(&self, binder: i32, body: i32) -> Result<i32, String> {
         checked_ref(
             self.0
                 .borrow_mut()
@@ -709,7 +709,7 @@ impl GuestKernel for HostKernel {
         )
     }
 
-    fn and_tm(&self, bool_type: u64, binder: u64, left: u64, right: u64) -> Result<u64, String> {
+    fn and_tm(&self, bool_type: i32, binder: i32, left: i32, right: i32) -> Result<i32, String> {
         checked_ref(self.0.borrow_mut().and_tm(
             reference(bool_type)?,
             reference(binder)?,
@@ -718,7 +718,7 @@ impl GuestKernel for HostKernel {
         ))
     }
 
-    fn or_tm(&self, bool_type: u64, binder: u64, left: u64, right: u64) -> Result<u64, String> {
+    fn or_tm(&self, bool_type: i32, binder: i32, left: i32, right: i32) -> Result<i32, String> {
         checked_ref(self.0.borrow_mut().or_tm(
             reference(bool_type)?,
             reference(binder)?,
@@ -727,7 +727,7 @@ impl GuestKernel for HostKernel {
         ))
     }
 
-    fn imp_tm(&self, bool_type: u64, binder: u64, left: u64, right: u64) -> Result<u64, String> {
+    fn imp_tm(&self, bool_type: i32, binder: i32, left: i32, right: i32) -> Result<i32, String> {
         checked_ref(self.0.borrow_mut().imp_tm(
             reference(bool_type)?,
             reference(binder)?,
@@ -736,7 +736,7 @@ impl GuestKernel for HostKernel {
         ))
     }
 
-    fn fresh_name(&self, roots: Vec<u64>) -> Result<u64, String> {
+    fn fresh_name(&self, roots: Vec<i32>) -> Result<u64, String> {
         let roots = roots
             .into_iter()
             .map(reference)
@@ -757,7 +757,7 @@ impl GuestKernel for HostKernel {
             .map_err(|error| error.to_string())
     }
 
-    fn refl(&self, bool_ty: u64, term: u64) -> Result<wit::ReflThm, String> {
+    fn refl(&self, bool_ty: i32, term: i32) -> Result<wit::ReflThm, String> {
         let result = self
             .0
             .borrow_mut()
@@ -769,7 +769,7 @@ impl GuestKernel for HostKernel {
         })
     }
 
-    fn ap_thm(&self, theorem: u64, argument: u64) -> Result<wit::ApThm, String> {
+    fn ap_thm(&self, theorem: u64, argument: i32) -> Result<wit::ApThm, String> {
         let result = self
             .0
             .borrow_mut()
@@ -783,7 +783,7 @@ impl GuestKernel for HostKernel {
         })
     }
 
-    fn ap_term(&self, theorem: u64, function: u64) -> Result<wit::ApThm, String> {
+    fn ap_term(&self, theorem: u64, function: i32) -> Result<wit::ApThm, String> {
         let result = self
             .0
             .borrow_mut()
@@ -805,7 +805,7 @@ impl GuestKernel for HostKernel {
             .map_err(|error| error.to_string())
     }
 
-    fn forall_intro(&self, theorem: u64, binder: u64) -> Result<wit::ForallThm, String> {
+    fn forall_intro(&self, theorem: u64, binder: i32) -> Result<wit::ForallThm, String> {
         let result = self
             .0
             .borrow_mut()
@@ -817,7 +817,7 @@ impl GuestKernel for HostKernel {
         })
     }
 
-    fn forall_intro_at(&self, theorem: u64, binder: u64, universal: u64) -> Result<u64, String> {
+    fn forall_intro_at(&self, theorem: u64, binder: i32, universal: i32) -> Result<u64, String> {
         self.0
             .borrow_mut()
             .forall_intro_at(
@@ -842,7 +842,7 @@ impl GuestKernel for HostKernel {
         })
     }
 
-    fn choice_intro_at(&self, theorem: u64, target: u64) -> Result<u64, String> {
+    fn choice_intro_at(&self, theorem: u64, target: i32) -> Result<u64, String> {
         self.0
             .borrow_mut()
             .choice_intro_at(theorem_id(theorem)?, reference(target)?)
@@ -850,14 +850,14 @@ impl GuestKernel for HostKernel {
             .map_err(|error| error.to_string())
     }
 
-    fn convert_theorem(&self, theorem: u64, source: u64, target: u64) -> Result<(), String> {
+    fn convert_theorem(&self, theorem: u64, source: i32, target: i32) -> Result<(), String> {
         self.0
             .borrow_mut()
             .convert_theorem(theorem_id(theorem)?, reference(source)?, reference(target)?)
             .map_err(|error| error.to_string())
     }
 
-    fn convert_conclusions(&self, theorem: u64, source: u64, target: u64) -> Result<(), String> {
+    fn convert_conclusions(&self, theorem: u64, source: i32, target: i32) -> Result<(), String> {
         self.0
             .borrow_mut()
             .convert_conclusions(theorem_id(theorem)?, reference(source)?, reference(target)?)
@@ -879,7 +879,7 @@ impl GuestKernel for HostKernel {
             .map_err(|error| error.to_string())
     }
 
-    fn inf_exists(&self, bool_type: u64) -> Result<wit::InfinityAxiom, String> {
+    fn inf_exists(&self, bool_type: i32) -> Result<wit::InfinityAxiom, String> {
         let axiom = self
             .0
             .borrow_mut()
@@ -896,9 +896,9 @@ impl GuestKernel for HostKernel {
 
     fn sub_exists(
         &self,
-        bool_type: u64,
-        carrier: u64,
-        predicate: u64,
+        bool_type: i32,
+        carrier: i32,
+        predicate: i32,
     ) -> Result<wit::SubtypeAxiom, String> {
         let axiom = self
             .0
@@ -920,7 +920,7 @@ impl GuestKernel for HostKernel {
         })
     }
 
-    fn add_context(&self, proposition: u64) -> Result<(), String> {
+    fn add_context(&self, proposition: i32) -> Result<(), String> {
         self.0
             .borrow_mut()
             .add_context(reference(proposition)?)
@@ -955,7 +955,7 @@ impl GuestKernel for HostKernel {
     fn syn_refl(
         &self,
         relation: WitSynRel,
-        input: u64,
+        input: i32,
         target: Option<u64>,
     ) -> Result<u64, String> {
         checked_fact(self.0.borrow_mut().syn_refl(
@@ -994,7 +994,7 @@ impl GuestKernel for HostKernel {
         ))
     }
 
-    fn syn_sub_var(&self, var: u64, val: u64, target: Option<u64>) -> Result<u64, String> {
+    fn syn_sub_var(&self, var: i32, val: i32, target: Option<u64>) -> Result<u64, String> {
         checked_fact(self.0.borrow_mut().syn_sub_var(
             optional_fact_id(target)?,
             reference(var)?,
@@ -1004,9 +1004,9 @@ impl GuestKernel for HostKernel {
 
     fn syn_sub_leaf(
         &self,
-        var: u64,
-        val: u64,
-        input: u64,
+        var: i32,
+        val: i32,
+        input: i32,
         target: Option<u64>,
     ) -> Result<u64, String> {
         checked_fact(self.0.borrow_mut().syn_sub_leaf(
@@ -1019,8 +1019,8 @@ impl GuestKernel for HostKernel {
 
     fn syn_sub_leaf_forall(
         &self,
-        var: u64,
-        input: u64,
+        var: i32,
+        input: i32,
         target: Option<u64>,
     ) -> Result<u64, String> {
         checked_fact(self.0.borrow_mut().syn_sub_leaf_forall(
@@ -1032,10 +1032,10 @@ impl GuestKernel for HostKernel {
 
     fn syn_sub_identity(
         &self,
-        var: u64,
-        val: u64,
-        input: u64,
-        output: u64,
+        var: i32,
+        val: i32,
+        input: i32,
+        output: i32,
         variable_equality: u64,
         body_equality: u64,
         target: Option<u64>,
@@ -1054,10 +1054,10 @@ impl GuestKernel for HostKernel {
     fn syn_congr(
         &self,
         relation: WitSynRel,
-        var: Option<u64>,
-        val: Option<u64>,
-        input: u64,
-        output: u64,
+        var: Option<i32>,
+        val: Option<i32>,
+        input: i32,
+        output: i32,
         children: Vec<u64>,
         target: Option<u64>,
     ) -> Result<u64, String> {
@@ -1079,10 +1079,10 @@ impl GuestKernel for HostKernel {
     fn syn_binder_congr(
         &self,
         relation: WitSynRel,
-        var: Option<u64>,
-        val: Option<u64>,
-        input: u64,
-        output: u64,
+        var: Option<i32>,
+        val: Option<i32>,
+        input: i32,
+        output: i32,
         binder: u64,
         body: u64,
         target: Option<u64>,
@@ -1102,11 +1102,11 @@ impl GuestKernel for HostKernel {
     fn syn_implicit_binder_congr(
         &self,
         relation: WitSynRel,
-        var: Option<u64>,
-        val: Option<u64>,
-        input: u64,
-        output: u64,
-        binder: u64,
+        var: Option<i32>,
+        val: Option<i32>,
+        input: i32,
+        output: i32,
+        binder: i32,
         body: u64,
         target: Option<u64>,
     ) -> Result<u64, String> {
@@ -1124,8 +1124,8 @@ impl GuestKernel for HostKernel {
 
     fn syn_alpha_binder(
         &self,
-        input: u64,
-        output: u64,
+        input: i32,
+        output: i32,
         binder_classifier: u64,
         body_substitution: u64,
         target: Option<u64>,
@@ -1141,10 +1141,10 @@ impl GuestKernel for HostKernel {
 
     fn syn_alpha_implicit_binder(
         &self,
-        input: u64,
-        output: u64,
-        input_binder: u64,
-        output_binder: u64,
+        input: i32,
+        output: i32,
+        input_binder: i32,
+        output_binder: i32,
         body_substitution: u64,
         target: Option<u64>,
     ) -> Result<u64, String> {
@@ -1158,7 +1158,7 @@ impl GuestKernel for HostKernel {
         ))
     }
 
-    fn tm_beta(&self, source: u64, substitution: u64, target: Option<u64>) -> Result<u64, String> {
+    fn tm_beta(&self, source: i32, substitution: u64, target: Option<u64>) -> Result<u64, String> {
         checked_fact(self.0.borrow_mut().tm_beta_fact(
             optional_fact_id(target)?,
             reference(source)?,
@@ -1166,7 +1166,7 @@ impl GuestKernel for HostKernel {
         ))
     }
 
-    fn ty_beta(&self, source: u64, substitution: u64, target: Option<u64>) -> Result<u64, String> {
+    fn ty_beta(&self, source: i32, substitution: u64, target: Option<u64>) -> Result<u64, String> {
         checked_fact(self.0.borrow_mut().ty_beta_fact(
             optional_fact_id(target)?,
             reference(source)?,
@@ -1174,7 +1174,7 @@ impl GuestKernel for HostKernel {
         ))
     }
 
-    fn tm_eta(&self, source: u64, target: Option<u64>) -> Result<u64, String> {
+    fn tm_eta(&self, source: i32, target: Option<u64>) -> Result<u64, String> {
         checked_fact(
             self.0
                 .borrow_mut()
@@ -1201,9 +1201,8 @@ fn usize_from_u64(value: u64, what: &str) -> Result<usize, String> {
     usize::try_from(value).map_err(|_| format!("{what} does not fit in component memory"))
 }
 
-fn reference(value: u64) -> Result<Ref, String> {
-    let value = i32::try_from(value).map_err(|_| "arena reference exceeds i32".to_owned())?;
-    Ref::new(value).ok_or_else(|| "arena references are one-based".to_owned())
+fn reference(value: i32) -> Result<Ref, String> {
+    Ref::new(value).ok_or_else(|| "invalid signed term reference".to_owned())
 }
 
 fn theorem_id(value: u64) -> Result<covalence_logic_hol::ThmId, String> {
@@ -1225,14 +1224,14 @@ fn optional_fact_id(value: Option<u64>) -> Result<Option<SynFactId>, String> {
     value.map(fact_id).transpose()
 }
 
-fn pushed(value: Option<Ref>, what: &str) -> Result<u64, String> {
+fn pushed(value: Option<Ref>, what: &str) -> Result<i32, String> {
     value
         .map(ref_index)
         .ok_or_else(|| format!("{what} exceeds the arena's index space"))
 }
 
-fn ref_index(value: Ref) -> u64 {
-    u64::try_from(value.get()).expect("resident references are positive")
+fn ref_index(value: Ref) -> i32 {
+    value.get()
 }
 
 fn import_index(value: ImportId) -> u64 {
@@ -1282,7 +1281,7 @@ impl Resolver for CasResolver<'_> {
     }
 }
 
-fn checked_ref(value: Result<Ref, covalence_logic_hol::KernelError>) -> Result<u64, String> {
+fn checked_ref(value: Result<Ref, covalence_logic_hol::KernelError>) -> Result<i32, String> {
     value.map(ref_index).map_err(|error| error.to_string())
 }
 

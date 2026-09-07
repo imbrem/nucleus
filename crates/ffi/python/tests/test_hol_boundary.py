@@ -157,7 +157,7 @@ def test_editing_the_arena_copy_cannot_reach_back_into_the_kernel() -> None:
     assert not kernel.equivalent(truth, falsehood)
     assert kernel.arena.context == []
     assert kernel.arena.axioms == []
-    assert len(kernel) == 4
+    assert len(kernel) == 0
     assert kernel.addr() != forged.addr()
 
 
@@ -228,7 +228,7 @@ def test_freshness_scanning_stays_conservative_under_shadowing() -> None:
 def test_classes_stay_within_one_category_and_survive_long_chains() -> None:
     base = basis()
     kernel = base.kernel
-    literals = [base.literal(True) for _ in range(24)]
+    literals = [base.var(987) for _ in range(24)]
 
     for left, right in zip(literals, literals[1:], strict=False):
         unify(kernel, left, right)

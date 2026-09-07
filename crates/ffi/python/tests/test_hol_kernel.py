@@ -82,7 +82,7 @@ def test_omitted_cas_uses_the_python_default_but_none_does_not() -> None:
 
 MISSING = "does not name a kernel row"
 WRONG_CATEGORY = "was required"
-ONE_BASED = "one-based"
+INVALID_REFERENCE = "nonzero|one-based"
 
 
 def test_a_new_kernel_is_empty_and_addresses_the_empty_arena() -> None:
@@ -176,11 +176,12 @@ def test_kinds_are_compared_syntactically_and_types_by_class() -> None:
     base = basis()
     kernel = base.kernel
     star = base.star
-    other_star = kernel.star()
-    arrow = kernel.kind_arr(star, star)
+    domain_kind = kernel.kind_arr(star, star)
+    other_kind_ref = kernel.kind_arr(star, star)
+    arrow = kernel.kind_arr(domain_kind, star)
     family = kernel.ty_fv(1, arrow)
-    same_kind = kernel.ty_fv(2, star)
-    other_kind = kernel.ty_fv(3, other_star)
+    same_kind = kernel.ty_fv(2, domain_kind)
+    other_kind = kernel.ty_fv(3, other_kind_ref)
 
     assert kernel.ty_app(family, same_kind)
     with pytest.raises(ValueError, match="is not equal to expected"):
@@ -188,12 +189,14 @@ def test_kinds_are_compared_syntactically_and_types_by_class() -> None:
 
     function_ty = kernel.ty_arr(base.bool_ty, base.bool_ty)
     function = kernel.tm_fv(4, function_ty)
-    duplicate_bool = kernel.bool_ty(star)
+    parameter = kernel.ty_fv(99, star)
+    duplicate_bool = kernel.ty_app(kernel.ty_lam(parameter, parameter), base.bool_ty)
     argument = kernel.tm_fv(5, duplicate_bool)
     with pytest.raises(ValueError, match="is not equal to expected"):
         kernel.app(function, argument)
 
-    unify(kernel, base.bool_ty, duplicate_bool)
+    _, equality = beta(kernel, duplicate_bool)
+    kernel.union_syn_fact(equality)
     assert kernel.app(function, argument)
 
 
@@ -283,7 +286,7 @@ def test_equality_operands_must_share_a_type_class() -> None:
     ],
 )
 def test_zero_is_never_a_kernel_reference(build) -> None:
-    with pytest.raises(ValueError, match=ONE_BASED):
+    with pytest.raises(ValueError, match=INVALID_REFERENCE):
         build(Kernel())
 
 
@@ -321,7 +324,7 @@ def test_the_arena_a_kernel_hands_out_is_detached() -> None:
     borrowed.add_context(9000)
 
     assert kernel.arena is not borrowed
-    assert len(kernel) == len(kernel.arena) == 2
+    assert len(kernel) == len(kernel.arena) == 0
     assert kernel.arena.axioms == []
     assert kernel.arena.context == []
     assert kernel.addr() == kernel.arena.addr()
@@ -333,8 +336,11 @@ def test_the_address_moves_with_every_appended_row() -> None:
     seen = {kernel.addr()}
 
     star = kernel.star()
+    bool_ty = kernel.bool_ty(star)
+    assert kernel.addr() in seen
+    kernel.tm_fv(1, bool_ty)
     seen.add(kernel.addr())
-    kernel.bool_ty(star)
+    kernel.tm_fv(2, bool_ty)
     seen.add(kernel.addr())
 
     assert len(seen) == 3
@@ -415,9 +421,9 @@ def test_equality_starts_discrete_and_is_reflexive() -> None:
 def test_union_picks_the_smaller_reference_as_representative() -> None:
     base = basis()
     kernel = base.kernel
-    first = base.literal(True)
-    second = base.literal(True)
-    third = base.literal(True)
+    first = base.var(987)
+    second = base.var(987)
+    third = base.var(987)
 
     unify(kernel, second, third)
     unify(kernel, first, third)
@@ -450,5 +456,5 @@ def test_dense_columns_expose_the_checked_members() -> None:
     assert rows[variable].children == [base.bool_ty]
     assert kernel.classifier(variable) == base.bool_ty
     assert kernel.arena.conv[variable - 1] == base.bool_ty
-    assert kernel.arena.conv[base.bool_ty - 1] == base.star
-    assert kernel.arena.conv[base.star - 1] is None
+    assert kernel.classifier(base.bool_ty) == base.star
+    assert kernel.arena.definition(base.star).tag == "kind.star"

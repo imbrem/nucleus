@@ -45,7 +45,7 @@ pub fn generate(instruction: Instruction) -> String {
         r"
 pub(crate) fn run(
     kernel: &Kernel,
-    bool_type: u64,
+    bool_type: i32,
     equality_theorem: u64,
     premise_theorem: u64,
 ) -> Result<RewriteResult, String> {{

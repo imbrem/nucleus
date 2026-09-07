@@ -5,7 +5,6 @@ use smallvec::SmallVec;
 
 use crate::{
     ImportId, Ref,
-    builtin::{Op1, Op2},
     constants::ConstantId,
     literals::{Builtin, LiteralType, WordWidth},
 };
@@ -60,10 +59,6 @@ pub(crate) enum Expr {
     Int(i64),
     ConstRef(ConstantId),
     Builtin(Builtin),
-    /// Versioned compact unary syntax. Semantics are supplied by lowering.
-    Op1(Op1, Ref),
-    /// Versioned compact binary syntax. Operands are ordered left-to-right.
-    Op2(Op2, Ref, Ref),
     /// Equality: left and right operands. Their common type is inferred.
     Eq(Ref, Ref, Ref),
     Eps {
@@ -107,8 +102,6 @@ impl Expr {
             Self::Int(_) => Tag::Tm(TmTag::Int),
             Self::ConstRef(_) => Tag::Tm(TmTag::Const),
             Self::Builtin(..) => Tag::Tm(TmTag::Builtin),
-            Self::Op1(..) => Tag::Tm(TmTag::Op1),
-            Self::Op2(..) => Tag::Tm(TmTag::Op2),
             Self::Eq(..) => Tag::Tm(TmTag::Eq),
             Self::Eps { .. } => Tag::Tm(TmTag::Eps),
             Self::TmRef { .. } => Tag::Tm(TmTag::Ref),
@@ -136,10 +129,8 @@ impl Expr {
             | Self::TyApp(left, right)
             | Self::TyLam(left, right)
             | Self::App(left, right)
-            | Self::Lam(left, right)
-            | Self::Op2(_, left, right) => SmallVec::from_slice(&[left, right]),
+            | Self::Lam(left, right) => SmallVec::from_slice(&[left, right]),
             Self::Eq(ty, left, right) => SmallVec::from_slice(&[ty, left, right]),
-            Self::Op1(_, operand) => SmallVec::from_slice(&[operand]),
             Self::Eps { ty, predicate } => SmallVec::from_slice(&[ty, predicate]),
             Self::TyFv { kind: child, .. }
             | Self::TyExists {
@@ -161,7 +152,7 @@ impl Expr {
 /// Classifiers and equality links are stored in arena-level dense columns;
 /// keeping them out of the row makes the expression table representation
 /// independent of which checked relations an arena elects to materialize.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Row {
     expr: Expr,
 }
@@ -263,8 +254,6 @@ pub enum TmTag {
     Int,
     Const,
     Builtin,
-    Op1,
-    Op2,
     Eq,
     Eps,
     Ref,
@@ -288,8 +277,6 @@ impl TmTag {
             Self::Int => "tm.int",
             Self::Const => "tm.const",
             Self::Builtin => "tm.builtin",
-            Self::Op1 => crate::builtin::OP1_ROW_TAG,
-            Self::Op2 => crate::builtin::OP2_ROW_TAG,
             Self::Eq => "tm.eq",
             Self::Eps => "tm.eps",
             Self::Ref => "tm.ref",
@@ -358,8 +345,6 @@ impl Tag {
             "tm.int" => Self::Tm(TmTag::Int),
             "tm.const" => Self::Tm(TmTag::Const),
             "tm.builtin" => Self::Tm(TmTag::Builtin),
-            crate::builtin::OP1_ROW_TAG => Self::Tm(TmTag::Op1),
-            crate::builtin::OP2_ROW_TAG => Self::Tm(TmTag::Op2),
             "tm.eq" => Self::Tm(TmTag::Eq),
             "tm.eps" => Self::Tm(TmTag::Eps),
             "tm.ref" => Self::Tm(TmTag::Ref),
@@ -548,16 +533,6 @@ impl From<Row> for RowSerde {
                 ordinary(Tag::Tm(TmTag::Const), [], Some(Value::Nat(u64::from(id.0))))
             }
             Expr::Builtin(..) => unreachable!("builtin row was handled above"),
-            Expr::Op1(op, operand) => ordinary(
-                Tag::Tm(TmTag::Op1),
-                [operand],
-                Some(Value::Nat(u64::from(op.code()))),
-            ),
-            Expr::Op2(op, left, right) => ordinary(
-                Tag::Tm(TmTag::Op2),
-                [left, right],
-                Some(Value::Nat(u64::from(op.code()))),
-            ),
             Expr::Eq(ty, left, right) => ordinary(Tag::Tm(TmTag::Eq), [ty, left, right], None),
             Expr::Eps { ty, predicate } => ordinary(Tag::Tm(TmTag::Eps), [ty, predicate], None),
             Expr::TmRef { src, ix } => foreign(Tag::Tm(TmTag::Ref), src, ix),
@@ -691,21 +666,6 @@ impl TryFrom<RowSerde> for Row {
             (Tag::Tm(TmTag::Const), None, Some(Value::Nat(value)), None, None) => Expr::ConstRef(
                 ConstantId(u32::try_from(value).map_err(|_| "constant index exceeds u32")?),
             ),
-            (Tag::Tm(TmTag::Op1), Some([operand]), Some(Value::Nat(code)), None, None) => {
-                Expr::Op1(
-                    Op1::from_code(u8::try_from(code).map_err(|_| "unknown op1 code")?)
-                        .ok_or("unknown op1 code")?,
-                    *operand,
-                )
-            }
-            (Tag::Tm(TmTag::Op2), Some([left, right]), Some(Value::Nat(code)), None, None) => {
-                Expr::Op2(
-                    Op2::from_code(u8::try_from(code).map_err(|_| "unknown op2 code")?)
-                        .ok_or("unknown op2 code")?,
-                    *left,
-                    *right,
-                )
-            }
             (Tag::Tm(TmTag::Eq), Some([ty, left, right]), None, None, None) => {
                 Expr::Eq(*ty, *left, *right)
             }
@@ -727,7 +687,7 @@ impl Serialize for Row {
     where
         S: serde::Serializer,
     {
-        RowSerde::from(self.clone()).serialize(serializer)
+        RowSerde::from(*self).serialize(serializer)
     }
 }
 
@@ -783,8 +743,6 @@ mod tests {
             Row::new(Expr::Lam(one, two)),
             Row::new(Expr::Bool(false)),
             Row::new(Expr::Bool(true)),
-            Row::new(Expr::Op1(Op1::Not, one)),
-            Row::new(Expr::Op2(Op2::And, one, two)),
             Row::new(Expr::Eq(one, one, two)),
             Row::new(Expr::Eps {
                 ty: one,
@@ -983,11 +941,11 @@ mod tests {
             ),
         ]));
         for (tag, operands, code) in [
-            (crate::builtin::OP1_ROW_TAG, vec![1, 2], 0),
-            (crate::builtin::OP2_ROW_TAG, vec![1], 0),
-            (crate::builtin::OP1_ROW_TAG, vec![1], 1),
-            (crate::builtin::OP2_ROW_TAG, vec![1, 2], 3),
-            (crate::builtin::OP2_ROW_TAG, vec![1, 2], 256),
+            ("tm.op1.v1", vec![1, 2], 0),
+            ("tm.op2.v1", vec![1], 0),
+            ("tm.op1.v1", vec![1], 1),
+            ("tm.op2.v1", vec![1, 2], 3),
+            ("tm.op2.v1", vec![1, 2], 256),
         ] {
             assert!(decode_bad(vec![
                 (Cbor::Text("tag".into()), Cbor::Text(tag.into())),

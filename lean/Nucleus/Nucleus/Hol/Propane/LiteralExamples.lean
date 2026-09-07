@@ -7,6 +7,27 @@ namespace Nucleus.Hol.Propane
 
 set_option maxRecDepth 4096
 
+/-- Boolean equality has one primitive meaning: equivalence. -/
+theorem bool_iff_is_equality (left right : Bool) :
+    Builtin.eval (.bool .iff) [.bool left, .bool right] =
+      some (.bool (decide (left = right))) := by
+  cases left <;> cases right <;> decide
+
+theorem bool_imp_is_material (left right : Bool) :
+    Builtin.eval (.bool .imp) [.bool left, .bool right] =
+      some (.bool (!left || right)) := by
+  cases left <;> cases right <;> decide
+
+def booleanProof : Proves (Γ := []) []
+    (.eq ((Tm.builtin (.bool .imp) rfl).applyLiterals
+      (.cons false (.cons false .nil))) (.literal .bool true)) :=
+  .eqOfEqTm (.builtinReduce (.bool .imp) (output := .bool)
+    rfl (.cons false (.cons false .nil)) true (by decide))
+
+/-- One symbolic definition equality is reusable before any operands are known. -/
+def booleanUnfoldProof (op : BoolOp) : Proves (Γ := []) [] (.eq op.term op.definition) :=
+  .eqOfEqTm (.boolUnfold op)
+
 private def byteAddArgs : LiteralArgs [.word .i8, .word .i8] :=
   .cons 255 (.cons 1 .nil)
 
@@ -64,27 +85,25 @@ open Nucleus.Hol.Propane
 
 private def exampleArena : Arena where
   rows := [
-    ⟨.type .nat, 0⟩, ⟨.type .bool, 0⟩,
-    ⟨.arrow 1 1, 0⟩, ⟨.arrow 1 3, 0⟩,
-    ⟨.natInline 20, 1⟩, ⟨.natInline 22, 1⟩,
-    ⟨.builtin (.nat .add), 4⟩, ⟨.app 7 5, 3⟩, ⟨.app 8 6, 1⟩,
-    ⟨.builtin (.nat .succ), 3⟩, ⟨.app 10 9, 1⟩,
-    ⟨.eq 1 11 13, 2⟩, ⟨.natInline 43, 1⟩]
+    ⟨.app (-1216) (-1048596), -131181⟩,
+    ⟨.app 1 (-1048598), -7⟩,
+    ⟨.app (-1221) 2, -7⟩,
+    ⟨.eq (-7) 3 (-1048619), -2⟩]
   constants := []
 
-private def exampleSchedule : List Nat := [5, 6, 9, 11, 13, 12]
+private def exampleSchedule : List Int := [-1048596, -1048598, 2, 3, -1048619, 4]
 
-example : check exampleArena exampleSchedule 12 = some (.bool true) := by decide
+example : check exampleArena exampleSchedule 4 = some (.bool true) := by decide
 
 /-- The exact curried application DAG denotes true in every certified natural model. -/
 theorem nested_dag_true (naturals : Nucleus.HolE.Infinity.CNatModel) :
-    Denotes naturals exampleArena 12 (quote naturals (.bool true)) :=
-  check_sound naturals (by decide : check exampleArena exampleSchedule 12 = some (.bool true))
+    Denotes naturals exampleArena 4 (quote naturals (.bool true)) :=
+  check_sound naturals (by decide : check exampleArena exampleSchedule 4 = some (.bool true))
 
 /-- Scheduling a result before its dependencies cannot establish it. -/
-example : check exampleArena [12] 12 = none := by decide
+example : check exampleArena [4] 4 = none := by decide
 
 /-- A function-valued partial application has no scalar reduction result. -/
-example : check exampleArena [5, 8] 8 = none := by decide
+example : check exampleArena [-1048596, 1] 1 = none := by decide
 
 end Nucleus.Hol.Ethane.Literals.Dag

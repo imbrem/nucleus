@@ -636,6 +636,12 @@
           ]
         },
         {
+          "name": "helpers",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "imports",
           "kinds": [
             "test"

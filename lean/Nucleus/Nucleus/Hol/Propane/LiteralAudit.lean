@@ -1,6 +1,9 @@
 import Nucleus.Hol.Propane.LiteralCorrespondence
 import Nucleus.Hol.Propane.LiteralEncoding
 import Nucleus.Hol.Ethane.LiteralArena
+import Nucleus.Hol.Ethane.LiteralRoots
+import Nucleus.Hol.Ethane.LiteralTheoremBoundary
+import Nucleus.Hol.Propane.LiteralCanonical
 
 /-!
 # Literal proof audit
@@ -24,3 +27,17 @@ computation rule is added.
 #print axioms Nucleus.Hol.Ethane.Literals.Dag.check_sound
 #print axioms Nucleus.Hol.Propane.LiteralEncoding.decode_encodeNat
 #print axioms Nucleus.Hol.Propane.LiteralEncoding.decode_encodeInt
+#print axioms Nucleus.Hol.Propane.BoolOp.definition_sound
+#print axioms Nucleus.Hol.Propane.LiteralRegistry.canonical_eval
+#print axioms Nucleus.Hol.Propane.LiteralRegistry.canonical_code_injective
+#print axioms Nucleus.Hol.Propane.LiteralRegistry.signatureCode_injective
+#print axioms Nucleus.Hol.Propane.LiteralRegistry.decodeGlobal_canonical
+#print axioms Nucleus.Hol.Propane.LiteralRegistry.decodeGlobal_injective
+#print axioms Nucleus.Hol.Propane.LiteralRegistry.lookup_injective
+#print axioms Nucleus.Hol.Propane.LiteralRegistry.decodeGlobal_boolean_only
+#print axioms Nucleus.Hol.Ethane.LiteralRoots.union_preserves_sound
+#print axioms Nucleus.Hol.Ethane.LiteralRoots.union_preserves_immutable
+#print axioms Nucleus.Hol.Ethane.LiteralRoots.semantic_union_preserves_sound
+#print axioms Nucleus.Hol.Ethane.LiteralRoots.semantic_union_preserves_immutable
+#print axioms Nucleus.Hol.Ethane.LiteralTheoremBoundary.constantCnf_holds
+#print axioms Nucleus.Hol.Ethane.LiteralTheoremBoundary.constantDnf_holds

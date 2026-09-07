@@ -1,9 +1,6 @@
 //! Lossless browser boundary for the checked classical HOL kernel.
 
-use covalence_logic_hol::{
-    Kernel, Lit, LitVec, Ref, RowId, ThmId,
-    builtin::{Op1, Op2},
-};
+use covalence_logic_hol::{Kernel, Lit, LitVec, Ref, RowId, ThmId, literals::BoolOp};
 use wasm_bindgen::prelude::*;
 
 use crate::classical::Refutation;
@@ -42,14 +39,20 @@ impl HolProver {
         self.proposition(name).map(format_prop).map_err(to_js)
     }
 
-    /// Creates a Boolean constant and returns its positive literal.
+    /// Returns a Boolean constant term, not a theorem literal.
+    ///
+    /// Its negative builtin reference must not be passed to theorem methods.
+    /// Use `trueRight` or `falseLeft` for constant theorem statements.
     ///
     /// # Errors
     ///
     /// Returns an error if allocation fails.
-    #[wasm_bindgen(js_name = boolean)]
-    pub fn boolean_js(&mut self, value: bool) -> Result<i32, JsError> {
-        self.boolean(value).map(format_prop).map_err(to_js)
+    #[wasm_bindgen(js_name = booleanTerm)]
+    pub fn boolean_term_js(&mut self, value: bool) -> Result<i32, JsError> {
+        self.kernel
+            .bool(self.bool_ty, value)
+            .map(Ref::get)
+            .map_err(to_js)
     }
 
     /// Returns the complementary signed literal.
@@ -72,7 +75,7 @@ impl HolProver {
     /// Returns an error for invalid IDs or failed checked construction.
     #[wasm_bindgen(js_name = and)]
     pub fn and_js(&mut self, left: i32, right: i32) -> Result<i32, JsError> {
-        self.binary(Op2::And, left, right)
+        self.binary(BoolOp::And, left, right)
             .map(format_prop)
             .map_err(to_js)
     }
@@ -84,7 +87,7 @@ impl HolProver {
     /// Returns an error for invalid IDs or failed checked construction.
     #[wasm_bindgen(js_name = or)]
     pub fn or_js(&mut self, left: i32, right: i32) -> Result<i32, JsError> {
-        self.binary(Op2::Or, left, right)
+        self.binary(BoolOp::Or, left, right)
             .map(format_prop)
             .map_err(to_js)
     }
@@ -96,7 +99,7 @@ impl HolProver {
     /// Returns an error for invalid IDs or failed checked construction.
     #[wasm_bindgen(js_name = implies)]
     pub fn implies_js(&mut self, left: i32, right: i32) -> Result<i32, JsError> {
-        self.binary(Op2::Imp, left, right)
+        self.binary(BoolOp::Imp, left, right)
             .map(format_prop)
             .map_err(to_js)
     }
@@ -146,20 +149,20 @@ impl HolProver {
     ///
     /// # Errors
     ///
-    /// Returns an error unless the ID names signed false.
+    /// Returns an error if the theorem arena is exhausted.
     #[wasm_bindgen(js_name = falseLeft)]
-    pub fn false_left(&mut self, proposition: i32) -> Result<i32, JsError> {
-        self.rule0_prop(proposition, Kernel::false_left)
+    pub fn false_left(&mut self) -> Result<i32, JsError> {
+        self.kernel.false_left().map(format_thm).map_err(to_js)
     }
 
     /// Introduces checked truth on the right.
     ///
     /// # Errors
     ///
-    /// Returns an error unless the ID names signed true.
+    /// Returns an error if the theorem arena is exhausted.
     #[wasm_bindgen(js_name = trueRight)]
-    pub fn true_right(&mut self, proposition: i32) -> Result<i32, JsError> {
-        self.rule0_prop(proposition, Kernel::true_right)
+    pub fn true_right(&mut self) -> Result<i32, JsError> {
+        self.kernel.true_right().map(format_thm).map_err(to_js)
     }
 
     /// Applies left polarity transfer.
@@ -697,14 +700,11 @@ impl HolProver {
         let name = parse_u64(name, "proposition name")?;
         self.kernel
             .tm_fv(name, self.bool_ty)
-            .map(|reference| Lit::positive(reference.get()))
-            .map_err(|error| error.to_string())
-    }
-
-    fn boolean(&mut self, value: bool) -> Result<Lit, String> {
-        self.kernel
-            .bool(self.bool_ty, value)
-            .map(|reference| Lit::positive(reference.get()))
+            .map(|reference| {
+                reference
+                    .positive()
+                    .expect("theorem atom is a local proposition")
+            })
             .map_err(|error| error.to_string())
     }
 
@@ -716,8 +716,7 @@ impl HolProver {
             .expect("literal magnitude is nonzero"))
         } else {
             self.kernel
-                .op1(
-                    Op1::Not,
+                .not(
                     Ref::new(
                         i32::try_from(proposition.magnitude()).expect("literal magnitude fits i32"),
                     )
@@ -727,12 +726,19 @@ impl HolProver {
         }
     }
 
-    fn binary(&mut self, op: Op2, left: i32, right: i32) -> Result<Lit, String> {
+    fn binary(&mut self, op: BoolOp, left: i32, right: i32) -> Result<Lit, String> {
         let left = self.materialize(parse_prop(left)?)?;
         let right = self.materialize(parse_prop(right)?)?;
         self.kernel
-            .op2(op, left, right)
-            .map(|reference| Lit::positive(reference.get()))
+            .builtin(
+                covalence_logic_hol::literals::Builtin::Bool(op),
+                &[left, right],
+            )
+            .map(|reference| {
+                reference
+                    .positive()
+                    .expect("theorem atom is a local proposition")
+            })
             .map_err(|error| error.to_string())
     }
 
@@ -748,17 +754,6 @@ impl HolProver {
             json_rows(theorem.lhs.rows()),
             json_rows(theorem.rhs.rows())
         ))
-    }
-
-    fn rule0_prop(
-        &mut self,
-        proposition: i32,
-        rule: fn(&mut Kernel, Lit) -> Result<ThmId, covalence_logic_hol::KernelError>,
-    ) -> Result<i32, JsError> {
-        let proposition = parse_prop(proposition).map_err(to_js)?;
-        rule(&mut self.kernel, proposition)
-            .map(format_thm)
-            .map_err(to_js)
     }
 
     fn rule1_prop(
@@ -800,7 +795,7 @@ fn parse_prop(value: i32) -> Result<Lit, String> {
 }
 
 fn parse_ref(value: i32) -> Result<Ref, String> {
-    Ref::new(value).ok_or_else(|| "references are one-based".to_owned())
+    Ref::new(value).ok_or_else(|| "invalid signed term reference".to_owned())
 }
 
 fn parse_thm(value: i32) -> Result<ThmId, String> {
@@ -1165,13 +1160,13 @@ mod tests {
         let q_id = format_prop(q);
         let theorem = prover.kernel.identity(p).unwrap();
         let theorem_id = format_thm(theorem);
-        let conjunction = format_prop(prover.binary(Op2::And, p_id, q_id).unwrap());
-        let disjunction = format_prop(prover.binary(Op2::Or, p_id, q_id).unwrap());
-        let implication = format_prop(prover.binary(Op2::Imp, p_id, q_id).unwrap());
+        let conjunction = format_prop(prover.binary(BoolOp::And, p_id, q_id).unwrap());
+        let disjunction = format_prop(prover.binary(BoolOp::Or, p_id, q_id).unwrap());
+        let implication = format_prop(prover.binary(BoolOp::Imp, p_id, q_id).unwrap());
 
         assert!(prover.kernel.cut(theorem, theorem, q).is_err());
-        assert!(prover.kernel.false_left(p).is_err());
-        assert!(prover.kernel.true_right(p).is_err());
+        let truth = prover.kernel.bool(prover.bool_ty, true).unwrap();
+        assert!(prover.kernel.lit(truth).is_err());
         assert!(prover.kernel.not_left(theorem, q).is_err());
         assert!(prover.kernel.not_right(theorem, q).is_err());
         assert!(
@@ -1223,16 +1218,24 @@ mod tests {
         let p = prover.proposition("1").unwrap();
         let not_p = p.negated();
         let conjunction = prover
-            .binary(Op2::And, format_prop(not_p), format_prop(p))
+            .binary(BoolOp::And, format_prop(not_p), format_prop(p))
             .unwrap();
         assert!(conjunction.is_positive());
-        let children = prover
+        let (_, children) = prover
             .kernel
-            .children(Ref::new(i32::try_from(conjunction.magnitude()).unwrap()).unwrap())
-            .unwrap()
-            .collect::<Vec<_>>();
+            .arena()
+            .builtin_application(Ref::from_literal(conjunction))
+            .unwrap();
         assert_eq!(children.len(), 2);
-        assert_eq!(prover.kernel.arena().op1(children[0]), Some(Op1::Not));
+        assert_eq!(
+            prover
+                .kernel
+                .arena()
+                .builtin_application(children[0])
+                .unwrap()
+                .0,
+            covalence_logic_hol::literals::Builtin::Bool(BoolOp::Not)
+        );
         assert_eq!(
             children[1],
             Ref::new(i32::try_from(p.magnitude()).unwrap()).unwrap()
@@ -1245,7 +1248,7 @@ mod tests {
         let p = prover.proposition("1").unwrap();
         let q = prover.proposition("2").unwrap();
         let conjunction = prover
-            .binary(Op2::And, format_prop(p), format_prop(q))
+            .binary(BoolOp::And, format_prop(p), format_prop(q))
             .unwrap();
         let identity = prover.kernel.identity(conjunction).unwrap();
 
@@ -1285,7 +1288,11 @@ mod tests {
         let equality = prover.kernel.eq(bool_ty, p_ref, q_ref).unwrap();
         let equality_assumption = prover
             .kernel
-            .identity(Lit::positive(equality.get()))
+            .identity(
+                equality
+                    .positive()
+                    .expect("theorem atom is a local proposition"),
+            )
             .unwrap();
         let function_ty = prover.kernel.ty_arr(bool_ty, bool_ty).unwrap();
         let function = prover.kernel.tm_fv(20, function_ty).unwrap();
@@ -1311,11 +1318,7 @@ mod tests {
         );
 
         let binder = prover.kernel.tm_fv(21, bool_ty).unwrap();
-        let truth = prover.kernel.bool(bool_ty, true).unwrap();
-        let body = prover
-            .kernel
-            .true_right(Lit::positive(truth.get()))
-            .unwrap();
+        let body = prover.kernel.true_right().unwrap();
         let generalized = prover.forall_intro(body.get(), binder.get()).unwrap();
         assert_eq!(generalized.len(), 2);
 
@@ -1323,7 +1326,11 @@ mod tests {
         let application = prover.kernel.app(predicate, p_ref).unwrap();
         let witnessed = prover
             .kernel
-            .identity(Lit::positive(application.get()))
+            .identity(
+                application
+                    .positive()
+                    .expect("theorem atom is a local proposition"),
+            )
             .unwrap();
         let choice = prover.choice_intro(witnessed.get()).unwrap();
         assert_eq!(choice.len(), 3);

@@ -1,6 +1,6 @@
 """The raw Ethane arena is wire data: it records rows and checks nothing.
 
-Every constructor here appends a row and returns its one-based reference. The
+Constructors append local rows or return immutable negative builtin references. The
 only invariants an arena is allowed to have are representation invariants, so
 these tests pin exactly two things: that the representation survives a CBOR
 round trip byte for byte, and that no *logical* condition is imposed on the
@@ -13,7 +13,7 @@ from covalence.logic.hol import AmbPred, Arena, Definition, Kernel, Link
 from hol_invariants import import_depth, nested_import_arena, nested_import_cbor
 from hol_support import amb_pred_view, arena_view, definition_view
 
-ONE_BASED = "one-based"
+INVALID_REFERENCE = "nonzero|one-based"
 
 
 def populated() -> tuple[Arena, dict[str, int]]:
@@ -59,20 +59,23 @@ def populated() -> tuple[Arena, dict[str, int]]:
     return arena, rows
 
 
-def test_every_constructor_appends_one_row_in_order() -> None:
+def test_local_constructors_append_rows_and_builtins_are_implicit() -> None:
     arena, rows = populated()
 
-    assert list(rows.values()) == sorted(rows.values())
-    assert len(arena) == len(rows)
-    assert [row.reference for row in arena.definitions] == list(range(1, len(rows) + 1))
+    local = [reference for reference in rows.values() if reference > 0]
+    assert local == sorted(local)
+    assert len(arena) == len(local)
+    assert [row.reference for row in arena.definitions] == list(
+        range(1, len(local) + 1)
+    )
     assert {row.reference: row.tag for row in arena.definitions} == {
-        reference: tag for tag, reference in rows.items()
+        reference: tag for tag, reference in rows.items() if reference > 0
     }
 
 
 def test_rows_report_the_members_their_tag_carries() -> None:
     arena, rows = populated()
-    by_tag = {row.tag: row for row in arena.definitions}
+    by_tag = {tag: arena.definition(reference) for tag, reference in rows.items()}
 
     assert by_tag["ty.fv"].name == 11
     assert by_tag["tm.ty_exists"].name == 12
@@ -112,9 +115,9 @@ def test_lookup_is_one_based_and_bounded() -> None:
     for outside_i32 in (2**31, 2**63, 2**64):
         with pytest.raises(OverflowError):
             arena.definition(outside_i32)
-    with pytest.raises(ValueError, match=ONE_BASED):
+    with pytest.raises(ValueError, match=INVALID_REFERENCE):
         arena.definition(0)
-    assert arena.definition(-1) is None
+    assert arena.definition(Kernel().star()).tag == "kind.star"
 
 
 def test_definitions_agrees_with_pointwise_lookup() -> None:
@@ -203,7 +206,7 @@ def test_nothing_logical_is_checked_on_the_way_in() -> None:
     ],
 )
 def test_zero_is_never_a_reference(build) -> None:
-    with pytest.raises(ValueError, match=ONE_BASED):
+    with pytest.raises(ValueError, match=INVALID_REFERENCE):
         build(Arena())
 
 
@@ -248,7 +251,7 @@ def test_the_wire_form_round_trips_every_member() -> None:
 
 def test_nested_literal_imports_round_trip_as_arenas() -> None:
     inner = Arena()
-    inner.bool_ty()
+    inner.tm_fv(1, inner.bool_ty())
     middle = Arena()
     middle.add_literal_import(inner)
     outer = Arena()
@@ -295,12 +298,12 @@ def test_decoding_refuses_literal_imports_beyond_the_depth_limit() -> None:
 def test_the_import_getter_hands_back_copies() -> None:
     """Reaching into an import cannot edit the arena that holds it."""
     inner = Arena()
-    inner.bool_ty()
+    inner.tm_fv(1, inner.bool_ty())
     outer = Arena()
     outer.add_literal_import(inner)
 
     detached = outer.imports[0]
-    detached.bool_ty()
+    detached.tm_fv(2, detached.bool_ty())
 
     assert len(detached) == 2
     assert len(outer.imports[0]) == 1
@@ -320,9 +323,9 @@ def test_addresses_track_content_and_nothing_else() -> None:
     right = Arena()
     assert left.addr() == right.addr()
 
-    left.bool_ty()
+    left.tm_fv(1, left.bool_ty())
     assert left.addr() != right.addr()
-    right.bool_ty()
+    right.tm_fv(1, right.bool_ty())
     assert left.addr() == right.addr()
 
     # Set members normalize, so insertion order cannot change the address.

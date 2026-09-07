@@ -1,10 +1,11 @@
 # Ethane compact builtin contract v1
 
-`crates/logic/hol/builtins-v1.tsv` is the reviewed registry for compact syntax.
-It is deliberately separate from the opcode-free init arena. Rust tests parse
-every registry column and compare it with the executable enums; Lean defines
-the same finite registry and evaluates the same row envelopes. Adding an entry
-requires updating all three in one change, and their tests are the drift gate.
+This historical design is retained in `Hol/Ethane/Builtin.lean` and its sibling
+`builtins-v1.tsv` fixture. It is not the running Rust encoding. The current
+implementation uses signed builtin references and ordinary application rows;
+see [`crates/logic/hol/README.md`](../../crates/logic/hol/README.md).
+
+The remainder describes the older model's contract.
 
 ## Wire and compatibility
 

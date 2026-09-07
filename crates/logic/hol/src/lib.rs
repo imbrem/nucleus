@@ -4,8 +4,9 @@
 //! not establish kinding, typing, equality, or provability.
 
 mod arena;
-pub mod builtin;
 mod constants;
+mod global;
+mod helpers;
 pub mod init;
 mod kernel;
 pub mod literals;
@@ -75,10 +76,10 @@ macro_rules! id_type {
     };
 }
 
-/// A one-based local definition reference. `Ref(n)` addresses `defs[n - 1]`.
+/// A positive local row or negative immutable builtin reference.
 ///
 /// References are globally bounded by the lossless signed literal wire space:
-/// `0 < n < i32::MAX`.
+/// Zero and both signed boundary sentinels are excluded.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct Ref(NonZeroI32);
@@ -95,7 +96,7 @@ pub struct RefError {
 impl Ref {
     #[must_use]
     pub const fn new(value: i32) -> Option<Self> {
-        if value <= 0 || value == i32::MAX {
+        if value == 0 || value == i32::MIN || value == i32::MAX {
             return None;
         }
         match NonZeroI32::new(value) {
@@ -107,6 +108,27 @@ impl Ref {
     #[must_use]
     pub const fn get(self) -> i32 {
         self.0.get()
+    }
+    /// Encodes a local reference as a positive classical proposition.
+    /// # Errors
+    /// Negative builtin references cannot appear directly in theorem matrices.
+    pub fn positive(self) -> Result<Lit, RefError> {
+        if self.get() < 0 {
+            Err(RefError { value: self.get() })
+        } else {
+            Ok(Lit::positive(self.get()))
+        }
+    }
+    /// Recovers the local reference of a classical proposition.
+    ///
+    /// # Panics
+    ///
+    /// Only if the classical `Lit` invariant is broken: its magnitude must be
+    /// nonzero and strictly below `i32::MAX`.
+    #[must_use]
+    pub fn from_literal(value: Lit) -> Self {
+        Self::new(i32::try_from(value.magnitude()).expect("literal magnitude fits i32"))
+            .expect("literal magnitude is a valid local reference")
     }
 }
 
@@ -139,7 +161,9 @@ impl<'de> Deserialize<'de> for Ref {
         D: serde::Deserializer<'de>,
     {
         let value = i32::deserialize(deserializer)?;
-        Self::new(value).ok_or_else(|| serde::de::Error::custom(RefError { value }))
+        Self::new(value)
+            .filter(|reference| value > 0 || global::row(*reference).is_some())
+            .ok_or_else(|| serde::de::Error::custom(RefError { value }))
     }
 }
 
@@ -371,7 +395,7 @@ impl ArenaRepr for Dense {
     }
 
     fn tag(&self, reference: Ref) -> Option<Tag> {
-        self.row(reference).map(Row::tag)
+        self.row(reference).map(|row| row.tag())
     }
 
     fn eq(&self, reference: Ref) -> Option<Ref> {
@@ -454,6 +478,9 @@ impl Arena {
     /// Returns the parent link in the syntactic-conversion column.
     #[must_use]
     pub fn conv(&self, reference: Ref) -> Option<Ref> {
+        if reference.get() < 0 {
+            return global::classifier(reference);
+        }
         self.dense.column(&self.dense.conv, reference)
     }
 
@@ -462,7 +489,7 @@ impl Arena {
         self.dense.sort(reference)
     }
 
-    pub(crate) fn row(&self, reference: Ref) -> Option<&Row> {
+    pub(crate) fn row(&self, reference: Ref) -> Option<Row> {
         self.dense.row(reference)
     }
 
@@ -626,24 +653,6 @@ impl Arena {
         }
     }
 
-    /// The unary builtin stored by a `tm.op1.v1` row.
-    #[must_use]
-    pub fn op1(&self, reference: Ref) -> Option<builtin::Op1> {
-        match self.dense.row(reference)?.expr() {
-            row::Expr::Op1(op, _) => Some(*op),
-            _ => None,
-        }
-    }
-
-    /// The binary builtin stored by a `tm.op2.v1` row.
-    #[must_use]
-    pub fn op2(&self, reference: Ref) -> Option<builtin::Op2> {
-        match self.dense.row(reference)?.expr() {
-            row::Expr::Op2(op, ..) => Some(*op),
-            _ => None,
-        }
-    }
-
     /// The source and foreign reference stored by a proxy row.
     #[must_use]
     pub fn foreign(&self, reference: Ref) -> Option<(ImportId, Ref)> {
@@ -657,7 +666,7 @@ impl Arena {
 
     /// Append a raw `kind.star` row.
     pub fn push_kind_star(&mut self) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::KindStar), None)
+        Some(global::star())
     }
 
     /// Append a raw `kind.arr` row.
@@ -667,7 +676,7 @@ impl Arena {
 
     /// Append a raw `ty.bool` row.
     pub fn push_bool_ty(&mut self) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::BoolTy), None)
+        Some(global::ty(literals::LiteralType::Bool))
     }
 
     /// Append a raw `ty.arr` row.
@@ -722,17 +731,7 @@ impl Arena {
 
     /// Append a raw Boolean literal row.
     pub fn push_bool(&mut self, value: bool) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::Bool(value)), None)
-    }
-
-    /// Append a raw unary builtin row.
-    pub fn push_op1(&mut self, op: builtin::Op1, operand: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::Op1(op, operand)), None)
-    }
-
-    /// Append a raw binary builtin row.
-    pub fn push_op2(&mut self, op: builtin::Op2, left: Ref, right: Ref) -> Option<Ref> {
-        self.push_row(Row::new(row::Expr::Op2(op, left, right)), None)
+        global::literal(&literals::LiteralValue::Bool(value))
     }
 
     /// Append a raw object-language equality row.
@@ -1068,6 +1067,14 @@ impl TryFrom<ArenaSerde> for Arena {
         } = arena.hol;
         let mut eq = eq;
         for row in &defs {
+            if row
+                .expr()
+                .children()
+                .into_iter()
+                .any(|reference| reference.get() < 0 && global::row(reference).is_none())
+            {
+                return Err("unknown immutable reference");
+            }
             if let row::Expr::ConstRef(id) = row.expr()
                 && constants.get(*id).is_none()
             {
@@ -1075,6 +1082,13 @@ impl TryFrom<ArenaSerde> for Arena {
             }
         }
         for column in [&eq, &syn.eq, &syn.conv] {
+            if column
+                .iter()
+                .flatten()
+                .any(|reference| reference.get() < 0 && global::row(*reference).is_none())
+            {
+                return Err("unknown immutable reference");
+            }
             if !column_is_resident(column, defs.len()) {
                 return Err("dense column has a member without a definition row");
             }
@@ -1167,7 +1181,13 @@ mod tests {
         let empty = arena.addr();
         assert_eq!(arena.addr(), empty);
 
-        arena.push_kind_star().unwrap();
+        let star = arena.push_kind_star().unwrap();
+        assert_eq!(
+            arena.addr(),
+            empty,
+            "immutable syntax does not change the arena"
+        );
+        arena.push_kind_arr(star, star).unwrap();
         assert_ne!(arena.addr(), empty);
     }
 

@@ -81,6 +81,9 @@ impl ConstantTable {
 
 impl Arena {
     pub(crate) fn can_push_literal(&self, value: &LiteralValue) -> bool {
+        if crate::global::literal(value).is_some() {
+            return true;
+        }
         if crate::next_ref(self.dense.defs.len()).is_none() {
             return false;
         }
@@ -98,10 +101,7 @@ impl Arena {
 
     /// Appends a raw literal type without creating checked typing evidence.
     pub fn push_literal_ty(&mut self, ty: LiteralType) -> Option<Ref> {
-        if ty == LiteralType::Bool {
-            return self.push_bool_ty();
-        }
-        self.push_row(Row::new(Expr::LiteralTy(ty)), None)
+        Some(crate::global::ty(ty))
     }
 
     /// Appends a raw literal, choosing its storage representation privately.
@@ -110,6 +110,9 @@ impl Arena {
     /// Small naturals and integers are normally inline; constant-table storage
     /// remains valid for these values as well.
     pub fn push_literal(&mut self, value: LiteralValue) -> Option<Ref> {
+        if let Some(reference) = crate::global::literal(&value) {
+            return Some(reference);
+        }
         crate::next_ref(self.dense.defs.len())?;
         let expr = match value {
             LiteralValue::Bool(value) => Expr::Bool(value),
@@ -175,6 +178,9 @@ impl Arena {
             Expr::Nat(value) => LiteralValue::Nat(Num::from(value)),
             Expr::Int(value) => LiteralValue::Int(Int::from(value)),
             Expr::ConstRef(id) => return self.constants.get(id)?.value(),
+            Expr::Builtin(Builtin::Bytes(crate::literals::BytesOp::Empty)) => {
+                LiteralValue::Bytes(bytes::Bytes::new())
+            }
             _ => return None,
         })
     }
@@ -186,6 +192,9 @@ impl Arena {
             Expr::Nat(_) => Some(LiteralType::Nat),
             Expr::Int(_) => Some(LiteralType::Int),
             Expr::ConstRef(id) => Some(self.constants.get(id)?.literal_type()),
+            Expr::Builtin(Builtin::Bytes(crate::literals::BytesOp::Empty)) => {
+                Some(LiteralType::Bytes)
+            }
             _ => None,
         }
     }
@@ -204,8 +213,7 @@ impl Arena {
     ///
     /// Arguments use ordinary application rows, including partial applications.
     pub fn push_builtin_const(&mut self, builtin: Builtin) -> Option<Ref> {
-        builtin.signature().ok()?;
-        self.push_row(Row::new(Expr::Builtin(builtin)), None)
+        crate::global::builtin(builtin)
     }
 
     pub(crate) fn clone_constant_from(

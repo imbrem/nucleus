@@ -4,6 +4,11 @@
 checked terms. Builtin constants have ordinary curried function types and take
 arguments through ordinary `Kernel::app` rows. `Kernel::builtin` is a
 full-application convenience, not another syntax form.
+Paired helpers such as `kernel.and(lhs, rhs)`, `kernel.not(prop)`, and
+`kernel.add_i32(lhs, rhs)` construct these same applications.
+`arena.match_and(term)`, `arena.match_not(term)`, and
+`arena.match_add_i32(term)` return arguments only for the exact operation and
+arity. Matchers inspect raw syntax; they establish no theorem or typing fact.
 `Kernel::reduce_builtin` returns a result literal and a premise-free
 theorem equating the original closed expression with that result. Constructing
 a symbolic expression is separate from evaluating it: an undefined operation
@@ -20,6 +25,7 @@ example, including a reusable partially applied builtin.
 
 | Carrier                   | Meaning                       | Builtin family                                                                                                                                               |
 | ------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Bool`                    | Truth values                  | `BoolOp`: not, and, or, implication, equivalence                                                                                                             |
 | `I8`, `I16`, `I32`, `I64` | Fixed-width bit patterns      | `WordOp`: wrapping arithmetic, signed/unsigned division and remainder, comparisons, bitwise operations, masked shifts, rotations, bit counts, sign extension |
 | `Nat`                     | Unbounded nonnegative integer | `NatOp`: arithmetic, zero-truncating subtraction/predecessor, powers, comparisons, min/max, bitwise operations and shifts                                    |
 | `Int`                     | Unbounded integer             | `IntOp`: arithmetic, negation, absolute value, powers, comparisons, min/max, two's-complement bitwise operations and arithmetic shifts                       |
@@ -37,31 +43,53 @@ and `Drop` clamp at the list length. `Decode` requires an exact word-sized
 bytestring; `Read` and `Write` operate at an explicit byte offset. Floats,
 Wasm execution, and general WIT values are outside this vocabulary.
 
-## Storage contract
+## References and storage
 
-The ordinary constructor chooses inline storage for a natural in
-`0..=i64::MAX` or an integer in `i64::MIN..=i64::MAX`. All other naturals and
-integers, and all resident bytestrings, use the typed constant table.
-Small naturals and integers are also valid table entries. Storage placement
-does not change a value's type or meaning; it may change its serialized bytes
-and content address.
+`Kernel` contains only `arena: Arena`. A `Ref` is a nonzero signed 32-bit index:
+positive indices address local rows; negative indices name immutable globals.
+There is no remembered init prefix, builtin-type cache, or allocated table of
+tiny values. `src/global.rs` decodes the fixed vocabulary arithmetically.
+Unknown negative encodings are rejected, including in serialized reference
+fields. Naming a numeric global does not bypass the checked `ax.inf` gate.
 
-The added rows use these fields:
+Globals include `kind.star`, the eight scalar types, their curried builtin
+signatures, Boolean values and functions, and tiny literals:
 
-| Rows                                                                  | Payload                                                                    |
-| --------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `ty.i8`, `ty.i16`, `ty.i32`, `ty.i64`, `ty.nat`, `ty.int`, `ty.bytes` | No payload                                                                 |
-| `tm.i8`, `tm.i16`, `tm.i32`, `tm.i64`                                 | `val`: integer in that width's signed range, encoding the full bit pattern |
-| `tm.nat`, `tm.int`                                                    | `val`: inline integer in the ranges above                                  |
-| `tm.const`                                                            | `val`: zero-based local `u32` constant index                               |
-| `tm.builtin`                                                          | `op`: the serialized `Builtin` descriptor; no children                     |
+- Nat `0..=65535` and Int `-32768..=32767`;
+- all I8 and I16 bit patterns;
+- I32 and I64 values `0..=65535`;
+- empty Bytes, identical to the nullary `BytesOp::Empty` constant.
 
-For example, addition is `app(app(builtin(nat.add), left), right)`. Partial
-application is ordinary syntax; a zero-argument builtin has its result type
-directly. This keeps application, congruence, and future checked unfolding on
-one path. A future function-definition equality can be shared across calls;
-it is distinct from evaluating a particular closed application. The primitive
-evaluator does not claim to construct lambda implementations for all builtins.
+The serialized global numbers are specified in `src/global.rs` and mirrored
+by `Propane/LiteralRegistry.lean`; callers use descriptors, not numeric IDs.
+Obvious aliases share a reference: one-byte endian variants and same-width
+cast variants. Fully applying a same-width cast returns its argument.
+
+Non-tiny Nat/Int values fitting `i64` are inline `tm.nat`/`tm.int` rows.
+Larger values and nonempty Bytes use a private typed constant table through
+one `tm.const` reference form. Small Nat/Int values may also appear in that
+table. Non-tiny words use `tm.i32`/`tm.i64` rows whose signed payload preserves
+the entire bit pattern. Storage placement changes neither type nor meaning;
+it can change serialized bytes and content addresses.
+
+For example, addition is `app(app(negative_nat_add, left), right)`. Partial
+application is ordinary syntax; no argument-bearing builtin row exists.
+Boolean functions unfold to fixed checked equality/lambda definitions, never
+definitions selected by userspace names. This does not claim lambda
+implementations for every numeric or Bytes operation.
+
+Checked equality classes prefer negative roots. Equating distinct negative
+roots is rejected transactionally; this cache restriction is not a proof that
+their meanings differ. Semantic classes additionally prefer resident literal
+roots to positive nonliteral rows. Reduction evaluates children, applies the
+builtin, and caches each successful application against its result. Tiny
+results allocate no value row; subsequent reductions can reuse cached values.
+
+Theorem literals are a separate namespace: their magnitude is a **positive
+local Boolean row**, and their sign denotes negation. `Kernel::lit` rejects a
+global reference. Boolean constants use empty logical matrices instead:
+true is CNF `[]` / DNF `[[]]`; false is CNF `[[]]` / DNF `[]`.
+No zigzag encoding or synthetic Boolean theorem atom is used.
 
 `hol.constants` is an array of `{tag, val}` records, omitted when empty:
 
@@ -86,8 +114,10 @@ literal encoding or compatibility adapter is retained.
 
 ## Trusted boundary and formal models
 
-The literal type and successful-evaluation rules explicitly extend the trusted
-kernel under `ax.inf`; they are not claims of opcode-free syntactic lowering.
+Numeric/Bytes carriers and successful evaluation explicitly extend the trusted
+kernel under `ax.inf`. Boolean construction, evaluation, and fixed unfolding
+need no infinity capability. These are separate checked rules, not claims
+that all numeric operations already lower to primitive HOL syntax.
 The evaluator in `src/literals.rs` and the numeric operations it calls through
 `covalence-data-num` (including `num-bigint`) are part of this trusted path.
 Python conversion, serialization, storage policy, and later Wasm acceleration
@@ -104,7 +134,12 @@ numeric encoders and general canonicality and decoder round-trip theorems.
 builtin meanings. `Hol/Ethane/LiteralArena.lean` models decoded type rows,
 resolved classifiers, builtin constants, application spines, equality, and memoized
 checked reduction; `Dag.check_sound` proves successful checked replay sound.
-This does not verify compiled Rust, its stack scheduling, or union-find transport.
+`LiteralRegistry.lean` and its companion modules prove canonical signed global
+decoding, signature round trips, and the Boolean-global classification boundary.
+`Ethane/LiteralRoots.lean` models immutable roots and checked semantic unions;
+`LiteralTheoremBoundary.lean` separates signed theorem atoms from global refs.
+`Propane/BooleanDefinition.lean` proves the fixed Boolean unfolding meanings.
+These models do not verify compiled Rust or its CBOR parser and stack scheduling.
 `Propane/LiteralCorrespondence.lean` relates the typed computation rule to the
 constructed carriers; `LiteralAudit.lean` prints the proof assumptions.
 Historical Lean designs retain their own namespaces and validation coverage.

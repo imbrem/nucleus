@@ -1,9 +1,9 @@
 //! Derived logical constructions over the Ethane primitives.
 //!
 //! Ethane's core has equality, lambda, application, choice, and Boolean
-//! literals. The connectives and quantifiers are *macros* over those — nothing
-//! here appends a new row shape or checks a new rule, and none of it is
-//! trusted beyond the primitive constructors it calls.
+//! literals. The connectives and quantifiers are macros over those primitives.
+//! The fixed Boolean definitions below also supply the checked builtin
+//! unfolding rule in `syn_facts`; their meanings are part of that rule's TCB.
 //!
 //! Each definition mirrors `Nucleus.Hol.Ethane.Expr` in
 //! `lean/Nucleus/Nucleus/Hol/Ethane/Logic.lean` term for term. That
@@ -12,16 +12,8 @@
 //! encodings, so a Rust construction that spells a connective differently is
 //! not covered by that proof.
 //!
-//! ## Why not the `Op1`/`Op2` builtins
-//!
-//! [`Kernel::op1`](super::Kernel::op1) / [`op2`](super::Kernel::op2) and
-//! [`lower_logical`](super::Kernel::lower_logical) are a second, independent
-//! Boolean encoding: compact rows whose meaning is supplied by applying the
-//! init manifest's `not`/`and`/`or`/`imp` *definitions*. That encoding is not
-//! interchangeable with this one — the manifest defines `false` as
-//! `(λx. x) = (λy. true)` where this uses the primitive literal — and no
-//! lemma yet relates them. The subtype package is built here rather than
-//! there because that is where the soundness proof is.
+//! Boolean builtin unfolding uses exactly these fixed encodings. Userspace
+//! declarations and names cannot change the meaning of an immutable builtin.
 //!
 //! ## Binders are rows, not names
 //!
@@ -35,8 +27,90 @@ use std::convert::Infallible;
 
 use super::{Kernel, KernelError};
 use crate::Ref;
+use crate::literals::{BoolOp, Builtin, LiteralType};
 
 impl Kernel {
+    pub(super) fn boolean_definition_cached(&mut self, op: BoolOp) -> Result<Ref, KernelError> {
+        let builtin = self.builtin_const(Builtin::Bool(op))?;
+        for candidate in self.references::<Infallible>()? {
+            if matches!(
+                self.row::<Infallible>(candidate)?.expr(),
+                super::Node::Lam(..)
+            ) && self
+                .find_path_in::<Infallible>(crate::EqColumn::Syn, candidate)?
+                .0
+                == builtin
+            {
+                return Ok(candidate);
+            }
+        }
+        self.boolean_definition(op)
+    }
+
+    /// Builds the fixed, closed HOL definition of a Boolean builtin.
+    /// Names here identify bound variables only; no user declaration supplies
+    /// the meaning of an immutable builtin.
+    pub(super) fn boolean_definition(&mut self, op: BoolOp) -> Result<Ref, KernelError> {
+        let boolean = self.literal_ty(LiteralType::Bool)?;
+        let left = self.tm_fv(0, boolean)?;
+        if op == BoolOp::Not {
+            let body = self.not_tm(boolean, left)?;
+            return self.lam(left, body);
+        }
+        let right = self.tm_fv(1, boolean)?;
+        let body = if op == BoolOp::Iff {
+            self.eq(boolean, left, right)?
+        } else {
+            let signature = crate::global::signature_type(
+                &[LiteralType::Bool, LiteralType::Bool],
+                LiteralType::Bool,
+            );
+            let binder = self.tm_fv(2, signature)?;
+            match op {
+                BoolOp::And => self.and_tm(boolean, binder, left, right)?,
+                BoolOp::Or => self.or_tm(boolean, binder, left, right)?,
+                BoolOp::Imp => self.imp_tm(boolean, binder, left, right)?,
+                BoolOp::Not | BoolOp::Iff => unreachable!("handled above"),
+            }
+        };
+        let body = self.lam(right, body)?;
+        self.lam(left, body)
+    }
+
+    pub(super) fn exact_definition(&self, left: Ref, right: Ref) -> Result<bool, KernelError> {
+        let mut pending = vec![(left, right)];
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some((left, right)) = pending.pop() {
+            if left == right || !seen.insert((left, right)) {
+                continue;
+            }
+            let left = *self.row::<Infallible>(left)?.expr();
+            let right = *self.row::<Infallible>(right)?.expr();
+            if !Self::same_head(left, right)
+                && !matches!(
+                    (left, right),
+                    (super::Node::Lam(..), super::Node::Lam(..))
+                        | (super::Node::TyLam(..), super::Node::TyLam(..))
+                )
+            {
+                return Ok(false);
+            }
+            let a = left.children();
+            let b = right.children();
+            if a.len() != b.len() {
+                return Ok(false);
+            }
+            pending.extend(a.into_iter().zip(b));
+        }
+        Ok(true)
+    }
+
+    pub(super) fn boolean_builtin(&self, reference: Ref) -> Option<BoolOp> {
+        match self.arena.builtin_op(reference)? {
+            Builtin::Bool(op) => Some(op),
+            _ => None,
+        }
+    }
     /// Appends `¬ proposition`, which is `proposition = false`.
     ///
     /// # Errors
