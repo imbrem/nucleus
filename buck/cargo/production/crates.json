@@ -1511,6 +1511,13 @@
     },
     {
       "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-data-num@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-data-sexpr@0.0.0",
       "kinds": [
         "normal"

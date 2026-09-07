@@ -2,6 +2,8 @@
 
 #![allow(clippy::needless_pass_by_value)]
 
+mod literals;
+
 use std::{
     num::NonZeroU64,
     sync::{
@@ -427,7 +429,7 @@ impl PyTy {
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 #[derive(Clone, Copy)]
 pub struct PyTm {
-    _owner: KernelId,
+    owner: KernelId,
     reference: Ref,
 }
 
@@ -722,6 +724,58 @@ impl PyKernel {
         }
     }
 
+    fn _literal(&mut self, ty: &str, value: &Bound<'_, PyAny>) -> PyResult<PyTm> {
+        literals::literal(self, ty, value)
+    }
+
+    fn _literal_variable(&mut self, name: u64, ty: &str) -> PyResult<PyTm> {
+        literals::variable(self, name, ty)
+    }
+
+    fn _literal_type(&self, term: &PyTm) -> PyResult<&'static str> {
+        literals::term_type(self, term)
+    }
+
+    fn _literal_value<'py>(&self, python: Python<'py>, term: &PyTm) -> PyResult<Bound<'py, PyAny>> {
+        literals::value(self, python, term)
+    }
+
+    fn _literal_builtin(
+        &mut self,
+        operation: &str,
+        arguments: Vec<PyRef<'_, PyTm>>,
+    ) -> PyResult<PyTm> {
+        literals::builtin(self, operation, &arguments)
+    }
+
+    fn _literal_function(
+        &mut self,
+        operation: &str,
+    ) -> PyResult<(PyTm, Vec<&'static str>, &'static str)> {
+        literals::function(self, operation)
+    }
+
+    fn _literal_match(&self, function: &PyTm, term: &PyTm) -> PyResult<Option<Vec<PyTm>>> {
+        literals::match_function(self, function, term)
+    }
+
+    fn _literal_apply(
+        &mut self,
+        function: &PyTm,
+        arguments: Vec<PyRef<'_, PyTm>>,
+    ) -> PyResult<PyTm> {
+        literals::apply(self, function, &arguments)
+    }
+
+    fn _literal_evaluate(
+        &mut self,
+        term: &PyTm,
+        max_bytes: usize,
+        max_steps: u32,
+    ) -> PyResult<literals::PyLiteralReduction> {
+        literals::reduce(self, term, max_bytes, max_steps)
+    }
+
     #[getter]
     fn arena(&self) -> PyArena {
         PyArena {
@@ -795,7 +849,7 @@ impl PyKernel {
             return Err(PyValueError::new_err("reference is not a term"));
         }
         Ok(PyTm {
-            _owner: self.id,
+            owner: self.id,
             reference,
         })
     }
@@ -1676,6 +1730,7 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyKind>()?;
     module.add_class::<PyTy>()?;
     module.add_class::<PyTm>()?;
+    module.add_class::<literals::PyLiteralReduction>()?;
     module.add_class::<PySynFact>()?;
     module.add_class::<PyKernel>()?;
     module.add_class::<PyRewriteResult>()?;

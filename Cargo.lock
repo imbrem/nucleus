@@ -1086,6 +1086,7 @@ dependencies = [
  "cid",
  "covalence-data-cas",
  "covalence-data-cbor",
+ "covalence-data-num",
  "covalence-data-sexpr",
  "covalence-lib-hash",
  "covalence-lib-python",

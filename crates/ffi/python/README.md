@@ -114,12 +114,21 @@ b'ab'
 True
 ```
 
-`covalence.logic.hol` exposes the one-based Ethane arena in two layers.
+`covalence.logic.hol` exposes the Ethane arena in two layers.
 `Arena` is mutable wire data and may contain unchecked rows. `Kernel` starts
 empty and can only grow through checked row and syntactic-fact rules. Both
 layers retain the low-level integer-index API. A kernel can additionally
 return opaque `Kind`, `Ty`, and `Tm` handles, while `SynFact` snapshots prevent
 evidence from being reused after its slot is overwritten or across kernels.
+Positive references identify local rows; negative references identify immutable
+builtins shared by all arenas. Zero is invalid. `Arena.definitions` lists local
+rows; `Arena.definition(ref)` also resolves builtins. The sign of a term
+reference never represents logical negation.
+
+Theorem matrices use signed literals over local Boolean references only.
+`Kernel.lit(ref, negated=...)` checks that boundary and rejects builtin refs.
+Boolean constants have their structural matrix meanings: `true_right()`
+concludes the empty conjunction and `false_left()` assumes the empty clause.
 
 ```python
 >>> from covalence.logic.hol import Kernel
@@ -130,6 +139,69 @@ evidence from being reused after its slot is overwritten or across kernels.
 >>> kernel.tm(truth).reference == truth
 True
 ```
+
+`covalence.logic.literals` supplies a typed symbolic API above the same checked
+kernel. `Context()` creates a kernel with the `ax.inf` literal capability;
+`Context(kernel)` uses an existing kernel without changing its assumptions.
+An existing kernel must have enabled `ax.inf` before constructing literals.
+Python integers become unbounded `Int`, booleans become `Bool`, and Python
+`bytes` become finite-octet-list `Bytes`. Explicit `nat`, `int`, `i8`, `i16`,
+`i32`, and `i64` constructors keep the intended type visible. Fixed integers
+accept signed values by default; `signed=False` selects unsigned bit patterns
+and `wrap=True` explicitly truncates. Literal `.value` returns unsigned word
+bits; `.signed_value` returns their signed interpretation.
+
+```python
+>>> from covalence.logic.literals import Context, Type
+>>> ctx = Context()
+>>> (ctx.i32(20) + ctx.i32(22)).evaluate().value
+42
+>>> ctx(-1).to_word(Type.I8, wrap=True).evaluate().value
+255
+>>> ctx.bytes(b"\x00asm\x01\x00\x00\x00").read_word(4, Type.I32).evaluate().value
+1
+```
+
+Operations build terms, including when arguments are variables. Equality
+builds a Boolean proposition; `bool(expr)` always raises and expressions are
+unhashable. Fixed-word ordering, division, remainder and right shift use
+explicit `_s`/`_u` methods. Int division truncates toward zero; Nat subtraction
+truncates at zero. Arithmetic, bitwise operations, shifts, counts, rotations,
+casts and endian codecs dispatch to the Rust builtin catalog. `builtin` also
+offers the complete qualified-name vocabulary, for example `i32.add` and
+`bytes.append`; its arguments undergo the same kernel signature checks.
+Boolean `~`, `&`, `|`, `implies`, and `iff` use the same ordinary builtin
+application path. Boolean equality is `iff`; inequality and XOR compose
+negation with `iff` in userspace.
+
+`ctx.builtin_function("i32.add")` returns a callable `Function` over an ordinary
+checked HOL term. Its `parameters` and `result_type` describe the semantic
+signature. Calls use ordinary checked application and may supply fewer
+arguments: `add(ctx.i32(1))(ctx.i32(41)).evaluate().value` is `42`. Plain Python
+integers still become Int, so fixed-width arguments remain explicit. Nullary
+builtins such as `bytes.empty` return `Expr` directly. No application-row or
+function-storage layout is exposed by the callable wrapper.
+
+Pair construction with `expr.match_builtin("i32.add")` or `add.match(expr)`:
+both return a tuple of typed arguments, or `None` for a non-match. Partial
+functions match their captured argument references exactly. Matching inspects
+syntax only and creates no theorem evidence. Boolean construction also has
+`ctx.not_`, `ctx.and_`, `ctx.or_`, `ctx.implies`, and `ctx.iff` helpers.
+
+Bytes support length, indexed access, concatenation, persistent updates,
+take/drop, split, replace, and word read/write. `b[start:stop]` follows Python
+clamping for nonnegative indices; `b.slice(start, length)` requires the exact
+range to exist. Negative indices and stepped slices are rejected. `.length`
+is symbolic Nat, so use it instead of Python `len`. `bytes_from` accepts a
+list of literal or symbolic octets; `repeat_byte` constructs repetitions.
+
+`evaluate()` returns a literal result and a sealed Rust record of the equality
+theorem created by the kernel. It accepts only closed, defined computations
+within the configured resource bounds. Partial operations and failed
+evaluation leave the kernel unchanged. Neither Python computation nor a
+successful call to an untrusted evaluator creates theorem authority. No
+object-table indices are part of this API. Full linked-byte reasoning remains
+outside this surface. See `examples/literals.py` and `tests/test_literals.py`.
 
 `covalence.logic.classical` keeps packed storage private. `Formula`, `Sequent`,
 and `Arena` are ordinary owned syntax; checking an arena validates and packs it
