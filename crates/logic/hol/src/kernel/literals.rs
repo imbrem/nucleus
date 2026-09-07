@@ -404,6 +404,38 @@ mod tests {
         );
         assert!(k.theorems().get(thm).is_some());
     }
+
+    #[test]
+    fn reduction_accepts_only_checked_equivalent_application_classifiers() {
+        let mut k = Kernel::new();
+        let star = k.star().unwrap();
+        let bool_ty = k.bool_ty(star).unwrap();
+        let parameter = k.ty_fv(77, star).unwrap();
+        let identity = k.ty_lam(parameter, parameter).unwrap();
+        let alias = k.ty_app(identity, bool_ty).unwrap();
+        let truth = k.bool(bool_ty, true).unwrap();
+        assert!(k.eq(alias, truth, truth).is_err());
+        let substitution = k.syn_sub_var(None, parameter, bool_ty).unwrap();
+        let beta = k.ty_beta_fact(None, alias, substitution).unwrap();
+        k.union_syn_fact(beta).unwrap();
+        let equality = k.eq(alias, truth, truth).unwrap();
+        assert_eq!(k.classifier(equality).unwrap(), alias);
+        let negated = k.not(equality).unwrap();
+        let (result, theorem) = k.reduce_builtin(negated, EvalLimits::default()).unwrap();
+        assert_eq!(
+            k.literal_value(result).unwrap(),
+            Some(LiteralValue::Bool(false))
+        );
+        assert!(k.theorems().get(theorem).is_some());
+
+        // Merely assigning an unrelated type is not evidence of equivalence.
+        let unrelated = k.ty_fv(78, star).unwrap();
+        k.arena
+            .set_eq_column(crate::EqColumn::Conv, equality, Some(unrelated));
+        let before = k.arena.clone();
+        assert!(k.reduce_builtin(negated, EvalLimits::default()).is_err());
+        assert_eq!(k.arena, before);
+    }
     #[test]
     fn resident_results_are_cached_without_an_auxiliary_value_table() {
         let mut k = kernel();

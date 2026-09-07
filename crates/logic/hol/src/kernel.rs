@@ -1587,7 +1587,7 @@ impl Kernel {
                 let (domain, codomain) =
                     self.type_arrow_member::<Infallible>(self.classifier(function)?)?;
                 let actual = self.classifier(argument)?;
-                if domain != actual {
+                if !self.equivalent(domain, actual)? {
                     return Err(KernelError::ClassifierMismatch {
                         expected: domain,
                         actual,
