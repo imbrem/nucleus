@@ -194,7 +194,7 @@
       "name": "covalence-data-cbor",
       "version": "0.0.0",
       "path": "crates/data/cbor",
-      "category": "product",
+      "category": "tcb",
       "targets": [
         {
           "name": "covalence_data_cbor",
@@ -239,7 +239,7 @@
       "name": "covalence-data-num",
       "version": "0.0.0",
       "path": "crates/data/num",
-      "category": "product",
+      "category": "tcb",
       "targets": [
         {
           "name": "covalence_data_num",
@@ -348,7 +348,7 @@
       "name": "covalence-lib-bigint",
       "version": "0.0.0",
       "path": "crates/lib/bigint",
-      "category": "product",
+      "category": "tcb",
       "targets": [
         {
           "name": "covalence_lib_bigint",
@@ -429,7 +429,7 @@
       "name": "covalence-lib-json",
       "version": "0.0.0",
       "path": "crates/lib/json",
-      "category": "product",
+      "category": "tcb",
       "targets": [
         {
           "name": "covalence_lib_json",
@@ -655,6 +655,12 @@
         },
         {
           "name": "known_gaps",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "literal_vectors",
           "kinds": [
             "test"
           ]
@@ -1633,6 +1639,20 @@
     {
       "source": "workspace#covalence-logic-hol-derived@0.0.0",
       "target": "workspace#covalence-logic-hol@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol@0.0.0",
+      "target": "workspace#covalence-data-cbor@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol@0.0.0",
+      "target": "workspace#covalence-data-num@0.0.0",
       "kinds": [
         "normal"
       ]

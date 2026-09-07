@@ -1,0 +1,5355 @@
+[
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Add"]
+    },
+    "output": "i8",
+    "result": ["i8", "252"]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Sub"]
+    },
+    "output": "i8",
+    "result": ["i8", "246"]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Mul"]
+    },
+    "output": "i8",
+    "result": ["i8", "235"]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "DivU"]
+    },
+    "output": "i8",
+    "result": ["i8", "83"]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "DivS"]
+    },
+    "output": "i8",
+    "result": ["i8", "254"]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "RemU"]
+    },
+    "output": "i8",
+    "result": ["i8", "0"]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "RemS"]
+    },
+    "output": "i8",
+    "result": ["i8", "255"]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "And"]
+    },
+    "output": "i8",
+    "result": ["i8", "1"]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Or"]
+    },
+    "output": "i8",
+    "result": ["i8", "251"]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Xor"]
+    },
+    "output": "i8",
+    "result": ["i8", "250"]
+  },
+  {
+    "args": [["i8", "249"]],
+    "inputs": ["i8"],
+    "op": {
+      "Word": ["W8", "Not"]
+    },
+    "output": "i8",
+    "result": ["i8", "6"]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Shl"]
+    },
+    "output": "i8",
+    "result": ["i8", "200"]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "ShrU"]
+    },
+    "output": "i8",
+    "result": ["i8", "31"]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "ShrS"]
+    },
+    "output": "i8",
+    "result": ["i8", "255"]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Rotl"]
+    },
+    "output": "i8",
+    "result": ["i8", "207"]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Rotr"]
+    },
+    "output": "i8",
+    "result": ["i8", "63"]
+  },
+  {
+    "args": [["i8", "249"]],
+    "inputs": ["i8"],
+    "op": {
+      "Word": ["W8", "Clz"]
+    },
+    "output": "i8",
+    "result": ["i8", "0"]
+  },
+  {
+    "args": [["i8", "249"]],
+    "inputs": ["i8"],
+    "op": {
+      "Word": ["W8", "Ctz"]
+    },
+    "output": "i8",
+    "result": ["i8", "0"]
+  },
+  {
+    "args": [["i8", "249"]],
+    "inputs": ["i8"],
+    "op": {
+      "Word": ["W8", "Popcnt"]
+    },
+    "output": "i8",
+    "result": ["i8", "6"]
+  },
+  {
+    "args": [["i8", "249"]],
+    "inputs": ["i8"],
+    "op": {
+      "Word": ["W8", "Eqz"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Eq"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Ne"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "LtU"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "LeU"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "GtU"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "GeU"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "LtS"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "LeS"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "GtS"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i8", "249"],
+      ["i8", "3"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "GeS"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [["i8", "3"]],
+    "inputs": ["i8"],
+    "op": {
+      "Bytes": {
+        "Encode": ["W8", "Little"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [3]]
+  },
+  {
+    "args": [["bytes", [137]]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W8", "Little"]
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "137"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W8", "Little"]
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "1"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"],
+      ["i8", "3"]
+    ],
+    "inputs": ["bytes", "nat", "i8"],
+    "op": {
+      "Bytes": {
+        "Write": ["W8", "Little"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [3, 2, 3, 4, 5, 6, 7, 8]]
+  },
+  {
+    "args": [["i8", "3"]],
+    "inputs": ["i8"],
+    "op": {
+      "Bytes": {
+        "Encode": ["W8", "Big"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [3]]
+  },
+  {
+    "args": [["bytes", [137]]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W8", "Big"]
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "137"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W8", "Big"]
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "1"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"],
+      ["i8", "3"]
+    ],
+    "inputs": ["bytes", "nat", "i8"],
+    "op": {
+      "Bytes": {
+        "Write": ["W8", "Big"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [3, 2, 3, 4, 5, 6, 7, 8]]
+  },
+  {
+    "args": [["i8", "3"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordToNat": "W8"
+      }
+    },
+    "output": "nat",
+    "result": ["nat", "3"]
+  },
+  {
+    "args": [["i8", "3"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordToIntU": "W8"
+      }
+    },
+    "output": "int",
+    "result": ["int", "3"]
+  },
+  {
+    "args": [["i8", "3"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordToIntS": "W8"
+      }
+    },
+    "output": "int",
+    "result": ["int", "3"]
+  },
+  {
+    "args": [["nat", "1"]],
+    "inputs": ["nat"],
+    "op": {
+      "Cast": {
+        "NatToWord": "W8"
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "1"]
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordU": "W8"
+      }
+    },
+    "output": "i8",
+    "result": null
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordS": "W8"
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "249"]
+  },
+  {
+    "args": [["nat", "1"]],
+    "inputs": ["nat"],
+    "op": {
+      "Cast": {
+        "NatToWordWrap": "W8"
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "1"]
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordWrap": "W8"
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "249"]
+  },
+  {
+    "args": [["i8", "131"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordWrap": ["W8", "W8"]
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "131"]
+  },
+  {
+    "args": [["i8", "131"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordZeroExtend": ["W8", "W8"]
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "131"]
+  },
+  {
+    "args": [["i8", "131"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordSignExtend": ["W8", "W8"]
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "131"]
+  },
+  {
+    "args": [["i8", "131"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordZeroExtend": ["W8", "W16"]
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "131"]
+  },
+  {
+    "args": [["i8", "131"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordSignExtend": ["W8", "W16"]
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "65411"]
+  },
+  {
+    "args": [["i8", "131"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordZeroExtend": ["W8", "W32"]
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "131"]
+  },
+  {
+    "args": [["i8", "131"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordSignExtend": ["W8", "W32"]
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "4294967171"]
+  },
+  {
+    "args": [["i8", "131"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordZeroExtend": ["W8", "W64"]
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "131"]
+  },
+  {
+    "args": [["i8", "131"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordSignExtend": ["W8", "W64"]
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551491"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Add"]
+    },
+    "output": "i16",
+    "result": ["i16", "65532"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Sub"]
+    },
+    "output": "i16",
+    "result": ["i16", "65526"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Mul"]
+    },
+    "output": "i16",
+    "result": ["i16", "65515"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "DivU"]
+    },
+    "output": "i16",
+    "result": ["i16", "21843"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "DivS"]
+    },
+    "output": "i16",
+    "result": ["i16", "65534"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "RemU"]
+    },
+    "output": "i16",
+    "result": ["i16", "0"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "RemS"]
+    },
+    "output": "i16",
+    "result": ["i16", "65535"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "And"]
+    },
+    "output": "i16",
+    "result": ["i16", "1"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Or"]
+    },
+    "output": "i16",
+    "result": ["i16", "65531"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Xor"]
+    },
+    "output": "i16",
+    "result": ["i16", "65530"]
+  },
+  {
+    "args": [["i16", "65529"]],
+    "inputs": ["i16"],
+    "op": {
+      "Word": ["W16", "Not"]
+    },
+    "output": "i16",
+    "result": ["i16", "6"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Shl"]
+    },
+    "output": "i16",
+    "result": ["i16", "65480"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "ShrU"]
+    },
+    "output": "i16",
+    "result": ["i16", "8191"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "ShrS"]
+    },
+    "output": "i16",
+    "result": ["i16", "65535"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Rotl"]
+    },
+    "output": "i16",
+    "result": ["i16", "65487"]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Rotr"]
+    },
+    "output": "i16",
+    "result": ["i16", "16383"]
+  },
+  {
+    "args": [["i16", "65529"]],
+    "inputs": ["i16"],
+    "op": {
+      "Word": ["W16", "Clz"]
+    },
+    "output": "i16",
+    "result": ["i16", "0"]
+  },
+  {
+    "args": [["i16", "65529"]],
+    "inputs": ["i16"],
+    "op": {
+      "Word": ["W16", "Ctz"]
+    },
+    "output": "i16",
+    "result": ["i16", "0"]
+  },
+  {
+    "args": [["i16", "65529"]],
+    "inputs": ["i16"],
+    "op": {
+      "Word": ["W16", "Popcnt"]
+    },
+    "output": "i16",
+    "result": ["i16", "14"]
+  },
+  {
+    "args": [["i16", "65529"]],
+    "inputs": ["i16"],
+    "op": {
+      "Word": ["W16", "Eqz"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Eq"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Ne"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "LtU"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "LeU"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "GtU"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "GeU"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "LtS"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "LeS"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "GtS"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i16", "65529"],
+      ["i16", "3"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "GeS"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [["i16", "65529"]],
+    "inputs": ["i16"],
+    "op": {
+      "Word": [
+        "W16",
+        {
+          "ExtendSign": "W8"
+        }
+      ]
+    },
+    "output": "i16",
+    "result": ["i16", "65529"]
+  },
+  {
+    "args": [["i16", "3"]],
+    "inputs": ["i16"],
+    "op": {
+      "Bytes": {
+        "Encode": ["W16", "Little"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [3, 0]]
+  },
+  {
+    "args": [["bytes", [137, 137]]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W16", "Little"]
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "35209"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W16", "Little"]
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "513"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"],
+      ["i16", "3"]
+    ],
+    "inputs": ["bytes", "nat", "i16"],
+    "op": {
+      "Bytes": {
+        "Write": ["W16", "Little"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [3, 0, 3, 4, 5, 6, 7, 8]]
+  },
+  {
+    "args": [["i16", "3"]],
+    "inputs": ["i16"],
+    "op": {
+      "Bytes": {
+        "Encode": ["W16", "Big"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [0, 3]]
+  },
+  {
+    "args": [["bytes", [137, 137]]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W16", "Big"]
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "35209"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W16", "Big"]
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "258"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"],
+      ["i16", "3"]
+    ],
+    "inputs": ["bytes", "nat", "i16"],
+    "op": {
+      "Bytes": {
+        "Write": ["W16", "Big"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [0, 3, 3, 4, 5, 6, 7, 8]]
+  },
+  {
+    "args": [["i16", "3"]],
+    "inputs": ["i16"],
+    "op": {
+      "Cast": {
+        "WordToNat": "W16"
+      }
+    },
+    "output": "nat",
+    "result": ["nat", "3"]
+  },
+  {
+    "args": [["i16", "3"]],
+    "inputs": ["i16"],
+    "op": {
+      "Cast": {
+        "WordToIntU": "W16"
+      }
+    },
+    "output": "int",
+    "result": ["int", "3"]
+  },
+  {
+    "args": [["i16", "3"]],
+    "inputs": ["i16"],
+    "op": {
+      "Cast": {
+        "WordToIntS": "W16"
+      }
+    },
+    "output": "int",
+    "result": ["int", "3"]
+  },
+  {
+    "args": [["nat", "1"]],
+    "inputs": ["nat"],
+    "op": {
+      "Cast": {
+        "NatToWord": "W16"
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "1"]
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordU": "W16"
+      }
+    },
+    "output": "i16",
+    "result": null
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordS": "W16"
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "65529"]
+  },
+  {
+    "args": [["nat", "1"]],
+    "inputs": ["nat"],
+    "op": {
+      "Cast": {
+        "NatToWordWrap": "W16"
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "1"]
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordWrap": "W16"
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "65529"]
+  },
+  {
+    "args": [["i16", "32771"]],
+    "inputs": ["i16"],
+    "op": {
+      "Cast": {
+        "WordWrap": ["W16", "W8"]
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "3"]
+  },
+  {
+    "args": [["i16", "32771"]],
+    "inputs": ["i16"],
+    "op": {
+      "Cast": {
+        "WordWrap": ["W16", "W16"]
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "32771"]
+  },
+  {
+    "args": [["i16", "32771"]],
+    "inputs": ["i16"],
+    "op": {
+      "Cast": {
+        "WordZeroExtend": ["W16", "W16"]
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "32771"]
+  },
+  {
+    "args": [["i16", "32771"]],
+    "inputs": ["i16"],
+    "op": {
+      "Cast": {
+        "WordSignExtend": ["W16", "W16"]
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "32771"]
+  },
+  {
+    "args": [["i16", "32771"]],
+    "inputs": ["i16"],
+    "op": {
+      "Cast": {
+        "WordZeroExtend": ["W16", "W32"]
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "32771"]
+  },
+  {
+    "args": [["i16", "32771"]],
+    "inputs": ["i16"],
+    "op": {
+      "Cast": {
+        "WordSignExtend": ["W16", "W32"]
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "4294934531"]
+  },
+  {
+    "args": [["i16", "32771"]],
+    "inputs": ["i16"],
+    "op": {
+      "Cast": {
+        "WordZeroExtend": ["W16", "W64"]
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "32771"]
+  },
+  {
+    "args": [["i16", "32771"]],
+    "inputs": ["i16"],
+    "op": {
+      "Cast": {
+        "WordSignExtend": ["W16", "W64"]
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709518851"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Add"]
+    },
+    "output": "i32",
+    "result": ["i32", "4294967292"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Sub"]
+    },
+    "output": "i32",
+    "result": ["i32", "4294967286"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Mul"]
+    },
+    "output": "i32",
+    "result": ["i32", "4294967275"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "DivU"]
+    },
+    "output": "i32",
+    "result": ["i32", "1431655763"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "DivS"]
+    },
+    "output": "i32",
+    "result": ["i32", "4294967294"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "RemU"]
+    },
+    "output": "i32",
+    "result": ["i32", "0"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "RemS"]
+    },
+    "output": "i32",
+    "result": ["i32", "4294967295"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "And"]
+    },
+    "output": "i32",
+    "result": ["i32", "1"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Or"]
+    },
+    "output": "i32",
+    "result": ["i32", "4294967291"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Xor"]
+    },
+    "output": "i32",
+    "result": ["i32", "4294967290"]
+  },
+  {
+    "args": [["i32", "4294967289"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": ["W32", "Not"]
+    },
+    "output": "i32",
+    "result": ["i32", "6"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Shl"]
+    },
+    "output": "i32",
+    "result": ["i32", "4294967240"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "ShrU"]
+    },
+    "output": "i32",
+    "result": ["i32", "536870911"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "ShrS"]
+    },
+    "output": "i32",
+    "result": ["i32", "4294967295"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Rotl"]
+    },
+    "output": "i32",
+    "result": ["i32", "4294967247"]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Rotr"]
+    },
+    "output": "i32",
+    "result": ["i32", "1073741823"]
+  },
+  {
+    "args": [["i32", "4294967289"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": ["W32", "Clz"]
+    },
+    "output": "i32",
+    "result": ["i32", "0"]
+  },
+  {
+    "args": [["i32", "4294967289"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": ["W32", "Ctz"]
+    },
+    "output": "i32",
+    "result": ["i32", "0"]
+  },
+  {
+    "args": [["i32", "4294967289"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": ["W32", "Popcnt"]
+    },
+    "output": "i32",
+    "result": ["i32", "30"]
+  },
+  {
+    "args": [["i32", "4294967289"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": ["W32", "Eqz"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Eq"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Ne"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "LtU"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "LeU"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "GtU"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "GeU"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "LtS"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "LeS"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "GtS"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i32", "4294967289"],
+      ["i32", "3"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "GeS"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [["i32", "4294967289"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": [
+        "W32",
+        {
+          "ExtendSign": "W8"
+        }
+      ]
+    },
+    "output": "i32",
+    "result": ["i32", "4294967289"]
+  },
+  {
+    "args": [["i32", "4294967289"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": [
+        "W32",
+        {
+          "ExtendSign": "W16"
+        }
+      ]
+    },
+    "output": "i32",
+    "result": ["i32", "4294967289"]
+  },
+  {
+    "args": [["i32", "3"]],
+    "inputs": ["i32"],
+    "op": {
+      "Bytes": {
+        "Encode": ["W32", "Little"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [3, 0, 0, 0]]
+  },
+  {
+    "args": [["bytes", [137, 137, 137, 137]]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W32", "Little"]
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "2307492233"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W32", "Little"]
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "67305985"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"],
+      ["i32", "3"]
+    ],
+    "inputs": ["bytes", "nat", "i32"],
+    "op": {
+      "Bytes": {
+        "Write": ["W32", "Little"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [3, 0, 0, 0, 5, 6, 7, 8]]
+  },
+  {
+    "args": [["i32", "3"]],
+    "inputs": ["i32"],
+    "op": {
+      "Bytes": {
+        "Encode": ["W32", "Big"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [0, 0, 0, 3]]
+  },
+  {
+    "args": [["bytes", [137, 137, 137, 137]]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W32", "Big"]
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "2307492233"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W32", "Big"]
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "16909060"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"],
+      ["i32", "3"]
+    ],
+    "inputs": ["bytes", "nat", "i32"],
+    "op": {
+      "Bytes": {
+        "Write": ["W32", "Big"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [0, 0, 0, 3, 5, 6, 7, 8]]
+  },
+  {
+    "args": [["i32", "3"]],
+    "inputs": ["i32"],
+    "op": {
+      "Cast": {
+        "WordToNat": "W32"
+      }
+    },
+    "output": "nat",
+    "result": ["nat", "3"]
+  },
+  {
+    "args": [["i32", "3"]],
+    "inputs": ["i32"],
+    "op": {
+      "Cast": {
+        "WordToIntU": "W32"
+      }
+    },
+    "output": "int",
+    "result": ["int", "3"]
+  },
+  {
+    "args": [["i32", "3"]],
+    "inputs": ["i32"],
+    "op": {
+      "Cast": {
+        "WordToIntS": "W32"
+      }
+    },
+    "output": "int",
+    "result": ["int", "3"]
+  },
+  {
+    "args": [["nat", "1"]],
+    "inputs": ["nat"],
+    "op": {
+      "Cast": {
+        "NatToWord": "W32"
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "1"]
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordU": "W32"
+      }
+    },
+    "output": "i32",
+    "result": null
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordS": "W32"
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "4294967289"]
+  },
+  {
+    "args": [["nat", "1"]],
+    "inputs": ["nat"],
+    "op": {
+      "Cast": {
+        "NatToWordWrap": "W32"
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "1"]
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordWrap": "W32"
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "4294967289"]
+  },
+  {
+    "args": [["i32", "2147483651"]],
+    "inputs": ["i32"],
+    "op": {
+      "Cast": {
+        "WordWrap": ["W32", "W8"]
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "3"]
+  },
+  {
+    "args": [["i32", "2147483651"]],
+    "inputs": ["i32"],
+    "op": {
+      "Cast": {
+        "WordWrap": ["W32", "W16"]
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "3"]
+  },
+  {
+    "args": [["i32", "2147483651"]],
+    "inputs": ["i32"],
+    "op": {
+      "Cast": {
+        "WordWrap": ["W32", "W32"]
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "2147483651"]
+  },
+  {
+    "args": [["i32", "2147483651"]],
+    "inputs": ["i32"],
+    "op": {
+      "Cast": {
+        "WordZeroExtend": ["W32", "W32"]
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "2147483651"]
+  },
+  {
+    "args": [["i32", "2147483651"]],
+    "inputs": ["i32"],
+    "op": {
+      "Cast": {
+        "WordSignExtend": ["W32", "W32"]
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "2147483651"]
+  },
+  {
+    "args": [["i32", "2147483651"]],
+    "inputs": ["i32"],
+    "op": {
+      "Cast": {
+        "WordZeroExtend": ["W32", "W64"]
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "2147483651"]
+  },
+  {
+    "args": [["i32", "2147483651"]],
+    "inputs": ["i32"],
+    "op": {
+      "Cast": {
+        "WordSignExtend": ["W32", "W64"]
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "18446744071562067971"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Add"]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551612"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Sub"]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551606"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Mul"]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551595"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "DivU"]
+    },
+    "output": "i64",
+    "result": ["i64", "6148914691236517203"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "DivS"]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551614"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "RemU"]
+    },
+    "output": "i64",
+    "result": ["i64", "0"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "RemS"]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551615"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "And"]
+    },
+    "output": "i64",
+    "result": ["i64", "1"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Or"]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551611"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Xor"]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551610"]
+  },
+  {
+    "args": [["i64", "18446744073709551609"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": ["W64", "Not"]
+    },
+    "output": "i64",
+    "result": ["i64", "6"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Shl"]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551560"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "ShrU"]
+    },
+    "output": "i64",
+    "result": ["i64", "2305843009213693951"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "ShrS"]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551615"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Rotl"]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551567"]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Rotr"]
+    },
+    "output": "i64",
+    "result": ["i64", "4611686018427387903"]
+  },
+  {
+    "args": [["i64", "18446744073709551609"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": ["W64", "Clz"]
+    },
+    "output": "i64",
+    "result": ["i64", "0"]
+  },
+  {
+    "args": [["i64", "18446744073709551609"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": ["W64", "Ctz"]
+    },
+    "output": "i64",
+    "result": ["i64", "0"]
+  },
+  {
+    "args": [["i64", "18446744073709551609"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": ["W64", "Popcnt"]
+    },
+    "output": "i64",
+    "result": ["i64", "62"]
+  },
+  {
+    "args": [["i64", "18446744073709551609"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": ["W64", "Eqz"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Eq"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Ne"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "LtU"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "LeU"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "GtU"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "GeU"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "LtS"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "LeS"]
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "GtS"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["i64", "18446744073709551609"],
+      ["i64", "3"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "GeS"]
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [["i64", "18446744073709551609"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": [
+        "W64",
+        {
+          "ExtendSign": "W8"
+        }
+      ]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551609"]
+  },
+  {
+    "args": [["i64", "18446744073709551609"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": [
+        "W64",
+        {
+          "ExtendSign": "W16"
+        }
+      ]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551609"]
+  },
+  {
+    "args": [["i64", "18446744073709551609"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": [
+        "W64",
+        {
+          "ExtendSign": "W32"
+        }
+      ]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551609"]
+  },
+  {
+    "args": [["i64", "3"]],
+    "inputs": ["i64"],
+    "op": {
+      "Bytes": {
+        "Encode": ["W64", "Little"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [3, 0, 0, 0, 0, 0, 0, 0]]
+  },
+  {
+    "args": [["bytes", [137, 137, 137, 137, 137, 137, 137, 137]]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W64", "Little"]
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "9910603678816504201"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W64", "Little"]
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "578437695752307201"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"],
+      ["i64", "3"]
+    ],
+    "inputs": ["bytes", "nat", "i64"],
+    "op": {
+      "Bytes": {
+        "Write": ["W64", "Little"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [3, 0, 0, 0, 0, 0, 0, 0]]
+  },
+  {
+    "args": [["i64", "3"]],
+    "inputs": ["i64"],
+    "op": {
+      "Bytes": {
+        "Encode": ["W64", "Big"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [0, 0, 0, 0, 0, 0, 0, 3]]
+  },
+  {
+    "args": [["bytes", [137, 137, 137, 137, 137, 137, 137, 137]]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W64", "Big"]
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "9910603678816504201"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W64", "Big"]
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "72623859790382856"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "0"],
+      ["i64", "3"]
+    ],
+    "inputs": ["bytes", "nat", "i64"],
+    "op": {
+      "Bytes": {
+        "Write": ["W64", "Big"]
+      }
+    },
+    "output": "bytes",
+    "result": ["bytes", [0, 0, 0, 0, 0, 0, 0, 3]]
+  },
+  {
+    "args": [["i64", "3"]],
+    "inputs": ["i64"],
+    "op": {
+      "Cast": {
+        "WordToNat": "W64"
+      }
+    },
+    "output": "nat",
+    "result": ["nat", "3"]
+  },
+  {
+    "args": [["i64", "3"]],
+    "inputs": ["i64"],
+    "op": {
+      "Cast": {
+        "WordToIntU": "W64"
+      }
+    },
+    "output": "int",
+    "result": ["int", "3"]
+  },
+  {
+    "args": [["i64", "3"]],
+    "inputs": ["i64"],
+    "op": {
+      "Cast": {
+        "WordToIntS": "W64"
+      }
+    },
+    "output": "int",
+    "result": ["int", "3"]
+  },
+  {
+    "args": [["nat", "1"]],
+    "inputs": ["nat"],
+    "op": {
+      "Cast": {
+        "NatToWord": "W64"
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "1"]
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordU": "W64"
+      }
+    },
+    "output": "i64",
+    "result": null
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordS": "W64"
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551609"]
+  },
+  {
+    "args": [["nat", "1"]],
+    "inputs": ["nat"],
+    "op": {
+      "Cast": {
+        "NatToWordWrap": "W64"
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "1"]
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordWrap": "W64"
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551609"]
+  },
+  {
+    "args": [["i64", "9223372036854775811"]],
+    "inputs": ["i64"],
+    "op": {
+      "Cast": {
+        "WordWrap": ["W64", "W8"]
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "3"]
+  },
+  {
+    "args": [["i64", "9223372036854775811"]],
+    "inputs": ["i64"],
+    "op": {
+      "Cast": {
+        "WordWrap": ["W64", "W16"]
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "3"]
+  },
+  {
+    "args": [["i64", "9223372036854775811"]],
+    "inputs": ["i64"],
+    "op": {
+      "Cast": {
+        "WordWrap": ["W64", "W32"]
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "3"]
+  },
+  {
+    "args": [["i64", "9223372036854775811"]],
+    "inputs": ["i64"],
+    "op": {
+      "Cast": {
+        "WordWrap": ["W64", "W64"]
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "9223372036854775811"]
+  },
+  {
+    "args": [["i64", "9223372036854775811"]],
+    "inputs": ["i64"],
+    "op": {
+      "Cast": {
+        "WordZeroExtend": ["W64", "W64"]
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "9223372036854775811"]
+  },
+  {
+    "args": [["i64", "9223372036854775811"]],
+    "inputs": ["i64"],
+    "op": {
+      "Cast": {
+        "WordSignExtend": ["W64", "W64"]
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "9223372036854775811"]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Add"
+    },
+    "output": "nat",
+    "result": ["nat", "10"]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Sub"
+    },
+    "output": "nat",
+    "result": ["nat", "4"]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Mul"
+    },
+    "output": "nat",
+    "result": ["nat", "21"]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Div"
+    },
+    "output": "nat",
+    "result": ["nat", "2"]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Rem"
+    },
+    "output": "nat",
+    "result": ["nat", "1"]
+  },
+  {
+    "args": [["nat", "7"]],
+    "inputs": ["nat"],
+    "op": {
+      "Nat": "Succ"
+    },
+    "output": "nat",
+    "result": ["nat", "8"]
+  },
+  {
+    "args": [["nat", "7"]],
+    "inputs": ["nat"],
+    "op": {
+      "Nat": "Pred"
+    },
+    "output": "nat",
+    "result": ["nat", "6"]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Pow"
+    },
+    "output": "nat",
+    "result": ["nat", "343"]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Eq"
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Ne"
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Lt"
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Le"
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Gt"
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Ge"
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Min"
+    },
+    "output": "nat",
+    "result": ["nat", "3"]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Max"
+    },
+    "output": "nat",
+    "result": ["nat", "7"]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "And"
+    },
+    "output": "nat",
+    "result": ["nat", "3"]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Or"
+    },
+    "output": "nat",
+    "result": ["nat", "7"]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Xor"
+    },
+    "output": "nat",
+    "result": ["nat", "4"]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Shl"
+    },
+    "output": "nat",
+    "result": ["nat", "56"]
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Shr"
+    },
+    "output": "nat",
+    "result": ["nat", "0"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Add"
+    },
+    "output": "int",
+    "result": ["int", "-4"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Sub"
+    },
+    "output": "int",
+    "result": ["int", "-10"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Mul"
+    },
+    "output": "int",
+    "result": ["int", "-21"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Div"
+    },
+    "output": "int",
+    "result": ["int", "-2"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Rem"
+    },
+    "output": "int",
+    "result": ["int", "-1"]
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Int": "Succ"
+    },
+    "output": "int",
+    "result": ["int", "-6"]
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Int": "Pred"
+    },
+    "output": "int",
+    "result": ["int", "-8"]
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Int": "Neg"
+    },
+    "output": "int",
+    "result": ["int", "7"]
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Int": "Abs"
+    },
+    "output": "nat",
+    "result": ["nat", "7"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["int", "nat"],
+    "op": {
+      "Int": "Pow"
+    },
+    "output": "int",
+    "result": ["int", "-343"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Eq"
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Ne"
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Lt"
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Le"
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Gt"
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Ge"
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Min"
+    },
+    "output": "int",
+    "result": ["int", "-7"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Max"
+    },
+    "output": "int",
+    "result": ["int", "3"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "And"
+    },
+    "output": "int",
+    "result": ["int", "1"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Or"
+    },
+    "output": "int",
+    "result": ["int", "-5"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Xor"
+    },
+    "output": "int",
+    "result": ["int", "-6"]
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Int": "Not"
+    },
+    "output": "int",
+    "result": ["int", "6"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["int", "nat"],
+    "op": {
+      "Int": "Shl"
+    },
+    "output": "int",
+    "result": ["int", "-56"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["nat", "3"]
+    ],
+    "inputs": ["int", "nat"],
+    "op": {
+      "Int": "Shr"
+    },
+    "output": "int",
+    "result": ["int", "-1"]
+  },
+  {
+    "args": [],
+    "inputs": [],
+    "op": {
+      "Bytes": "Empty"
+    },
+    "output": "bytes",
+    "result": ["bytes", []]
+  },
+  {
+    "args": [["i8", "3"]],
+    "inputs": ["i8"],
+    "op": {
+      "Bytes": "Singleton"
+    },
+    "output": "bytes",
+    "result": ["bytes", [3]]
+  },
+  {
+    "args": [
+      ["i8", "3"],
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]]
+    ],
+    "inputs": ["i8", "bytes"],
+    "op": {
+      "Bytes": "Cons"
+    },
+    "output": "bytes",
+    "result": ["bytes", [3, 1, 2, 3, 4, 5, 6, 7, 8]]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["i8", "3"]
+    ],
+    "inputs": ["bytes", "i8"],
+    "op": {
+      "Bytes": "Snoc"
+    },
+    "output": "bytes",
+    "result": ["bytes", [1, 2, 3, 4, 5, 6, 7, 8, 3]]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]]
+    ],
+    "inputs": ["bytes", "bytes"],
+    "op": {
+      "Bytes": "Append"
+    },
+    "output": "bytes",
+    "result": ["bytes", [1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8]]
+  },
+  {
+    "args": [
+      ["i8", "3"],
+      ["nat", "1"]
+    ],
+    "inputs": ["i8", "nat"],
+    "op": {
+      "Bytes": "Repeat"
+    },
+    "output": "bytes",
+    "result": ["bytes", [3]]
+  },
+  {
+    "args": [["bytes", [1, 2, 3, 4, 5, 6, 7, 8]]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": "Length"
+    },
+    "output": "nat",
+    "result": ["nat", "8"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["bytes", [1, 3]]
+    ],
+    "inputs": ["bytes", "bytes"],
+    "op": {
+      "Bytes": "Eq"
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["bytes", [1, 3]]
+    ],
+    "inputs": ["bytes", "bytes"],
+    "op": {
+      "Bytes": "Ne"
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["bytes", [1, 3]]
+    ],
+    "inputs": ["bytes", "bytes"],
+    "op": {
+      "Bytes": "Lt"
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["bytes", [1, 3]]
+    ],
+    "inputs": ["bytes", "bytes"],
+    "op": {
+      "Bytes": "Le"
+    },
+    "output": "bool",
+    "result": ["bool", true]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["bytes", [1, 3]]
+    ],
+    "inputs": ["bytes", "bytes"],
+    "op": {
+      "Bytes": "Gt"
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["bytes", [1, 3]]
+    ],
+    "inputs": ["bytes", "bytes"],
+    "op": {
+      "Bytes": "Ge"
+    },
+    "output": "bool",
+    "result": ["bool", false]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "1"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": "Get"
+    },
+    "output": "i8",
+    "result": ["i8", "2"]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "1"],
+      ["i8", "3"]
+    ],
+    "inputs": ["bytes", "nat", "i8"],
+    "op": {
+      "Bytes": "Set"
+    },
+    "output": "bytes",
+    "result": ["bytes", [1, 3, 3, 4, 5, 6, 7, 8]]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "1"],
+      ["nat", "1"]
+    ],
+    "inputs": ["bytes", "nat", "nat"],
+    "op": {
+      "Bytes": "Slice"
+    },
+    "output": "bytes",
+    "result": ["bytes", [2]]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "1"],
+      ["nat", "1"],
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]]
+    ],
+    "inputs": ["bytes", "nat", "nat", "bytes"],
+    "op": {
+      "Bytes": "Replace"
+    },
+    "output": "bytes",
+    "result": ["bytes", [1, 1, 2, 3, 4, 5, 6, 7, 8, 3, 4, 5, 6, 7, 8]]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "1"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": "Take"
+    },
+    "output": "bytes",
+    "result": ["bytes", [1]]
+  },
+  {
+    "args": [
+      ["bytes", [1, 2, 3, 4, 5, 6, 7, 8]],
+      ["nat", "1"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": "Drop"
+    },
+    "output": "bytes",
+    "result": ["bytes", [2, 3, 4, 5, 6, 7, 8]]
+  },
+  {
+    "args": [["nat", "1"]],
+    "inputs": ["nat"],
+    "op": {
+      "Cast": "NatToInt"
+    },
+    "output": "int",
+    "result": ["int", "1"]
+  },
+  {
+    "args": [["int", "-7"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": "IntToNat"
+    },
+    "output": "nat",
+    "result": null
+  },
+  {
+    "args": [
+      ["i8", "128"],
+      ["i8", "255"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "DivS"]
+    },
+    "output": "i8",
+    "result": null
+  },
+  {
+    "args": [
+      ["i8", "128"],
+      ["i8", "255"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "RemS"]
+    },
+    "output": "i8",
+    "result": ["i8", "0"]
+  },
+  {
+    "args": [
+      ["i8", "3"],
+      ["i8", "0"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "DivS"]
+    },
+    "output": "i8",
+    "result": null
+  },
+  {
+    "args": [
+      ["i8", "3"],
+      ["i8", "0"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "RemS"]
+    },
+    "output": "i8",
+    "result": null
+  },
+  {
+    "args": [
+      ["i8", "3"],
+      ["i8", "0"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "DivU"]
+    },
+    "output": "i8",
+    "result": null
+  },
+  {
+    "args": [
+      ["i8", "3"],
+      ["i8", "0"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "RemU"]
+    },
+    "output": "i8",
+    "result": null
+  },
+  {
+    "args": [
+      ["i8", "131"],
+      ["i8", "8"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Shl"]
+    },
+    "output": "i8",
+    "result": ["i8", "131"]
+  },
+  {
+    "args": [
+      ["i8", "131"],
+      ["i8", "9"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Shl"]
+    },
+    "output": "i8",
+    "result": ["i8", "6"]
+  },
+  {
+    "args": [
+      ["i8", "131"],
+      ["i8", "8"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "ShrS"]
+    },
+    "output": "i8",
+    "result": ["i8", "131"]
+  },
+  {
+    "args": [
+      ["i8", "131"],
+      ["i8", "9"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "ShrS"]
+    },
+    "output": "i8",
+    "result": ["i8", "193"]
+  },
+  {
+    "args": [
+      ["i8", "131"],
+      ["i8", "8"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "ShrU"]
+    },
+    "output": "i8",
+    "result": ["i8", "131"]
+  },
+  {
+    "args": [
+      ["i8", "131"],
+      ["i8", "9"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "ShrU"]
+    },
+    "output": "i8",
+    "result": ["i8", "65"]
+  },
+  {
+    "args": [
+      ["i8", "131"],
+      ["i8", "8"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Rotl"]
+    },
+    "output": "i8",
+    "result": ["i8", "131"]
+  },
+  {
+    "args": [
+      ["i8", "131"],
+      ["i8", "9"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Rotl"]
+    },
+    "output": "i8",
+    "result": ["i8", "7"]
+  },
+  {
+    "args": [
+      ["i8", "131"],
+      ["i8", "8"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Rotr"]
+    },
+    "output": "i8",
+    "result": ["i8", "131"]
+  },
+  {
+    "args": [
+      ["i8", "131"],
+      ["i8", "9"]
+    ],
+    "inputs": ["i8", "i8"],
+    "op": {
+      "Word": ["W8", "Rotr"]
+    },
+    "output": "i8",
+    "result": ["i8", "193"]
+  },
+  {
+    "args": [["i8", "0"]],
+    "inputs": ["i8"],
+    "op": {
+      "Word": ["W8", "Clz"]
+    },
+    "output": "i8",
+    "result": ["i8", "8"]
+  },
+  {
+    "args": [["i8", "255"]],
+    "inputs": ["i8"],
+    "op": {
+      "Word": ["W8", "Clz"]
+    },
+    "output": "i8",
+    "result": ["i8", "0"]
+  },
+  {
+    "args": [["i8", "0"]],
+    "inputs": ["i8"],
+    "op": {
+      "Word": ["W8", "Ctz"]
+    },
+    "output": "i8",
+    "result": ["i8", "8"]
+  },
+  {
+    "args": [["i8", "255"]],
+    "inputs": ["i8"],
+    "op": {
+      "Word": ["W8", "Ctz"]
+    },
+    "output": "i8",
+    "result": ["i8", "0"]
+  },
+  {
+    "args": [["i8", "0"]],
+    "inputs": ["i8"],
+    "op": {
+      "Word": ["W8", "Popcnt"]
+    },
+    "output": "i8",
+    "result": ["i8", "0"]
+  },
+  {
+    "args": [["i8", "255"]],
+    "inputs": ["i8"],
+    "op": {
+      "Word": ["W8", "Popcnt"]
+    },
+    "output": "i8",
+    "result": ["i8", "8"]
+  },
+  {
+    "args": [["i8", "255"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordToIntS": "W8"
+      }
+    },
+    "output": "int",
+    "result": ["int", "-1"]
+  },
+  {
+    "args": [["i8", "255"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordToIntU": "W8"
+      }
+    },
+    "output": "int",
+    "result": ["int", "255"]
+  },
+  {
+    "args": [["i8", "255"]],
+    "inputs": ["i8"],
+    "op": {
+      "Cast": {
+        "WordToNat": "W8"
+      }
+    },
+    "output": "nat",
+    "result": ["nat", "255"]
+  },
+  {
+    "args": [["nat", "256"]],
+    "inputs": ["nat"],
+    "op": {
+      "Cast": {
+        "NatToWord": "W8"
+      }
+    },
+    "output": "i8",
+    "result": null
+  },
+  {
+    "args": [["int", "128"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordS": "W8"
+      }
+    },
+    "output": "i8",
+    "result": null
+  },
+  {
+    "args": [["int", "-128"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordS": "W8"
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "128"]
+  },
+  {
+    "args": [["int", "255"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordU": "W8"
+      }
+    },
+    "output": "i8",
+    "result": ["i8", "255"]
+  },
+  {
+    "args": [["bytes", []]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W8", "Little"]
+      }
+    },
+    "output": "i8",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W8", "Little"]
+      }
+    },
+    "output": "i8",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"],
+      ["i8", "1"]
+    ],
+    "inputs": ["bytes", "nat", "i8"],
+    "op": {
+      "Bytes": {
+        "Write": ["W8", "Little"]
+      }
+    },
+    "output": "bytes",
+    "result": null
+  },
+  {
+    "args": [["bytes", []]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W8", "Big"]
+      }
+    },
+    "output": "i8",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W8", "Big"]
+      }
+    },
+    "output": "i8",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"],
+      ["i8", "1"]
+    ],
+    "inputs": ["bytes", "nat", "i8"],
+    "op": {
+      "Bytes": {
+        "Write": ["W8", "Big"]
+      }
+    },
+    "output": "bytes",
+    "result": null
+  },
+  {
+    "args": [
+      ["i16", "32768"],
+      ["i16", "65535"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "DivS"]
+    },
+    "output": "i16",
+    "result": null
+  },
+  {
+    "args": [
+      ["i16", "32768"],
+      ["i16", "65535"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "RemS"]
+    },
+    "output": "i16",
+    "result": ["i16", "0"]
+  },
+  {
+    "args": [
+      ["i16", "3"],
+      ["i16", "0"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "DivS"]
+    },
+    "output": "i16",
+    "result": null
+  },
+  {
+    "args": [
+      ["i16", "3"],
+      ["i16", "0"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "RemS"]
+    },
+    "output": "i16",
+    "result": null
+  },
+  {
+    "args": [
+      ["i16", "3"],
+      ["i16", "0"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "DivU"]
+    },
+    "output": "i16",
+    "result": null
+  },
+  {
+    "args": [
+      ["i16", "3"],
+      ["i16", "0"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "RemU"]
+    },
+    "output": "i16",
+    "result": null
+  },
+  {
+    "args": [
+      ["i16", "32771"],
+      ["i16", "16"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Shl"]
+    },
+    "output": "i16",
+    "result": ["i16", "32771"]
+  },
+  {
+    "args": [
+      ["i16", "32771"],
+      ["i16", "17"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Shl"]
+    },
+    "output": "i16",
+    "result": ["i16", "6"]
+  },
+  {
+    "args": [
+      ["i16", "32771"],
+      ["i16", "16"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "ShrS"]
+    },
+    "output": "i16",
+    "result": ["i16", "32771"]
+  },
+  {
+    "args": [
+      ["i16", "32771"],
+      ["i16", "17"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "ShrS"]
+    },
+    "output": "i16",
+    "result": ["i16", "49153"]
+  },
+  {
+    "args": [
+      ["i16", "32771"],
+      ["i16", "16"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "ShrU"]
+    },
+    "output": "i16",
+    "result": ["i16", "32771"]
+  },
+  {
+    "args": [
+      ["i16", "32771"],
+      ["i16", "17"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "ShrU"]
+    },
+    "output": "i16",
+    "result": ["i16", "16385"]
+  },
+  {
+    "args": [
+      ["i16", "32771"],
+      ["i16", "16"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Rotl"]
+    },
+    "output": "i16",
+    "result": ["i16", "32771"]
+  },
+  {
+    "args": [
+      ["i16", "32771"],
+      ["i16", "17"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Rotl"]
+    },
+    "output": "i16",
+    "result": ["i16", "7"]
+  },
+  {
+    "args": [
+      ["i16", "32771"],
+      ["i16", "16"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Rotr"]
+    },
+    "output": "i16",
+    "result": ["i16", "32771"]
+  },
+  {
+    "args": [
+      ["i16", "32771"],
+      ["i16", "17"]
+    ],
+    "inputs": ["i16", "i16"],
+    "op": {
+      "Word": ["W16", "Rotr"]
+    },
+    "output": "i16",
+    "result": ["i16", "49153"]
+  },
+  {
+    "args": [["i16", "0"]],
+    "inputs": ["i16"],
+    "op": {
+      "Word": ["W16", "Clz"]
+    },
+    "output": "i16",
+    "result": ["i16", "16"]
+  },
+  {
+    "args": [["i16", "65535"]],
+    "inputs": ["i16"],
+    "op": {
+      "Word": ["W16", "Clz"]
+    },
+    "output": "i16",
+    "result": ["i16", "0"]
+  },
+  {
+    "args": [["i16", "0"]],
+    "inputs": ["i16"],
+    "op": {
+      "Word": ["W16", "Ctz"]
+    },
+    "output": "i16",
+    "result": ["i16", "16"]
+  },
+  {
+    "args": [["i16", "65535"]],
+    "inputs": ["i16"],
+    "op": {
+      "Word": ["W16", "Ctz"]
+    },
+    "output": "i16",
+    "result": ["i16", "0"]
+  },
+  {
+    "args": [["i16", "0"]],
+    "inputs": ["i16"],
+    "op": {
+      "Word": ["W16", "Popcnt"]
+    },
+    "output": "i16",
+    "result": ["i16", "0"]
+  },
+  {
+    "args": [["i16", "65535"]],
+    "inputs": ["i16"],
+    "op": {
+      "Word": ["W16", "Popcnt"]
+    },
+    "output": "i16",
+    "result": ["i16", "16"]
+  },
+  {
+    "args": [["i16", "65535"]],
+    "inputs": ["i16"],
+    "op": {
+      "Cast": {
+        "WordToIntS": "W16"
+      }
+    },
+    "output": "int",
+    "result": ["int", "-1"]
+  },
+  {
+    "args": [["i16", "65535"]],
+    "inputs": ["i16"],
+    "op": {
+      "Cast": {
+        "WordToIntU": "W16"
+      }
+    },
+    "output": "int",
+    "result": ["int", "65535"]
+  },
+  {
+    "args": [["i16", "65535"]],
+    "inputs": ["i16"],
+    "op": {
+      "Cast": {
+        "WordToNat": "W16"
+      }
+    },
+    "output": "nat",
+    "result": ["nat", "65535"]
+  },
+  {
+    "args": [["i16", "255"]],
+    "inputs": ["i16"],
+    "op": {
+      "Word": [
+        "W16",
+        {
+          "ExtendSign": "W8"
+        }
+      ]
+    },
+    "output": "i16",
+    "result": ["i16", "65535"]
+  },
+  {
+    "args": [["nat", "65536"]],
+    "inputs": ["nat"],
+    "op": {
+      "Cast": {
+        "NatToWord": "W16"
+      }
+    },
+    "output": "i16",
+    "result": null
+  },
+  {
+    "args": [["int", "32768"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordS": "W16"
+      }
+    },
+    "output": "i16",
+    "result": null
+  },
+  {
+    "args": [["int", "-32768"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordS": "W16"
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "32768"]
+  },
+  {
+    "args": [["int", "65535"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordU": "W16"
+      }
+    },
+    "output": "i16",
+    "result": ["i16", "65535"]
+  },
+  {
+    "args": [["bytes", []]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W16", "Little"]
+      }
+    },
+    "output": "i16",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W16", "Little"]
+      }
+    },
+    "output": "i16",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"],
+      ["i16", "1"]
+    ],
+    "inputs": ["bytes", "nat", "i16"],
+    "op": {
+      "Bytes": {
+        "Write": ["W16", "Little"]
+      }
+    },
+    "output": "bytes",
+    "result": null
+  },
+  {
+    "args": [["bytes", []]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W16", "Big"]
+      }
+    },
+    "output": "i16",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W16", "Big"]
+      }
+    },
+    "output": "i16",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"],
+      ["i16", "1"]
+    ],
+    "inputs": ["bytes", "nat", "i16"],
+    "op": {
+      "Bytes": {
+        "Write": ["W16", "Big"]
+      }
+    },
+    "output": "bytes",
+    "result": null
+  },
+  {
+    "args": [
+      ["i32", "2147483648"],
+      ["i32", "4294967295"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "DivS"]
+    },
+    "output": "i32",
+    "result": null
+  },
+  {
+    "args": [
+      ["i32", "2147483648"],
+      ["i32", "4294967295"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "RemS"]
+    },
+    "output": "i32",
+    "result": ["i32", "0"]
+  },
+  {
+    "args": [
+      ["i32", "3"],
+      ["i32", "0"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "DivS"]
+    },
+    "output": "i32",
+    "result": null
+  },
+  {
+    "args": [
+      ["i32", "3"],
+      ["i32", "0"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "RemS"]
+    },
+    "output": "i32",
+    "result": null
+  },
+  {
+    "args": [
+      ["i32", "3"],
+      ["i32", "0"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "DivU"]
+    },
+    "output": "i32",
+    "result": null
+  },
+  {
+    "args": [
+      ["i32", "3"],
+      ["i32", "0"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "RemU"]
+    },
+    "output": "i32",
+    "result": null
+  },
+  {
+    "args": [
+      ["i32", "2147483651"],
+      ["i32", "32"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Shl"]
+    },
+    "output": "i32",
+    "result": ["i32", "2147483651"]
+  },
+  {
+    "args": [
+      ["i32", "2147483651"],
+      ["i32", "33"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Shl"]
+    },
+    "output": "i32",
+    "result": ["i32", "6"]
+  },
+  {
+    "args": [
+      ["i32", "2147483651"],
+      ["i32", "32"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "ShrS"]
+    },
+    "output": "i32",
+    "result": ["i32", "2147483651"]
+  },
+  {
+    "args": [
+      ["i32", "2147483651"],
+      ["i32", "33"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "ShrS"]
+    },
+    "output": "i32",
+    "result": ["i32", "3221225473"]
+  },
+  {
+    "args": [
+      ["i32", "2147483651"],
+      ["i32", "32"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "ShrU"]
+    },
+    "output": "i32",
+    "result": ["i32", "2147483651"]
+  },
+  {
+    "args": [
+      ["i32", "2147483651"],
+      ["i32", "33"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "ShrU"]
+    },
+    "output": "i32",
+    "result": ["i32", "1073741825"]
+  },
+  {
+    "args": [
+      ["i32", "2147483651"],
+      ["i32", "32"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Rotl"]
+    },
+    "output": "i32",
+    "result": ["i32", "2147483651"]
+  },
+  {
+    "args": [
+      ["i32", "2147483651"],
+      ["i32", "33"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Rotl"]
+    },
+    "output": "i32",
+    "result": ["i32", "7"]
+  },
+  {
+    "args": [
+      ["i32", "2147483651"],
+      ["i32", "32"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Rotr"]
+    },
+    "output": "i32",
+    "result": ["i32", "2147483651"]
+  },
+  {
+    "args": [
+      ["i32", "2147483651"],
+      ["i32", "33"]
+    ],
+    "inputs": ["i32", "i32"],
+    "op": {
+      "Word": ["W32", "Rotr"]
+    },
+    "output": "i32",
+    "result": ["i32", "3221225473"]
+  },
+  {
+    "args": [["i32", "0"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": ["W32", "Clz"]
+    },
+    "output": "i32",
+    "result": ["i32", "32"]
+  },
+  {
+    "args": [["i32", "4294967295"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": ["W32", "Clz"]
+    },
+    "output": "i32",
+    "result": ["i32", "0"]
+  },
+  {
+    "args": [["i32", "0"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": ["W32", "Ctz"]
+    },
+    "output": "i32",
+    "result": ["i32", "32"]
+  },
+  {
+    "args": [["i32", "4294967295"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": ["W32", "Ctz"]
+    },
+    "output": "i32",
+    "result": ["i32", "0"]
+  },
+  {
+    "args": [["i32", "0"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": ["W32", "Popcnt"]
+    },
+    "output": "i32",
+    "result": ["i32", "0"]
+  },
+  {
+    "args": [["i32", "4294967295"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": ["W32", "Popcnt"]
+    },
+    "output": "i32",
+    "result": ["i32", "32"]
+  },
+  {
+    "args": [["i32", "4294967295"]],
+    "inputs": ["i32"],
+    "op": {
+      "Cast": {
+        "WordToIntS": "W32"
+      }
+    },
+    "output": "int",
+    "result": ["int", "-1"]
+  },
+  {
+    "args": [["i32", "4294967295"]],
+    "inputs": ["i32"],
+    "op": {
+      "Cast": {
+        "WordToIntU": "W32"
+      }
+    },
+    "output": "int",
+    "result": ["int", "4294967295"]
+  },
+  {
+    "args": [["i32", "4294967295"]],
+    "inputs": ["i32"],
+    "op": {
+      "Cast": {
+        "WordToNat": "W32"
+      }
+    },
+    "output": "nat",
+    "result": ["nat", "4294967295"]
+  },
+  {
+    "args": [["i32", "255"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": [
+        "W32",
+        {
+          "ExtendSign": "W8"
+        }
+      ]
+    },
+    "output": "i32",
+    "result": ["i32", "4294967295"]
+  },
+  {
+    "args": [["i32", "65535"]],
+    "inputs": ["i32"],
+    "op": {
+      "Word": [
+        "W32",
+        {
+          "ExtendSign": "W16"
+        }
+      ]
+    },
+    "output": "i32",
+    "result": ["i32", "4294967295"]
+  },
+  {
+    "args": [["nat", "4294967296"]],
+    "inputs": ["nat"],
+    "op": {
+      "Cast": {
+        "NatToWord": "W32"
+      }
+    },
+    "output": "i32",
+    "result": null
+  },
+  {
+    "args": [["int", "2147483648"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordS": "W32"
+      }
+    },
+    "output": "i32",
+    "result": null
+  },
+  {
+    "args": [["int", "-2147483648"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordS": "W32"
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "2147483648"]
+  },
+  {
+    "args": [["int", "4294967295"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordU": "W32"
+      }
+    },
+    "output": "i32",
+    "result": ["i32", "4294967295"]
+  },
+  {
+    "args": [["bytes", []]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W32", "Little"]
+      }
+    },
+    "output": "i32",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W32", "Little"]
+      }
+    },
+    "output": "i32",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"],
+      ["i32", "1"]
+    ],
+    "inputs": ["bytes", "nat", "i32"],
+    "op": {
+      "Bytes": {
+        "Write": ["W32", "Little"]
+      }
+    },
+    "output": "bytes",
+    "result": null
+  },
+  {
+    "args": [["bytes", []]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W32", "Big"]
+      }
+    },
+    "output": "i32",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W32", "Big"]
+      }
+    },
+    "output": "i32",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"],
+      ["i32", "1"]
+    ],
+    "inputs": ["bytes", "nat", "i32"],
+    "op": {
+      "Bytes": {
+        "Write": ["W32", "Big"]
+      }
+    },
+    "output": "bytes",
+    "result": null
+  },
+  {
+    "args": [
+      ["i64", "9223372036854775808"],
+      ["i64", "18446744073709551615"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "DivS"]
+    },
+    "output": "i64",
+    "result": null
+  },
+  {
+    "args": [
+      ["i64", "9223372036854775808"],
+      ["i64", "18446744073709551615"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "RemS"]
+    },
+    "output": "i64",
+    "result": ["i64", "0"]
+  },
+  {
+    "args": [
+      ["i64", "3"],
+      ["i64", "0"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "DivS"]
+    },
+    "output": "i64",
+    "result": null
+  },
+  {
+    "args": [
+      ["i64", "3"],
+      ["i64", "0"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "RemS"]
+    },
+    "output": "i64",
+    "result": null
+  },
+  {
+    "args": [
+      ["i64", "3"],
+      ["i64", "0"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "DivU"]
+    },
+    "output": "i64",
+    "result": null
+  },
+  {
+    "args": [
+      ["i64", "3"],
+      ["i64", "0"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "RemU"]
+    },
+    "output": "i64",
+    "result": null
+  },
+  {
+    "args": [
+      ["i64", "9223372036854775811"],
+      ["i64", "64"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Shl"]
+    },
+    "output": "i64",
+    "result": ["i64", "9223372036854775811"]
+  },
+  {
+    "args": [
+      ["i64", "9223372036854775811"],
+      ["i64", "65"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Shl"]
+    },
+    "output": "i64",
+    "result": ["i64", "6"]
+  },
+  {
+    "args": [
+      ["i64", "9223372036854775811"],
+      ["i64", "64"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "ShrS"]
+    },
+    "output": "i64",
+    "result": ["i64", "9223372036854775811"]
+  },
+  {
+    "args": [
+      ["i64", "9223372036854775811"],
+      ["i64", "65"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "ShrS"]
+    },
+    "output": "i64",
+    "result": ["i64", "13835058055282163713"]
+  },
+  {
+    "args": [
+      ["i64", "9223372036854775811"],
+      ["i64", "64"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "ShrU"]
+    },
+    "output": "i64",
+    "result": ["i64", "9223372036854775811"]
+  },
+  {
+    "args": [
+      ["i64", "9223372036854775811"],
+      ["i64", "65"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "ShrU"]
+    },
+    "output": "i64",
+    "result": ["i64", "4611686018427387905"]
+  },
+  {
+    "args": [
+      ["i64", "9223372036854775811"],
+      ["i64", "64"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Rotl"]
+    },
+    "output": "i64",
+    "result": ["i64", "9223372036854775811"]
+  },
+  {
+    "args": [
+      ["i64", "9223372036854775811"],
+      ["i64", "65"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Rotl"]
+    },
+    "output": "i64",
+    "result": ["i64", "7"]
+  },
+  {
+    "args": [
+      ["i64", "9223372036854775811"],
+      ["i64", "64"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Rotr"]
+    },
+    "output": "i64",
+    "result": ["i64", "9223372036854775811"]
+  },
+  {
+    "args": [
+      ["i64", "9223372036854775811"],
+      ["i64", "65"]
+    ],
+    "inputs": ["i64", "i64"],
+    "op": {
+      "Word": ["W64", "Rotr"]
+    },
+    "output": "i64",
+    "result": ["i64", "13835058055282163713"]
+  },
+  {
+    "args": [["i64", "0"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": ["W64", "Clz"]
+    },
+    "output": "i64",
+    "result": ["i64", "64"]
+  },
+  {
+    "args": [["i64", "18446744073709551615"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": ["W64", "Clz"]
+    },
+    "output": "i64",
+    "result": ["i64", "0"]
+  },
+  {
+    "args": [["i64", "0"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": ["W64", "Ctz"]
+    },
+    "output": "i64",
+    "result": ["i64", "64"]
+  },
+  {
+    "args": [["i64", "18446744073709551615"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": ["W64", "Ctz"]
+    },
+    "output": "i64",
+    "result": ["i64", "0"]
+  },
+  {
+    "args": [["i64", "0"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": ["W64", "Popcnt"]
+    },
+    "output": "i64",
+    "result": ["i64", "0"]
+  },
+  {
+    "args": [["i64", "18446744073709551615"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": ["W64", "Popcnt"]
+    },
+    "output": "i64",
+    "result": ["i64", "64"]
+  },
+  {
+    "args": [["i64", "18446744073709551615"]],
+    "inputs": ["i64"],
+    "op": {
+      "Cast": {
+        "WordToIntS": "W64"
+      }
+    },
+    "output": "int",
+    "result": ["int", "-1"]
+  },
+  {
+    "args": [["i64", "18446744073709551615"]],
+    "inputs": ["i64"],
+    "op": {
+      "Cast": {
+        "WordToIntU": "W64"
+      }
+    },
+    "output": "int",
+    "result": ["int", "18446744073709551615"]
+  },
+  {
+    "args": [["i64", "18446744073709551615"]],
+    "inputs": ["i64"],
+    "op": {
+      "Cast": {
+        "WordToNat": "W64"
+      }
+    },
+    "output": "nat",
+    "result": ["nat", "18446744073709551615"]
+  },
+  {
+    "args": [["i64", "255"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": [
+        "W64",
+        {
+          "ExtendSign": "W8"
+        }
+      ]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551615"]
+  },
+  {
+    "args": [["i64", "65535"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": [
+        "W64",
+        {
+          "ExtendSign": "W16"
+        }
+      ]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551615"]
+  },
+  {
+    "args": [["i64", "4294967295"]],
+    "inputs": ["i64"],
+    "op": {
+      "Word": [
+        "W64",
+        {
+          "ExtendSign": "W32"
+        }
+      ]
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551615"]
+  },
+  {
+    "args": [["nat", "18446744073709551616"]],
+    "inputs": ["nat"],
+    "op": {
+      "Cast": {
+        "NatToWord": "W64"
+      }
+    },
+    "output": "i64",
+    "result": null
+  },
+  {
+    "args": [["int", "9223372036854775808"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordS": "W64"
+      }
+    },
+    "output": "i64",
+    "result": null
+  },
+  {
+    "args": [["int", "-9223372036854775808"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordS": "W64"
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "9223372036854775808"]
+  },
+  {
+    "args": [["int", "18446744073709551615"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": {
+        "IntToWordU": "W64"
+      }
+    },
+    "output": "i64",
+    "result": ["i64", "18446744073709551615"]
+  },
+  {
+    "args": [["bytes", []]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W64", "Little"]
+      }
+    },
+    "output": "i64",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W64", "Little"]
+      }
+    },
+    "output": "i64",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"],
+      ["i64", "1"]
+    ],
+    "inputs": ["bytes", "nat", "i64"],
+    "op": {
+      "Bytes": {
+        "Write": ["W64", "Little"]
+      }
+    },
+    "output": "bytes",
+    "result": null
+  },
+  {
+    "args": [["bytes", []]],
+    "inputs": ["bytes"],
+    "op": {
+      "Bytes": {
+        "Decode": ["W64", "Big"]
+      }
+    },
+    "output": "i64",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": {
+        "Read": ["W64", "Big"]
+      }
+    },
+    "output": "i64",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", []],
+      ["nat", "0"],
+      ["i64", "1"]
+    ],
+    "inputs": ["bytes", "nat", "i64"],
+    "op": {
+      "Bytes": {
+        "Write": ["W64", "Big"]
+      }
+    },
+    "output": "bytes",
+    "result": null
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "0"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Div"
+    },
+    "output": "nat",
+    "result": null
+  },
+  {
+    "args": [
+      ["nat", "7"],
+      ["nat", "0"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Rem"
+    },
+    "output": "nat",
+    "result": null
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "0"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Div"
+    },
+    "output": "int",
+    "result": null
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "0"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Rem"
+    },
+    "output": "int",
+    "result": null
+  },
+  {
+    "args": [
+      ["nat", "0"],
+      ["nat", "5"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Sub"
+    },
+    "output": "nat",
+    "result": ["nat", "0"]
+  },
+  {
+    "args": [["nat", "0"]],
+    "inputs": ["nat"],
+    "op": {
+      "Nat": "Pred"
+    },
+    "output": "nat",
+    "result": ["nat", "0"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Rem"
+    },
+    "output": "int",
+    "result": ["int", "-1"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["int", "3"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Div"
+    },
+    "output": "int",
+    "result": ["int", "-2"]
+  },
+  {
+    "args": [
+      ["int", "-7"],
+      ["nat", "1"]
+    ],
+    "inputs": ["int", "nat"],
+    "op": {
+      "Int": "Shr"
+    },
+    "output": "int",
+    "result": ["int", "-4"]
+  },
+  {
+    "args": [
+      ["bytes", [1]],
+      ["nat", "1"]
+    ],
+    "inputs": ["bytes", "nat"],
+    "op": {
+      "Bytes": "Get"
+    },
+    "output": "i8",
+    "result": null
+  },
+  {
+    "args": [
+      ["bytes", [1]],
+      ["nat", "0"],
+      ["nat", "2"]
+    ],
+    "inputs": ["bytes", "nat", "nat"],
+    "op": {
+      "Bytes": "Slice"
+    },
+    "output": "bytes",
+    "result": null
+  },
+  {
+    "args": [["int", "-1"]],
+    "inputs": ["int"],
+    "op": {
+      "Cast": "IntToNat"
+    },
+    "output": "nat",
+    "result": null
+  },
+  {
+    "args": [
+      [
+        "nat",
+        "14995756686169137402619640035007488113515246955286721517015871585401267424428417"
+      ],
+      ["nat", "7"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Add"
+    },
+    "output": "nat",
+    "result": [
+      "nat",
+      "14995756686169137402619640035007488113515246955286721517015871585401267424428424"
+    ]
+  },
+  {
+    "args": [
+      [
+        "nat",
+        "14995756686169137402619640035007488113515246955286721517015871585401267424428417"
+      ],
+      ["nat", "7"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Mul"
+    },
+    "output": "nat",
+    "result": [
+      "nat",
+      "104970296803183961818337480245052416794606728687007050619111101097808871970998919"
+    ]
+  },
+  {
+    "args": [
+      [
+        "nat",
+        "14995756686169137402619640035007488113515246955286721517015871585401267424428417"
+      ],
+      ["nat", "7"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Div"
+    },
+    "output": "nat",
+    "result": [
+      "nat",
+      "2142250955167019628945662862143926873359320993612388788145124512200181060632631"
+    ]
+  },
+  {
+    "args": [
+      [
+        "nat",
+        "14995756686169137402619640035007488113515246955286721517015871585401267424428417"
+      ],
+      ["nat", "7"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Rem"
+    },
+    "output": "nat",
+    "result": ["nat", "0"]
+  },
+  {
+    "args": [
+      [
+        "nat",
+        "14995756686169137402619640035007488113515246955286721517015871585401267424428417"
+      ],
+      ["nat", "7"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "And"
+    },
+    "output": "nat",
+    "result": ["nat", "1"]
+  },
+  {
+    "args": [
+      [
+        "nat",
+        "14995756686169137402619640035007488113515246955286721517015871585401267424428417"
+      ],
+      ["nat", "7"]
+    ],
+    "inputs": ["nat", "nat"],
+    "op": {
+      "Nat": "Xor"
+    },
+    "output": "nat",
+    "result": [
+      "nat",
+      "14995756686169137402619640035007488113515246955286721517015871585401267424428422"
+    ]
+  },
+  {
+    "args": [
+      [
+        "int",
+        "-14647018158583808625814532127216616296921869119117262877085269920624493763395199"
+      ],
+      ["int", "7"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Add"
+    },
+    "output": "int",
+    "result": [
+      "int",
+      "-14647018158583808625814532127216616296921869119117262877085269920624493763395192"
+    ]
+  },
+  {
+    "args": [
+      [
+        "int",
+        "-14647018158583808625814532127216616296921869119117262877085269920624493763395199"
+      ],
+      ["int", "7"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Mul"
+    },
+    "output": "int",
+    "result": [
+      "int",
+      "-102529127110086660380701724890516314078453083833820840139596889444371456343766393"
+    ]
+  },
+  {
+    "args": [
+      [
+        "int",
+        "-14647018158583808625814532127216616296921869119117262877085269920624493763395199"
+      ],
+      ["int", "7"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Div"
+    },
+    "output": "int",
+    "result": [
+      "int",
+      "-2092431165511972660830647446745230899560267017016751839583609988660641966199314"
+    ]
+  },
+  {
+    "args": [
+      [
+        "int",
+        "-14647018158583808625814532127216616296921869119117262877085269920624493763395199"
+      ],
+      ["int", "7"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Rem"
+    },
+    "output": "int",
+    "result": ["int", "-1"]
+  },
+  {
+    "args": [
+      [
+        "int",
+        "-14647018158583808625814532127216616296921869119117262877085269920624493763395199"
+      ],
+      ["int", "7"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "And"
+    },
+    "output": "int",
+    "result": ["int", "1"]
+  },
+  {
+    "args": [
+      [
+        "int",
+        "-14647018158583808625814532127216616296921869119117262877085269920624493763395199"
+      ],
+      ["int", "7"]
+    ],
+    "inputs": ["int", "int"],
+    "op": {
+      "Int": "Xor"
+    },
+    "output": "int",
+    "result": [
+      "int",
+      "-14647018158583808625814532127216616296921869119117262877085269920624493763395194"
+    ]
+  }
+]

@@ -5,8 +5,10 @@
 
 mod arena;
 pub mod builtin;
+mod constants;
 pub mod init;
 mod kernel;
+pub mod literals;
 mod resolve;
 mod row;
 mod syn;
@@ -14,6 +16,7 @@ mod table;
 pub mod wire;
 
 pub use arena::Arena;
+pub use constants::MAX_LITERAL_BYTES;
 pub use kernel::{
     AX_INF, AX_SUB, AbsThm, ApTerm, ApThm, BINDER_COUNT, Binder, CheckedArena, CheckedPrefix,
     ChoiceThm, ClassicalArena, ClassicalKernel, CopyMap, ForallThm, INFINITY_BINDER_COUNT,
@@ -384,6 +387,7 @@ impl Arena {
     #[must_use]
     pub const fn empty() -> Self {
         Self {
+            constants: constants::ConstantTable::empty(),
             imports: Vec::new(),
             axs: BTreeSet::new(),
             dense: Dense {
@@ -786,6 +790,7 @@ impl Arena {
             })
         };
         self.imports == prefix.imports
+            && self.constants.starts_with(&prefix.constants)
             && self.dense.defs.starts_with(&prefix.dense.defs)
             && columns_match(&self.dense.eq, &prefix.dense.eq)
             && columns_match(&self.dense.syn_eq, &prefix.dense.syn_eq)
@@ -905,6 +910,7 @@ impl Arena {
         amb_thm: Vec<AmbPred>,
     ) -> Self {
         let mut arena = Self {
+            constants: constants::ConstantTable::default(),
             imports,
             axs: axs.into_iter().collect(),
             dense: Dense::default(),
@@ -970,6 +976,8 @@ struct PredSerde {
 #[serde(deny_unknown_fields)]
 struct HolSerde {
     defs: Vec<Row>,
+    #[serde(default, skip_serializing_if = "constants::ConstantTable::is_empty")]
+    constants: constants::ConstantTable,
     ax: Vec<String>,
     ctx: Vec<Ref>,
     thm: ClassicalArena,
@@ -1009,6 +1017,7 @@ impl From<Arena> for ArenaSerde {
             pred: PredSerde { syl: arena.syl },
             hol: HolSerde {
                 defs: arena.dense.defs,
+                constants: arena.constants,
                 ax: arena.axs.into_iter().collect(),
                 ctx: arena.ctx.into_iter().collect(),
                 thm: arena.thm,
@@ -1050,6 +1059,7 @@ impl TryFrom<ArenaSerde> for Arena {
         } = arena.amb;
         let HolSerde {
             defs,
+            constants,
             ax,
             ctx: hol_ctx,
             thm: hol_thm,
@@ -1057,6 +1067,13 @@ impl TryFrom<ArenaSerde> for Arena {
             mut syn,
         } = arena.hol;
         let mut eq = eq;
+        for row in &defs {
+            if let row::Expr::ConstRef(id) = row.expr()
+                && constants.get(*id).is_none()
+            {
+                return Err("constant reference is not resident");
+            }
+        }
         for column in [&eq, &syn.eq, &syn.conv] {
             if !column_is_resident(column, defs.len()) {
                 return Err("dense column has a member without a definition row");
@@ -1066,6 +1083,7 @@ impl TryFrom<ArenaSerde> for Arena {
         normalize_column(&mut syn.eq);
         normalize_column(&mut syn.conv);
         Ok(Self {
+            constants,
             imports: arena.imports,
             axs: ax.into_iter().collect(),
             dense: Dense {

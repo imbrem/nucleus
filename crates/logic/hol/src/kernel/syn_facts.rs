@@ -1020,7 +1020,18 @@ impl Kernel {
         E: std::error::Error + 'static,
     {
         let node = *self.row::<E>(input)?.expr();
-        if matches!(node, Node::KindStar | Node::BoolTy | Node::Bool(_)) {
+        if matches!(
+            node,
+            Node::KindStar
+                | Node::BoolTy
+                | Node::Bool(_)
+                | Node::LiteralTy(_)
+                | Node::Word(..)
+                | Node::Nat(_)
+                | Node::Int(_)
+                | Node::ConstRef(_)
+                | Node::Builtin(_)
+        ) {
             return Ok(());
         }
         let var_node = *self.row::<E>(var)?.expr();
@@ -1128,8 +1139,16 @@ impl Kernel {
             | (Node::TmFv { name: left, .. }, Node::TmFv { name: right, .. })
             | (Node::TyExists { name: left, .. }, Node::TyExists { name: right, .. })
             | (Node::TyForall { name: left, .. }, Node::TyForall { name: right, .. })
-            | (Node::Model { name: left, .. }, Node::Model { name: right, .. }) => left == right,
+            | (Node::Model { name: left, .. }, Node::Model { name: right, .. })
+            | (Node::Nat(left), Node::Nat(right)) => left == right,
             (Node::Bool(left), Node::Bool(right)) => left == right,
+            (Node::LiteralTy(left), Node::LiteralTy(right)) => left == right,
+            (Node::Word(lw, left), Node::Word(rw, right)) => lw == rw && left == right,
+            (Node::Int(left), Node::Int(right)) => left == right,
+            (Node::ConstRef(left), Node::ConstRef(right)) => {
+                self.arena.constants.get(left) == self.arena.constants.get(right)
+            }
+            (Node::Builtin(left, ..), Node::Builtin(right, ..)) => left == right,
             (Node::Op1(left, ..), Node::Op1(right, ..)) => left.code() == right.code(),
             (Node::Op2(left, ..), Node::Op2(right, ..)) => left.code() == right.code(),
             _ => false,
@@ -1210,7 +1229,7 @@ impl Kernel {
         )
     }
 
-    const fn same_head(left: Node, right: Node) -> bool {
+    fn same_head(left: Node, right: Node) -> bool {
         match (left, right) {
             (Node::KindStar, Node::KindStar)
             | (Node::BoolTy, Node::BoolTy)
@@ -1221,8 +1240,14 @@ impl Kernel {
             | (Node::Eq(..), Node::Eq(..))
             | (Node::Eps { .. }, Node::Eps { .. }) => true,
             (Node::TyFv { name: left, .. }, Node::TyFv { name: right, .. })
-            | (Node::TmFv { name: left, .. }, Node::TmFv { name: right, .. }) => left == right,
+            | (Node::TmFv { name: left, .. }, Node::TmFv { name: right, .. })
+            | (Node::Nat(left), Node::Nat(right)) => left == right,
             (Node::Bool(left), Node::Bool(right)) => left == right,
+            (Node::LiteralTy(left), Node::LiteralTy(right)) => left == right,
+            (Node::Word(lw, left), Node::Word(rw, right)) => lw == rw && left == right,
+            (Node::Int(left), Node::Int(right)) => left == right,
+            (Node::ConstRef(left), Node::ConstRef(right)) => left == right,
+            (Node::Builtin(left, ..), Node::Builtin(right, ..)) => left == right,
             (Node::Op1(left, ..), Node::Op1(right, ..)) => left.code() == right.code(),
             (Node::Op2(left, ..), Node::Op2(right, ..)) => left.code() == right.code(),
             (

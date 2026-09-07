@@ -90,6 +90,7 @@ impl Dense {
 /// A one-based dense Ethane arena.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Arena {
+    pub(crate) constants: crate::constants::ConstantTable,
     pub(crate) imports: Vec<Import>,
     pub(crate) axs: BTreeSet<String>,
     pub(crate) dense: Dense,

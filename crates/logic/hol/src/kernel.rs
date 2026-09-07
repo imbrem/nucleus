@@ -22,6 +22,7 @@ use crate::{
 mod choice;
 mod classical;
 mod infinity;
+mod literals;
 mod logic;
 mod subtype;
 mod syn_facts;
@@ -41,6 +42,12 @@ pub enum KernelError<E = Infallible>
 where
     E: std::error::Error + 'static,
 {
+    /// Literal construction or evaluation failed before any fact was added.
+    #[snafu(transparent)]
+    Literal {
+        /// Typed literal failure.
+        source: crate::literals::EvalError,
+    },
     /// The dense definition index no longer fits in `Ref`.
     #[snafu(display("kernel has too many definitions"))]
     TooManyDefinitions,
@@ -275,6 +282,7 @@ impl CopyMap {
 pub struct Kernel {
     arena: Arena,
     init_prefix: Option<(crate::O256, usize)>,
+    literal_types: [Option<Ref>; 8],
 }
 
 struct ConvPath {
@@ -298,6 +306,7 @@ impl Kernel {
         Self {
             arena: Arena::empty(),
             init_prefix: None,
+            literal_types: [None; 8],
         }
     }
 
@@ -307,13 +316,18 @@ impl Kernel {
         Self {
             arena: init.arena().clone(),
             init_prefix: Some((init.arena().addr(), init.arena().len())),
+            literal_types: [None; 8],
         }
     }
 
     /// Creates a checked kernel whose first rows are a compiled init prefix.
     pub(crate) fn with_init_prefix(arena: Arena) -> Self {
         let init_prefix = Some((arena.addr(), arena.len()));
-        Self { arena, init_prefix }
+        Self {
+            arena,
+            init_prefix,
+            literal_types: [None; 8],
+        }
     }
 
     /// Returns the compiled init-prefix address and row count, when present.
@@ -338,6 +352,7 @@ impl Kernel {
         Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
+            literal_types: self.literal_types,
         }
     }
 
@@ -454,10 +469,19 @@ impl Kernel {
         let mut staged = Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
+            literal_types: self.literal_types,
         };
         for &source_ref in &order {
             let row = source.row::<Infallible>(source_ref)?;
-            let (copied, sort) = remap_row(row, source.sort(source_ref), &nodes);
+            let (mut copied, sort) = remap_row(row, source.sort(source_ref), &nodes);
+            if let Node::ConstRef(id) = *row.expr() {
+                copied = Row::new(Node::ConstRef(
+                    staged
+                        .arena
+                        .clone_constant_from(&source.arena, id)
+                        .ok_or(KernelError::TooManyDefinitions)?,
+                ));
+            }
             staged
                 .arena
                 .push_row(copied, sort)
@@ -533,6 +557,7 @@ impl Kernel {
         let mut staged = Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
+            literal_types: self.literal_types,
         };
         for &source_ref in &order {
             let syntax_root = source
@@ -564,7 +589,15 @@ impl Kernel {
                     staged.app(partial, nodes[&right])?
                 }
                 _ => {
-                    let (copied, sort) = remap_row(row, source.sort(source_ref), &nodes);
+                    let (mut copied, sort) = remap_row(row, source.sort(source_ref), &nodes);
+                    if let Node::ConstRef(id) = *row.expr() {
+                        copied = Row::new(Node::ConstRef(
+                            staged
+                                .arena
+                                .clone_constant_from(&source.arena, id)
+                                .ok_or(KernelError::TooManyDefinitions)?,
+                        ));
+                    }
                     staged
                         .arena
                         .push_row(copied, sort)
@@ -1131,6 +1164,7 @@ impl Kernel {
         let mut staged = Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
+            literal_types: self.literal_types,
         };
         let mut memo = BTreeMap::new();
         let mut aliases = Vec::with_capacity(roots.len());
@@ -1297,6 +1331,12 @@ impl Kernel {
             Node::Eps { ty, predicate } => self.eps(child(ty)?, child(predicate)?),
             Node::KindStar
             | Node::BoolTy
+            | Node::LiteralTy(_)
+            | Node::Word(..)
+            | Node::Nat(_)
+            | Node::Int(_)
+            | Node::ConstRef(_)
+            | Node::Builtin(_)
             | Node::Bool(_)
             | Node::TmRef { .. }
             | Node::TyRef { .. }
@@ -1595,6 +1635,16 @@ impl Kernel {
         let row = self.row::<Infallible>(reference)?;
         let row_sort = self.arena.sort(reference);
         let expected_sort = match *row.expr() {
+            Node::LiteralTy(_) => {
+                self.require_literal_capability()?;
+                let sort = row_sort.ok_or(KernelError::MissingSort { reference })?;
+                self.require_star::<Infallible>(sort)?;
+                Some(sort)
+            }
+            Node::Word(..) | Node::Nat(_) | Node::Int(_) | Node::ConstRef(_) => {
+                Some(self.validate_literal_row(reference)?)
+            }
+            Node::Builtin(op) => Some(self.validate_builtin_const(reference, op)?),
             Node::KindStar => None,
             Node::KindArr(domain, codomain) => {
                 self.require_category::<Infallible>(domain, Sort::Kind)?;
@@ -2270,6 +2320,12 @@ fn remap_row(row: &Row, sort: Option<Ref>, map: &BTreeMap<Ref, Ref>) -> (Row, Op
         Node::KindStar => Node::KindStar,
         Node::KindArr(a, b) => Node::KindArr(remap(a), remap(b)),
         Node::BoolTy => Node::BoolTy,
+        Node::LiteralTy(ty) => Node::LiteralTy(ty),
+        Node::Word(w, value) => Node::Word(w, value),
+        Node::Nat(value) => Node::Nat(value),
+        Node::Int(value) => Node::Int(value),
+        Node::ConstRef(id) => Node::ConstRef(id),
+        Node::Builtin(op) => Node::Builtin(op),
         Node::TyArr(a, b) => Node::TyArr(remap(a), remap(b)),
         Node::TyApp(a, b) => Node::TyApp(remap(a), remap(b)),
         Node::TyLam(a, b) => Node::TyLam(remap(a), remap(b)),

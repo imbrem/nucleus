@@ -329,6 +329,7 @@ impl Kernel {
         let mut staged = Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
+            literal_types: self.literal_types,
         };
         let equality = staged.eq(bool_ty, term, term)?;
         let theorem = staged.push_theorem(Thm::new(
@@ -367,6 +368,7 @@ impl Kernel {
         let mut staged = Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
+            literal_types: self.literal_types,
         };
         let left = staged.app(function, argument)?;
         let right = staged.app(varied, argument)?;
@@ -419,6 +421,7 @@ impl Kernel {
         let mut staged = Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
+            literal_types: self.literal_types,
         };
         let body_ty = staged.classifier(left_body)?;
         let right_body_ty = staged.classifier(right_body)?;
@@ -469,6 +472,7 @@ impl Kernel {
         let mut staged = Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
+            literal_types: self.literal_types,
         };
         let left = staged.app(function, left_operand)?;
         let right = staged.app(function, right_operand)?;
@@ -582,6 +586,7 @@ impl Kernel {
         let mut staged = Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
+            literal_types: self.literal_types,
         };
         let witness = staged.eps(domain, predicate)?;
         let proposition = staged.app(predicate, witness)?;
@@ -654,6 +659,7 @@ impl Kernel {
         let mut staged = Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
+            literal_types: self.literal_types,
         };
         let universal = staged.forall_tm(bool_ty, binder, body)?;
         let theorem = staged.forall_intro_at(theorem, binder, universal)?;
@@ -752,6 +758,7 @@ impl Kernel {
         let mut staged = Self {
             arena: self.arena.clone(),
             init_prefix: self.init_prefix,
+            literal_types: self.literal_types,
         };
         let universal = staged.ty_forall(name, predicate)?;
         let theorem = staged.push_theorem(Thm::new(

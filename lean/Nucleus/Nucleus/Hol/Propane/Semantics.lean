@@ -11,18 +11,11 @@ proof theory.
 
 namespace Nucleus.Hol.Propane
 
+attribute [local irreducible] Builtin.eval
+
 set_option relaxedAutoImplicit true
 
 noncomputable section
-
-/-- Set-theoretic interpretation of simple types. -/
-def Ty.denote : Ty → Type
-  | .bool => Bool
-  | .arr domain codomain => domain.denote → codomain.denote
-
-noncomputable def Ty.default : (type : Ty) → type.denote
-  | .bool => false
-  | .arr _ codomain => fun _ => codomain.default
 
 noncomputable instance Ty.denoteInhabited (type : Ty) : Inhabited type.denote :=
   ⟨type.default⟩
@@ -66,6 +59,8 @@ noncomputable def Tm.eval {Γ : List Ty} {A : Ty}
   | .app function argument => function.eval valuation env (argument.eval valuation env)
   | .lam body => fun value => body.eval valuation (.cons value env)
   | .bool value => value
+  | .literal type value => Ty.literalValue type value
+  | .builtin op (inputs := inputs) (output := output) _ => op.curried output inputs []
   | .eq left right =>
       @decide (left.eval valuation env = right.eval valuation env)
         (Classical.propDecidable _)
@@ -101,6 +96,8 @@ theorem Tm.eval_rename {Γ Δ : List Ty} {A : Ty} {rename : Ren Γ Δ}
       funext value
       exact ih (agreement.lift value)
   | bool => rfl
+  | literal => rfl
+  | builtin => rfl
   | eq left right ihLeft ihRight =>
       simp only [Tm.rename, Tm.eval]
       rw [ihLeft agreement, ihRight agreement]
@@ -156,6 +153,8 @@ theorem Tm.eval_subst {Γ Δ : List Ty} {A : Ty} {substitute : Sub Γ Δ}
       funext value
       exact ih (agreement.lift value)
   | bool => rfl
+  | literal => rfl
+  | builtin => rfl
   | eq left right ihLeft ihRight =>
       simp only [Tm.subst, Tm.eval]
       rw [ihLeft agreement, ihRight agreement]
@@ -182,6 +181,34 @@ theorem Env.single_agrees {Γ : List Ty} {A : Ty} {valuation : Valuation}
 /-- Semantic equality of typed terms in all environments. -/
 def SemEq {Γ : List Ty} {A : Ty} (left right : Tm Γ A) : Prop :=
   ∀ valuation env, left.eval valuation env = right.eval valuation env
+
+theorem Tm.eval_applyLiterals {Γ : List Ty} {inputs : List LiteralTy}
+    {output : LiteralTy} (op : Builtin) (supplied : List LiteralValue)
+    (term : Tm Γ (Ty.arrows inputs output)) (args : LiteralArgs inputs)
+    (valuation : Valuation) (env : Env Γ)
+    (denotes : term.eval valuation env = op.curried output inputs supplied) :
+    (term.applyLiterals args).eval valuation env =
+      Ty.literalValue output
+        (((op.eval (supplied ++ args.values)).bind (LiteralValue.as output)).getD
+          output.default) := by
+  induction args generalizing supplied with
+  | nil =>
+      change term.eval valuation env = _
+      change term.eval valuation env =
+        Ty.literalValue output
+          (((op.eval supplied).bind (LiteralValue.as output)).getD output.default) at denotes
+      change term.eval valuation env = Ty.literalValue output
+        (((op.eval (supplied ++ [])).bind (LiteralValue.as output)).getD output.default)
+      rw [List.append_nil]
+      exact denotes
+  | @cons type types value rest ih =>
+      have applied : (Tm.app term (.literal type value)).eval valuation env =
+          op.curried output types (supplied ++ [LiteralValue.ofDenote type value]) := by
+        exact (congrFun denotes (Ty.literalValue type value)).trans (by cases type <;> rfl)
+      have result := ih (supplied ++ [LiteralValue.ofDenote type value])
+        (.app term (.literal type value)) applied
+      rw [List.append_assoc] at result
+      exact result
 
 theorem EqTm.sound {Γ : List Ty} {A : Ty} {left right : Tm Γ A}
     (equality : EqTm left right) : SemEq left right := by
@@ -213,7 +240,10 @@ theorem EqTm.sound {Γ : List Ty} {A : Ty} {left right : Tm Γ A}
   | eta function =>
       intro valuation env
       simp only [Tm.eval, Tm.eval_weaken, Env.lookup]
-      rfl
+  | builtinReduce op signature args result checked =>
+      intro valuation env
+      rw [Tm.eval_applyLiterals op [] _ args valuation env rfl]
+      simp [checked, Tm.eval]
 
 /-- Truth of a Boolean term under one interpretation. -/
 def Satisfies {Γ : List Ty} (valuation : Valuation) (env : Env Γ)
@@ -256,7 +286,7 @@ theorem Proves.sound {Γ : List Ty} {hypotheses : Hyps Γ} {conclusion : Wff Γ}
           rcases List.mem_cons.mp member with rfl | member
           · change @decide (Tm.eval valuation env proposition = false)
                 (Classical.propDecidable _) = true
-            exact decide_eq_true value
+            exact @decide_eq_true _ (Classical.propDecidable _) value
           · exact assumptions candidate member
       | true =>
           apply ihLeft valuation env
@@ -267,7 +297,6 @@ theorem Proves.sound {Γ : List Ty} {hypotheses : Hyps Γ} {conclusion : Wff Γ}
   | eqRefl term =>
       intro valuation env assumptions
       simp [Satisfies, Tm.eval]
-      rfl
   | eqMp predicate equality premise ihEquality ihPremise =>
       intro valuation env assumptions
       have equalityTrue := ihEquality valuation env assumptions
@@ -309,7 +338,6 @@ theorem Proves.sound {Γ : List Ty} {hypotheses : Hyps Γ} {conclusion : Wff Γ}
   | eqOfEqTm equality =>
       intro valuation env assumptions
       simp [Satisfies, Tm.eval, equality.sound valuation env]
-      rfl
   | antisymm forward backward ihForward ihBackward =>
       intro valuation env assumptions
       have valuesEqual := bool_eq_of_true_implications
@@ -324,7 +352,6 @@ theorem Proves.sound {Γ : List Ty} {hypotheses : Hyps Γ} {conclusion : Wff Γ}
           · exact rightTrue
           · exact assumptions proposition member))
       simp [Satisfies, Tm.eval, valuesEqual]
-      rfl
 
 /-- The empty Propane theory is consistent. -/
 theorem consistent (proof : Proves ([] : Hyps []) (.bool false)) : False := by

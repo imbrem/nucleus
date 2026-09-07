@@ -6,6 +6,8 @@ use smallvec::SmallVec;
 use crate::{
     ImportId, Ref,
     builtin::{Op1, Op2},
+    constants::ConstantId,
+    literals::{Builtin, LiteralType, WordWidth},
 };
 
 const MAX_CHILDREN: usize = 3;
@@ -23,6 +25,7 @@ pub(crate) enum Expr {
     KindStar,
     KindArr(Ref, Ref),
     BoolTy,
+    LiteralTy(LiteralType),
     TyArr(Ref, Ref),
     /// Type-family application: function and argument.
     TyApp(Ref, Ref),
@@ -52,6 +55,11 @@ pub(crate) enum Expr {
     /// The children are the binder variable and body, in that order.
     Lam(Ref, Ref),
     Bool(bool),
+    Word(WordWidth, i64),
+    Nat(u64),
+    Int(i64),
+    ConstRef(ConstantId),
+    Builtin(Builtin),
     /// Versioned compact unary syntax. Semantics are supplied by lowering.
     Op1(Op1, Ref),
     /// Versioned compact binary syntax. Operands are ordered left-to-right.
@@ -82,6 +90,7 @@ impl Expr {
             Self::KindStar => Tag::Kind(KindTag::Star),
             Self::KindArr(..) => Tag::Kind(KindTag::Arr),
             Self::BoolTy => Tag::Ty(TyTag::Bool),
+            Self::LiteralTy(ty) => Tag::Ty(literal_type_tag(*ty)),
             Self::TyArr(..) => Tag::Ty(TyTag::Arr),
             Self::TyApp(..) => Tag::Ty(TyTag::App),
             Self::TyLam(..) => Tag::Ty(TyTag::Lam),
@@ -93,6 +102,11 @@ impl Expr {
             Self::App(..) => Tag::Tm(TmTag::App),
             Self::Lam(..) => Tag::Tm(TmTag::Lam),
             Self::Bool(..) => Tag::Tm(TmTag::Bool),
+            Self::Word(width, _) => Tag::Tm(word_tag(*width)),
+            Self::Nat(_) => Tag::Tm(TmTag::Nat),
+            Self::Int(_) => Tag::Tm(TmTag::Int),
+            Self::ConstRef(_) => Tag::Tm(TmTag::Const),
+            Self::Builtin(..) => Tag::Tm(TmTag::Builtin),
             Self::Op1(..) => Tag::Tm(TmTag::Op1),
             Self::Op2(..) => Tag::Tm(TmTag::Op2),
             Self::Eq(..) => Tag::Tm(TmTag::Eq),
@@ -107,7 +121,13 @@ impl Expr {
         match *self {
             Self::KindStar
             | Self::BoolTy
+            | Self::LiteralTy(_)
             | Self::Bool(_)
+            | Self::Word(..)
+            | Self::Nat(_)
+            | Self::Int(_)
+            | Self::ConstRef(_)
+            | Self::Builtin(_)
             | Self::TmRef { .. }
             | Self::TyRef { .. }
             | Self::KindRef { .. } => SmallVec::new(),
@@ -190,6 +210,13 @@ impl KindTag {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum TyTag {
     Bool,
+    I8,
+    I16,
+    I32,
+    I64,
+    Nat,
+    Int,
+    Bytes,
     Arr,
     App,
     Lam,
@@ -203,6 +230,13 @@ impl TyTag {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Bool => "ty.bool",
+            Self::I8 => "ty.i8",
+            Self::I16 => "ty.i16",
+            Self::I32 => "ty.i32",
+            Self::I64 => "ty.i64",
+            Self::Nat => "ty.nat",
+            Self::Int => "ty.int",
+            Self::Bytes => "ty.bytes",
             Self::Arr => "ty.arr",
             Self::App => "ty.app",
             Self::Lam => "ty.lam",
@@ -221,6 +255,14 @@ pub enum TmTag {
     App,
     Lam,
     Bool,
+    I8,
+    I16,
+    I32,
+    I64,
+    Nat,
+    Int,
+    Const,
+    Builtin,
     Op1,
     Op2,
     Eq,
@@ -238,6 +280,14 @@ impl TmTag {
             Self::App => "tm.app",
             Self::Lam => "tm.lam",
             Self::Bool => "tm.bool",
+            Self::I8 => "tm.i8",
+            Self::I16 => "tm.i16",
+            Self::I32 => "tm.i32",
+            Self::I64 => "tm.i64",
+            Self::Nat => "tm.nat",
+            Self::Int => "tm.int",
+            Self::Const => "tm.const",
+            Self::Builtin => "tm.builtin",
             Self::Op1 => crate::builtin::OP1_ROW_TAG,
             Self::Op2 => crate::builtin::OP2_ROW_TAG,
             Self::Eq => "tm.eq",
@@ -281,6 +331,13 @@ impl Tag {
             "kind.arr" => Self::Kind(KindTag::Arr),
             "kind.ref" => Self::Kind(KindTag::Ref),
             "ty.bool" => Self::Ty(TyTag::Bool),
+            "ty.i8" => Self::Ty(TyTag::I8),
+            "ty.i16" => Self::Ty(TyTag::I16),
+            "ty.i32" => Self::Ty(TyTag::I32),
+            "ty.i64" => Self::Ty(TyTag::I64),
+            "ty.nat" => Self::Ty(TyTag::Nat),
+            "ty.int" => Self::Ty(TyTag::Int),
+            "ty.bytes" => Self::Ty(TyTag::Bytes),
             "ty.arr" => Self::Ty(TyTag::Arr),
             "ty.app" => Self::Ty(TyTag::App),
             "ty.lam" => Self::Ty(TyTag::Lam),
@@ -293,6 +350,14 @@ impl Tag {
             "tm.app" => Self::Tm(TmTag::App),
             "tm.lam" => Self::Tm(TmTag::Lam),
             "tm.bool" => Self::Tm(TmTag::Bool),
+            "tm.i8" => Self::Tm(TmTag::I8),
+            "tm.i16" => Self::Tm(TmTag::I16),
+            "tm.i32" => Self::Tm(TmTag::I32),
+            "tm.i64" => Self::Tm(TmTag::I64),
+            "tm.nat" => Self::Tm(TmTag::Nat),
+            "tm.int" => Self::Tm(TmTag::Int),
+            "tm.const" => Self::Tm(TmTag::Const),
+            "tm.builtin" => Self::Tm(TmTag::Builtin),
             crate::builtin::OP1_ROW_TAG => Self::Tm(TmTag::Op1),
             crate::builtin::OP2_ROW_TAG => Self::Tm(TmTag::Op2),
             "tm.eq" => Self::Tm(TmTag::Eq),
@@ -326,13 +391,48 @@ impl<'de> Deserialize<'de> for Tag {
 #[serde(untagged)]
 enum Value {
     Nat(u64),
+    Int(i64),
     Bool(bool),
+}
+
+impl Value {
+    fn signed(self) -> Option<i64> {
+        match self {
+            Self::Nat(value) => i64::try_from(value).ok(),
+            Self::Int(value) => Some(value),
+            Self::Bool(_) => None,
+        }
+    }
+}
+
+const fn literal_type_tag(ty: LiteralType) -> TyTag {
+    match ty {
+        LiteralType::Bool => TyTag::Bool,
+        LiteralType::I8 => TyTag::I8,
+        LiteralType::I16 => TyTag::I16,
+        LiteralType::I32 => TyTag::I32,
+        LiteralType::I64 => TyTag::I64,
+        LiteralType::Nat => TyTag::Nat,
+        LiteralType::Int => TyTag::Int,
+        LiteralType::Bytes => TyTag::Bytes,
+    }
+}
+
+const fn word_tag(width: WordWidth) -> TmTag {
+    match width {
+        WordWidth::W8 => TmTag::I8,
+        WordWidth::W16 => TmTag::I16,
+        WordWidth::W32 => TmTag::I32,
+        WordWidth::W64 => TmTag::I64,
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RowSerde {
     tag: Tag,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    op: Option<Builtin>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -393,12 +493,23 @@ where
 
 impl From<Row> for RowSerde {
     fn from(row: Row) -> Self {
+        if let Expr::Builtin(op) = row.expr {
+            return Self {
+                tag: Tag::Tm(TmTag::Builtin),
+                op: Some(op),
+                ixs: None,
+                val: None,
+                src: None,
+                ix: None,
+            };
+        }
         let (tag, ixs, val, src, ix) = match row.expr {
             Expr::KindStar => ordinary(Tag::Kind(KindTag::Star), [], None),
             Expr::KindArr(domain, codomain) => {
                 ordinary(Tag::Kind(KindTag::Arr), [domain, codomain], None)
             }
             Expr::BoolTy => ordinary(Tag::Ty(TyTag::Bool), [], None),
+            Expr::LiteralTy(ty) => ordinary(Tag::Ty(literal_type_tag(ty)), [], None),
             Expr::TyArr(domain, codomain) => {
                 ordinary(Tag::Ty(TyTag::Arr), [domain, codomain], None)
             }
@@ -428,6 +539,15 @@ impl From<Row> for RowSerde {
             }
             Expr::Lam(binder, body) => ordinary(Tag::Tm(TmTag::Lam), [binder, body], None),
             Expr::Bool(value) => ordinary(Tag::Tm(TmTag::Bool), [], Some(Value::Bool(value))),
+            Expr::Word(width, value) => {
+                ordinary(Tag::Tm(word_tag(width)), [], Some(Value::Int(value)))
+            }
+            Expr::Nat(value) => ordinary(Tag::Tm(TmTag::Nat), [], Some(Value::Nat(value))),
+            Expr::Int(value) => ordinary(Tag::Tm(TmTag::Int), [], Some(Value::Int(value))),
+            Expr::ConstRef(id) => {
+                ordinary(Tag::Tm(TmTag::Const), [], Some(Value::Nat(u64::from(id.0))))
+            }
+            Expr::Builtin(..) => unreachable!("builtin row was handled above"),
             Expr::Op1(op, operand) => ordinary(
                 Tag::Tm(TmTag::Op1),
                 [operand],
@@ -446,6 +566,7 @@ impl From<Row> for RowSerde {
         };
         Self {
             tag,
+            op: None,
             ixs,
             val,
             src,
@@ -464,16 +585,64 @@ const fn foreign(tag: Tag, src: ImportId, ix: Ref) -> Fields {
     (tag, None, None, Some(src), Some(ix))
 }
 
+impl RowSerde {
+    fn literal_row(&self) -> Result<Option<Expr>, &'static str> {
+        let row = self;
+        if row.tag == Tag::Tm(TmTag::Builtin) {
+            if row.ixs.is_some() || row.val.is_some() || row.src.is_some() || row.ix.is_some() {
+                return Err("unexpected builtin row field");
+            }
+            let op = row.op.ok_or("builtin operation is missing")?;
+            op.signature().map_err(|_| "invalid builtin descriptor")?;
+            return Ok(Some(Expr::Builtin(op)));
+        }
+        if row.op.is_some() {
+            return Err("operation is only allowed on builtin rows");
+        }
+        if let Tag::Tm(tag @ (TmTag::I8 | TmTag::I16 | TmTag::I32 | TmTag::I64 | TmTag::Int)) =
+            row.tag
+        {
+            if row.ixs.is_some() || row.src.is_some() || row.ix.is_some() {
+                return Err("unexpected inline integer row field");
+            }
+            let value = row
+                .val
+                .and_then(Value::signed)
+                .ok_or("literal must be a signed 64-bit integer")?;
+            let expr = match tag {
+                TmTag::I8 if i8::try_from(value).is_ok() => Expr::Word(WordWidth::W8, value),
+                TmTag::I16 if i16::try_from(value).is_ok() => Expr::Word(WordWidth::W16, value),
+                TmTag::I32 if i32::try_from(value).is_ok() => Expr::Word(WordWidth::W32, value),
+                TmTag::I64 => Expr::Word(WordWidth::W64, value),
+                TmTag::Int => Expr::Int(value),
+                _ => return Err("inline word is outside its signed width"),
+            };
+            return Ok(Some(expr));
+        }
+        Ok(None)
+    }
+}
+
 impl TryFrom<RowSerde> for Row {
     type Error = &'static str;
 
     fn try_from(row: RowSerde) -> Result<Self, Self::Error> {
+        if let Some(expr) = row.literal_row()? {
+            return Ok(Self::new(expr));
+        }
         let expression = match (row.tag, row.ixs.as_deref(), row.val, row.src, row.ix) {
             (Tag::Kind(KindTag::Star), None, None, None, None) => Expr::KindStar,
             (Tag::Kind(KindTag::Arr), Some([domain, codomain]), None, None, None) => {
                 Expr::KindArr(*domain, *codomain)
             }
             (Tag::Ty(TyTag::Bool), None, None, None, None) => Expr::BoolTy,
+            (Tag::Ty(TyTag::I8), None, None, None, None) => Expr::LiteralTy(LiteralType::I8),
+            (Tag::Ty(TyTag::I16), None, None, None, None) => Expr::LiteralTy(LiteralType::I16),
+            (Tag::Ty(TyTag::I32), None, None, None, None) => Expr::LiteralTy(LiteralType::I32),
+            (Tag::Ty(TyTag::I64), None, None, None, None) => Expr::LiteralTy(LiteralType::I64),
+            (Tag::Ty(TyTag::Nat), None, None, None, None) => Expr::LiteralTy(LiteralType::Nat),
+            (Tag::Ty(TyTag::Int), None, None, None, None) => Expr::LiteralTy(LiteralType::Int),
+            (Tag::Ty(TyTag::Bytes), None, None, None, None) => Expr::LiteralTy(LiteralType::Bytes),
             (Tag::Ty(TyTag::Arr), Some([domain, codomain]), None, None, None) => {
                 Expr::TyArr(*domain, *codomain)
             }
@@ -514,6 +683,14 @@ impl TryFrom<RowSerde> for Row {
                 Expr::Lam(*binder, *body)
             }
             (Tag::Tm(TmTag::Bool), None, Some(Value::Bool(value)), None, None) => Expr::Bool(value),
+            (Tag::Tm(TmTag::Nat), None, Some(Value::Nat(value)), None, None)
+                if i64::try_from(value).is_ok() =>
+            {
+                Expr::Nat(value)
+            }
+            (Tag::Tm(TmTag::Const), None, Some(Value::Nat(value)), None, None) => Expr::ConstRef(
+                ConstantId(u32::try_from(value).map_err(|_| "constant index exceeds u32")?),
+            ),
             (Tag::Tm(TmTag::Op1), Some([operand]), Some(Value::Nat(code)), None, None) => {
                 Expr::Op1(
                     Op1::from_code(u8::try_from(code).map_err(|_| "unknown op1 code")?)
@@ -634,6 +811,94 @@ mod tests {
             let mut bytes = Vec::new();
             into_writer(&row, &mut bytes).unwrap();
             assert_eq!(from_reader::<Row, _>(bytes.as_slice()).unwrap(), row);
+        }
+    }
+
+    #[test]
+    fn literal_rows_round_trip_signed_boundaries() {
+        let mut rows = vec![
+            Expr::Nat(0),
+            Expr::Nat(i64::MAX.unsigned_abs()),
+            Expr::Int(i64::MIN),
+            Expr::Int(0),
+            Expr::Int(i64::MAX),
+            Expr::ConstRef(ConstantId(0)),
+            Expr::ConstRef(ConstantId(u32::MAX)),
+        ];
+        for width in [
+            WordWidth::W8,
+            WordWidth::W16,
+            WordWidth::W32,
+            WordWidth::W64,
+        ] {
+            let min = i64::MIN >> (64 - width.bits());
+            let max = i64::MAX >> (64 - width.bits());
+            rows.extend([
+                Expr::Word(width, min),
+                Expr::Word(width, max),
+                Expr::Word(width, -1),
+                Expr::Word(width, 0),
+            ]);
+            rows.push(Expr::LiteralTy(width.ty()));
+        }
+        rows.extend([
+            Expr::LiteralTy(LiteralType::Nat),
+            Expr::LiteralTy(LiteralType::Int),
+            Expr::LiteralTy(LiteralType::Bytes),
+        ]);
+        for expr in rows {
+            let row = Row::new(expr);
+            let mut encoded = Vec::new();
+            into_writer(&row, &mut encoded).unwrap();
+            assert_eq!(from_reader::<Row, _>(encoded.as_slice()).unwrap(), row);
+        }
+    }
+
+    #[test]
+    fn invalid_literal_ranges_and_builtin_descriptors_are_rejected() {
+        use crate::literals::WordOp;
+        let invalid = [
+            Expr::Nat(u64::MAX),
+            Expr::Word(WordWidth::W8, 128),
+            Expr::Word(WordWidth::W8, -129),
+            Expr::Word(WordWidth::W16, 32768),
+            Expr::Word(WordWidth::W32, i64::from(i32::MAX) + 1),
+            Expr::Builtin(Builtin::Word(
+                WordWidth::W8,
+                WordOp::ExtendSign(WordWidth::W16),
+            )),
+        ];
+        for expr in invalid {
+            let mut encoded = Vec::new();
+            into_writer(&Row::new(expr), &mut encoded).unwrap();
+            assert!(
+                from_reader::<Row, _>(encoded.as_slice()).is_err(),
+                "{expr:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn builtin_constants_have_no_application_fields() {
+        use crate::literals::{BytesOp, NatOp};
+        for op in [Builtin::Nat(NatOp::Add), Builtin::Bytes(BytesOp::Empty)] {
+            let row = Row::new(Expr::Builtin(op));
+            assert!(row.expr().children().is_empty());
+            let mut encoded = Vec::new();
+            into_writer(&row, &mut encoded).unwrap();
+            assert_eq!(from_reader::<Row, _>(encoded.as_slice()).unwrap(), row);
+            let Cbor::Map(mut fields) = from_reader(encoded.as_slice()).unwrap() else {
+                panic!("builtin is a map");
+            };
+            assert!(
+                !fields
+                    .iter()
+                    .any(|(key, _)| key == &Cbor::Text("ixs".into()))
+            );
+            fields.push((Cbor::Text("ixs".into()), Cbor::Array(vec![])));
+            encoded.clear();
+            into_writer(&Cbor::Map(fields), &mut encoded).unwrap();
+            assert!(from_reader::<Row, _>(encoded.as_slice()).is_err());
         }
     }
 

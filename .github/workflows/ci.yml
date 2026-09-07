@@ -43,6 +43,12 @@ jobs:
       - uses: leanprover/lean-action@38fbc41a8c28c4cbaec22d7f7de508ec2e7c0dd9 # v1.5.0
         with:
           lake-package-directory: lean/Nucleus
+      # include_str inputs are not tracked by Lake's module cache.
+      - name: Check shared literal fixtures against the current JSON
+        working-directory: lean/Nucleus
+        run: |
+          lake env lean Nucleus/Hol/Propane/BuiltinFixtures.lean
+          lake env lean Nucleus/Hol/Propane/LiteralWireFixtures.lean
 
   # Documentation stays on our own runner: `lean-action` has no doc-gen4
   # support, and generation needs both a tuned runner and `glu`.
