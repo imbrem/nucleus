@@ -1,3 +1,4 @@
+import Nucleus.Classical.Array.Table
 import Nucleus.Classical.Alternating.Abstract
 import Nucleus.Classical.Alternating.Equality
 import Nucleus.Classical.Alternating.Packed
@@ -25,7 +26,7 @@ import Nucleus.Classical.Tagged.Runtime.SharedRuntime
 import Nucleus.Classical.Tagged.Runtime.LengthIndex
 import Nucleus.Classical.Tagged.Runtime.SharedKernel
 import Nucleus.Classical.Tagged.Runtime.SemanticWire
-import Nucleus.Classical.Tagged.Runtime.V3
+import Nucleus.Classical.Tagged.Runtime.TokenWire
 
 /-!
 # Classical prover designs

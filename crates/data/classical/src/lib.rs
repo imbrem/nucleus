@@ -11,7 +11,7 @@ use covalence_logic_classical::{
 };
 
 /// Discriminator for the semantic classical-arena object.
-pub const TYPE_NAME: &str = "io.github.imbrem.nucleus.classicalArenaV3";
+pub const TYPE_NAME: &str = "io.github.imbrem.nucleus.classicalArena";
 
 const MAX_SEQUENTS: usize = 500_000;
 const MAX_TOKENS: usize = 1_000_000;
@@ -365,10 +365,42 @@ mod tests {
     }
 
     #[test]
+    fn empty_wire_has_one_unversioned_schema() {
+        let expected = [
+            &[0xa2, 0x65][..],
+            b"$type",
+            &[0x78, 0x27],
+            TYPE_NAME.as_bytes(),
+            &[0x68],
+            b"sequents",
+            &[0x80],
+        ]
+        .concat();
+        assert_eq!(encode_checked(&empty()).unwrap(), expected);
+        assert_eq!(decode_checked(&expected).unwrap(), empty());
+    }
+
+    #[test]
+    fn alternate_discriminators_are_rejected() {
+        for discriminator in [
+            "io.github.imbrem.nucleus.classicalArenaV1",
+            "io.github.imbrem.nucleus.classicalArenaV2",
+            "io.github.imbrem.nucleus.classicalArenaV3",
+        ] {
+            let mut value = encode_arena(&[]).unwrap();
+            let Value::Map(fields) = &mut value else {
+                unreachable!()
+            };
+            fields.insert("$type".to_owned(), Value::Text(discriminator.to_owned()));
+            reject(&value);
+        }
+    }
+
+    #[test]
     fn semantic_round_trip_is_stable() {
         let checked = sample();
         let encoded = encode_checked(&checked).unwrap();
-        assert!(String::from_utf8_lossy(&encoded).contains("classicalArenaV3"));
+        assert!(String::from_utf8_lossy(&encoded).contains(TYPE_NAME));
         let decoded = decode_checked(&encoded).unwrap();
         assert_eq!(
             decoded.decode_sequents().unwrap(),
