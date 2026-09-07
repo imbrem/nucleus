@@ -1,6 +1,6 @@
 ; Untrusted entry point for the natural-number init segment.
 ; These addresses pin the logical kernel and its external namespace metadata.
 (import logical
-  !f8c65ffe8817adda472f44bfa039738351b88524abaf9f9d798c6cef714ac964
-  !4567f466366c438932752bf7b09f38a1c39c15b47918f81e97c124c9a7903843)
+  !d7a1ac93b4cf7215b1e2a68cf500df68a1b3880361c5f99188720acb915bd915
+  !1ef97779e74db0a799451ce5568bc736231ba2ee9f242f912a3d061ce91e0005)
 (#accelerator nucleus.natural.init.v0)

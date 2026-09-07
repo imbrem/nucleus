@@ -5,7 +5,7 @@
 //! use canonical bytes at storage and runtime boundaries.
 
 use std::fmt;
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, BitAnd, BitOr, BitXor, Mul, Neg, Not, Shl, Shr, Sub};
 
 use covalence_lib_bigint::{BigInt, BigUint, Sign};
 use covalence_lib_error::snafu::{self, Snafu};
@@ -79,6 +79,16 @@ pub enum ArithmeticError {
 pub struct Num(pub(crate) BigUint);
 
 impl Num {
+    /// Number of significant bits.
+    #[must_use]
+    pub fn bits(&self) -> u64 {
+        self.0.bits()
+    }
+    /// Natural exponentiation.
+    #[must_use]
+    pub fn pow(&self, exponent: u32) -> Self {
+        Self(self.0.pow(exponent))
+    }
     /// Zero.
     pub const ZERO: Self = Self(BigUint::ZERO);
 
@@ -165,6 +175,21 @@ impl fmt::Display for Num {
 pub struct Int(pub(crate) BigInt);
 
 impl Int {
+    /// Number of significant magnitude bits.
+    #[must_use]
+    pub fn bits(&self) -> u64 {
+        self.0.bits()
+    }
+    /// Integer exponentiation by a natural exponent.
+    #[must_use]
+    pub fn pow(&self, exponent: u32) -> Self {
+        Self(self.0.pow(exponent))
+    }
+    /// Nonnegative magnitude.
+    #[must_use]
+    pub fn magnitude(&self) -> Num {
+        Num(self.0.magnitude().clone())
+    }
     /// Zero.
     pub const ZERO: Self = Self(BigInt::ZERO);
 
@@ -415,6 +440,49 @@ impl Neg for &Int {
 
     fn neg(self) -> Self::Output {
         Int(-&self.0)
+    }
+}
+
+macro_rules! bit_ops {
+    ($ty:ident) => {
+        impl BitAnd for &$ty {
+            type Output = $ty;
+            fn bitand(self, rhs: Self) -> $ty {
+                $ty(&self.0 & &rhs.0)
+            }
+        }
+        impl BitOr for &$ty {
+            type Output = $ty;
+            fn bitor(self, rhs: Self) -> $ty {
+                $ty(&self.0 | &rhs.0)
+            }
+        }
+        impl BitXor for &$ty {
+            type Output = $ty;
+            fn bitxor(self, rhs: Self) -> $ty {
+                $ty(&self.0 ^ &rhs.0)
+            }
+        }
+        impl Shl<usize> for &$ty {
+            type Output = $ty;
+            fn shl(self, rhs: usize) -> $ty {
+                $ty(&self.0 << rhs)
+            }
+        }
+        impl Shr<usize> for &$ty {
+            type Output = $ty;
+            fn shr(self, rhs: usize) -> $ty {
+                $ty(&self.0 >> rhs)
+            }
+        }
+    };
+}
+bit_ops!(Num);
+bit_ops!(Int);
+impl Not for &Int {
+    type Output = Int;
+    fn not(self) -> Int {
+        Int(!&self.0)
     }
 }
 

@@ -94,10 +94,11 @@ def test_rejected_rules_are_atomic_and_do_not_consume_slots() -> None:
 def test_constants_connective_rules_and_tree_normalization() -> None:
     kernel, bool_ty, p, q, p_ref = fixture()
     q_ref = abs(q)
-    falsehood = kernel.lit(kernel.bool(bool_ty, False))
-    truth = kernel.lit(kernel.bool(bool_ty, True))
-    assert kernel.theorem(kernel.false_left(falsehood)) == ([[falsehood]], [])
-    assert kernel.theorem(kernel.true_right(truth)) == ([], [[truth]])
+    assert kernel.theorem(kernel.false_left()) == ([[]], [])
+    assert kernel.theorem(kernel.true_right()) == ([], [[]])
+    for value in (False, True):
+        with pytest.raises(ValueError):
+            kernel.lit(kernel.bool(bool_ty, value))
 
     conjunction = kernel.lit(kernel.logical_and(p_ref, q_ref))
     disjunction = kernel.lit(kernel.logical_or(p_ref, q_ref))
@@ -172,9 +173,7 @@ def test_standard_hol_rules_preserve_i32_ids_and_checked_contexts() -> None:
 
     binder = kernel.tm_fv(21, bool_ty)
     truth = kernel.bool(bool_ty, True)
-    universal, generalized = kernel.forall_intro(
-        kernel.true_right(kernel.lit(truth)), binder
-    )
+    universal, generalized = kernel.forall_intro(kernel.refl(bool_ty, truth)[1], binder)
     assert kernel.theorem(generalized) == ([], [[kernel.lit(universal)]])
     with pytest.raises(ValueError):
         kernel.forall_intro(generalized, bool_ty)

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use covalence_logic_hol::{AX_SUB, Binder, Kernel, KernelError, Lit, Ref, Sort, Table, ThmId};
+use covalence_logic_hol::{AX_SUB, Binder, Kernel, KernelError, Ref, Sort, Table, ThmId};
 use covalence_logic_hol_derived::{Subtype, SubtypeError, SubtypeExt};
 
 /// A kernel with `star`, `bool`, a carrier, and a predicate over it.
@@ -60,8 +60,8 @@ fn same_shape(kernel: &Kernel, left: Ref, right: Ref) -> bool {
         if left.tag() != right.tag()
             || left.name() != right.name()
             || left.bool_value() != right.bool_value()
-            || left.op1() != right.op1()
-            || left.op2() != right.op2()
+            || left.builtin_op() != right.builtin_op()
+            || left.literal_value() != right.literal_value()
         {
             return false;
         }
@@ -204,7 +204,10 @@ fn each_chosen_package_law_is_an_exact_premise_free_theorem() {
             .rhs
             .to_rows()[0]
             .as_slice(),
-        [Lit::positive(built.property.get())]
+        [built
+            .property
+            .positive()
+            .expect("theorem atom is a local proposition")]
     );
 }
 

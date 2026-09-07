@@ -115,14 +115,6 @@ where
 struct KernelInfo {
     address: String,
     rows: usize,
-    init: Option<InitInfo>,
-}
-
-#[derive(Serialize)]
-#[serde(crate = "covalence_lib_serde")]
-struct InitInfo {
-    address: String,
-    rows: usize,
 }
 
 async fn kernel_info<C>(State(server): State<Arc<NucleusServer<C>>>) -> Json<KernelInfo> {
@@ -130,10 +122,6 @@ async fn kernel_info<C>(State(server): State<Arc<NucleusServer<C>>>) -> Json<Ker
     Json(KernelInfo {
         address: kernel.addr().hex().to_string(),
         rows: kernel.len(),
-        init: kernel.init_prefix().map(|(address, rows)| InitInfo {
-            address: address.hex().to_string(),
-            rows,
-        }),
     })
 }
 

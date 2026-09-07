@@ -175,7 +175,12 @@ fn mediator_laws_are_universal_and_premise_free() {
     assert_eq!(theorem.lhs.rows().count(), 0);
     assert_eq!(
         theorem.rhs.rows().collect::<Vec<_>>(),
-        vec![&[covalence_logic_hol::Lit::positive(laws.conjunction.get())][..]]
+        vec![
+            &[laws
+                .conjunction
+                .positive()
+                .expect("theorem atom is a local proposition")][..]
+        ]
     );
 
     let left_value = kernel.tm_fv(502, coproduct.left).unwrap();
@@ -218,7 +223,11 @@ fn every_coproduct_representation_is_in_an_injection_image() {
         assert_eq!(theorem.lhs.rows().count(), 0);
         assert_eq!(
             theorem.rhs.rows().collect::<Vec<_>>(),
-            vec![&[covalence_logic_hol::Lit::positive(proposition.get())][..]]
+            vec![
+                &[proposition
+                    .positive()
+                    .expect("theorem atom is a local proposition")][..]
+            ]
         );
     }
 
@@ -233,11 +242,21 @@ fn every_coproduct_representation_is_in_an_injection_image() {
     assert_eq!(theorem.lhs.rows().count(), 0);
     assert_eq!(
         theorem.rhs.rows().collect::<Vec<_>>(),
-        vec![&[covalence_logic_hol::Lit::positive(cases.disjunction.get())][..]]
+        vec![
+            &[cases
+                .disjunction
+                .positive()
+                .expect("theorem atom is a local proposition")][..]
+        ]
     );
     assert_eq!(
-        kernel.arena().op2(cases.disjunction),
-        Some(covalence_logic_hol::builtin::Op2::Or)
+        kernel
+            .arena()
+            .builtin_application(cases.disjunction)
+            .map(|(op, _)| op),
+        Some(covalence_logic_hol::literals::Builtin::Bool(
+            covalence_logic_hol::literals::BoolOp::Or
+        ))
     );
 
     let opened = coproduct.open_cases(&mut kernel, cases).unwrap();
@@ -253,7 +272,11 @@ fn every_coproduct_representation_is_in_an_injection_image() {
         let theorem = kernel.thm().get(branch.theorem).unwrap();
         assert_eq!(
             theorem.lhs.rows().collect::<Vec<_>>(),
-            vec![&[covalence_logic_hol::Lit::positive(premise.get())][..]]
+            vec![
+                &[premise
+                    .positive()
+                    .expect("theorem atom is a local proposition")][..]
+            ]
         );
         assert_eq!(
             theorem.rhs.rows().collect::<Vec<_>>(),
@@ -332,7 +355,12 @@ fn every_mediator_with_the_computation_laws_is_extensionally_unique() {
     assert_eq!(theorem.lhs.rows().count(), 0);
     assert_eq!(
         theorem.rhs.rows().collect::<Vec<_>>(),
-        vec![&[covalence_logic_hol::Lit::positive(unique.equality.get())][..]]
+        vec![
+            &[unique
+                .equality
+                .positive()
+                .expect("theorem atom is a local proposition")][..]
+        ]
     );
     let expected = kernel
         .eq(bool_ty, candidate_function, unique.canonical)
@@ -415,7 +443,12 @@ fn fixed_codomain_package_quantifies_maps_and_selects_a_unique_mediator() {
     join_same_syntax(&mut kernel, at_right.proposition, fixed.mediator_exists).unwrap();
     let mediator = open_exists(&mut kernel, fixed.mediator_exists).unwrap();
     assert_eq!(
-        kernel.arena().op2(mediator.body),
-        Some(covalence_logic_hol::builtin::Op2::And)
+        kernel
+            .arena()
+            .builtin_application(mediator.body)
+            .map(|(op, _)| op),
+        Some(covalence_logic_hol::literals::Builtin::Bool(
+            covalence_logic_hol::literals::BoolOp::And
+        ))
     );
 }

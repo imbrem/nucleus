@@ -43,15 +43,15 @@ pub struct SegmentTriple {
 /// Pinned source, output-object, and kernel identities for logical init.
 pub const LOGICAL_INIT_TRIPLE: SegmentTriple = SegmentTriple {
     script: address("daa7b5ebf70583e39688e2a7e48b6204b427248008c2e6e4dd9b070208df5d5b"),
-    output: address("b3b4ca5eb6ba5c5d9835aadf08b019fb58ae29d93fa112153fa295be96ea2304"),
-    kernel: address("f8c65ffe8817adda472f44bfa039738351b88524abaf9f9d798c6cef714ac964"),
+    output: address("336a4b8d91d867cffe906063cede854ed6a1304d8cb7cfd8fd488b7c1ccbbcf9"),
+    kernel: address("d7a1ac93b4cf7215b1e2a68cf500df68a1b3880361c5f99188720acb915bd915"),
 };
 
 /// Pinned source, output-object, and kernel identities for natural init.
 pub const NATURAL_INIT_TRIPLE: SegmentTriple = SegmentTriple {
-    script: address("7678eb034e81e7ff40845e48d66edff71b21f48ff16ba40ad43f3ab4f2d32c3a"),
-    output: address("c140d7b08bd314beb49f2299a9027d695848868b726306fae1af6dd9c24eb7fa"),
-    kernel: address("08b577109951887e8acca5a3039d7e0d1a324f1b0aad02da120993bceff18953"),
+    script: address("6c2a961f181b326f72dd2cd63a2525b76825e737e3682afa6d8713e55c1c2057"),
+    output: address("1ce18a9040dd50cec0ea84fbdf03ac52c8dd7a1d2f3d16487cc3d5c3ec23560b"),
+    kernel: address("fad26522274756de5f7d2fea57e47833f767f3c432cc2ed013d77e4e8e736e11"),
 };
 
 /// The content-addressed result of one init script.

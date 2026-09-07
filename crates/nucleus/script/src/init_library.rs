@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    AX_INF, AX_SUB, CheckedPrefix, InfinityAxiom, Kernel, KernelError, Lit, Ref, SubtypeAxiom,
-    ThmId, init::Compiled as LogicalInit,
+    AX_INF, AX_SUB, CheckedPrefix, InfinityAxiom, Kernel, KernelError, Ref, SubtypeAxiom, ThmId,
+    init::Compiled as LogicalInit,
 };
 use covalence_logic_hol_derived::{
     ChosenModel, CoproductSchema, Infinity, InfinityDecl, InfinityError, ModelExt,
@@ -110,26 +110,18 @@ impl InitSlice {
     /// Returns an error if the logical prefix or declaration is mismatched, or
     /// if any checked construction, substitution, beta, conversion, or
     /// conjunction-projection step is rejected.
-    pub fn prove_infinity(
-        &self,
-        init: &LogicalInit,
-        kernel: &mut Kernel,
-    ) -> Result<Infinity, InitLibraryError> {
+    pub fn prove_infinity(&self, kernel: &mut Kernel) -> Result<Infinity, InitLibraryError> {
         let mut staged = kernel.fork();
-        let package = self.prove_infinity_inner(init, &mut staged)?;
+        let package = self.prove_infinity_inner(&mut staged)?;
         *kernel = staged;
         Ok(package)
     }
 
-    fn prove_infinity_inner(
-        &self,
-        init: &LogicalInit,
-        kernel: &mut Kernel,
-    ) -> Result<Infinity, InitLibraryError> {
+    fn prove_infinity_inner(&self, kernel: &mut Kernel) -> Result<Infinity, InitLibraryError> {
         let declaration = self.naturals.infinity;
         let roots = declaration.references().collect::<Vec<_>>();
         let aliases = kernel
-            .compact_logical_trees(init, &roots)
+            .compact_logical_trees(&roots)
             .map_err(|source| InitLibraryError::Kernel { source })?;
         let [
             axiom_alias,
@@ -222,29 +214,21 @@ impl InitSlice {
     /// Returns an error for a wrong prefix or malformed declaration, or when
     /// any existing checked subtype, model, beta, conversion, or Gentzen rule
     /// rejects the replay.
-    pub fn prove_subtype(
-        &self,
-        init: &LogicalInit,
-        kernel: &mut Kernel,
-    ) -> Result<Subtype, InitLibraryError> {
+    pub fn prove_subtype(&self, kernel: &mut Kernel) -> Result<Subtype, InitLibraryError> {
         let mut staged = kernel.fork();
-        let package = self.prove_subtype_inner(init, &mut staged)?;
+        let package = self.prove_subtype_inner(&mut staged)?;
         *kernel = staged;
         Ok(package)
     }
 
-    fn prove_subtype_inner(
-        &self,
-        init: &LogicalInit,
-        kernel: &mut Kernel,
-    ) -> Result<Subtype, InitLibraryError> {
+    fn prove_subtype_inner(&self, kernel: &mut Kernel) -> Result<Subtype, InitLibraryError> {
         let declaration = self.naturals.subtype;
         let axiom_decl = declaration
             .axiom
             .ok_or(InitLibraryError::MissingSubtypeAxiom)?;
         let roots = declaration.references().collect::<Vec<_>>();
         let aliases = kernel
-            .compact_logical_trees(init, &roots)
+            .compact_logical_trees(&roots)
             .map_err(|source| InitLibraryError::Kernel { source })?;
         let [
             _carrier_alias,
@@ -276,7 +260,7 @@ impl InitSlice {
             .sub_exists(bool_ty, declaration.carrier, declaration.predicate)
             .map_err(|source| InitLibraryError::Kernel { source })?;
         let raw_axiom = kernel
-            .lower_logical_tree(init, axiom.exists_type)
+            .lower_logical_tree(axiom.exists_type)
             .map_err(|source| InitLibraryError::Kernel { source })?;
         join_alpha_equivalent(kernel, raw_axiom.raw, axiom_decl.exists_type)
             .map_err(|source| InitLibraryError::Syntax { source })?;
@@ -352,31 +336,22 @@ impl InitSlice {
     /// Returns an error for a mismatched prefix, missing source schema, or any
     /// rejected infinity, subtype, natural-number, lowering, or conversion
     /// certificate. The supplied kernel is unchanged on failure.
-    pub fn prove_naturals(
-        &self,
-        init: &LogicalInit,
-        kernel: &mut Kernel,
-    ) -> Result<Naturals, InitLibraryError> {
+    pub fn prove_naturals(&self, kernel: &mut Kernel) -> Result<Naturals, InitLibraryError> {
         let mut staged = kernel.fork();
-        let package = self.prove_naturals_inner(init, &mut staged)?;
+        let package = self.prove_naturals_inner(&mut staged)?;
         *kernel = staged;
         Ok(package)
     }
 
-    fn prove_naturals_inner(
-        &self,
-        init: &LogicalInit,
-        kernel: &mut Kernel,
-    ) -> Result<Naturals, InitLibraryError> {
+    fn prove_naturals_inner(&self, kernel: &mut Kernel) -> Result<Naturals, InitLibraryError> {
         let declaration = self.naturals;
-        let infinity = self.prove_infinity_inner(init, kernel)?;
-        let subtype = self.prove_subtype_inner(init, kernel)?;
+        let infinity = self.prove_infinity_inner(kernel)?;
+        let subtype = self.prove_subtype_inner(kernel)?;
         let member = kernel
-            .compact_logical_tree(init, declaration.member)
+            .compact_logical_tree(declaration.member)
             .map_err(|source| InitLibraryError::Kernel { source })?;
         let mut working_subtype = subtype;
         let (working_subtype_abs_rep, working_abs_rep_theorem) = compact_theorem(
-            init,
             kernel,
             subtype.abs_rep,
             subtype
@@ -386,7 +361,6 @@ impl InitSlice {
         working_subtype.abs_rep = working_subtype_abs_rep;
         working_subtype.abs_rep_theorem = Some(working_abs_rep_theorem);
         let (working_subtype_rep_abs, working_rep_abs_theorem) = compact_theorem(
-            init,
             kernel,
             subtype.rep_abs,
             subtype
@@ -396,7 +370,6 @@ impl InitSlice {
         working_subtype.rep_abs = working_subtype_rep_abs;
         working_subtype.rep_abs_theorem = Some(working_rep_abs_theorem);
         let (working_subtype_rep_guarded, working_rep_guarded_theorem) = compact_theorem(
-            init,
             kernel,
             subtype.rep_guarded,
             subtype
@@ -419,12 +392,11 @@ impl InitSlice {
             generated.symbols().zip(declaration.symbols())
         {
             debug_assert_eq!(name, exact_name);
-            retarget_exact_syntax(init, kernel, generated, exact)?;
+            retarget_exact_syntax(kernel, generated, exact)?;
         }
 
-        let mut retarget = |theorem, generated, exact| {
-            retarget_exact_theorem(init, kernel, theorem, generated, exact)
-        };
+        let mut retarget =
+            |theorem, generated, exact| retarget_exact_theorem(kernel, theorem, generated, exact);
         let proof = NaturalsProof {
             infinity: infinity.proof(),
             subtype: subtype.proof(),
@@ -481,15 +453,15 @@ impl InitSlice {
     /// supplied kernel is unchanged on failure.
     pub fn prove_arithmetic(
         &self,
-        init: &LogicalInit,
+
         kernel: &mut Kernel,
     ) -> Result<NaturalArithmetic, InitLibraryError> {
         let mut staged = kernel.fork();
-        let naturals = self.prove_naturals_inner(init, &mut staged)?;
-        let working_naturals = compact_natural_theorems(init, &mut staged, naturals)?;
+        let naturals = self.prove_naturals_inner(&mut staged)?;
+        let working_naturals = compact_natural_theorems(&mut staged, naturals)?;
         let schema_roots = self.recursion_schemas.references().collect::<Vec<_>>();
         let schema_aliases = staged
-            .compact_logical_trees(init, &schema_roots)
+            .compact_logical_trees(&schema_roots)
             .map_err(|source| InitLibraryError::Kernel { source })?;
         let [
             graph,
@@ -525,7 +497,7 @@ impl InitSlice {
             .map(|&(generated, _)| generated)
             .collect::<Vec<_>>();
         let lowered = staged
-            .lower_logical_trees(init, &generated_roots)
+            .lower_logical_trees(&generated_roots)
             .map_err(|source| InitLibraryError::Kernel { source })?;
         let alpha_pairs = lowered
             .iter()
@@ -535,7 +507,6 @@ impl InitSlice {
         join_alpha_equivalents(&mut staged, &alpha_pairs)
             .map_err(|source| InitLibraryError::Syntax { source })?;
         let proof = retarget_arithmetic_proof(
-            init,
             &mut staged,
             generated.declaration,
             generated.proof,
@@ -547,7 +518,6 @@ impl InitSlice {
 }
 
 fn retarget_exact_theorem(
-    init: &LogicalInit,
     kernel: &mut Kernel,
     theorem: ThmId,
     generated: Ref,
@@ -556,7 +526,7 @@ fn retarget_exact_theorem(
     if kernel.convert_theorem(theorem, generated, exact).is_ok() {
         return Ok(theorem);
     }
-    retarget_exact_syntax(init, kernel, generated, exact)?;
+    retarget_exact_syntax(kernel, generated, exact)?;
     kernel
         .convert_theorem(theorem, generated, exact)
         .map_err(|source| InitLibraryError::Kernel { source })?;
@@ -564,78 +534,57 @@ fn retarget_exact_theorem(
 }
 
 fn retarget_arithmetic_proof(
-    init: &LogicalInit,
     kernel: &mut Kernel,
     generated: NaturalArithmeticDecl,
     proof: NaturalArithmeticProof,
     exact: NaturalArithmeticDecl,
 ) -> Result<NaturalArithmeticProof, InitLibraryError> {
     Ok(NaturalArithmeticProof {
-        add_rec: retarget_recursor_proof(
-            init,
-            kernel,
-            generated.add_rec,
-            proof.add_rec,
-            exact.add_rec,
-        )?,
+        add_rec: retarget_recursor_proof(kernel, generated.add_rec, proof.add_rec, exact.add_rec)?,
         add_zero: retarget_exact_theorem(
-            init,
             kernel,
             proof.add_zero,
             generated.add_zero,
             exact.add_zero,
         )?,
         add_successor: retarget_exact_theorem(
-            init,
             kernel,
             proof.add_successor,
             generated.add_successor,
             exact.add_successor,
         )?,
         add_right_zero: retarget_exact_theorem(
-            init,
             kernel,
             proof.add_right_zero,
             generated.add_right_zero,
             exact.add_right_zero,
         )?,
         add_right_successor: retarget_exact_theorem(
-            init,
             kernel,
             proof.add_right_successor,
             generated.add_right_successor,
             exact.add_right_successor,
         )?,
         add_commutative: retarget_exact_theorem(
-            init,
             kernel,
             proof.add_commutative,
             generated.add_commutative,
             exact.add_commutative,
         )?,
-        mul_rec: retarget_recursor_proof(
-            init,
-            kernel,
-            generated.mul_rec,
-            proof.mul_rec,
-            exact.mul_rec,
-        )?,
+        mul_rec: retarget_recursor_proof(kernel, generated.mul_rec, proof.mul_rec, exact.mul_rec)?,
         mul_zero: retarget_exact_theorem(
-            init,
             kernel,
             proof.mul_zero,
             generated.mul_zero,
             exact.mul_zero,
         )?,
         mul_successor: retarget_exact_theorem(
-            init,
             kernel,
             proof.mul_successor,
             generated.mul_successor,
             exact.mul_successor,
         )?,
         one_plus_one: retarget_exact_theorem(
-            init,
             kernel,
             proof.one_plus_one,
             generated.one_plus_one,
@@ -645,27 +594,24 @@ fn retarget_arithmetic_proof(
 }
 
 fn retarget_recursor_proof(
-    init: &LogicalInit,
     kernel: &mut Kernel,
     generated: NaturalRecursorDecl,
     proof: NaturalRecursorProof,
     exact: NaturalRecursorDecl,
 ) -> Result<NaturalRecursorProof, InitLibraryError> {
     Ok(NaturalRecursorProof {
-        graph: retarget_graph_proof(init, kernel, generated.graph, proof.graph, exact.graph)?,
+        graph: retarget_graph_proof(kernel, generated.graph, proof.graph, exact.graph)?,
         specification: retarget_exact_theorem(
-            init,
             kernel,
             proof.specification,
             generated.specification,
             exact.specification,
         )?,
-        unique: retarget_exact_theorem(init, kernel, proof.unique, generated.unique, exact.unique)?,
+        unique: retarget_exact_theorem(kernel, proof.unique, generated.unique, exact.unique)?,
     })
 }
 
 fn retarget_graph_proof(
-    init: &LogicalInit,
     kernel: &mut Kernel,
     generated: NaturalRecGraphDecl,
     proof: NaturalRecGraphProof,
@@ -673,7 +619,7 @@ fn retarget_graph_proof(
 ) -> Result<NaturalRecGraphProof, InitLibraryError> {
     macro_rules! theorem {
         ($field:ident) => {
-            retarget_exact_theorem(init, kernel, proof.$field, generated.$field, exact.$field)?
+            retarget_exact_theorem(kernel, proof.$field, generated.$field, exact.$field)?
         };
     }
     Ok(NaturalRecGraphProof {
@@ -692,13 +638,12 @@ fn retarget_graph_proof(
 }
 
 fn compact_theorem(
-    init: &LogicalInit,
     kernel: &mut Kernel,
     proposition: Ref,
     theorem: ThmId,
 ) -> Result<(Ref, ThmId), InitLibraryError> {
     let alias = kernel
-        .compact_logical_tree(init, proposition)
+        .compact_logical_tree(proposition)
         .map_err(|source| InitLibraryError::Kernel { source })?;
     let theorem = kernel
         .copy_theorem(theorem)
@@ -710,14 +655,12 @@ fn compact_theorem(
 }
 
 fn compact_natural_theorems(
-    init: &LogicalInit,
     kernel: &mut Kernel,
     mut naturals: Naturals,
 ) -> Result<Naturals, InitLibraryError> {
     macro_rules! compact {
         ($statement:ident) => {{
             let (statement, theorem) = compact_theorem(
-                init,
                 kernel,
                 naturals.declaration.$statement,
                 naturals.proof.$statement,
@@ -737,13 +680,12 @@ fn compact_natural_theorems(
 }
 
 fn retarget_exact_syntax(
-    init: &LogicalInit,
     kernel: &mut Kernel,
     generated: Ref,
     exact: Ref,
 ) -> Result<(), InitLibraryError> {
     let raw = kernel
-        .lower_logical_tree(init, generated)
+        .lower_logical_tree(generated)
         .map_err(|source| InitLibraryError::Kernel { source })?;
     join_alpha_equivalent(kernel, raw.raw, exact)
         .map_err(|source| InitLibraryError::Syntax { source })?;
@@ -804,7 +746,10 @@ fn prove_infinity_laws(
     let property_theorem = kernel.copy_theorem(model_theorem)?;
     kernel.convert_theorem(property_theorem, specification, targets.property)?;
     kernel.convert_theorem(property_theorem, targets.property, targets.property_alias)?;
-    let conjunction = Lit::positive(targets.property_alias.get());
+    let conjunction = targets
+        .property_alias
+        .positive()
+        .expect("theorem atom is a local proposition");
     let reflects_equality_theorem =
         kernel.expand_conclusion(property_theorem, conjunction, Some(false))?;
     let avoids_missed_theorem =
@@ -889,10 +834,16 @@ fn prove_subtype_laws(
     let property_theorem = kernel.copy_theorem(model_theorem)?;
     kernel.convert_theorem(property_theorem, specification, targets.property)?;
     kernel.convert_theorem(property_theorem, targets.property, targets.property_alias)?;
-    let property = Lit::positive(targets.property_alias.get());
+    let property = targets
+        .property_alias
+        .positive()
+        .expect("theorem atom is a local proposition");
     let abs_rep_theorem = kernel.expand_conclusion(property_theorem, property, Some(false))?;
     let rep_property_theorem = kernel.expand_conclusion(property_theorem, property, Some(true))?;
-    let rep_property = Lit::positive(targets.rep_property_alias.get());
+    let rep_property = targets
+        .rep_property_alias
+        .positive()
+        .expect("theorem atom is a local proposition");
     let rep_abs_theorem =
         kernel.expand_conclusion(rep_property_theorem, rep_property, Some(false))?;
     let rep_guarded_theorem =
@@ -971,14 +922,14 @@ impl InitLibrary {
     /// Projects public syntax into a fresh opcode-free checked prefix.
     ///
     /// Proof rows, caches, and private construction intermediates are omitted.
-    /// Compact logical rows reachable beneath public roots are recursively
-    /// replaced with applications of the caller's authoritative raw logical
-    /// definitions. The external dictionary is remapped to the projected rows.
+    /// Boolean builtin applications reachable beneath public roots are
+    /// recursively expanded using their fixed checked definitions. The external
+    /// dictionary is remapped to the projected rows. The supplied library is
+    /// only the initial checked arena; its names do not determine builtin meaning.
     ///
     /// # Errors
     ///
-    /// Returns an error if `init` is not the construction kernel's exact
-    /// prefix, a public root cannot be copied and lowered, or a dictionary
+    /// Returns an error if a public root cannot be copied and lowered, or a dictionary
     /// reference is not in the resulting reachable closure.
     pub fn into_slice(self, init: &LogicalInit) -> Result<InitSlice, InitLibraryError> {
         let mut roots = self.symbols.values().copied().collect::<Vec<_>>();
@@ -992,7 +943,7 @@ impl InitLibrary {
             .add_axiom(AX_SUB)
             .map_err(|source| InitLibraryError::Kernel { source })?;
         let copied = projected
-            .copy_objects_lowered_from(init, &self.kernel, &roots)
+            .copy_objects_lowered_from(&self.kernel, &roots)
             .map_err(|source| InitLibraryError::Kernel { source })?;
         let naturals = self.naturals.declaration.try_map(|source| {
             copied
@@ -1133,7 +1084,7 @@ pub fn compile_init_library(init: &LogicalInit) -> Result<InitLibrary, InitLibra
     let compiled = compile_theory_with_init(
         INIT_SOURCE,
         TheoryOptions {
-            logic: LogicEncoding::Compact,
+            logic: LogicEncoding::Builtins,
         },
         init,
     )

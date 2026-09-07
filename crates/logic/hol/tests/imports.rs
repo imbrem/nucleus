@@ -33,11 +33,11 @@ fn a_literal_import_never_consults_the_resolver() {
         .import_literal(imported().into_arena())
         .expect("literal import");
     let proxy = fix
-        .tm_ref(&mut Never, source, row_id(3), bool_ty)
+        .tm_ref(&mut Never, source, row_id(-11), bool_ty)
         .expect("proxy");
 
     assert_eq!(fix.arena().tag(proxy), Some(Tag::Tm(TmTag::Ref)));
-    assert_eq!(fix.arena().foreign(proxy), Some((source, row_id(3))));
+    assert_eq!(fix.arena().foreign(proxy), Some((source, row_id(-11))));
 }
 
 #[test]
@@ -51,9 +51,9 @@ fn a_link_import_is_answered_once_per_call_and_address_checked() {
         calls: 0,
     };
 
-    fix.tm_ref(&mut resolver, source, row_id(3), bool_ty)
+    fix.tm_ref(&mut resolver, source, row_id(-11), bool_ty)
         .expect("proxy");
-    fix.tm_ref(&mut resolver, source, row_id(4), bool_ty)
+    fix.tm_ref(&mut resolver, source, row_id(1), bool_ty)
         .expect("proxy");
     assert_eq!(resolver.calls, 2, "the kernel caches nothing itself");
 }
@@ -68,7 +68,7 @@ fn a_resolver_answering_for_another_address_is_rejected() {
     let bool_ty = fix.bool_ty;
     let source = fix.import_link(link_to(&wanted)).expect("link import");
     let error = fix
-        .tm_ref(&mut Always(other.clone()), source, row_id(3), bool_ty)
+        .tm_ref(&mut Always(other.clone()), source, row_id(-11), bool_ty)
         .expect_err("wrong address");
 
     match error {
@@ -98,7 +98,7 @@ fn a_resolver_failure_reaches_the_caller_intact() {
     let source = fix.import_link(link_to(&table)).expect("link import");
 
     let error = fix
-        .tm_ref(&mut Offline, source, row_id(3), bool_ty)
+        .tm_ref(&mut Offline, source, row_id(-11), bool_ty)
         .expect_err("offline");
     assert!(matches!(
         error,
@@ -118,13 +118,13 @@ fn each_proxy_records_exactly_the_premise_it_relies_on() {
         .expect("literal import");
 
     let kind = fix
-        .kind_ref(&mut Never, source, row_id(1))
+        .kind_ref(&mut Never, source, row_id(-1))
         .expect("kind proxy");
     let ty = fix
-        .ty_ref(&mut Never, source, row_id(2), star)
+        .ty_ref(&mut Never, source, row_id(-2), star)
         .expect("type proxy");
     let term = fix
-        .tm_ref(&mut Never, source, row_id(3), bool_ty)
+        .tm_ref(&mut Never, source, row_id(-11), bool_ty)
         .expect("term proxy");
 
     assert_eq!(
@@ -133,12 +133,12 @@ fn each_proxy_records_exactly_the_premise_it_relies_on() {
             AmbPred::ArenaOk { src: source },
             AmbPred::HolSort {
                 src: source,
-                ix: row_id(2),
+                ix: row_id(-2),
                 sort: star,
             },
             AmbPred::HolSort {
                 src: source,
-                ix: row_id(3),
+                ix: row_id(-11),
                 sort: bool_ty,
             },
         ]
@@ -166,23 +166,23 @@ fn a_proxy_must_agree_with_the_category_of_its_target() {
         .import_literal(imported().into_arena())
         .expect("literal import");
 
-    // Row 3 is a term, row 2 a type, row 1 a kind.
+    // The global true, Bool, and star references retain their categories.
     assert!(matches!(
-        fix.kind_ref(&mut Never, source, row_id(3)),
+        fix.kind_ref(&mut Never, source, row_id(-11)),
         Err(KernelError::WrongCategory {
             expected: Sort::Kind,
             ..
         })
     ));
     assert!(matches!(
-        fix.ty_ref(&mut Never, source, row_id(3), star),
+        fix.ty_ref(&mut Never, source, row_id(-11), star),
         Err(KernelError::WrongCategory {
             expected: Sort::Ty,
             ..
         })
     ));
     assert!(matches!(
-        fix.tm_ref(&mut Never, source, row_id(1), bool_ty),
+        fix.tm_ref(&mut Never, source, row_id(-1), bool_ty),
         Err(KernelError::WrongCategory {
             expected: Sort::Tm,
             ..
@@ -211,7 +211,7 @@ fn a_proxy_into_a_row_that_does_not_exist_is_rejected() {
     let last = fix.import_literal(Arena::empty()).expect("literal import");
     let absent_source = ImportId::new(last.get() + 10).expect("nonzero");
     assert!(matches!(
-        fix.tm_ref(&mut Never, absent_source, row_id(1), bool_ty),
+        fix.tm_ref(&mut Never, absent_source, row_id(-1), bool_ty),
         Err(KernelError::Resolve {
             source: ResolveError::MissingImport { .. }
         })
@@ -227,7 +227,7 @@ fn a_null_import_is_a_hole_rather_than_an_empty_arena() {
         Err(ResolveError::NullImport { .. })
     ));
     assert!(matches!(
-        arena.resolve_foreign(&mut Never, source, row_id(1)),
+        arena.resolve_foreign(&mut Never, source, row_id(-1)),
         Err(ResolveError::NullImport { .. })
     ));
 }
@@ -256,15 +256,15 @@ fn proxy_navigation_reads_one_row_without_rebuilding_a_tree() {
     let source = owner
         .push_import(Import::Literal(Box::new(inner)))
         .expect("literal import");
-    let proxy = owner.push_tm_ref(source, row_id(3)).expect("proxy row");
-    let type_proxy = owner.push_ty_ref(source, row_id(2)).expect("proxy row");
+    let proxy = owner.push_tm_ref(source, row_id(-11)).expect("proxy row");
+    let type_proxy = owner.push_ty_ref(source, row_id(-2)).expect("proxy row");
 
     let target = owner
         .resolve_proxy(&mut Never, proxy)
         .expect("term proxy resolves");
     assert_eq!(target.tag(), Tag::Tm(TmTag::Bool));
     assert_eq!(target.bool_value(), Some(true));
-    assert_eq!(target.reference(), row_id(3));
+    assert_eq!(target.reference(), row_id(-11));
     assert_eq!(target.children().len(), 0);
 
     let target = owner
@@ -281,8 +281,8 @@ fn a_raw_proxy_whose_target_changed_category_is_rejected() {
     let source = owner
         .push_import(Import::Literal(Box::new(inner)))
         .expect("literal import");
-    // Row 3 is a term, but this raw row claims it is a type.
-    let lying = owner.push_ty_ref(source, row_id(3)).expect("proxy row");
+    // Global true is a term, but this raw row claims it is a type.
+    let lying = owner.push_ty_ref(source, row_id(-11)).expect("proxy row");
 
     assert!(matches!(
         owner.resolve_proxy(&mut Never, lying),

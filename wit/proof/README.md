@@ -50,9 +50,14 @@ authority.
   asynchronously returns an opaque checked whole-blob fact; its default path
   hashes the bytes, while a checked cache may avoid rehashing.
 
-An arena reference, import ID, CAS object ID, or syntactic-fact slot is only
-meaningful for the object that issued it. Arena references and syntactic-fact
-slots are one-based; CAS object IDs are zero-based. Removing, replacing, or
+Term references use signed 32-bit `term-ref` values: positive references are
+one-based local rows, negative references identify immutable global builtins,
+and zero is invalid. Negative references are not theorem literals; theorem
+negation has its own encoding over local proposition rows.
+
+An import ID, CAS object ID, syntactic-fact slot, or positive term reference is
+only meaningful for the object that issued it. Syntactic-fact slots are
+one-based; CAS object IDs are zero-based. Removing, replacing, or
 truncating a syntactic-fact slot invalidates any integer previously used to
 refer to that evidence. Components must not reuse such stale IDs.
 

@@ -4,7 +4,9 @@ use covalence_logic_hol_derived::{
 };
 
 fn positive(reference: covalence_logic_hol::Ref) -> Lit {
-    Lit::positive(reference.get())
+    reference
+        .positive()
+        .expect("theorem atom is a local proposition")
 }
 
 #[test]

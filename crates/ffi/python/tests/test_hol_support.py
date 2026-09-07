@@ -48,8 +48,9 @@ def test_views_compare_snapshots_that_have_no_equality_of_their_own() -> None:
 def test_congruence_unions_the_classifiers_it_needs_on_the_way_up() -> None:
     base = basis()
     kernel = base.kernel
-    left_domain = kernel.ty_arr(base.bool_ty, base.bool_ty)
-    right_domain = kernel.ty_arr(base.bool_ty, base.bool_ty)
+    parameter = kernel.ty_fv(99, base.star)
+    left_domain = kernel.ty_arr(parameter, base.bool_ty)
+    right_domain = kernel.ty_arr(parameter, base.bool_ty)
     left = kernel.tm_fv(1, left_domain)
     right = kernel.tm_fv(1, right_domain)
 
@@ -224,11 +225,12 @@ def test_the_row_cache_picks_up_rows_created_after_it() -> None:
     base = basis()
     kernel = base.kernel
     rows = Rows(kernel)
-    assert len(rows) == 2
+    assert len(rows) == 0
 
-    later = base.literal(True)
-    assert rows[later].tag == "tm.bool"
-    assert len(rows) == 3
+    later = base.var(42)
+    assert rows[later].tag == "tm.fv"
+    assert len(rows) == 1
+    assert rows[base.literal(True)].tag == "tm.bool"
 
 
 def test_the_row_cache_still_reports_a_reference_that_does_not_exist() -> None:

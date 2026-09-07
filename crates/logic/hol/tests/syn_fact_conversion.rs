@@ -248,15 +248,14 @@ fn alpha_renaming_refuses_to_capture_a_free_occurrence() {
 #[test]
 fn alpha_renaming_demands_alpha_equal_binder_classifiers() {
     let mut fix = Fix::new();
-    let star = fix.star;
-    let bool_ty = fix.bool_ty;
-    let other_bool = fix.bool_ty(star).expect("second bool type");
+    let bool_ty = fix.ty_var(0);
+    let other_bool = fix.ty_var(0);
     let left_var = fix.tm_fv(1, bool_ty).expect("variable");
     let right_var = fix.tm_fv(2, other_bool).expect("variable at the twin type");
     let left = fix.lam(left_var, left_var).expect("identity");
     let right = fix.lam(right_var, right_var).expect("identity");
 
-    // Nothing yet relates the two `ty.bool` rows.
+    // Nothing yet relates the duplicate type-variable rows.
     let unrelated = fix
         .syn_refl(None, SynRel::Syn, bool_ty)
         .expect("reflexivity");

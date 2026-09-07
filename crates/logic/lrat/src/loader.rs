@@ -8,8 +8,7 @@ use covalence_logic_classical::{
     RowId,
 };
 use covalence_logic_hol::{
-    Kernel, KernelError, Lit, LitVec, Matrix, Ref, ThmId, ThmRef,
-    builtin::{Op1, Op2},
+    Kernel, KernelError, Lit, LitVec, Matrix, Ref, ThmId, ThmRef, literals::BoolOp,
 };
 
 use crate::{Clause, ClauseId, Formula, Literal, Step};
@@ -336,7 +335,7 @@ impl CnfBuilder {
         for literals in &canonical_clauses {
             terms.push(build_clause(&mut self.kernel, literals, false_ref)?);
         }
-        let formula = build_binary(&mut self.kernel, Op2::And, &terms, true_ref)?;
+        let formula = build_binary(&mut self.kernel, BoolOp::And, &terms, true_ref)?;
         let canonical: BTreeMap<_, _> = canonical_clauses
             .iter()
             .cloned()
@@ -676,7 +675,9 @@ pub fn reconstruct(kernel: &Kernel, formula: Ref) -> Result<Vec<Vec<Lit>>, Error
 }
 
 fn positive(reference: Ref) -> Lit {
-    Lit::positive(reference.get())
+    reference
+        .positive()
+        .expect("theorem atom is a local proposition")
 }
 
 fn reference(proposition: Lit) -> Ref {
@@ -714,9 +715,10 @@ fn map_dimacs(
 
 fn validate_atom(kernel: &Kernel, proposition: Lit) -> Result<(), Error> {
     let reference = reference(proposition);
-    if kernel.arena().op1(reference).is_some()
-        || kernel.arena().op2(reference).is_some()
-        || kernel.arena().bool_value(reference).is_some()
+    if matches!(
+        kernel.arena().builtin_application(reference),
+        Some((covalence_logic_hol::literals::Builtin::Bool(_), _))
+    ) || kernel.arena().bool_value(reference).is_some()
     {
         return Err(Error::NonAtomicLiteral { reference });
     }
@@ -727,7 +729,7 @@ fn literal_term(kernel: &mut Kernel, literal: Lit) -> Result<Ref, Error> {
     if literal.is_positive() {
         Ok(reference(literal))
     } else {
-        Ok(kernel.op1(Op1::Not, reference(literal))?)
+        Ok(kernel.not(reference(literal))?)
     }
 }
 
@@ -737,12 +739,22 @@ fn build_clause(kernel: &mut Kernel, literals: &[Lit], false_ref: Ref) -> Result
         .copied()
         .map(|literal| literal_term(kernel, literal))
         .collect::<Result<Vec<_>, _>>()?;
-    build_binary(kernel, Op2::Or, &terms, false_ref)
+    build_binary(kernel, BoolOp::Or, &terms, false_ref)
 }
 
-fn build_binary(kernel: &mut Kernel, op: Op2, terms: &[Ref], identity: Ref) -> Result<Ref, Error> {
+fn build_binary(
+    kernel: &mut Kernel,
+    op: BoolOp,
+    terms: &[Ref],
+    identity: Ref,
+) -> Result<Ref, Error> {
     terms.iter().rev().try_fold(identity, |right, left| {
-        kernel.op2(op, *left, right).map_err(Error::from)
+        kernel
+            .builtin(
+                covalence_logic_hol::literals::Builtin::Bool(op),
+                &[*left, right],
+            )
+            .map_err(Error::from)
     })
 }
 
@@ -750,15 +762,16 @@ fn flatten_formula(kernel: &Kernel, formula: Ref, output: &mut Vec<Ref>) -> Resu
     if kernel.arena().bool_value(formula) == Some(true) {
         return Ok(());
     }
-    if kernel.arena().op2(formula) == Some(Op2::And) {
-        let children: Vec<_> = kernel
-            .children(formula)
-            .ok_or(Error::NonCanonicalFormula { formula })?
-            .collect();
+    if let Some((covalence_logic_hol::literals::Builtin::Bool(BoolOp::And), children)) =
+        kernel.arena().builtin_application(formula)
+    {
+        let [left, right] = children.as_slice() else {
+            return Err(Error::NonCanonicalFormula { formula });
+        };
         let mut clause = Vec::new();
-        flatten_clause(kernel, children[0], &mut clause)?;
-        output.push(children[0]);
-        return flatten_formula(kernel, children[1], output);
+        flatten_clause(kernel, *left, &mut clause)?;
+        output.push(*left);
+        return flatten_formula(kernel, *right, output);
     }
     Err(Error::NonCanonicalFormula { formula })
 }
@@ -767,28 +780,31 @@ fn flatten_clause(kernel: &Kernel, term: Ref, output: &mut Vec<Lit>) -> Result<(
     if kernel.arena().bool_value(term) == Some(false) {
         return Ok(());
     }
-    if kernel.arena().op2(term) == Some(Op2::Or) {
-        let children: Vec<_> = kernel
-            .children(term)
-            .ok_or(Error::NonCanonicalFormula { formula: term })?
-            .collect();
-        decode_literal(kernel, children[0], output)?;
-        return flatten_clause(kernel, children[1], output);
+    if let Some((covalence_logic_hol::literals::Builtin::Bool(BoolOp::Or), children)) =
+        kernel.arena().builtin_application(term)
+    {
+        let [left, right] = children.as_slice() else {
+            return Err(Error::NonCanonicalFormula { formula: term });
+        };
+        decode_literal(kernel, *left, output)?;
+        return flatten_clause(kernel, *right, output);
     }
     Err(Error::NonCanonicalFormula { formula: term })
 }
 
 fn decode_literal(kernel: &Kernel, term: Ref, output: &mut Vec<Lit>) -> Result<(), Error> {
-    if kernel.arena().op1(term) == Some(Op1::Not) {
-        let child = kernel
-            .children(term)
-            .and_then(|mut children| children.next())
-            .ok_or(Error::NonCanonicalFormula { formula: term })?;
-        validate_atom(kernel, positive(child))?;
-        output.push(positive(child).negated());
+    if let Some((covalence_logic_hol::literals::Builtin::Bool(BoolOp::Not), children)) =
+        kernel.arena().builtin_application(term)
+    {
+        let [child] = children.as_slice() else {
+            return Err(Error::NonCanonicalFormula { formula: term });
+        };
+        let literal = kernel.lit(*child)?;
+        validate_atom(kernel, literal)?;
+        output.push(literal.negated());
         return Ok(());
     }
-    let atom = positive(term);
+    let atom = kernel.lit(term)?;
     validate_atom(kernel, atom)?;
     output.push(atom);
     Ok(())
@@ -882,16 +898,16 @@ mod tests {
         let (mut kernel, bool_ty, p, _) = fixture();
         let truth = kernel.bool(bool_ty, true).unwrap();
         let falsehood = kernel.bool(bool_ty, false).unwrap();
-        let clause = kernel.op2(Op2::Or, reference(p), falsehood).unwrap();
-        let repeated = kernel.op2(Op2::And, clause, truth).unwrap();
-        let formula = kernel.op2(Op2::And, clause, repeated).unwrap();
+        let clause = kernel.or(reference(p), falsehood).unwrap();
+        let repeated = kernel.and(clause, truth).unwrap();
+        let formula = kernel.and(clause, repeated).unwrap();
         assert!(matches!(
             reconstruct(&kernel, formula),
             Err(Error::NonCanonicalFormula { .. })
         ));
 
-        let repeated_literal = kernel.op2(Op2::Or, reference(p), clause).unwrap();
-        let formula = kernel.op2(Op2::And, repeated_literal, truth).unwrap();
+        let repeated_literal = kernel.or(reference(p), clause).unwrap();
+        let formula = kernel.and(repeated_literal, truth).unwrap();
         assert!(matches!(
             reconstruct(&kernel, formula),
             Err(Error::NonCanonicalFormula { .. })

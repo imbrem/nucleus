@@ -3,7 +3,7 @@
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_logic_hol::{
     ChoiceThm, Kernel, KernelError, Lit, Ref, Sort, SynFactId, SynRel, Tag, ThmId, TmTag,
-    TyForallThm, TyTag, builtin::Op2,
+    TyForallThm, TyTag, literals::BoolOp,
 };
 
 use crate::{
@@ -742,9 +742,7 @@ fn build_coproduct(
     let right_exists = kernel
         .exists_tm(right_witness, right_equality)
         .context(KernelSnafu)?;
-    let image = kernel
-        .op2(Op2::Or, left_exists, right_exists)
-        .context(KernelSnafu)?;
+    let image = kernel.or(left_exists, right_exists).context(KernelSnafu)?;
     let predicate_ty = kernel.ty_arr(carrier, bool_ty).context(KernelSnafu)?;
     let predicate = kernel
         .lam_at(predicate_ty, candidate, image)
@@ -902,7 +900,8 @@ fn prove_exhaustiveness_inner(
     let base = kernel.fresh_name(&references).context(KernelSnafu)?;
     let value = kernel.tm_fv(base, coproduct.ty).context(KernelSnafu)?;
     let guarded = forall_elim(kernel, rep_guarded_theorem, value).context(ForallSnafu)?;
-    let [holds_representation, empty_fallback] = exact_op2(kernel, guarded.proposition, Op2::Or)?;
+    let [holds_representation, empty_fallback] =
+        exact_op2(kernel, guarded.proposition, BoolOp::Or)?;
 
     let image_branch = kernel
         .identity(positive(holds_representation))
@@ -913,7 +912,11 @@ fn prove_exhaustiveness_inner(
     kernel
         .not_left(empty_branch, positive(inhabited.proposition))
         .context(KernelSnafu)?;
-    let [fallback_inhabited] = exact_children(kernel, empty_fallback, Tag::Tm(TmTag::Op1))?;
+    let [fallback_inhabited] = crate::boolean_args(kernel, empty_fallback, BoolOp::Not).ok_or(
+        CoproductError::WrongForm {
+            expected: "a Boolean negation application",
+        },
+    )?;
     let inhabited_same = join_alpha_equivalent(kernel, inhabited.proposition, fallback_inhabited)
         .context(SyntaxSnafu)?;
     let inhabited_same = kernel
@@ -1048,7 +1051,7 @@ fn specialize_exhaustiveness(
     kernel
         .convert_conclusions(specialized.theorem, specialized.proposition, disjunction)
         .context(KernelSnafu)?;
-    let [left, right] = exact_op2(kernel, disjunction, Op2::Or)?;
+    let [left, right] = exact_op2(kernel, disjunction, BoolOp::Or)?;
     Ok(CoproductCases {
         value,
         left,
@@ -1354,13 +1357,13 @@ fn prove_universal_mediator_inner(
         .contract_theorem(uniqueness.theorem)
         .context(KernelSnafu)?;
     let laws = kernel
-        .op2(Op2::And, candidate.left, candidate.right)
+        .and(candidate.left, candidate.right)
         .context(KernelSnafu)?;
     let under_laws = kernel
         .and_left(uniqueness.theorem, positive(laws))
         .context(KernelSnafu)?;
     let implication = kernel
-        .op2(Op2::Imp, laws, uniqueness.equality)
+        .implies(laws, uniqueness.equality)
         .context(KernelSnafu)?;
     let implication_theorem = kernel
         .imp_right(under_laws, positive(implication))
@@ -1388,23 +1391,23 @@ fn introduce_mediator_exists(
     uniqueness: CoproductUniversal,
 ) -> Result<ChoiceThm, CoproductError> {
     let mediator_laws = kernel
-        .op2(Op2::And, mediator_candidate.left, mediator_candidate.right)
+        .and(mediator_candidate.left, mediator_candidate.right)
         .context(KernelSnafu)?;
     let comparison_equality = kernel
         .eq(coproduct.bool_ty, comparison, mediator)
         .context(KernelSnafu)?;
     let comparison_implication = kernel
-        .op2(Op2::Imp, uniqueness.laws, comparison_equality)
+        .implies(uniqueness.laws, comparison_equality)
         .context(KernelSnafu)?;
     let comparison_universal = kernel
         .forall_tm(coproduct.bool_ty, comparison, comparison_implication)
         .context(KernelSnafu)?;
     let mediator_property = kernel
-        .op2(Op2::And, mediator_laws, comparison_universal)
+        .and(mediator_laws, comparison_universal)
         .context(KernelSnafu)?;
     let canonical = uniqueness.uniqueness.canonical;
     let canonical_property = kernel
-        .op2(Op2::And, laws.conjunction, uniqueness.universal)
+        .and(laws.conjunction, uniqueness.universal)
         .context(KernelSnafu)?;
     let property_theorem = kernel
         .and_right(
@@ -1553,7 +1556,7 @@ fn prove_case_laws_inner(
         .forall_intro(right_instance.theorem, right_value)
         .context(KernelSnafu)?;
     let conjunction = kernel
-        .op2(Op2::And, left.universal, right.universal)
+        .and(left.universal, right.universal)
         .context(KernelSnafu)?;
     let theorem = kernel
         .and_right(left.theorem, right.theorem, positive(conjunction))
@@ -1631,7 +1634,8 @@ fn prove_case_inner(
             expected: "a proved guarded-subtype representation law",
         })?;
     let rep_abs = forall_elim(kernel, rep_abs_theorem, branch_church_value).context(ForallSnafu)?;
-    let [guard_antecedent, _rep_abs_equality] = exact_op2(kernel, rep_abs.proposition, Op2::Imp)?;
+    let [guard_antecedent, _rep_abs_equality] =
+        exact_op2(kernel, rep_abs.proposition, BoolOp::Imp)?;
     let guard = prove_injection_guard(kernel, coproduct, guard_antecedent, value, is_left)?;
     let rep_abs_equality =
         modus_ponens(kernel, rep_abs.theorem, guard.theorem, rep_abs.proposition)?;
@@ -2055,7 +2059,7 @@ fn prove_injection_guard(
     value: Ref,
     is_left: bool,
 ) -> Result<CoproductComputation, CoproductError> {
-    let [holds_value, empty_fallback] = exact_op2(kernel, expanded, Op2::Or)?;
+    let [holds_value, empty_fallback] = exact_op2(kernel, expanded, BoolOp::Or)?;
     let [predicate, church_value] = exact_children(kernel, holds_value, Tag::Tm(TmTag::App))?;
     let (predicate_application, image, predicate_beta) =
         beta_apply(kernel, predicate, church_value)?;
@@ -2092,7 +2096,7 @@ fn prove_injection_image(
     value: Ref,
     is_left: bool,
 ) -> Result<CoproductComputation, CoproductError> {
-    let [left_exists, right_exists] = exact_op2(kernel, image, Op2::Or)?;
+    let [left_exists, right_exists] = exact_op2(kernel, image, BoolOp::Or)?;
     let selected_exists = if is_left { left_exists } else { right_exists };
     let other_exists = if is_left { right_exists } else { left_exists };
     let [selected_predicate, _choice] =
@@ -2194,7 +2198,7 @@ fn modus_ponens(
     antecedent_theorem: ThmId,
     implication: Ref,
 ) -> Result<ThmId, CoproductError> {
-    let [_antecedent, consequent] = exact_op2(kernel, implication, Op2::Imp)?;
+    let [_antecedent, consequent] = exact_op2(kernel, implication, BoolOp::Imp)?;
     let consequence = kernel.identity(positive(consequent)).context(KernelSnafu)?;
     let use_implication = kernel
         .imp_left(antecedent_theorem, consequence, positive(implication))
@@ -2225,13 +2229,10 @@ fn sole_conclusion(kernel: &Kernel, theorem: ThmId) -> Result<Ref, CoproductErro
     })
 }
 
-fn exact_op2(kernel: &Kernel, reference: Ref, op: Op2) -> Result<[Ref; 2], CoproductError> {
-    if kernel.arena().op2(reference) != Some(op) {
-        return Err(CoproductError::WrongForm {
-            expected: "a compact logical binary opcode",
-        });
-    }
-    exact_children(kernel, reference, Tag::Tm(TmTag::Op2))
+fn exact_op2(kernel: &Kernel, reference: Ref, op: BoolOp) -> Result<[Ref; 2], CoproductError> {
+    crate::boolean_args(kernel, reference, op).ok_or(CoproductError::WrongForm {
+        expected: "a binary Boolean builtin application",
+    })
 }
 
 fn exact_children<const N: usize>(
@@ -2258,7 +2259,9 @@ fn exact_children<const N: usize>(
 }
 
 fn positive(reference: Ref) -> Lit {
-    Lit::positive(reference.get())
+    reference
+        .positive()
+        .expect("theorem atom is a local proposition")
 }
 
 fn coproduct_references(coproduct: &Coproduct, codomain: Ref) -> Vec<Ref> {

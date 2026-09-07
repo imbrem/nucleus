@@ -2,6 +2,9 @@ package nucleus:proof@0.1.0;
 
 /// Low-level host objects and checked Ethane operations available to proofs.
 interface host {
+    /// Positive local row or negative immutable builtin; zero is invalid.
+    type term-ref = s32;
+
     /// A syntactic relation in the Ethane conversion hierarchy.
     enum syn-rel {
         syn,
@@ -20,10 +23,10 @@ interface host {
     /// that misses a point.
     record infinity-axiom {
         /// The sentence the theorem concludes.
-        exists-type: u64,
+        exists-type: term-ref,
         /// The body `exists-type` quantifies, with the carrier type variable
         /// free.
-        body: u64,
+        body: term-ref,
         /// The name of the carrier type variable bound in `body`.
         carrier-name: u64,
         /// The first name reserved for the sentence's own binders.
@@ -36,15 +39,15 @@ interface host {
     /// in order to build terms about the same subtype.
     record subtype-axiom {
         /// The carrier type the subtype was carved out of.
-        carrier: u64,
+        carrier: term-ref,
         /// The defining predicate, of type `carrier -> bool`.
-        predicate: u64,
+        predicate: term-ref,
         /// The sentence the theorem concludes. The only field carrying
         /// authority.
-        exists-type: u64,
+        exists-type: term-ref,
         /// The body `exists-type` quantifies, with the model type variable
         /// free. The subtype itself is `model(model-name, package-body)`.
-        package-body: u64,
+        package-body: term-ref,
         /// The name of the model type variable bound in `package`.
         model-name: u64,
         /// The first name reserved for the package's own binders; the caller's
@@ -60,28 +63,28 @@ interface host {
 
     /// Result of HOL's standard `AP_THM` rule.
     record ap-thm {
-        left: u64,
-        right: u64,
-        equality: u64,
+        left: term-ref,
+        right: term-ref,
+        equality: term-ref,
         theorem: u64,
     }
 
     /// Result of HOL equality reflexivity.
     record refl-thm {
-        equality: u64,
+        equality: term-ref,
         theorem: u64,
     }
 
     /// Result of universal introduction.
     record forall-thm {
-        universal: u64,
+        universal: term-ref,
         theorem: u64,
     }
 
     /// Result of Hilbert-choice introduction.
     record choice-thm {
-        witness: u64,
-        proposition: u64,
+        witness: term-ref,
+        proposition: term-ref,
         theorem: u64,
     }
 
@@ -182,32 +185,33 @@ interface host {
         /// Number of local definition rows.
         len: func() -> u64;
 
-        /// Appends raw syntax rows. References are one-based integers.
-        kind-star: func() -> result<u64, string>;
-        kind-arr: func(domain: u64, codomain: u64) -> result<u64, string>;
-        bool-type: func() -> result<u64, string>;
-        ty-arr: func(domain: u64, codomain: u64) -> result<u64, string>;
-        ty-app: func(function: u64, argument: u64) -> result<u64, string>;
-        ty-lam: func(binder: u64, body: u64) -> result<u64, string>;
-        ty-fv: func(name: u64, kind: u64) -> result<u64, string>;
-        ty-exists: func(name: u64, predicate: u64) -> result<u64, string>;
-        ty-forall: func(name: u64, predicate: u64) -> result<u64, string>;
-        model: func(name: u64, predicate: u64) -> result<u64, string>;
-        tm-fv: func(name: u64, ty: u64) -> result<u64, string>;
-        app: func(function: u64, argument: u64) -> result<u64, string>;
-        lam: func(binder: u64, body: u64) -> result<u64, string>;
-        bool-lit: func(value: bool) -> result<u64, string>;
-        tm-eq: func(left: u64, right: u64) -> result<u64, string>;
-        eps: func(ty: u64, predicate: u64) -> result<u64, string>;
-        kind-ref: func(source: u64, foreign: u64) -> result<u64, string>;
-        ty-ref: func(source: u64, foreign: u64) -> result<u64, string>;
-        tm-ref: func(source: u64, foreign: u64) -> result<u64, string>;
+        /// Constructs raw syntax. Positive references address local rows;
+        /// negative references identify immutable builtins.
+        kind-star: func() -> result<term-ref, string>;
+        kind-arr: func(domain: term-ref, codomain: term-ref) -> result<term-ref, string>;
+        bool-type: func() -> result<term-ref, string>;
+        ty-arr: func(domain: term-ref, codomain: term-ref) -> result<term-ref, string>;
+        ty-app: func(function: term-ref, argument: term-ref) -> result<term-ref, string>;
+        ty-lam: func(binder: term-ref, body: term-ref) -> result<term-ref, string>;
+        ty-fv: func(name: u64, kind: term-ref) -> result<term-ref, string>;
+        ty-exists: func(name: u64, predicate: term-ref) -> result<term-ref, string>;
+        ty-forall: func(name: u64, predicate: term-ref) -> result<term-ref, string>;
+        model: func(name: u64, predicate: term-ref) -> result<term-ref, string>;
+        tm-fv: func(name: u64, ty: term-ref) -> result<term-ref, string>;
+        app: func(function: term-ref, argument: term-ref) -> result<term-ref, string>;
+        lam: func(binder: term-ref, body: term-ref) -> result<term-ref, string>;
+        bool-lit: func(value: bool) -> result<term-ref, string>;
+        tm-eq: func(left: term-ref, right: term-ref) -> result<term-ref, string>;
+        eps: func(ty: term-ref, predicate: term-ref) -> result<term-ref, string>;
+        kind-ref: func(source: u64, foreign: term-ref) -> result<term-ref, string>;
+        ty-ref: func(source: u64, foreign: term-ref) -> result<term-ref, string>;
+        tm-ref: func(source: u64, foreign: term-ref) -> result<term-ref, string>;
 
         /// Appends raw arena metadata and imports.
         import-null: func() -> result<u64, string>;
         import-arena: func(value: borrow<arena>) -> result<u64, string>;
         import-link: func(address: list<u8>) -> result<u64, string>;
-        add-context: func(proposition: u64) -> result<_, string>;
+        add-context: func(proposition: term-ref) -> result<_, string>;
         add-axiom: func(name: string);
     }
 
@@ -240,30 +244,30 @@ interface host {
         len: func() -> u64;
 
         /// Checked row inspection.
-        category: func(reference: u64) -> result<sort, string>;
-        classifier: func(reference: u64) -> result<u64, string>;
-        find: func(reference: u64) -> result<u64, string>;
-        find-mut: func(reference: u64) -> result<u64, string>;
-        equivalent: func(left: u64, right: u64) -> result<bool, string>;
-        equivalent-mut: func(left: u64, right: u64) -> result<bool, string>;
+        category: func(reference: term-ref) -> result<sort, string>;
+        classifier: func(reference: term-ref) -> result<term-ref, string>;
+        find: func(reference: term-ref) -> result<term-ref, string>;
+        find-mut: func(reference: term-ref) -> result<term-ref, string>;
+        equivalent: func(left: term-ref, right: term-ref) -> result<bool, string>;
+        equivalent-mut: func(left: term-ref, right: term-ref) -> result<bool, string>;
 
         /// Checked syntax constructors.
-        kind-star: func() -> result<u64, string>;
-        kind-arr: func(domain: u64, codomain: u64) -> result<u64, string>;
-        bool-type: func(star: u64) -> result<u64, string>;
-        ty-arr: func(domain: u64, codomain: u64) -> result<u64, string>;
-        ty-app: func(function: u64, argument: u64) -> result<u64, string>;
-        ty-lam: func(binder: u64, body: u64) -> result<u64, string>;
-        ty-fv: func(name: u64, kind: u64) -> result<u64, string>;
-        ty-exists: func(name: u64, predicate: u64) -> result<u64, string>;
-        ty-forall: func(name: u64, predicate: u64) -> result<u64, string>;
-        model: func(name: u64, predicate: u64) -> result<u64, string>;
-        tm-fv: func(name: u64, ty: u64) -> result<u64, string>;
-        app: func(function: u64, argument: u64) -> result<u64, string>;
-        lam: func(binder: u64, body: u64) -> result<u64, string>;
-        bool-lit: func(bool-type: u64, value: bool) -> result<u64, string>;
-        tm-eq: func(bool-type: u64, left: u64, right: u64) -> result<u64, string>;
-        eps: func(ty: u64, predicate: u64) -> result<u64, string>;
+        kind-star: func() -> result<term-ref, string>;
+        kind-arr: func(domain: term-ref, codomain: term-ref) -> result<term-ref, string>;
+        bool-type: func(star: term-ref) -> result<term-ref, string>;
+        ty-arr: func(domain: term-ref, codomain: term-ref) -> result<term-ref, string>;
+        ty-app: func(function: term-ref, argument: term-ref) -> result<term-ref, string>;
+        ty-lam: func(binder: term-ref, body: term-ref) -> result<term-ref, string>;
+        ty-fv: func(name: u64, kind: term-ref) -> result<term-ref, string>;
+        ty-exists: func(name: u64, predicate: term-ref) -> result<term-ref, string>;
+        ty-forall: func(name: u64, predicate: term-ref) -> result<term-ref, string>;
+        model: func(name: u64, predicate: term-ref) -> result<term-ref, string>;
+        tm-fv: func(name: u64, ty: term-ref) -> result<term-ref, string>;
+        app: func(function: term-ref, argument: term-ref) -> result<term-ref, string>;
+        lam: func(binder: term-ref, body: term-ref) -> result<term-ref, string>;
+        bool-lit: func(bool-type: term-ref, value: bool) -> result<term-ref, string>;
+        tm-eq: func(bool-type: term-ref, left: term-ref, right: term-ref) -> result<term-ref, string>;
+        eps: func(ty: term-ref, predicate: term-ref) -> result<term-ref, string>;
 
         /// Derived logical constructions.
         ///
@@ -275,15 +279,14 @@ interface host {
         /// `tm-fv` row of type `bool -> bool -> bool`, and the caller owns the
         /// choice of a name that does not capture.
         ///
-        /// Deliberately not the compact Boolean builtins, whose meaning comes
-        /// from the init manifest's definitions rather than the primitive
-        /// literals; no lemma relates the two encodings.
-        not-tm: func(bool-type: u64, proposition: u64) -> result<u64, string>;
-        forall-tm: func(bool-type: u64, binder: u64, body: u64) -> result<u64, string>;
-        exists-tm: func(binder: u64, body: u64) -> result<u64, string>;
-        and-tm: func(bool-type: u64, binder: u64, left: u64, right: u64) -> result<u64, string>;
-        or-tm: func(bool-type: u64, binder: u64, left: u64, right: u64) -> result<u64, string>;
-        imp-tm: func(bool-type: u64, binder: u64, left: u64, right: u64) -> result<u64, string>;
+        /// These explicit HOL definitions also determine the fixed Boolean
+        /// builtin unfolding rule. Userspace init names do not select meanings.
+        not-tm: func(bool-type: term-ref, proposition: term-ref) -> result<term-ref, string>;
+        forall-tm: func(bool-type: term-ref, binder: term-ref, body: term-ref) -> result<term-ref, string>;
+        exists-tm: func(binder: term-ref, body: term-ref) -> result<term-ref, string>;
+        and-tm: func(bool-type: term-ref, binder: term-ref, left: term-ref, right: term-ref) -> result<term-ref, string>;
+        or-tm: func(bool-type: term-ref, binder: term-ref, left: term-ref, right: term-ref) -> result<term-ref, string>;
+        imp-tm: func(bool-type: term-ref, binder: term-ref, left: term-ref, right: term-ref) -> result<term-ref, string>;
 
         /// One past the largest name reachable from `roots`, counting "no
         /// names at all" as zero.
@@ -291,7 +294,7 @@ interface host {
         /// A binder allocated here cannot capture anything in `roots`. Exposed
         /// because a component building terms about a subtype has to pick the
         /// same names the axiom did.
-        fresh-name: func(roots: list<u64>) -> result<u64, string>;
+        fresh-name: func(roots: list<term-ref>) -> result<u64, string>;
 
         /// Concludes that a chosen model satisfies the predicate that chose it:
         /// from a theorem concluding `exists-type a. P`, derives `P` with `a`
@@ -309,33 +312,33 @@ interface host {
 
         /// From `G |- f = g`, derive `G |- f argument = g argument`.
         /// Introduces the exact theorem `|- term = term`.
-        refl: func(bool-ty: u64, term: u64) -> result<refl-thm, string>;
+        refl: func(bool-ty: term-ref, term: term-ref) -> result<refl-thm, string>;
 
-        ap-thm: func(theorem: u64, argument: u64) -> result<ap-thm, string>;
+        ap-thm: func(theorem: u64, argument: term-ref) -> result<ap-thm, string>;
 
         /// From `G |- x = y`, derive `G |- function x = function y`.
-        ap-term: func(theorem: u64, function: u64) -> result<ap-thm, string>;
+        ap-term: func(theorem: u64, function: term-ref) -> result<ap-thm, string>;
 
         /// From `G |- p = q` and `D |- p`, derive `G, D |- q`.
         eq-mp: func(equality: u64, premise: u64) -> result<u64, string>;
 
         /// Generalize a theorem over a variable absent from its premises.
-        forall-intro: func(theorem: u64, binder: u64) -> result<forall-thm, string>;
+        forall-intro: func(theorem: u64, binder: term-ref) -> result<forall-thm, string>;
 
         /// Generalize into an existing equality-encoded universal.
-        forall-intro-at: func(theorem: u64, binder: u64, universal: u64) -> result<u64, string>;
+        forall-intro-at: func(theorem: u64, binder: term-ref, universal: term-ref) -> result<u64, string>;
 
         /// Replace a proved witness by the Hilbert-selected witness.
         choice-intro: func(theorem: u64) -> result<choice-thm, string>;
 
         /// Introduce choice into an existing matching target.
-        choice-intro-at: func(theorem: u64, target: u64) -> result<u64, string>;
+        choice-intro-at: func(theorem: u64, target: term-ref) -> result<u64, string>;
 
         /// Rewrite every occurrence of one semantically equal theorem atom.
-        convert-theorem: func(theorem: u64, source: u64, target: u64) -> result<_, string>;
+        convert-theorem: func(theorem: u64, source: term-ref, target: term-ref) -> result<_, string>;
 
         /// Rewrite one semantically equal atom only in conclusions.
-        convert-conclusions: func(theorem: u64, source: u64, target: u64) -> result<_, string>;
+        convert-conclusions: func(theorem: u64, source: term-ref, target: term-ref) -> result<_, string>;
 
         /// Contract duplicate rows and literals in a theorem.
         contract-theorem: func(theorem: u64) -> result<_, string>;
@@ -348,7 +351,7 @@ interface host {
         /// The sentence is closed, so it takes only the Boolean type to build
         /// it at. `model-spec` can then name and specify the carrier selected
         /// by this existential.
-        inf-exists: func(bool-type: u64) -> result<infinity-axiom, string>;
+        inf-exists: func(bool-type: term-ref) -> result<infinity-axiom, string>;
 
         /// Concludes the guarded subtype-package sentence for `carrier` and
         /// `predicate`, consuming the `ax.sub` capability.
@@ -366,86 +369,86 @@ interface host {
         /// from the result — the subtype itself, `rep`, `abs`, the laws — is
         /// ordinary construction over the constructors above and carries no
         /// authority.
-        sub-exists: func(bool-type: u64, carrier: u64, predicate: u64)
+        sub-exists: func(bool-type: term-ref, carrier: term-ref, predicate: term-ref)
             -> result<subtype-axiom, string>;
 
         /// Checked imports, contexts, and axiom capabilities.
         import-arena: func(value: borrow<arena>) -> result<u64, string>;
         import-table: func(value: borrow<table>) -> result<u64, string>;
         import-link: func(address: list<u8>) -> result<u64, string>;
-        kind-ref: func(source: u64, foreign: u64) -> result<u64, string>;
-        ty-ref: func(source: u64, foreign: u64, kind: u64) -> result<u64, string>;
-        tm-ref: func(source: u64, foreign: u64, ty: u64) -> result<u64, string>;
-        add-context: func(proposition: u64) -> result<_, string>;
+        kind-ref: func(source: u64, foreign: term-ref) -> result<term-ref, string>;
+        ty-ref: func(source: u64, foreign: term-ref, kind: term-ref) -> result<term-ref, string>;
+        tm-ref: func(source: u64, foreign: term-ref, ty: term-ref) -> result<term-ref, string>;
+        add-context: func(proposition: term-ref) -> result<_, string>;
         add-axiom: func(name: string) -> result<_, string>;
 
         /// Syntactic-fact cache operations. Slots are one-based integers.
         syn-fact-count: func() -> u64;
         remove-syn-fact: func(fact: u64) -> bool;
         truncate-syn-facts: func(len: u64) -> result<_, string>;
-        syn-refl: func(relation: syn-rel, input: u64, target: option<u64>) -> result<u64, string>;
+        syn-refl: func(relation: syn-rel, input: term-ref, target: option<u64>) -> result<u64, string>;
         syn-refine: func(fact: u64, relation: syn-rel, target: option<u64>) -> result<u64, string>;
         syn-symm: func(fact: u64, target: option<u64>) -> result<u64, string>;
         syn-trans: func(left: u64, right: u64, target: option<u64>) -> result<u64, string>;
-        syn-sub-var: func(var: u64, val: u64, target: option<u64>) -> result<u64, string>;
-        syn-sub-leaf: func(var: u64, val: u64, input: u64, target: option<u64>) -> result<u64, string>;
-        syn-sub-leaf-forall: func(var: u64, input: u64, target: option<u64>) -> result<u64, string>;
+        syn-sub-var: func(var: term-ref, val: term-ref, target: option<u64>) -> result<u64, string>;
+        syn-sub-leaf: func(var: term-ref, val: term-ref, input: term-ref, target: option<u64>) -> result<u64, string>;
+        syn-sub-leaf-forall: func(var: term-ref, input: term-ref, target: option<u64>) -> result<u64, string>;
         syn-sub-identity: func(
-            var: u64,
-            val: u64,
-            input: u64,
-            output: u64,
+            var: term-ref,
+            val: term-ref,
+            input: term-ref,
+            output: term-ref,
             variable-equality: u64,
             body-equality: u64,
             target: option<u64>,
         ) -> result<u64, string>;
         syn-congr: func(
             relation: syn-rel,
-            var: option<u64>,
-            val: option<u64>,
-            input: u64,
-            output: u64,
+            var: option<term-ref>,
+            val: option<term-ref>,
+            input: term-ref,
+            output: term-ref,
             children: list<u64>,
             target: option<u64>,
         ) -> result<u64, string>;
         syn-binder-congr: func(
             relation: syn-rel,
-            var: option<u64>,
-            val: option<u64>,
-            input: u64,
-            output: u64,
+            var: option<term-ref>,
+            val: option<term-ref>,
+            input: term-ref,
+            output: term-ref,
             binder: u64,
             body: u64,
             target: option<u64>,
         ) -> result<u64, string>;
         syn-implicit-binder-congr: func(
             relation: syn-rel,
-            var: option<u64>,
-            val: option<u64>,
-            input: u64,
-            output: u64,
-            binder: u64,
+            var: option<term-ref>,
+            val: option<term-ref>,
+            input: term-ref,
+            output: term-ref,
+            binder: term-ref,
             body: u64,
             target: option<u64>,
         ) -> result<u64, string>;
         syn-alpha-binder: func(
-            input: u64,
-            output: u64,
+            input: term-ref,
+            output: term-ref,
             binder-classifier: u64,
             body-substitution: u64,
             target: option<u64>,
         ) -> result<u64, string>;
         syn-alpha-implicit-binder: func(
-            input: u64,
-            output: u64,
-            input-binder: u64,
-            output-binder: u64,
+            input: term-ref,
+            output: term-ref,
+            input-binder: term-ref,
+            output-binder: term-ref,
             body-substitution: u64,
             target: option<u64>,
         ) -> result<u64, string>;
-        tm-beta: func(source: u64, substitution: u64, target: option<u64>) -> result<u64, string>;
-        ty-beta: func(source: u64, substitution: u64, target: option<u64>) -> result<u64, string>;
-        tm-eta: func(source: u64, target: option<u64>) -> result<u64, string>;
+        tm-beta: func(source: term-ref, substitution: u64, target: option<u64>) -> result<u64, string>;
+        ty-beta: func(source: term-ref, substitution: u64, target: option<u64>) -> result<u64, string>;
+        tm-eta: func(source: term-ref, target: option<u64>) -> result<u64, string>;
         union-syn-fact: func(fact: u64) -> result<_, string>;
     }
 }
@@ -465,7 +468,7 @@ interface capabilities {
 /// returned theorem is introduced by the same kernel rules as the low-level
 /// `host` interface.
 interface tactics {
-    use host.{bytes, kernel};
+    use host.{bytes, kernel, term-ref};
 
     enum rewrite-direction {
         forward,
@@ -473,8 +476,8 @@ interface tactics {
     }
 
     record rewrite-result {
-        source: u64,
-        target: u64,
+        source: term-ref,
+        target: term-ref,
         theorem: u64,
     }
 
@@ -484,15 +487,15 @@ interface tactics {
     /// the caller supplies the base and function and owns their meaning.
     iterate-unary: func(
         kernel: borrow<kernel>,
-        zero: u64,
-        successor: u64,
+        zero: term-ref,
+        successor: term-ref,
         count: u64,
-    ) -> result<u64, string>;
+    ) -> result<term-ref, string>;
 
     /// Rewrites a proposition using a proved equality and `EQ_MP`.
     rewrite-proposition: func(
         kernel: borrow<kernel>,
-        bool-type: u64,
+        bool-type: term-ref,
         equality: u64,
         premise: u64,
         direction: rewrite-direction,

@@ -1,6 +1,6 @@
 //! End-to-end coverage for the first userspace natural-number package.
 
-use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Lit, Ref, Sort, builtin::Op2};
+use covalence_logic_hol::{AX_INF, AX_SUB, Kernel, Lit, Ref, Sort};
 use covalence_logic_hol_derived::{NaturalError, NaturalExt, substitute};
 
 fn prelude() -> (Kernel, Ref) {
@@ -111,7 +111,9 @@ fn construction_is_deterministic() {
 }
 
 fn positive(reference: Ref) -> Lit {
-    Lit::positive(reference.get())
+    reference
+        .positive()
+        .expect("theorem atom is a local proposition")
 }
 
 fn prove_constant_true(
@@ -129,7 +131,7 @@ fn prove_constant_true(
         .tm_beta_fact(None, application, substitution.fact)
         .expect("beta fact");
     kernel.union_syn_fact(beta).expect("register beta fact");
-    let theorem = kernel.true_right(positive(truth)).expect("truth theorem");
+    let theorem = kernel.true_right().expect("truth theorem");
     kernel
         .convert_conclusions(theorem, truth, application)
         .expect("convert truth to constant predicate");
@@ -180,9 +182,7 @@ fn induction_is_a_transactional_userspace_combinator() {
         .expect("successor application");
     let at_step = kernel.app(predicate, step_binder).expect("step antecedent");
     let (at_next, next_truth) = prove_constant_true(&mut kernel, predicate, binder, next, truth);
-    let step_implication = kernel
-        .op2(Op2::Imp, at_step, at_next)
-        .expect("step implication");
+    let step_implication = kernel.implies(at_step, at_next).expect("step implication");
     kernel
         .weaken(next_truth, &[positive(at_step)], &[])
         .expect("step hypothesis");

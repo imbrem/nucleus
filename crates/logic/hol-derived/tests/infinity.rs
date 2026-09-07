@@ -1,6 +1,6 @@
 //! End-to-end userspace projection of the axiom of infinity.
 
-use covalence_logic_hol::{AX_INF, Kernel, Lit, Ref, Sort, Tag, TmTag, TyTag};
+use covalence_logic_hol::{AX_INF, Kernel, Ref, Sort, Tag, TmTag, TyTag};
 use covalence_logic_hol_derived::{
     ExistsError, InfinityError, InfinityExt, OpenedExistsDecl, forall_elim, open_exists,
     open_exists_at, substitute,
@@ -49,7 +49,13 @@ fn infinity_projects_the_chosen_carrier_map_point_and_property() {
     let theorem = kernel.thm().get(package.theorem).expect("property theorem");
     let rows = theorem.rhs.to_rows();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].as_slice(), [Lit::positive(package.property.get())]);
+    assert_eq!(
+        rows[0].as_slice(),
+        [package
+            .property
+            .positive()
+            .expect("theorem atom is a local proposition")]
+    );
     assert_eq!(
         kernel
             .thm()
@@ -58,7 +64,10 @@ fn infinity_projects_the_chosen_carrier_map_point_and_property() {
             .rhs
             .to_rows()[0]
             .as_slice(),
-        [Lit::positive(package.reflects_equality.get())]
+        [package
+            .reflects_equality
+            .positive()
+            .expect("theorem atom is a local proposition")]
     );
     assert_eq!(
         kernel
@@ -68,7 +77,10 @@ fn infinity_projects_the_chosen_carrier_map_point_and_property() {
             .rhs
             .to_rows()[0]
             .as_slice(),
-        [Lit::positive(package.avoids_missed.get())]
+        [package
+            .avoids_missed
+            .positive()
+            .expect("theorem atom is a local proposition")]
     );
     assert_eq!(
         kernel
@@ -78,7 +90,11 @@ fn infinity_projects_the_chosen_carrier_map_point_and_property() {
             .rhs
             .to_rows()[0]
             .as_slice(),
-        [Lit::positive(package.model.specification.get())]
+        [package
+            .model
+            .specification
+            .positive()
+            .expect("theorem atom is a local proposition")]
     );
 }
 
@@ -188,7 +204,10 @@ fn infinity_reflection_specializes_through_standard_hol_rules() {
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].as_slice(),
-        [Lit::positive(at_both.proposition.get())]
+        [at_both
+            .proposition
+            .positive()
+            .expect("theorem atom is a local proposition")]
     );
 }
 

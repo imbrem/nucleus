@@ -153,9 +153,9 @@ silently changing the logical artifact.
 6. Project the dependency closure into a deterministic, opcode-free
    `CheckedPrefix`, accompanied by external names and typed descriptors.
 
-The present frozen prefix has 1,331 rows. Its address and the semantic roots for
+The frozen prefix's row count, address, and the semantic roots for
 the natural carrier, zero, successor, induction, successor injectivity, and
-zero/successor separation are pinned by regression tests.
+zero/successor separation are pinned by regression tests in `tests/theory.rs`.
 
 ## Formal verification boundary
 
@@ -175,7 +175,7 @@ and exact references, never source syntax or the userspace dictionary.
 ## Representation policy
 
 `LogicEncoding::EqualityOnly` emits only the raw logical definitions and is the
-canonical init-slice mode. `LogicEncoding::Compact` emits checked logical macro
-rows for tactic-oriented work. The kernel's lowering rules relate compact rows
-to the same opcode-free definitions; selecting either encoding is an untrusted
+canonical init-slice mode. `LogicEncoding::Builtins` emits ordinary applications
+of fixed Boolean builtins for tactic-oriented work. Checked lowering relates
+these applications to fixed equality-only definitions; selecting either encoding is an untrusted
 frontend policy, not a new axiom.

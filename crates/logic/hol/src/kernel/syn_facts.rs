@@ -8,35 +8,34 @@ use std::{
     convert::Infallible,
 };
 
-use crate::{EqColumn, Ref, Sort, SynFact, SynFactId, SynRel, init::Compiled, row::Expr as Node};
+use crate::{EqColumn, Ref, Sort, SynFact, SynFactId, SynRel, row::Expr as Node};
 
 use super::{Kernel, KernelError};
 
 impl Kernel {
-    /// Records that a compact logical opcode is syntactically equal to its
-    /// canonical opcode-free init expansion.
+    /// Records that a Boolean builtin equals its fixed closed HOL definition.
     ///
     /// `target` replaces that one-based slot when present; `None` allocates.
-    /// The expansion is appended to this kernel using the named definition in
-    /// `init`, exactly as in [`Kernel::lower_logical`].
+    /// The expansion is appended exactly as in [`Kernel::lower_logical`].
+    /// This checked rule accepts no userspace naming authority.
     ///
     /// # Errors
     ///
-    /// Returns an error if the source is not a logical opcode row, the init
-    /// prefix is absent or mismatched, checked lowering fails, or the
-    /// replacement slot is absent.
+    /// Rejects non-Boolean builtins, malformed syntax, or an absent replacement
+    /// slot. Failure leaves the kernel unchanged.
     pub fn logical_lower_fact(
         &mut self,
         target: Option<SynFactId>,
-        init: &Compiled,
         source: Ref,
     ) -> Result<SynFactId, KernelError> {
-        let expansion = self.lower_logical(init, source)?;
-        self.logical_lower_fact_to(target, init, source, expansion)
+        let mut staged = self.fork();
+        let expansion = staged.lower_logical(source)?;
+        let fact = staged.logical_lower_fact_to(target, source, expansion)?;
+        *self = staged;
+        Ok(fact)
     }
 
-    /// Records that a compact logical opcode equals one already-resident raw
-    /// application of its canonical init definition.
+    /// Checks an already-resident instance of a fixed Boolean definition.
     ///
     /// Unlike [`logical_lower_fact`](Self::logical_lower_fact), this rule does
     /// not allocate the expansion. It checks the exact application spine at
@@ -45,53 +44,16 @@ impl Kernel {
     ///
     /// # Errors
     ///
-    /// Returns an error unless `source` is a logical opcode, `output` is its
-    /// exact one- or two-argument init expansion, and the init prefix matches.
+    /// Rejects a non-Boolean builtin or an output with different syntax.
     pub fn logical_lower_fact_to(
         &mut self,
         target: Option<SynFactId>,
-        init: &Compiled,
         source: Ref,
         output: Ref,
     ) -> Result<SynFactId, KernelError> {
-        if !self.arena.has_definition_prefix(init.arena()) {
-            return Err(KernelError::InitPrefixMismatch);
-        }
-        let source_node = *self.row::<Infallible>(source)?.expr();
-        let valid = match source_node {
-            Node::Op1(op, operand) => {
-                let definition = init.get(op.name()).ok_or(KernelError::WrongForm {
-                    reference: source,
-                    expected: "named logical init definition",
-                    actual: source_node.tag(),
-                })?;
-                matches!(*self.row::<Infallible>(output)?.expr(), Node::App(function, argument)
-                    if function == definition && argument == operand)
-            }
-            Node::Op2(op, left, right) => {
-                let definition = init.get(op.name()).ok_or(KernelError::WrongForm {
-                    reference: source,
-                    expected: "named logical init definition",
-                    actual: source_node.tag(),
-                })?;
-                match *self.row::<Infallible>(output)?.expr() {
-                    Node::App(partial, argument) if argument == right => {
-                        matches!(*self.row::<Infallible>(partial)?.expr(),
-                            Node::App(function, argument)
-                                if function == definition && argument == left)
-                    }
-                    _ => false,
-                }
-            }
-            _ => {
-                return Err(KernelError::WrongForm {
-                    reference: source,
-                    expected: "tm.op1.v1 or tm.op2.v1",
-                    actual: source_node.tag(),
-                });
-            }
-        };
-        if !valid {
+        let mut staged = self.fork();
+        let expected = staged.lower_logical(source)?;
+        if !staged.exact_definition(expected, output)? {
             return Err(Self::invalid_fact("logical lowering"));
         }
         self.require_compatible_endpoints::<Infallible>(source, output, false)?;
@@ -1020,7 +982,18 @@ impl Kernel {
         E: std::error::Error + 'static,
     {
         let node = *self.row::<E>(input)?.expr();
-        if matches!(node, Node::KindStar | Node::BoolTy | Node::Bool(_)) {
+        if matches!(
+            node,
+            Node::KindStar
+                | Node::BoolTy
+                | Node::Bool(_)
+                | Node::LiteralTy(_)
+                | Node::Word(..)
+                | Node::Nat(_)
+                | Node::Int(_)
+                | Node::ConstRef(_)
+                | Node::Builtin(_)
+        ) {
             return Ok(());
         }
         let var_node = *self.row::<E>(var)?.expr();
@@ -1128,10 +1101,16 @@ impl Kernel {
             | (Node::TmFv { name: left, .. }, Node::TmFv { name: right, .. })
             | (Node::TyExists { name: left, .. }, Node::TyExists { name: right, .. })
             | (Node::TyForall { name: left, .. }, Node::TyForall { name: right, .. })
-            | (Node::Model { name: left, .. }, Node::Model { name: right, .. }) => left == right,
+            | (Node::Model { name: left, .. }, Node::Model { name: right, .. })
+            | (Node::Nat(left), Node::Nat(right)) => left == right,
             (Node::Bool(left), Node::Bool(right)) => left == right,
-            (Node::Op1(left, ..), Node::Op1(right, ..)) => left.code() == right.code(),
-            (Node::Op2(left, ..), Node::Op2(right, ..)) => left.code() == right.code(),
+            (Node::LiteralTy(left), Node::LiteralTy(right)) => left == right,
+            (Node::Word(lw, left), Node::Word(rw, right)) => lw == rw && left == right,
+            (Node::Int(left), Node::Int(right)) => left == right,
+            (Node::ConstRef(left), Node::ConstRef(right)) => {
+                self.arena.constants.get(left) == self.arena.constants.get(right)
+            }
+            (Node::Builtin(left, ..), Node::Builtin(right, ..)) => left == right,
             _ => false,
         };
         if !same_head {
@@ -1210,7 +1189,7 @@ impl Kernel {
         )
     }
 
-    const fn same_head(left: Node, right: Node) -> bool {
+    pub(super) fn same_head(left: Node, right: Node) -> bool {
         match (left, right) {
             (Node::KindStar, Node::KindStar)
             | (Node::BoolTy, Node::BoolTy)
@@ -1221,10 +1200,14 @@ impl Kernel {
             | (Node::Eq(..), Node::Eq(..))
             | (Node::Eps { .. }, Node::Eps { .. }) => true,
             (Node::TyFv { name: left, .. }, Node::TyFv { name: right, .. })
-            | (Node::TmFv { name: left, .. }, Node::TmFv { name: right, .. }) => left == right,
+            | (Node::TmFv { name: left, .. }, Node::TmFv { name: right, .. })
+            | (Node::Nat(left), Node::Nat(right)) => left == right,
             (Node::Bool(left), Node::Bool(right)) => left == right,
-            (Node::Op1(left, ..), Node::Op1(right, ..)) => left.code() == right.code(),
-            (Node::Op2(left, ..), Node::Op2(right, ..)) => left.code() == right.code(),
+            (Node::LiteralTy(left), Node::LiteralTy(right)) => left == right,
+            (Node::Word(lw, left), Node::Word(rw, right)) => lw == rw && left == right,
+            (Node::Int(left), Node::Int(right)) => left == right,
+            (Node::ConstRef(left), Node::ConstRef(right)) => left == right,
+            (Node::Builtin(left, ..), Node::Builtin(right, ..)) => left == right,
             (
                 Node::TmRef {
                     src: left_src,
@@ -1601,8 +1584,12 @@ mod tests {
     #[test]
     fn union_materializes_exactly_the_relation_refinement_chain() {
         let (mut kernel, _, bool_ty) = bool_kernel();
-        let left = kernel.bool(bool_ty, true).unwrap();
-        let right = kernel.bool(bool_ty, true).unwrap();
+        let left = kernel
+            .push::<Infallible>(crate::Row::new(Node::Bool(true)), Some(bool_ty))
+            .unwrap();
+        let right = kernel
+            .push::<Infallible>(crate::Row::new(Node::Bool(true)), Some(bool_ty))
+            .unwrap();
         let syntax = kernel
             .syn_congr(None, SynRel::Syn, None, None, left, right, &[])
             .unwrap();
@@ -1614,7 +1601,9 @@ mod tests {
         assert_eq!(kernel.arena().sort(right), Some(bool_ty));
         assert_eq!(kernel.arena().eq(right), Some(left));
 
-        let third = kernel.bool(bool_ty, true).unwrap();
+        let third = kernel
+            .push::<Infallible>(crate::Row::new(Node::Bool(true)), Some(bool_ty))
+            .unwrap();
         let syntax = kernel
             .syn_congr(None, SynRel::Syn, None, None, left, third, &[])
             .unwrap();
@@ -1631,8 +1620,12 @@ mod tests {
     #[test]
     fn union_failure_prefixes_are_coarse_to_fine_on_malformed_private_state() {
         fn syntax_fact(kernel: &mut Kernel, bool_ty: Ref) -> (Ref, Ref, SynFactId) {
-            let left = kernel.bool(bool_ty, true).unwrap();
-            let right = kernel.bool(bool_ty, true).unwrap();
+            let left = kernel
+                .push::<Infallible>(crate::Row::new(Node::Bool(true)), Some(bool_ty))
+                .unwrap();
+            let right = kernel
+                .push::<Infallible>(crate::Row::new(Node::Bool(true)), Some(bool_ty))
+                .unwrap();
             let fact = kernel
                 .syn_congr(None, SynRel::Syn, None, None, left, right, &[])
                 .unwrap();
@@ -1700,12 +1693,28 @@ mod tests {
     }
 
     #[test]
-    fn logical_opcode_congruence_tracks_substitution_and_opcode_identity() {
+    fn unary_builtin_congruence_tracks_substitution() {
         let (mut kernel, _, bool_ty) = bool_kernel();
         let variable = kernel.tm_fv(20, bool_ty).unwrap();
         let truth = kernel.bool(bool_ty, true).unwrap();
-        let unary_input = kernel.op1(crate::builtin::Op1::Not, variable).unwrap();
-        let unary_output = kernel.op1(crate::builtin::Op1::Not, truth).unwrap();
+        let unary_input = kernel
+            .builtin(
+                crate::literals::Builtin::Bool(crate::literals::BoolOp::Not),
+                &[variable],
+            )
+            .unwrap();
+        let unary_output = kernel
+            .builtin(
+                crate::literals::Builtin::Bool(crate::literals::BoolOp::Not),
+                &[truth],
+            )
+            .unwrap();
+        let function = kernel
+            .builtin_const(crate::literals::Builtin::Bool(crate::literals::BoolOp::Not))
+            .unwrap();
+        let unchanged = kernel
+            .syn_sub_leaf(None, variable, truth, function)
+            .unwrap();
         let replaced = kernel.syn_sub_var(None, variable, truth).unwrap();
         kernel
             .syn_congr(
@@ -1715,18 +1724,53 @@ mod tests {
                 Some(truth),
                 unary_input,
                 unary_output,
-                &[replaced],
+                &[unchanged, replaced],
             )
             .unwrap();
+    }
 
+    #[test]
+    fn binary_builtin_congruence_tracks_substitution_and_descriptor_identity() {
+        let (mut kernel, _, bool_ty) = bool_kernel();
+        let variable = kernel.tm_fv(20, bool_ty).unwrap();
+        let truth = kernel.bool(bool_ty, true).unwrap();
+        let replaced = kernel.syn_sub_var(None, variable, truth).unwrap();
         for op in [
-            crate::builtin::Op2::And,
-            crate::builtin::Op2::Or,
-            crate::builtin::Op2::Imp,
+            crate::literals::BoolOp::And,
+            crate::literals::BoolOp::Or,
+            crate::literals::BoolOp::Imp,
         ] {
-            let left_unchanged = kernel.syn_sub_leaf(None, variable, truth, truth).unwrap();
-            let binary_input = kernel.op2(op, truth, variable).unwrap();
-            let binary_output = kernel.op2(op, truth, truth).unwrap();
+            let binary_input = kernel
+                .builtin(crate::literals::Builtin::Bool(op), &[truth, variable])
+                .unwrap();
+            let binary_output = kernel
+                .builtin(crate::literals::Builtin::Bool(op), &[truth, truth])
+                .unwrap();
+            let input_partial = kernel.arena.children(binary_input).unwrap().next().unwrap();
+            let output_partial = kernel
+                .arena
+                .children(binary_output)
+                .unwrap()
+                .next()
+                .unwrap();
+            let function = kernel
+                .builtin_const(crate::literals::Builtin::Bool(op))
+                .unwrap();
+            let function_unchanged = kernel
+                .syn_sub_leaf(None, variable, truth, function)
+                .unwrap();
+            let truth_unchanged = kernel.syn_sub_leaf(None, variable, truth, truth).unwrap();
+            let left_unchanged = kernel
+                .syn_congr(
+                    None,
+                    SynRel::Syn,
+                    Some(variable),
+                    Some(truth),
+                    input_partial,
+                    output_partial,
+                    &[function_unchanged, truth_unchanged],
+                )
+                .unwrap();
             kernel
                 .syn_congr(
                     None,
@@ -1750,8 +1794,18 @@ mod tests {
             );
         }
 
-        let binary_output = kernel.op2(crate::builtin::Op2::And, truth, truth).unwrap();
-        let wrong_opcode = kernel.op2(crate::builtin::Op2::Or, truth, truth).unwrap();
+        let binary_output = kernel
+            .builtin(
+                crate::literals::Builtin::Bool(crate::literals::BoolOp::And),
+                &[truth, truth],
+            )
+            .unwrap();
+        let wrong_opcode = kernel
+            .builtin(
+                crate::literals::Builtin::Bool(crate::literals::BoolOp::Or),
+                &[truth, truth],
+            )
+            .unwrap();
         let left_refl = kernel.syn_refl(None, SynRel::Syn, truth).unwrap();
         let right_refl = kernel.syn_refl(None, SynRel::Syn, truth).unwrap();
         assert!(
@@ -2070,7 +2124,9 @@ mod tests {
         let mut kernel = Kernel::new();
         let star = kernel.star().unwrap();
         let left_ty = kernel.bool_ty(star).unwrap();
-        let right_ty = kernel.bool_ty(star).unwrap();
+        let right_ty = kernel
+            .push::<Infallible>(crate::Row::new(Node::BoolTy), Some(star))
+            .unwrap();
         let variable = kernel.tm_fv(7, left_ty).unwrap();
         let occurrence = kernel.tm_fv(7, right_ty).unwrap();
         let other = kernel.tm_fv(8, right_ty).unwrap();

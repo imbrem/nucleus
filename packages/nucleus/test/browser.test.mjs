@@ -191,6 +191,8 @@ test("the browser composes the full kernel host with a proof", async (context) =
       addressedRows: proofStats(addressed).rows.toString(),
       rows: stats.rows.toString(),
       synFacts: stats.synFacts.toString(),
+      builtinKind: star,
+      localArrow: arrow,
       category: kernel.category(arrow),
       tableAddressBytes: table.address().length,
     };
@@ -209,7 +211,9 @@ test("the browser composes the full kernel host with a proof", async (context) =
   assert.equal(result.addressedRows, result.rows);
   // The demo exercises the full subtype package and a rewrite through the
   // imported userspace tactics interface.
-  assert.equal(result.rows, "76");
+  assert.equal(result.rows, "70");
+  assert.equal(result.builtinKind, -1);
+  assert.ok(result.localArrow > 0);
   assert.equal(result.synFacts, "0");
   assert.equal(result.category, "kind");
   assert.equal(result.tableAddressBytes, 32);
@@ -241,7 +245,7 @@ test("the browser proof loader runs a proof component", async (context) => {
     await proofPage.locator("#address").textContent(),
     /^[0-9a-f]{64}$/,
   );
-  assert.equal(await proofPage.locator("#rows").textContent(), "76");
+  assert.equal(await proofPage.locator("#rows").textContent(), "70");
 });
 
 test("the REPL runs proofs from the selected kernel by content address", async (context) => {

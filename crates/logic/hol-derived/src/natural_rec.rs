@@ -5,7 +5,7 @@
 //! two type parameters and the open schema.  Every specialization and proof
 //! step is then checked by [`Kernel`].
 
-use covalence_logic_hol::{Kernel, Ref, SynFactId, SynRel, Tag, ThmId, TmTag, builtin::Op2};
+use covalence_logic_hol::{Kernel, Ref, SynFactId, SynRel, Tag, ThmId, TmTag, literals::BoolOp};
 
 use crate::{
     NaturalError, Naturals, equality_symmetry, equality_transitivity, forall_elim,
@@ -728,8 +728,8 @@ fn prove_graph_base(
             expected: "the recursion graph relation universal",
         });
     }
-    let [premises, consequence] = exact_op2(kernel, implication, Op2::Imp)?;
-    let [base_case, closure] = exact_op2(kernel, premises, Op2::And)?;
+    let [premises, consequence] = exact_op2(kernel, implication, BoolOp::Imp)?;
+    let [base_case, closure] = exact_op2(kernel, premises, BoolOp::And)?;
     join_same_syntax(kernel, base_case, consequence)?;
     let theorem = kernel.identity(positive(base_case))?;
     kernel.convert_conclusions(theorem, base_case, consequence)?;
@@ -764,7 +764,7 @@ fn prove_graph_step(
     let step_at_natural = kernel.app(recursion_step, natural)?;
     let next_value = kernel.app(step_at_natural, value)?;
     let graph_at_next = apply2(kernel, graph, next_natural, next_value)?;
-    let implication = kernel.op2(Op2::Imp, graph_at_value, graph_at_next)?;
+    let implication = kernel.implies(graph_at_value, graph_at_next)?;
 
     let (expanded_next_application, expanded_next) =
         expand_graph_application(kernel, graph, next_natural, next_value)?;
@@ -779,7 +779,7 @@ fn prove_graph_step(
             expected: "the recursion graph relation universal",
         });
     }
-    let [target_premises, target_consequence] = exact_op2(kernel, target_implication, Op2::Imp)?;
+    let [target_premises, target_consequence] = exact_op2(kernel, target_implication, BoolOp::Imp)?;
 
     let assumed_graph = kernel.identity(positive(graph_at_value))?;
     let (expanded_value_application, expanded_value) =
@@ -791,7 +791,7 @@ fn prove_graph_step(
             expected: "the recursion graph specialized at a relation",
         })?;
     let [source_premises, relation_at_value] =
-        exact_op2(kernel, specialized.proposition, Op2::Imp)?;
+        exact_op2(kernel, specialized.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, source_premises, target_premises)?;
     let premises_theorem = kernel.identity(positive(target_premises))?;
     kernel.convert_conclusions(premises_theorem, target_premises, source_premises)?;
@@ -814,7 +814,7 @@ fn prove_graph_step(
             }
         })?;
     let [closure_source, closure_target] =
-        exact_op2(kernel, closure_at_value.proposition, Op2::Imp)?;
+        exact_op2(kernel, closure_at_value.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, relation_at_value, closure_source)?;
     join_same_syntax(kernel, closure_target, target_consequence)?;
     kernel.convert_conclusions(relation_at_value_theorem, relation_at_value, closure_source)?;
@@ -932,8 +932,8 @@ fn guarded_graph_targets(
         forall_elim(kernel, theorem, guarded).map_err(|_| NaturalError::WrongForm {
             expected: "the graph guarded-shape premises",
         })?;
-    let [premises, guarded_at] = exact_op2(kernel, specialized.proposition, Op2::Imp)?;
-    let [base, step] = exact_op2(kernel, premises, Op2::And)?;
+    let [premises, guarded_at] = exact_op2(kernel, specialized.proposition, BoolOp::Imp)?;
+    let [base, step] = exact_op2(kernel, premises, BoolOp::And)?;
     Ok(GuardedGraphUse {
         natural,
         value,
@@ -963,7 +963,7 @@ fn build_shape_predicates(
     let bool_ty = kernel.classifier(graph_at_value)?;
     let at_zero = kernel.eq(bool_ty, natural, naturals.zero)?;
     let at_base = kernel.eq(bool_ty, value, base)?;
-    let base_case = kernel.op2(Op2::And, at_zero, at_base)?;
+    let base_case = kernel.and(at_zero, at_base)?;
 
     let predecessor = names.variable(kernel, naturals.ty)?;
     let predecessor_value = names.variable(kernel, codomain)?;
@@ -973,11 +973,11 @@ fn build_shape_predicates(
     let step_at_predecessor = kernel.app(recursion_step, predecessor)?;
     let successor_value = kernel.app(step_at_predecessor, predecessor_value)?;
     let step_value = kernel.eq(bool_ty, value, successor_value)?;
-    let equalities = kernel.op2(Op2::And, successor_index, step_value)?;
-    let successor_data = kernel.op2(Op2::And, predecessor_graph, equalities)?;
+    let equalities = kernel.and(successor_index, step_value)?;
+    let successor_data = kernel.and(predecessor_graph, equalities)?;
     let has_value = kernel.exists_tm(predecessor_value, successor_data)?;
     let successor_case = kernel.exists_tm(predecessor, has_value)?;
-    let shape_body = kernel.op2(Op2::Or, base_case, successor_case)?;
+    let shape_body = kernel.or(base_case, successor_case)?;
     let at_value = kernel.lam(value, shape_body)?;
     let shape = kernel.lam(natural, at_value)?;
 
@@ -1006,7 +1006,7 @@ fn build_shape_predicates(
     let guarded_value = names.variable(kernel, guarded_codomain)?;
     let graph_at = apply2(kernel, graph, guarded_natural, guarded_value)?;
     let shape_at = apply2(kernel, shape, guarded_natural, guarded_value)?;
-    let guarded_body = kernel.op2(Op2::And, graph_at, shape_at)?;
+    let guarded_body = kernel.and(graph_at, shape_at)?;
     let guarded_at_value = kernel.lam_at(guarded_value_function, guarded_value, guarded_body)?;
     let guarded = kernel.lam_at(relation_type, guarded_natural, guarded_at_value)?;
     Ok(ShapePredicates { shape, guarded })
@@ -1021,8 +1021,8 @@ fn prove_guarded_shape_base(
 ) -> Result<(Ref, ThmId), NaturalError> {
     let (shape_at_base, shape_body) =
         expand_graph_application(kernel, predicates.shape, zero, base)?;
-    let [base_case, successor_case] = exact_op2(kernel, shape_body, Op2::Or)?;
-    let [zero_equality, base_equality] = exact_op2(kernel, base_case, Op2::And)?;
+    let [base_case, successor_case] = exact_op2(kernel, shape_body, BoolOp::Or)?;
+    let [zero_equality, base_equality] = exact_op2(kernel, base_case, BoolOp::And)?;
     let bool_ty = kernel.classifier(zero_equality)?;
     let zero_refl = kernel.refl(bool_ty, zero)?;
     join_same_syntax(kernel, zero_refl.equality, zero_equality)?;
@@ -1038,7 +1038,7 @@ fn prove_guarded_shape_base(
 
     let (guarded_base, guarded_body) =
         expand_graph_application(kernel, predicates.guarded, zero, base)?;
-    let [guarded_graph, guarded_shape] = exact_op2(kernel, guarded_body, Op2::And)?;
+    let [guarded_graph, guarded_shape] = exact_op2(kernel, guarded_body, BoolOp::And)?;
     let graph_theorem = kernel.copy_theorem(graph_base_theorem)?;
     let graph_conclusion = sole_conclusion(kernel, graph_theorem)?;
     join_same_syntax(kernel, graph_conclusion, guarded_graph)?;
@@ -1079,7 +1079,7 @@ fn prove_guarded_shape_step(
             expected: "the guarded graph inner closure universal",
         });
     }
-    let [guarded_at, guarded_next] = exact_op2(kernel, implication, Op2::Imp)?;
+    let [guarded_at, guarded_next] = exact_op2(kernel, implication, BoolOp::Imp)?;
     let next_natural = kernel.app(naturals.succ, natural)?;
     let step_at_natural = kernel.app(recursion_step, natural)?;
     let next_value = kernel.app(step_at_natural, value)?;
@@ -1087,7 +1087,7 @@ fn prove_guarded_shape_step(
     let (expanded_at_application, expanded_at) =
         expand_graph_application(kernel, predicates.guarded, natural, value)?;
     join_same_syntax(kernel, guarded_at, expanded_at_application)?;
-    let [source_graph, _source_shape] = exact_op2(kernel, expanded_at, Op2::And)?;
+    let [source_graph, _source_shape] = exact_op2(kernel, expanded_at, BoolOp::And)?;
     let graph_theorem = project_and_left(kernel, expanded_at)?;
 
     let graph_step_at_natural =
@@ -1100,7 +1100,8 @@ fn prove_guarded_shape_step(
                 expected: "the graph shape closure at a value",
             }
         })?;
-    let [step_source, step_target] = exact_op2(kernel, graph_step_at_value.proposition, Op2::Imp)?;
+    let [step_source, step_target] =
+        exact_op2(kernel, graph_step_at_value.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, source_graph, step_source)?;
     kernel.convert_conclusions(graph_theorem, source_graph, step_source)?;
     let next_graph = modus_ponens(
@@ -1124,7 +1125,7 @@ fn prove_guarded_shape_step(
     let (expanded_next_application, expanded_next) =
         expand_graph_application(kernel, predicates.guarded, next_natural, next_value)?;
     join_same_syntax(kernel, guarded_next, expanded_next_application)?;
-    let [target_graph, target_shape] = exact_op2(kernel, expanded_next, Op2::And)?;
+    let [target_graph, target_shape] = exact_op2(kernel, expanded_next, BoolOp::And)?;
     join_same_syntax(kernel, step_target, target_graph)?;
     let shape_conclusion = sole_conclusion(kernel, shape_next)?;
     join_same_syntax(kernel, shape_conclusion, target_shape)?;
@@ -1153,7 +1154,7 @@ fn prove_successor_shape(
 ) -> Result<ThmId, NaturalError> {
     let (shape_application, shape_body) =
         expand_graph_application(kernel, shape, successor, successor_value)?;
-    let [base_case, successor_case] = exact_op2(kernel, shape_body, Op2::Or)?;
+    let [base_case, successor_case] = exact_op2(kernel, shape_body, BoolOp::Or)?;
     let [predecessor_predicate, _predecessor_choice] =
         exact_children(kernel, successor_case, Tag::Tm(TmTag::App))?;
     let (outer_witness_application, inner_exists, outer_beta) =
@@ -1164,8 +1165,8 @@ fn prove_successor_shape(
     let (inner_witness_application, successor_data, inner_beta) =
         beta_apply(kernel, value_predicate, predecessor_value)?;
     kernel.union_syn_fact(inner_beta)?;
-    let [target_graph, equalities] = exact_op2(kernel, successor_data, Op2::And)?;
-    let [index_equality, value_equality] = exact_op2(kernel, equalities, Op2::And)?;
+    let [target_graph, equalities] = exact_op2(kernel, successor_data, BoolOp::And)?;
+    let [index_equality, value_equality] = exact_op2(kernel, equalities, BoolOp::And)?;
     let bool_ty = kernel.classifier(index_equality)?;
 
     join_same_syntax(kernel, graph_at_predecessor, target_graph)?;
@@ -1220,7 +1221,7 @@ fn specialize_graph_to_guarded_shape(
     )?;
     join_same_syntax(kernel, graph_use.guarded_at, expanded_guarded_application)?;
     kernel.convert_conclusions(guarded_theorem, graph_use.guarded_at, expanded_guarded)?;
-    let [_guarded_graph, guarded_shape] = exact_op2(kernel, expanded_guarded, Op2::And)?;
+    let [_guarded_graph, guarded_shape] = exact_op2(kernel, expanded_guarded, BoolOp::And)?;
     let shape_projection = project_and_right(kernel, expanded_guarded)?;
     let shape_theorem = kernel.cut(
         guarded_theorem,
@@ -1231,7 +1232,7 @@ fn specialize_graph_to_guarded_shape(
     join_same_syntax(kernel, guarded_shape, shape_at)?;
     kernel.convert_conclusions(shape_theorem, guarded_shape, shape_at)?;
     kernel.convert_theorem(shape_theorem, graph_use.expanded_graph, graph_use.graph_at)?;
-    let implication = kernel.op2(Op2::Imp, graph_use.graph_at, shape_at)?;
+    let implication = kernel.implies(graph_use.graph_at, shape_at)?;
     let implication_theorem = kernel.imp_right(shape_theorem, positive(implication))?;
     kernel.contract_theorem(implication_theorem)?;
     let at_value = kernel.forall_intro(implication_theorem, graph_use.value)?;
@@ -1263,7 +1264,7 @@ fn prove_graph_zero_value(
             expected: "graph shape inversion at the zero value",
         }
     })?;
-    let [shape_source, shape_target] = exact_op2(kernel, shape_at_value.proposition, Op2::Imp)?;
+    let [shape_source, shape_target] = exact_op2(kernel, shape_at_value.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, graph_at_zero, shape_source)?;
     join_same_syntax(kernel, shape_at_zero, shape_target)?;
     kernel.convert_conclusions(assumed, graph_at_zero, shape_source)?;
@@ -1278,8 +1279,8 @@ fn prove_graph_zero_value(
         expand_graph_application(kernel, shape, naturals.zero, value)?;
     join_same_syntax(kernel, shape_at_zero, shape_application)?;
     kernel.convert_conclusions(shape_theorem, shape_at_zero, shape_body)?;
-    let [base_case, successor_case] = exact_op2(kernel, shape_body, Op2::Or)?;
-    let [_zero_equality, value_equality] = exact_op2(kernel, base_case, Op2::And)?;
+    let [base_case, successor_case] = exact_op2(kernel, shape_body, BoolOp::Or)?;
+    let [_zero_equality, value_equality] = exact_op2(kernel, base_case, BoolOp::And)?;
     let base_branch = project_and_right(kernel, base_case)?;
 
     let successor_branch =
@@ -1287,7 +1288,7 @@ fn prove_graph_zero_value(
     let cases = kernel.or_left(base_branch, successor_branch, positive(shape_body))?;
     let value_theorem = kernel.cut(shape_theorem, cases, positive(shape_body))?;
     kernel.contract_theorem(value_theorem)?;
-    let implication = kernel.op2(Op2::Imp, graph_at_zero, value_equality)?;
+    let implication = kernel.implies(graph_at_zero, value_equality)?;
     let implication_theorem = kernel.imp_right(value_theorem, positive(implication))?;
     let generalized = kernel.forall_intro(implication_theorem, value)?;
     Ok((generalized.universal, generalized.theorem))
@@ -1311,8 +1312,8 @@ fn successor_shape_contradiction(
         beta_apply(kernel, value_predicate, predecessor_value)?;
     join_same_syntax(kernel, inner_exists, inner_application)?;
     kernel.union_syn_fact(inner_beta)?;
-    let [_predecessor_graph, equalities] = exact_op2(kernel, successor_data, Op2::And)?;
-    let [zero_is_successor, _value_equality] = exact_op2(kernel, equalities, Op2::And)?;
+    let [_predecessor_graph, equalities] = exact_op2(kernel, successor_data, BoolOp::And)?;
+    let [zero_is_successor, _value_equality] = exact_op2(kernel, equalities, BoolOp::And)?;
 
     let equalities_theorem = project_and_right(kernel, successor_data)?;
     let index_theorem = project_and_left(kernel, equalities)?;
@@ -1328,7 +1329,7 @@ fn successor_shape_contradiction(
     let [separated_equality] = exact_op1(
         kernel,
         separation.proposition,
-        covalence_logic_hol::builtin::Op1::Not,
+        covalence_logic_hol::literals::BoolOp::Not,
     )?;
     join_same_syntax(kernel, zero_is_successor, separated_equality)?;
     kernel.convert_conclusions(index_theorem, zero_is_successor, separated_equality)?;
@@ -1360,9 +1361,9 @@ fn prove_graph_successor_value(
     let expected_value = kernel.app(step_at_natural, witness)?;
     let bool_ty = kernel.classifier(graph_at_successor)?;
     let value_equality = kernel.eq(bool_ty, value, expected_value)?;
-    let witness_body = kernel.op2(Op2::And, graph_at_witness, value_equality)?;
+    let witness_body = kernel.and(graph_at_witness, value_equality)?;
     let exists_witness = kernel.exists_tm(witness, witness_body)?;
-    let implication = kernel.op2(Op2::Imp, graph_at_successor, exists_witness)?;
+    let implication = kernel.implies(graph_at_successor, exists_witness)?;
 
     let shape_at_successor = apply2(kernel, shape, successor, value)?;
     let assumed = kernel.identity(positive(graph_at_successor))?;
@@ -1375,7 +1376,7 @@ fn prove_graph_successor_value(
             expected: "graph shape inversion at a successor value",
         }
     })?;
-    let [shape_source, shape_target] = exact_op2(kernel, shape_at_value.proposition, Op2::Imp)?;
+    let [shape_source, shape_target] = exact_op2(kernel, shape_at_value.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, graph_at_successor, shape_source)?;
     join_same_syntax(kernel, shape_at_successor, shape_target)?;
     kernel.convert_conclusions(assumed, graph_at_successor, shape_source)?;
@@ -1390,7 +1391,7 @@ fn prove_graph_successor_value(
         expand_graph_application(kernel, shape, successor, value)?;
     join_same_syntax(kernel, shape_at_successor, shape_application)?;
     kernel.convert_conclusions(shape_theorem, shape_at_successor, shape_body)?;
-    let [base_case, successor_case] = exact_op2(kernel, shape_body, Op2::Or)?;
+    let [base_case, successor_case] = exact_op2(kernel, shape_body, BoolOp::Or)?;
 
     let base_branch = successor_base_contradiction(
         kernel,
@@ -1427,7 +1428,7 @@ fn successor_base_contradiction(
     base_case: Ref,
     conclusion: covalence_logic_hol::Lit,
 ) -> Result<ThmId, NaturalError> {
-    let [successor_is_zero, _value_is_base] = exact_op2(kernel, base_case, Op2::And)?;
+    let [successor_is_zero, _value_is_base] = exact_op2(kernel, base_case, BoolOp::And)?;
     let successor_equality = project_and_left(kernel, base_case)?;
     let bool_ty = kernel.classifier(successor_is_zero)?;
     let reversed = equality_symmetry(kernel, bool_ty, successor_equality)?;
@@ -1439,7 +1440,7 @@ fn successor_base_contradiction(
     let [separated_equality] = exact_op1(
         kernel,
         separation.proposition,
-        covalence_logic_hol::builtin::Op1::Not,
+        covalence_logic_hol::literals::BoolOp::Not,
     )?;
     join_same_syntax(kernel, reversed.equality, separated_equality)?;
     kernel.convert_conclusions(reversed.theorem, reversed.equality, separated_equality)?;
@@ -1475,8 +1476,9 @@ fn successor_shape_witness(
         beta_apply(kernel, value_predicate, predecessor_value)?;
     join_same_syntax(kernel, inner_exists, inner_application)?;
     kernel.union_syn_fact(inner_beta)?;
-    let [predecessor_graph, equalities] = exact_op2(kernel, successor_data, Op2::And)?;
-    let [successor_equality, predecessor_value_equality] = exact_op2(kernel, equalities, Op2::And)?;
+    let [predecessor_graph, equalities] = exact_op2(kernel, successor_data, BoolOp::And)?;
+    let [successor_equality, predecessor_value_equality] =
+        exact_op2(kernel, equalities, BoolOp::And)?;
 
     let graph_data = project_and_left(kernel, successor_data)?;
     let equalities_data = project_and_right(kernel, successor_data)?;
@@ -1499,7 +1501,7 @@ fn successor_shape_witness(
         expected: "successor injectivity at the shape predecessor",
     })?;
     let [injective_source, _index_equality] =
-        exact_op2(kernel, injective_at_predecessor.proposition, Op2::Imp)?;
+        exact_op2(kernel, injective_at_predecessor.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, successor_equality, injective_source)?;
     kernel.convert_conclusions(successor_data_theorem, successor_equality, injective_source)?;
     let equal_predecessors = modus_ponens(
@@ -1546,7 +1548,7 @@ fn successor_shape_witness(
     let (witness_application, target_body, witness_beta) =
         beta_apply(kernel, target_predicate, predecessor_value)?;
     kernel.union_syn_fact(witness_beta)?;
-    let [target_graph_body, target_value_body] = exact_op2(kernel, target_body, Op2::And)?;
+    let [target_graph_body, target_value_body] = exact_op2(kernel, target_body, BoolOp::And)?;
     join_same_syntax(kernel, target_graph, target_graph_body)?;
     join_same_syntax(kernel, target_value_equality, target_value_body)?;
     kernel.convert_conclusions(transported_graph, target_graph, target_graph_body)?;
@@ -1603,8 +1605,8 @@ fn prove_zero_functionality(
     let graph_right = apply2(kernel, graph, naturals.zero, right)?;
     let bool_ty = kernel.classifier(graph_left)?;
     let equality = kernel.eq(bool_ty, left, right)?;
-    let inner_implication = kernel.op2(Op2::Imp, graph_right, equality)?;
-    let outer_implication = kernel.op2(Op2::Imp, graph_left, inner_implication)?;
+    let inner_implication = kernel.implies(graph_right, equality)?;
+    let outer_implication = kernel.implies(graph_left, inner_implication)?;
 
     let left_assumption = kernel.identity(positive(graph_left))?;
     let right_assumption = kernel.identity(positive(graph_right))?;
@@ -1616,8 +1618,9 @@ fn prove_zero_functionality(
         forall_elim(kernel, zero_value_theorem, right).map_err(|_| NaturalError::WrongForm {
             expected: "zero graph inversion at the right value",
         })?;
-    let [left_source, _left_equality] = exact_op2(kernel, zero_at_left.proposition, Op2::Imp)?;
-    let [right_source, _right_equality] = exact_op2(kernel, zero_at_right.proposition, Op2::Imp)?;
+    let [left_source, _left_equality] = exact_op2(kernel, zero_at_left.proposition, BoolOp::Imp)?;
+    let [right_source, _right_equality] =
+        exact_op2(kernel, zero_at_right.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, graph_left, left_source)?;
     join_same_syntax(kernel, graph_right, right_source)?;
     kernel.convert_conclusions(left_assumption, graph_left, left_source)?;
@@ -1663,8 +1666,8 @@ fn prove_graph_functionality(
     let graph_right = apply2(kernel, graph, index, right)?;
     let bool_ty = kernel.classifier(graph_left)?;
     let equality = kernel.eq(bool_ty, left, right)?;
-    let inner_implication = kernel.op2(Op2::Imp, graph_right, equality)?;
-    let outer_implication = kernel.op2(Op2::Imp, graph_left, inner_implication)?;
+    let inner_implication = kernel.implies(graph_right, equality)?;
+    let outer_implication = kernel.implies(graph_left, inner_implication)?;
     let at_right = kernel.forall_tm(bool_ty, right, outer_implication)?;
     let at_left = kernel.forall_tm(bool_ty, left, at_right)?;
     let predicate = kernel.lam(index, at_left)?;
@@ -1683,8 +1686,8 @@ fn prove_graph_functionality(
             expected: "natural induction at graph functionality",
         }
     })?;
-    let [premises, conclusion] = exact_op2(kernel, induction.proposition, Op2::Imp)?;
-    let [base_target, step_target] = exact_op2(kernel, premises, Op2::And)?;
+    let [premises, conclusion] = exact_op2(kernel, induction.proposition, BoolOp::Imp)?;
+    let [base_target, step_target] = exact_op2(kernel, premises, BoolOp::And)?;
     let base_theorem = prove_functionality_base_at(
         kernel,
         predicate,
@@ -1788,7 +1791,7 @@ fn prove_functionality_step_at(
         });
     }
     let [property_at_natural, property_at_successor] =
-        exact_op2(kernel, step_implication, Op2::Imp)?;
+        exact_op2(kernel, step_implication, BoolOp::Imp)?;
     let property_assumption = kernel.identity(positive(property_at_natural))?;
     let (natural_application, expanded_natural, natural_beta) =
         beta_apply(kernel, predicate, natural)?;
@@ -1821,8 +1824,8 @@ fn prove_functionality_step_at(
             expected: "the inner successor-functionality universal",
         });
     }
-    let [left_graph, right_implication] = exact_op2(kernel, functionality_body, Op2::Imp)?;
-    let [right_graph, target_equality] = exact_op2(kernel, right_implication, Op2::Imp)?;
+    let [left_graph, right_implication] = exact_op2(kernel, functionality_body, BoolOp::Imp)?;
+    let [right_graph, target_equality] = exact_op2(kernel, right_implication, BoolOp::Imp)?;
     let left_assumption = kernel.identity(positive(left_graph))?;
     let right_assumption = kernel.identity(positive(right_graph))?;
 
@@ -1845,8 +1848,9 @@ fn prove_functionality_step_at(
     let (left_witness, left_body, left_preimage_theorem) = open_choice_body(kernel, left_preimage)?;
     let (right_witness, right_body, right_preimage_theorem) =
         open_choice_body(kernel, right_preimage)?;
-    let [left_predecessor_graph, _left_value_equality] = exact_op2(kernel, left_body, Op2::And)?;
-    let [right_predecessor_graph, _right_value_equality] = exact_op2(kernel, right_body, Op2::And)?;
+    let [left_predecessor_graph, _left_value_equality] = exact_op2(kernel, left_body, BoolOp::And)?;
+    let [right_predecessor_graph, _right_value_equality] =
+        exact_op2(kernel, right_body, BoolOp::And)?;
     let left_graph_theorem = project_and_left(kernel, left_body)?;
     let left_graph_theorem = kernel.cut(
         left_preimage_theorem,
@@ -1884,8 +1888,9 @@ fn prove_functionality_step_at(
                 expected: "the functionality hypothesis at the right predecessor value",
             }
         })?;
-    let [left_source, right_property] = exact_op2(kernel, property_at_right.proposition, Op2::Imp)?;
-    let [right_source, _witness_equality] = exact_op2(kernel, right_property, Op2::Imp)?;
+    let [left_source, right_property] =
+        exact_op2(kernel, property_at_right.proposition, BoolOp::Imp)?;
+    let [right_source, _witness_equality] = exact_op2(kernel, right_property, BoolOp::Imp)?;
     join_same_syntax(kernel, left_predecessor_graph, left_source)?;
     join_same_syntax(kernel, right_predecessor_graph, right_source)?;
     kernel.convert_conclusions(left_graph_theorem, left_predecessor_graph, left_source)?;
@@ -1947,7 +1952,7 @@ fn successor_preimage_at(
         forall_elim(kernel, at_natural.theorem, value).map_err(|_| NaturalError::WrongForm {
             expected: "successor inversion at the induction value",
         })?;
-    let [source, _target] = exact_op2(kernel, at_value.proposition, Op2::Imp)?;
+    let [source, _target] = exact_op2(kernel, at_value.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, graph_proposition, source)?;
     kernel.convert_conclusions(graph_theorem, graph_proposition, source)?;
     modus_ponens(
@@ -2045,8 +2050,8 @@ fn prove_graph_total(
             expected: "natural induction at graph totality",
         })?;
     let [induction_premises, induction_total] =
-        exact_op2(kernel, induction_at_predicate.proposition, Op2::Imp)?;
-    let [induction_base, induction_step] = exact_op2(kernel, induction_premises, Op2::And)?;
+        exact_op2(kernel, induction_at_predicate.proposition, BoolOp::Imp)?;
+    let [induction_base, induction_step] = exact_op2(kernel, induction_premises, BoolOp::And)?;
 
     let (at_zero, expanded_zero, zero_beta) = beta_apply(kernel, total_predicate, naturals.zero)?;
     kernel.union_syn_fact(zero_beta)?;
@@ -2077,7 +2082,7 @@ fn prove_graph_total(
             expected: "the totality induction step universal",
         });
     }
-    let [at_natural, at_next] = exact_op2(kernel, step_implication, Op2::Imp)?;
+    let [at_natural, at_next] = exact_op2(kernel, step_implication, BoolOp::Imp)?;
     let next_natural = kernel.app(naturals.succ, natural)?;
     let assumed = kernel.identity(positive(at_natural))?;
     let (at_natural_application, expanded_at_natural, at_natural_beta) =
@@ -2103,7 +2108,8 @@ fn prove_graph_total(
                 expected: "the graph step theorem at its chosen value",
             }
         })?;
-    let [step_source, step_target] = exact_op2(kernel, graph_step_at_choice.proposition, Op2::Imp)?;
+    let [step_source, step_target] =
+        exact_op2(kernel, graph_step_at_choice.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, graph_at_choice, step_source)?;
     kernel.convert_conclusions(assumed, graph_at_choice, step_source)?;
     let next_graph = modus_ponens(
@@ -2233,7 +2239,7 @@ fn prove_rec_specification(
     let (_application, specification, beta) =
         beta_apply(kernel, specification_predicate, graph.rec)?;
     kernel.union_syn_fact(beta)?;
-    let [zero_law, successor_law] = exact_op2(kernel, specification, Op2::And)?;
+    let [zero_law, successor_law] = exact_op2(kernel, specification, BoolOp::And)?;
     let zero_theorem = kernel.copy_theorem(graph.rec_zero_theorem)?;
     let zero_conclusion = sole_conclusion(kernel, zero_theorem)?;
     join_same_syntax(kernel, zero_conclusion, zero_law)?;
@@ -2278,7 +2284,7 @@ fn prove_rec_uniqueness(
         beta_apply(kernel, specification_predicate, candidate)?;
     kernel.union_syn_fact(specification_beta)?;
     let [_candidate_zero_law, candidate_successor_law] =
-        exact_op2(kernel, candidate_specification, Op2::And)?;
+        exact_op2(kernel, candidate_specification, BoolOp::And)?;
     let candidate_zero_theorem = project_and_left(kernel, candidate_specification)?;
     let candidate_successor_theorem = project_and_right(kernel, candidate_specification)?;
 
@@ -2305,8 +2311,8 @@ fn prove_rec_uniqueness(
             }
         })?;
     let [induction_premises, induction_conclusion] =
-        exact_op2(kernel, induction.proposition, Op2::Imp)?;
-    let [induction_base, induction_step] = exact_op2(kernel, induction_premises, Op2::And)?;
+        exact_op2(kernel, induction.proposition, BoolOp::Imp)?;
+    let [induction_base, induction_step] = exact_op2(kernel, induction_premises, BoolOp::And)?;
 
     // candidate zero = base = rec zero
     let rec_zero_reversed = equality_symmetry(kernel, bool_ty, graph.rec_zero_theorem)?;
@@ -2340,7 +2346,7 @@ fn prove_rec_uniqueness(
             expected: "the recursor uniqueness induction step universal",
         });
     }
-    let [step_hypothesis, step_conclusion] = exact_op2(kernel, step_implication, Op2::Imp)?;
+    let [step_hypothesis, step_conclusion] = exact_op2(kernel, step_implication, BoolOp::Imp)?;
     let hypothesis = kernel.identity(positive(step_hypothesis))?;
     let (hypothesis_application, hypothesis_equality, hypothesis_beta) =
         beta_apply(kernel, equality_predicate, step_index)?;
@@ -2434,7 +2440,7 @@ fn prove_rec_uniqueness(
         induction_inputs,
         induction.proposition,
     )?;
-    let uniqueness_body = kernel.op2(Op2::Imp, candidate_specification, induction_conclusion)?;
+    let uniqueness_body = kernel.implies(candidate_specification, induction_conclusion)?;
     let uniqueness_at_candidate = kernel.imp_right(pointwise, positive(uniqueness_body))?;
     let unique = kernel.forall_tm(bool_ty, candidate, uniqueness_body)?;
     let unique_theorem = kernel.forall_intro_at(uniqueness_at_candidate, candidate, unique)?;
@@ -2461,7 +2467,7 @@ fn prove_rec_zero(
             expected: "graph zero inversion at the selected value",
         }
     })?;
-    let [source, equality] = exact_op2(kernel, zero_value_at_rec.proposition, Op2::Imp)?;
+    let [source, equality] = exact_op2(kernel, zero_value_at_rec.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, source, selected_at_zero.proposition)?;
     kernel.convert_conclusions(
         selected_at_zero.theorem,
@@ -2507,7 +2513,8 @@ fn prove_rec_successor(
         .map_err(|_| NaturalError::WrongForm {
             expected: "the recursion graph step at the selected value",
         })?;
-    let [step_source, _step_target] = exact_op2(kernel, graph_step_at_value.proposition, Op2::Imp)?;
+    let [step_source, _step_target] =
+        exact_op2(kernel, graph_step_at_value.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, graph_at_natural.proposition, step_source)?;
     kernel.convert_conclusions(
         graph_at_natural.theorem,
@@ -2551,7 +2558,8 @@ fn prove_rec_successor(
                 expected: "graph functionality at the recursive step value",
             }
         })?;
-    let [selected_source, remaining] = exact_op2(kernel, functional_at_step.proposition, Op2::Imp)?;
+    let [selected_source, remaining] =
+        exact_op2(kernel, functional_at_step.proposition, BoolOp::Imp)?;
     join_same_syntax(kernel, selected_source, selected_successor.proposition)?;
     kernel.convert_conclusions(
         selected_successor.theorem,
@@ -2564,7 +2572,7 @@ fn prove_rec_successor(
         selected_successor.theorem,
         functional_at_step.proposition,
     )?;
-    let [stepped_source, equality] = exact_op2(kernel, remaining, Op2::Imp)?;
+    let [stepped_source, equality] = exact_op2(kernel, remaining, BoolOp::Imp)?;
     let stepped_conclusion = sole_conclusion(kernel, stepped_graph)?;
     join_same_syntax(kernel, stepped_source, stepped_conclusion)?;
     kernel.convert_conclusions(stepped_graph, stepped_conclusion, stepped_source)?;
@@ -2629,7 +2637,7 @@ fn modus_ponens(
     antecedent_theorem: ThmId,
     implication: Ref,
 ) -> Result<ThmId, NaturalError> {
-    let [_antecedent, consequent] = exact_op2(kernel, implication, Op2::Imp)?;
+    let [_antecedent, consequent] = exact_op2(kernel, implication, BoolOp::Imp)?;
     let consequence = kernel.identity(positive(consequent))?;
     let use_implication =
         kernel.imp_left(antecedent_theorem, consequence, positive(implication))?;
@@ -2637,14 +2645,14 @@ fn modus_ponens(
 }
 
 fn project_and_right(kernel: &mut Kernel, conjunction: Ref) -> Result<ThmId, NaturalError> {
-    let [left, right] = exact_op2(kernel, conjunction, Op2::And)?;
+    let [left, right] = exact_op2(kernel, conjunction, BoolOp::And)?;
     let theorem = kernel.identity(positive(right))?;
     kernel.weaken(theorem, &[positive(left)], &[])?;
     Ok(kernel.and_left(theorem, positive(conjunction))?)
 }
 
 fn project_and_left(kernel: &mut Kernel, conjunction: Ref) -> Result<ThmId, NaturalError> {
-    let [left, right] = exact_op2(kernel, conjunction, Op2::And)?;
+    let [left, right] = exact_op2(kernel, conjunction, BoolOp::And)?;
     let theorem = kernel.identity(positive(left))?;
     kernel.weaken(theorem, &[positive(right)], &[])?;
     Ok(kernel.and_left(theorem, positive(conjunction))?)
@@ -2663,7 +2671,9 @@ fn beta_apply(
 }
 
 fn positive(reference: Ref) -> covalence_logic_hol::Lit {
-    covalence_logic_hol::Lit::positive(reference.get())
+    reference
+        .positive()
+        .expect("theorem atom is a local proposition")
 }
 
 fn sole_conclusion(kernel: &Kernel, theorem: ThmId) -> Result<Ref, NaturalError> {
@@ -2689,26 +2699,20 @@ fn sole_conclusion(kernel: &Kernel, theorem: ThmId) -> Result<Ref, NaturalError>
     })
 }
 
-fn exact_op2(kernel: &Kernel, reference: Ref, op: Op2) -> Result<[Ref; 2], NaturalError> {
-    if kernel.arena().op2(reference) != Some(op) {
-        return Err(NaturalError::WrongForm {
-            expected: "a compact logical opcode",
-        });
-    }
-    exact_children(kernel, reference, Tag::Tm(TmTag::Op2))
+fn exact_op2(kernel: &Kernel, reference: Ref, op: BoolOp) -> Result<[Ref; 2], NaturalError> {
+    crate::boolean_args(kernel, reference, op).ok_or(NaturalError::WrongForm {
+        expected: "a binary Boolean builtin application",
+    })
 }
 
 fn exact_op1(
     kernel: &Kernel,
     reference: Ref,
-    op: covalence_logic_hol::builtin::Op1,
+    op: covalence_logic_hol::literals::BoolOp,
 ) -> Result<[Ref; 1], NaturalError> {
-    if kernel.arena().op1(reference) != Some(op) {
-        return Err(NaturalError::WrongForm {
-            expected: "a compact unary logical opcode",
-        });
-    }
-    exact_children(kernel, reference, Tag::Tm(TmTag::Op1))
+    crate::boolean_args(kernel, reference, op).ok_or(NaturalError::WrongForm {
+        expected: "a unary Boolean builtin application",
+    })
 }
 
 fn exact_children<const N: usize>(

@@ -13,9 +13,7 @@ use covalence_data_sexpr::{
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_logic_hol::{
-    Kernel, KernelError, Ref,
-    builtin::{Op1, Op2},
-    init::Compiled as LogicalInit,
+    Kernel, KernelError, Ref, init::Compiled as LogicalInit, literals::BoolOp,
 };
 
 mod init_library;
@@ -49,9 +47,9 @@ pub const INIT_SOURCE: &str = include_str!("../logical-schemata.sexpr");
 /// Representation chosen for logical connectives during elaboration.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum LogicEncoding {
-    /// Compact `tm.op1`/`tm.op2` rows, useful for checked Gentzen automation.
+    /// Ordinary applications of fixed Boolean builtins.
     #[default]
-    Compact,
+    Builtins,
     /// Primitive equality/lambda/application definitions only.
     EqualityOnly,
 }
@@ -249,11 +247,12 @@ pub fn compile_theory_with(
     })
 }
 
-/// Compiles a module on top of an authoritative opcode-free logical prefix.
+/// Compiles a module on top of a checked, named logical library.
 ///
 /// In equality-only mode the connective surface becomes checked application
-/// of the prefix's named definitions. In compact mode it becomes opcode rows
-/// that [`Kernel::logical_lower_fact`] can relate to those exact definitions.
+/// of the library's named definitions. In builtin mode it becomes ordinary
+/// applications of fixed primitives, whose checked unfolding is independent
+/// of those names.
 /// Parsing and elaboration remain untrusted in both cases.
 ///
 /// # Errors
@@ -413,15 +412,6 @@ impl<'a> Compiler<'a> {
             next_name: 10,
             options,
         })
-    }
-
-    fn logical_definition(&self, name: &str) -> Result<Ref, TheoryError> {
-        self.logical_init
-            .as_ref()
-            .and_then(|init| init.get(name))
-            .ok_or_else(|| TheoryError::Unknown {
-                name: name.to_owned(),
-            })
     }
 
     fn declaration(&mut self, form: &'a SExpr) -> Result<(), TheoryError> {
@@ -821,62 +811,33 @@ impl<'a> Compiler<'a> {
     }
 
     fn not(&mut self, value: Ref) -> Result<Ref, TheoryError> {
-        if self.options.logic == LogicEncoding::Compact {
-            return Ok(self.kernel.op1(Op1::Not, value)?);
-        }
-        if self.logical_init.is_some() {
-            let definition = self.logical_definition("not")?;
-            return Ok(self.kernel.app(definition, value)?);
-        }
-        Ok(self.kernel.not_tm(self.bool_ty, value)?)
+        self.boolean(BoolOp::Not, &[value])
     }
 
     fn and(&mut self, left: Ref, right: Ref) -> Result<Ref, TheoryError> {
-        if self.options.logic == LogicEncoding::Compact {
-            return Ok(self.kernel.op2(Op2::And, left, right)?);
-        }
-        if self.logical_init.is_some() {
-            let definition = self.logical_definition("and")?;
-            let partial = self.kernel.app(definition, left)?;
-            return Ok(self.kernel.app(partial, right)?);
-        }
-        let bool_to_bool = self.arrow(self.bool_ty, self.bool_ty)?;
-        let binder_ty = self.arrow(self.bool_ty, bool_to_bool)?;
-        let name = self.name();
-        let binder = self.kernel.tm_fv(name, binder_ty)?;
-        Ok(self.kernel.and_tm(self.bool_ty, binder, left, right)?)
+        self.boolean(BoolOp::And, &[left, right])
     }
 
     fn or(&mut self, left: Ref, right: Ref) -> Result<Ref, TheoryError> {
-        if self.options.logic == LogicEncoding::Compact {
-            return Ok(self.kernel.op2(Op2::Or, left, right)?);
-        }
-        if self.logical_init.is_some() {
-            let definition = self.logical_definition("or")?;
-            let partial = self.kernel.app(definition, left)?;
-            return Ok(self.kernel.app(partial, right)?);
-        }
-        let bool_to_bool = self.arrow(self.bool_ty, self.bool_ty)?;
-        let binder_ty = self.arrow(self.bool_ty, bool_to_bool)?;
-        let name = self.name();
-        let binder = self.kernel.tm_fv(name, binder_ty)?;
-        Ok(self.kernel.or_tm(self.bool_ty, binder, left, right)?)
+        self.boolean(BoolOp::Or, &[left, right])
     }
 
     fn imp(&mut self, left: Ref, right: Ref) -> Result<Ref, TheoryError> {
-        if self.options.logic == LogicEncoding::Compact {
-            return Ok(self.kernel.op2(Op2::Imp, left, right)?);
+        self.boolean(BoolOp::Imp, &[left, right])
+    }
+
+    fn boolean(&mut self, operation: BoolOp, arguments: &[Ref]) -> Result<Ref, TheoryError> {
+        let operation = covalence_logic_hol::literals::Builtin::Bool(operation);
+        if self.options.logic == LogicEncoding::Builtins {
+            return Ok(self.kernel.builtin(operation, arguments)?);
         }
-        if self.logical_init.is_some() {
-            let definition = self.logical_definition("imp")?;
-            let partial = self.kernel.app(definition, left)?;
-            return Ok(self.kernel.app(partial, right)?);
+        // Use the fixed checked definition, independent of userspace init names.
+        let function = self.kernel.builtin_const(operation)?;
+        let mut term = self.kernel.lower_logical(function)?;
+        for &argument in arguments {
+            term = self.kernel.app(term, argument)?;
         }
-        let bool_to_bool = self.arrow(self.bool_ty, self.bool_ty)?;
-        let binder_ty = self.arrow(self.bool_ty, bool_to_bool)?;
-        let name = self.name();
-        let binder = self.kernel.tm_fv(name, binder_ty)?;
-        Ok(self.kernel.imp_tm(self.bool_ty, binder, left, right)?)
+        Ok(term)
     }
 
     fn equal(&mut self, left: Ref, right: Ref) -> Result<Ref, TheoryError> {

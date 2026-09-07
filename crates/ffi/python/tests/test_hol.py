@@ -18,8 +18,8 @@ def test_raw_arena_roundtrip_and_normalized_sets() -> None:
     assert decoded.axioms == ["ax.inf"]
     assert decoded.context == [true]
     assert decoded.definition(bool_ty).tag == "ty.bool"
-    assert [definition.reference for definition in decoded.definitions] == [1, 2]
-    with pytest.raises(ValueError, match="one-based"):
+    assert decoded.definitions == []
+    with pytest.raises(ValueError, match="nonzero|one-based"):
         decoded.definition(0)
 
 

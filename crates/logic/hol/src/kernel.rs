@@ -14,7 +14,6 @@ use smallvec::SmallVec;
 use crate::{
     AmbPred, Arena, EqColumn, Import, ImportId, Link, Ref, ResolveError, Resolver, Sort, SynFactId,
     Tag,
-    builtin::{Op1, Op2},
     init::Compiled,
     row::{Expr as Node, Row},
 };
@@ -22,6 +21,7 @@ use crate::{
 mod choice;
 mod classical;
 mod infinity;
+mod literals;
 mod logic;
 mod subtype;
 mod syn_facts;
@@ -41,6 +41,20 @@ pub enum KernelError<E = Infallible>
 where
     E: std::error::Error + 'static,
 {
+    /// Immutable roots cannot be joined in this cache; this is not inequality.
+    #[snafu(display("cannot join distinct immutable cache roots {left:?} and {right:?}"))]
+    ImmutableRoots {
+        /// First immutable root.
+        left: Ref,
+        /// Second immutable root.
+        right: Ref,
+    },
+    /// Literal construction or evaluation failed before any fact was added.
+    #[snafu(transparent)]
+    Literal {
+        /// Typed literal failure.
+        source: crate::literals::EvalError,
+    },
     /// The dense definition index no longer fits in `Ref`.
     #[snafu(display("kernel has too many definitions"))]
     TooManyDefinitions,
@@ -114,9 +128,6 @@ where
         /// Proxy row encountered while traversing the copied syntax.
         reference: Ref,
     },
-    /// Kernels do not share the same deterministic initialization prefix.
-    #[snafu(display("kernel init prefixes do not match"))]
-    InitPrefixMismatch,
     /// A constructor requires a particular row form.
     #[snafu(display("reference {reference:?} has tag {actual:?}, but {expected} was required"))]
     WrongForm {
@@ -228,7 +239,7 @@ impl CheckedPrefix {
     /// Creates a kernel whose complete initial state is this prefix.
     #[must_use]
     pub fn kernel(&self) -> Kernel {
-        Kernel::with_init_prefix(self.arena.clone())
+        Kernel::from_checked_arena(self.arena.clone())
     }
 }
 
@@ -274,7 +285,6 @@ impl CopyMap {
 #[derive(Debug, Default)]
 pub struct Kernel {
     arena: Arena,
-    init_prefix: Option<(crate::O256, usize)>,
 }
 
 struct ConvPath {
@@ -297,7 +307,6 @@ impl Kernel {
     pub const fn new() -> Self {
         Self {
             arena: Arena::empty(),
-            init_prefix: None,
         }
     }
 
@@ -306,20 +315,12 @@ impl Kernel {
     pub fn with_init(init: &Compiled) -> Self {
         Self {
             arena: init.arena().clone(),
-            init_prefix: Some((init.arena().addr(), init.arena().len())),
         }
     }
 
-    /// Creates a checked kernel whose first rows are a compiled init prefix.
-    pub(crate) fn with_init_prefix(arena: Arena) -> Self {
-        let init_prefix = Some((arena.addr(), arena.len()));
-        Self { arena, init_prefix }
-    }
-
-    /// Returns the compiled init-prefix address and row count, when present.
-    #[must_use]
-    pub const fn init_prefix(&self) -> Option<(crate::O256, usize)> {
-        self.init_prefix
+    /// Adopts an arena already checked by a trusted construction path.
+    pub(crate) fn from_checked_arena(arena: Arena) -> Self {
+        Self { arena }
     }
 
     /// Borrows the underlying raw arena.
@@ -330,14 +331,13 @@ impl Kernel {
 
     /// Forks the complete checked state for transactional userspace work.
     ///
-    /// The fork retains the exact init-prefix identity, definitions, proof
+    /// The fork retains the complete arena's definitions, proof
     /// rows, and caches. Mutating it has no effect on `self`; callers may
     /// replace the original only after a multi-step derived operation succeeds.
     #[must_use]
     pub fn fork(&self) -> Self {
         Self {
             arena: self.arena.clone(),
-            init_prefix: self.init_prefix,
         }
     }
 
@@ -363,13 +363,13 @@ impl Kernel {
     /// The copy preserves sharing, introduces no import, and retains no
     /// borrow of `source`. Equality, context, proof metadata, and syntactic
     /// facts are deliberately not copied. References in a matching compiled
-    /// init prefix are identities and are never appended.
+    /// structurally identical arena prefix are reused without being appended.
     ///
     /// # Errors
     ///
     /// Returns an error if the root is not a term or its reachable syntax is
     /// missing, cyclic, imported, or fails checked kinding or typing, or if
-    /// the kernels have different init prefixes. The destination is unchanged
+    /// required capabilities are unavailable. The destination is unchanged
     /// on error.
     pub fn copy_term_from(&mut self, source: &Self, root: Ref) -> Result<CopyMap, KernelError> {
         self.copy_terms_from(source, &[root])
@@ -377,9 +377,8 @@ impl Kernel {
 
     /// Copies one reachable term DAG while expanding every logical opcode.
     ///
-    /// The source and destination must share `init` as their exact compiled
-    /// prefix. Compact logical rows are replaced by checked applications of
-    /// the corresponding opcode-free definitions; all other rows are copied
+    /// Boolean constants are replaced by their fixed closed HOL definitions;
+    /// all other rows are copied
     /// as in [`copy_term_from`](Self::copy_term_from).
     ///
     /// # Errors
@@ -388,11 +387,10 @@ impl Kernel {
     /// [`copy_terms_lowered_from`](Self::copy_terms_lowered_from).
     pub fn copy_term_lowered_from(
         &mut self,
-        init: &Compiled,
         source: &Self,
         root: Ref,
     ) -> Result<CopyMap, KernelError> {
-        self.copy_terms_lowered_from(init, source, &[root])
+        self.copy_terms_lowered_from(source, &[root])
     }
 
     /// Copies one checked object of any syntactic category while recursively
@@ -404,11 +402,10 @@ impl Kernel {
     /// [`copy_objects_lowered_from`](Self::copy_objects_lowered_from).
     pub fn copy_object_lowered_from(
         &mut self,
-        init: &Compiled,
         source: &Self,
         root: Ref,
     ) -> Result<CopyMap, KernelError> {
-        self.copy_objects_lowered_from(init, source, &[root])
+        self.copy_objects_lowered_from(source, &[root])
     }
 
     /// Copies the union of several reachable term DAGs from another kernel.
@@ -421,21 +418,18 @@ impl Kernel {
     ///
     /// Returns an error if a root is not a term or reachable syntax is
     /// missing, cyclic, imported, or fails checked kinding or typing, or if
-    /// the kernels have different init prefixes. All validation and capacity
+    /// required capabilities are unavailable. All validation and capacity
     /// checks precede mutation, so failure is atomic.
     pub fn copy_terms_from(
         &mut self,
         source: &Self,
         roots: &[Ref],
     ) -> Result<CopyMap, KernelError> {
-        if self.init_prefix != source.init_prefix {
-            return Err(KernelError::InitPrefixMismatch);
-        }
         for &root in roots {
             source.require_category::<Infallible>(root, Sort::Tm)?;
         }
 
-        let (order, mut nodes) = source.copy_order(roots)?;
+        let (order, mut nodes) = source.copy_order(roots, &self.arena)?;
 
         let final_len = self
             .arena
@@ -453,11 +447,18 @@ impl Kernel {
         }
         let mut staged = Self {
             arena: self.arena.clone(),
-            init_prefix: self.init_prefix,
         };
         for &source_ref in &order {
             let row = source.row::<Infallible>(source_ref)?;
-            let (copied, sort) = remap_row(row, source.sort(source_ref), &nodes);
+            let (mut copied, sort) = remap_row(&row, source.sort(source_ref), &nodes);
+            if let Node::ConstRef(id) = *row.expr() {
+                copied = Row::new(Node::ConstRef(
+                    staged
+                        .arena
+                        .clone_constant_from(&source.arena, id)
+                        .ok_or(KernelError::TooManyDefinitions)?,
+                ));
+            }
             staged
                 .arena
                 .push_row(copied, sort)
@@ -484,20 +485,18 @@ impl Kernel {
     ///
     /// # Errors
     ///
-    /// Returns an error if `init` is not the exact shared compiled prefix, a
-    /// root or reachable row is invalid or imported, a logical definition is
-    /// absent, an expansion is ill-typed, or the destination reference space
+    /// Returns an error if a root or reachable row is invalid or imported,
+    /// an expansion is ill-typed, or the destination reference space
     /// is exhausted. The destination is unchanged on error.
     pub fn copy_terms_lowered_from(
         &mut self,
-        init: &Compiled,
         source: &Self,
         roots: &[Ref],
     ) -> Result<CopyMap, KernelError> {
         for &root in roots {
             source.require_category::<Infallible>(root, Sort::Tm)?;
         }
-        self.copy_objects_lowered_from(init, source, roots)
+        self.copy_objects_lowered_from(source, roots)
     }
 
     /// Copies checked objects of any syntactic category while recursively
@@ -510,30 +509,28 @@ impl Kernel {
     ///
     /// # Errors
     ///
-    /// Returns an error if `init` is not the exact shared compiled prefix, a
-    /// root or reachable row is absent, invalid, cyclic, or imported, a
-    /// logical definition is absent, an expansion is ill-typed, or the
+    /// Returns an error if a root or reachable row is absent, invalid, cyclic,
+    /// or imported, an expansion is ill-typed, or the
     /// destination reference space is exhausted. The destination is unchanged
     /// on error.
     pub fn copy_objects_lowered_from(
         &mut self,
-        init: &Compiled,
         source: &Self,
         roots: &[Ref],
     ) -> Result<CopyMap, KernelError> {
-        let expected_prefix = Some((init.arena().addr(), init.arena().len()));
-        if self.init_prefix != expected_prefix || source.init_prefix != expected_prefix {
-            return Err(KernelError::InitPrefixMismatch);
-        }
         for &root in roots {
             source.category_as::<Infallible>(root)?;
         }
 
-        let (order, mut nodes) = source.copy_order(roots)?;
+        let (order, mut nodes) = source.copy_order(roots, &Arena::empty())?;
         let mut staged = Self {
             arena: self.arena.clone(),
-            init_prefix: self.init_prefix,
         };
+        for destination in nodes.values_mut() {
+            if let Some(op) = source.boolean_builtin(*destination) {
+                *destination = staged.boolean_definition_cached(op)?;
+            }
+        }
         for &source_ref in &order {
             let syntax_root = source
                 .find_path_in::<Infallible>(EqColumn::Syn, source_ref)?
@@ -545,31 +542,23 @@ impl Kernel {
                 continue;
             }
             let row = source.row::<Infallible>(source_ref)?;
-            let destination = match *row.expr() {
-                Node::Op1(op, operand) => {
-                    let definition = init.get(op.name()).ok_or(KernelError::WrongForm {
-                        reference: source_ref,
-                        expected: "named logical init definition",
-                        actual: row.tag(),
-                    })?;
-                    staged.app(definition, nodes[&operand])?
+            let destination = if let Node::Builtin(crate::literals::Builtin::Bool(op)) = *row.expr()
+            {
+                staged.boolean_definition_cached(op)?
+            } else {
+                let (mut copied, sort) = remap_row(&row, source.sort(source_ref), &nodes);
+                if let Node::ConstRef(id) = *row.expr() {
+                    copied = Row::new(Node::ConstRef(
+                        staged
+                            .arena
+                            .clone_constant_from(&source.arena, id)
+                            .ok_or(KernelError::TooManyDefinitions)?,
+                    ));
                 }
-                Node::Op2(op, left, right) => {
-                    let definition = init.get(op.name()).ok_or(KernelError::WrongForm {
-                        reference: source_ref,
-                        expected: "named logical init definition",
-                        actual: row.tag(),
-                    })?;
-                    let partial = staged.app(definition, nodes[&left])?;
-                    staged.app(partial, nodes[&right])?
-                }
-                _ => {
-                    let (copied, sort) = remap_row(row, source.sort(source_ref), &nodes);
-                    staged
-                        .arena
-                        .push_row(copied, sort)
-                        .ok_or(KernelError::TooManyDefinitions)?
-                }
+                staged
+                    .arena
+                    .push_row(copied, sort)
+                    .ok_or(KernelError::TooManyDefinitions)?
             };
             nodes.insert(source_ref, destination);
         }
@@ -703,7 +692,7 @@ impl Kernel {
     ///
     /// Returns an error if the dense reference space is exhausted.
     pub fn star(&mut self) -> Result<Ref, KernelError> {
-        self.push::<Infallible>(Row::new(Node::KindStar), None)
+        Ok(crate::global::star())
     }
 
     /// Appends a kind arrow.
@@ -724,7 +713,7 @@ impl Kernel {
     /// Returns an error unless `star` names `kind.star`.
     pub fn bool_ty(&mut self, star: Ref) -> Result<Ref, KernelError> {
         self.require_star::<Infallible>(star)?;
-        self.push::<Infallible>(Row::new(Node::BoolTy), Some(star))
+        Ok(crate::global::ty(crate::literals::LiteralType::Bool))
     }
 
     /// Appends a simple function type.
@@ -735,6 +724,9 @@ impl Kernel {
     pub fn ty_arr(&mut self, domain: Ref, codomain: Ref) -> Result<Ref, KernelError> {
         let star = self.require_star_type::<Infallible>(domain)?;
         self.require_star_type::<Infallible>(codomain)?;
+        if let Some(reference) = crate::global::arrow(domain, codomain) {
+            return Ok(reference);
+        }
         self.push::<Infallible>(Row::new(Node::TyArr(domain, codomain)), Some(star))
     }
 
@@ -914,78 +906,39 @@ impl Kernel {
     /// Returns an error unless `bool_ty` names a Boolean type row.
     pub fn bool(&mut self, bool_ty: Ref, value: bool) -> Result<Ref, KernelError> {
         self.require_bool_type::<Infallible>(bool_ty)?;
-        self.push::<Infallible>(Row::new(Node::Bool(value)), Some(bool_ty))
+        Ok(crate::global::boolean(value))
     }
 
-    /// Appends a checked unary Boolean builtin.
+    /// Expands a Boolean builtin constant or application using its fixed HOL
+    /// definition. The definition is closed and independent of userspace names.
     ///
     /// # Errors
     ///
-    /// Returns an error unless the operand is a Boolean term.
-    pub fn op1(&mut self, op: Op1, operand: Ref) -> Result<Ref, KernelError> {
-        let bool_ty = self.require_bool_term::<Infallible>(operand)?;
-        self.push::<Infallible>(Row::new(Node::Op1(op, operand)), Some(bool_ty))
-    }
-
-    /// Appends a checked binary Boolean builtin.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error unless both operands are Boolean terms.
-    pub fn op2(&mut self, op: Op2, left: Ref, right: Ref) -> Result<Ref, KernelError> {
-        let bool_ty = self.require_bool_term::<Infallible>(left)?;
-        let right_ty = self.require_bool_term::<Infallible>(right)?;
-        if !self.equivalent(bool_ty, right_ty)? {
-            return Err(KernelError::ClassifierMismatch {
-                expected: bool_ty,
-                actual: right_ty,
-            });
-        }
-        self.push::<Infallible>(Row::new(Node::Op2(op, left, right)), Some(bool_ty))
-    }
-
-    /// Canonically lowers one compact logical row through its named init definition.
-    ///
-    /// The kernel must have been created with [`Kernel::with_init`], and `init`
-    /// must be that same prefix. Lowering is ordinary checked application, so
-    /// the resulting raw term is identical to direct construction from the
-    /// authoritative opcode-free definition.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `reference` is not an opcode row, the init prefix
-    /// is absent/mismatched, or checked application rejects an operand.
-    pub fn lower_logical(&mut self, init: &Compiled, reference: Ref) -> Result<Ref, KernelError> {
-        if !self.arena.has_definition_prefix(init.arena()) {
-            return Err(KernelError::InitPrefixMismatch);
-        }
-        let row = self.row::<Infallible>(reference)?;
-        let actual = row.tag();
-        let node = *row.expr();
-        match node {
-            Node::Op1(op, operand) => {
-                let definition = init.get(op.name()).ok_or(KernelError::WrongForm {
-                    reference,
-                    expected: "named logical init definition",
-                    actual,
-                })?;
-                self.app(definition, operand)
-            }
-            Node::Op2(op, left, right) => {
-                let definition = init.get(op.name()).ok_or(KernelError::WrongForm {
-                    reference,
-                    expected: "named logical init definition",
-                    actual,
-                })?;
-                let partial = self.app(definition, left)?;
-                self.app(partial, right)
-            }
-            _ => Err(KernelError::WrongForm {
+    /// Rejects non-Boolean builtins or malformed applications atomically.
+    pub fn lower_logical(&mut self, reference: Ref) -> Result<Ref, KernelError> {
+        let (crate::literals::Builtin::Bool(op), args) = self
+            .arena
+            .builtin_application(reference)
+            .ok_or(KernelError::WrongForm {
                 reference,
-                expected: "tm.op1.v1 or tm.op2.v1",
-                actual,
-            }),
+                expected: "Boolean builtin application",
+                actual: self.row::<Infallible>(reference)?.tag(),
+            })?
+        else {
+            return Err(KernelError::WrongForm {
+                reference,
+                expected: "Boolean builtin application",
+                actual: self.row::<Infallible>(reference)?.tag(),
+            });
+        };
+        self.validate_copy_row(reference)?;
+        let mut staged = self.fork();
+        let mut output = staged.boolean_definition_cached(op)?;
+        for arg in args {
+            output = staged.app(output, arg)?;
         }
+        *self = staged;
+        Ok(output)
     }
 
     /// Recursively expands logical opcodes in one resident syntax DAG.
@@ -996,14 +949,9 @@ impl Kernel {
     ///
     /// # Errors
     ///
-    /// Returns an error unless the exact logical init prefix is installed and
-    /// every reachable local row can be rebuilt by checked constructors.
-    pub fn lower_logical_tree(
-        &mut self,
-        init: &Compiled,
-        root: Ref,
-    ) -> Result<LogicalExpansion, KernelError> {
-        self.lower_logical_trees(init, &[root])
+    /// Rejects any reachable row that cannot be rebuilt by checked constructors.
+    pub fn lower_logical_tree(&mut self, root: Ref) -> Result<LogicalExpansion, KernelError> {
+        self.lower_logical_trees(&[root])
             .map(|expansions| expansions[0])
     }
 
@@ -1016,20 +964,16 @@ impl Kernel {
     /// a no-op.
     pub fn lower_logical_trees(
         &mut self,
-        init: &Compiled,
         roots: &[Ref],
     ) -> Result<Vec<LogicalExpansion>, KernelError> {
         for &root in roots {
             self.category_as::<Infallible>(root)?;
         }
-        if !self.arena.has_definition_prefix(init.arena()) {
-            return Err(KernelError::InitPrefixMismatch);
-        }
         let mut staged = self.fork();
         let mut memo = BTreeMap::new();
         let mut expansions = Vec::with_capacity(roots.len());
         for &compact in roots {
-            let (raw, fact) = staged.lower_logical_visit(init, compact, &mut memo)?;
+            let (raw, fact) = staged.lower_logical_visit(compact, &mut memo)?;
             staged.union_syn_fact(fact)?;
             expansions.push(LogicalExpansion { compact, raw, fact });
         }
@@ -1039,14 +983,13 @@ impl Kernel {
 
     fn lower_logical_visit(
         &mut self,
-        init: &Compiled,
         input: Ref,
         memo: &mut BTreeMap<Ref, (Ref, SynFactId)>,
     ) -> Result<(Ref, SynFactId), KernelError> {
         if let Some(&result) = memo.get(&input) {
             return Ok(result);
         }
-        let row = self.row::<Infallible>(input)?.clone();
+        let row = self.row::<Infallible>(input)?;
         if matches!(*row.expr(), Node::TmFv { .. } | Node::TyFv { .. }) {
             let fact = self.syn_refl(None, crate::SynRel::Syn, input)?;
             memo.insert(input, (input, fact));
@@ -1056,7 +999,7 @@ impl Kernel {
         let mut remapped = BTreeMap::new();
         let mut child_facts = Vec::with_capacity(children.len());
         for child in children {
-            let (output, fact) = self.lower_logical_visit(init, child, memo)?;
+            let (output, fact) = self.lower_logical_visit(child, memo)?;
             remapped.insert(child, output);
             child_facts.push(fact);
         }
@@ -1065,12 +1008,9 @@ impl Kernel {
         }
         let changed = remapped.iter().any(|(input, output)| input != output);
         let (generic, generic_fact) =
-            self.rebuild_logical_container(init, input, &row, &remapped, &child_facts, changed)?;
-        let result = if matches!(
-            *self.row::<Infallible>(generic)?.expr(),
-            Node::Op1(..) | Node::Op2(..)
-        ) {
-            let lowering = self.logical_lower_fact(None, init, generic)?;
+            self.rebuild_logical_container(input, &row, &remapped, &child_facts, changed)?;
+        let result = if self.boolean_builtin(generic).is_some() {
+            let lowering = self.logical_lower_fact(None, generic)?;
             let raw = self.syn_fact(lowering)?.output();
             (raw, self.syn_trans(None, generic_fact, lowering)?)
         } else {
@@ -1094,15 +1034,9 @@ impl Kernel {
     ///
     /// # Errors
     ///
-    /// Returns an error unless `raw` is a resident local object under the init
-    /// prefix and every rebuilt constructor and syntactic fact is accepted.
-    pub fn compact_logical_tree(
-        &mut self,
-        init: &Compiled,
-        raw: Ref,
-    ) -> Result<LogicalAlias, KernelError> {
-        self.compact_logical_trees(init, &[raw])
-            .map(|aliases| aliases[0])
+    /// Rejects malformed syntax or unsupported imported proxies.
+    pub fn compact_logical_tree(&mut self, raw: Ref) -> Result<LogicalAlias, KernelError> {
+        self.compact_logical_trees(&[raw]).map(|aliases| aliases[0])
     }
 
     /// Rebuilds several raw syntax DAGs with shared compact logical aliases.
@@ -1119,23 +1053,18 @@ impl Kernel {
     /// slice is a no-op.
     pub fn compact_logical_trees(
         &mut self,
-        init: &Compiled,
         roots: &[Ref],
     ) -> Result<Vec<LogicalAlias>, KernelError> {
         for &raw in roots {
             self.category_as::<Infallible>(raw)?;
         }
-        if !self.arena.has_definition_prefix(init.arena()) {
-            return Err(KernelError::InitPrefixMismatch);
-        }
         let mut staged = Self {
             arena: self.arena.clone(),
-            init_prefix: self.init_prefix,
         };
         let mut memo = BTreeMap::new();
         let mut aliases = Vec::with_capacity(roots.len());
         for &raw in roots {
-            let (compact, fact) = staged.compact_logical_visit(init, raw, &mut memo)?;
+            let (compact, fact) = staged.compact_logical_visit(raw, &mut memo)?;
             aliases.push(LogicalAlias { raw, compact, fact });
         }
         for alias in &aliases {
@@ -1147,14 +1076,13 @@ impl Kernel {
 
     fn compact_logical_visit(
         &mut self,
-        init: &Compiled,
         input: Ref,
         memo: &mut BTreeMap<Ref, (Ref, SynFactId)>,
     ) -> Result<(Ref, SynFactId), KernelError> {
         if let Some(&result) = memo.get(&input) {
             return Ok(result);
         }
-        let row = self.row::<Infallible>(input)?.clone();
+        let row = self.row::<Infallible>(input)?;
         let node = *row.expr();
         if matches!(
             node,
@@ -1179,7 +1107,7 @@ impl Kernel {
         let mut remapped = BTreeMap::new();
         let mut child_facts = Vec::with_capacity(children.len());
         for child in children {
-            let (output, fact) = self.compact_logical_visit(init, child, memo)?;
+            let (output, fact) = self.compact_logical_visit(child, memo)?;
             remapped.insert(child, output);
             child_facts.push(fact);
         }
@@ -1188,11 +1116,9 @@ impl Kernel {
         }
         let changed = remapped.iter().any(|(input, output)| input != output);
         let (generic, generic_fact) =
-            self.rebuild_logical_container(init, input, &row, &remapped, &child_facts, changed)?;
-        let result = if let Some(compact) =
-            self.recognize_logical_application(init, node, &remapped, memo)?
-        {
-            let lowering = self.logical_lower_fact_to(None, init, compact, generic)?;
+            self.rebuild_logical_container(input, &row, &remapped, &child_facts, changed)?;
+        let result = if let Some(compact) = self.recognize_logical_definition(generic)? {
+            let lowering = self.logical_lower_fact_to(None, compact, generic)?;
             let lowering = self.syn_symm(None, lowering)?;
             let fact = self.syn_trans(None, generic_fact, lowering)?;
             (compact, fact)
@@ -1205,7 +1131,6 @@ impl Kernel {
 
     fn rebuild_logical_container(
         &mut self,
-        init: &Compiled,
         input: Ref,
         row: &Row,
         remapped: &BTreeMap<Ref, Ref>,
@@ -1221,11 +1146,7 @@ impl Kernel {
             Node::Model { name, .. }
             | Node::TyExists { name, .. }
             | Node::TyForall { name, .. } => {
-                let star = init.get("star").ok_or(KernelError::WrongForm {
-                    reference: input,
-                    expected: "named init kind star",
-                    actual: row.tag(),
-                })?;
+                let star = self.star()?;
                 let binder = self.ty_fv(name, star)?;
                 self.syn_implicit_binder_congr(
                     None,
@@ -1288,8 +1209,6 @@ impl Kernel {
             Node::Lam(binder, body) => {
                 self.lam_at(self.classifier(input)?, child(binder)?, child(body)?)
             }
-            Node::Op1(op, operand) => self.op1(op, child(operand)?),
-            Node::Op2(op, left, right) => self.op2(op, child(left)?, child(right)?),
             Node::Eq(ty, left, right) => {
                 let bool_ty = self.classifier(input)?;
                 self.eq_at(bool_ty, child(ty)?, child(left)?, child(right)?)
@@ -1297,6 +1216,12 @@ impl Kernel {
             Node::Eps { ty, predicate } => self.eps(child(ty)?, child(predicate)?),
             Node::KindStar
             | Node::BoolTy
+            | Node::LiteralTy(_)
+            | Node::Word(..)
+            | Node::Nat(_)
+            | Node::Int(_)
+            | Node::ConstRef(_)
+            | Node::Builtin(_)
             | Node::Bool(_)
             | Node::TmRef { .. }
             | Node::TyRef { .. }
@@ -1308,37 +1233,25 @@ impl Kernel {
         }
     }
 
-    fn recognize_logical_application(
-        &mut self,
-        init: &Compiled,
-        node: Node,
-        remapped: &BTreeMap<Ref, Ref>,
-        memo: &BTreeMap<Ref, (Ref, SynFactId)>,
-    ) -> Result<Option<Ref>, KernelError> {
-        let Node::App(function, right) = node else {
+    fn recognize_logical_definition(&self, reference: Ref) -> Result<Option<Ref>, KernelError> {
+        use crate::literals::{BoolOp, Builtin};
+        if !matches!(self.row::<Infallible>(reference)?.expr(), Node::Lam(..)) {
             return Ok(None);
-        };
-        let right = remapped
-            .get(&right)
-            .copied()
-            .ok_or(KernelError::MissingDefinition { reference: right })?;
-        if init.get(Op1::Not.name()) == Some(function) {
-            return self.op1(Op1::Not, right).map(Some);
         }
-        let Node::App(definition, left) = *self.row::<Infallible>(function)?.expr() else {
-            return Ok(None);
-        };
-        let op = [Op2::And, Op2::Or, Op2::Imp]
-            .into_iter()
-            .find(|op| init.get(op.name()) == Some(definition));
-        let Some(op) = op else {
-            return Ok(None);
-        };
-        let left = memo
-            .get(&left)
-            .map(|&(output, _)| output)
-            .ok_or(KernelError::MissingDefinition { reference: left })?;
-        self.op2(op, left, right).map(Some)
+        for op in [
+            BoolOp::Not,
+            BoolOp::And,
+            BoolOp::Or,
+            BoolOp::Imp,
+            BoolOp::Iff,
+        ] {
+            let mut scratch = self.fork();
+            let definition = scratch.boolean_definition(op)?;
+            if scratch.exact_definition(reference, definition)? {
+                return Ok(crate::global::builtin(Builtin::Bool(op)));
+            }
+        }
+        Ok(None)
     }
 
     /// Appends object-language equality.
@@ -1594,7 +1507,20 @@ impl Kernel {
     fn validate_copy_row(&self, reference: Ref) -> Result<(), KernelError> {
         let row = self.row::<Infallible>(reference)?;
         let row_sort = self.arena.sort(reference);
+        if reference.get() < 0 {
+            return Ok(());
+        }
         let expected_sort = match *row.expr() {
+            Node::LiteralTy(_) => {
+                self.require_literal_capability()?;
+                let sort = row_sort.ok_or(KernelError::MissingSort { reference })?;
+                self.require_star::<Infallible>(sort)?;
+                Some(sort)
+            }
+            Node::Word(..) | Node::Nat(_) | Node::Int(_) | Node::ConstRef(_) => {
+                Some(self.validate_literal_row(reference)?)
+            }
+            Node::Builtin(op) => Some(self.validate_builtin_const(reference, op)?),
             Node::KindStar => None,
             Node::KindArr(domain, codomain) => {
                 self.require_category::<Infallible>(domain, Sort::Kind)?;
@@ -1661,7 +1587,7 @@ impl Kernel {
                 let (domain, codomain) =
                     self.type_arrow_member::<Infallible>(self.classifier(function)?)?;
                 let actual = self.classifier(argument)?;
-                if domain != actual {
+                if !self.equivalent(domain, actual)? {
                     return Err(KernelError::ClassifierMismatch {
                         expected: domain,
                         actual,
@@ -1688,18 +1614,6 @@ impl Kernel {
                 let sort = row_sort.ok_or(KernelError::MissingSort { reference })?;
                 self.require_bool_type::<Infallible>(sort)?;
                 Some(sort)
-            }
-            Node::Op1(_, operand) => Some(self.require_bool_term::<Infallible>(operand)?),
-            Node::Op2(_, left, right) => {
-                let bool_ty = self.require_bool_term::<Infallible>(left)?;
-                let right_ty = self.require_bool_term::<Infallible>(right)?;
-                if !self.equivalent(bool_ty, right_ty)? {
-                    return Err(KernelError::ClassifierMismatch {
-                        expected: bool_ty,
-                        actual: right_ty,
-                    });
-                }
-                Some(bool_ty)
             }
             Node::Eq(ty, left, right) => {
                 self.require_category::<Infallible>(ty, Sort::Ty)?;
@@ -1751,14 +1665,30 @@ impl Kernel {
         Ok(())
     }
 
-    fn copy_order(&self, roots: &[Ref]) -> Result<(Vec<Ref>, BTreeMap<Ref, Ref>), KernelError> {
+    fn copy_order(
+        &self,
+        roots: &[Ref],
+        destination: &Arena,
+    ) -> Result<(Vec<Ref>, BTreeMap<Ref, Ref>), KernelError> {
         let mut state = BTreeMap::<Ref, bool>::new();
         let mut order = Vec::new();
         let mut nodes = BTreeMap::new();
-        let prefix_len = self.init_prefix.map_or(0, |(_, len)| len);
+        let prefix_len = if self.arena.has_definition_prefix(destination) {
+            destination.len()
+        } else if destination.has_definition_prefix(&self.arena) {
+            self.arena.len()
+        } else {
+            0
+        };
         for &root in roots {
             let mut stack = vec![(root, false)];
             while let Some((reference, expanded)) = stack.pop() {
+                if reference.get() < 0 {
+                    self.row::<Infallible>(reference)?;
+                    nodes.insert(reference, reference);
+                    state.insert(reference, true);
+                    continue;
+                }
                 let reference_index = usize::try_from(reference.get())
                     .map_err(|_| KernelError::TooManyDefinitions)?;
                 if reference_index <= prefix_len {
@@ -1819,10 +1749,16 @@ impl Kernel {
             .ok_or(KernelError::TooManyImports)
     }
 
-    fn row<E>(&self, reference: Ref) -> Result<&Row, KernelError<E>>
+    fn row<E>(&self, reference: Ref) -> Result<Row, KernelError<E>>
     where
         E: std::error::Error + 'static,
     {
+        if reference.get() < 0
+            && crate::global::requires_infinity(reference)
+            && !self.arena.axioms().any(|a| a == AX_INF)
+        {
+            return Err(KernelError::MissingAxiom { name: AX_INF });
+        }
         self.arena
             .row(reference)
             .ok_or(KernelError::MissingDefinition { reference })
@@ -1832,10 +1768,7 @@ impl Kernel {
     where
         E: std::error::Error + 'static,
     {
-        self.arena
-            .tag(reference)
-            .map(Tag::sort)
-            .ok_or(KernelError::MissingDefinition { reference })
+        Ok(self.row::<E>(reference)?.tag().sort())
     }
 
     fn classifier_as<E>(&self, reference: Ref) -> Result<Ref, KernelError<E>>
@@ -1908,7 +1841,13 @@ impl Kernel {
         E: std::error::Error + 'static,
     {
         self.require_star_type(reference)?;
+        if matches!(*self.row::<E>(reference)?.expr(), Node::BoolTy) {
+            return Ok(());
+        }
         let representative = self.find_as::<E>(reference)?;
+        if matches!(*self.row::<E>(representative)?.expr(), Node::BoolTy) {
+            return Ok(());
+        }
         for candidate in self.references::<E>()? {
             if self.find_as::<E>(candidate)? == representative
                 && matches!(self.row::<E>(candidate)?.expr(), Node::BoolTy)
@@ -1954,7 +1893,13 @@ impl Kernel {
         E: std::error::Error + 'static,
     {
         self.require_category(reference, Sort::Ty)?;
+        if let Node::TyArr(domain, codomain) = *self.row::<E>(reference)?.expr() {
+            return Ok((domain, codomain));
+        }
         let representative = self.find_as::<E>(reference)?;
+        if let Node::TyArr(domain, codomain) = *self.row::<E>(representative)?.expr() {
+            return Ok((domain, codomain));
+        }
         for candidate in self.references::<E>()? {
             if self.category_as::<E>(candidate)? == Sort::Ty
                 && self.find_as::<E>(candidate)? == representative
@@ -2065,7 +2010,13 @@ impl Kernel {
         // Preflight both paths before compressing either one. Any preflight
         // error is therefore transactional even for malformed private state.
         let (left_root, left_path) = self.find_path_in::<E>(column, left)?;
-        let _ = self.find_path_in::<E>(column, right)?;
+        let (right_root, _) = self.find_path_in::<E>(column, right)?;
+        if left_root.get() < 0 && right_root.get() < 0 && left_root != right_root {
+            return Err(KernelError::ImmutableRoots {
+                left: left_root,
+                right: right_root,
+            });
+        }
         self.compress_path_in(column, left_root, left_path);
         // Recompute after left compression so the successful path certificate
         // describes the current forest. Every preflight failure above is
@@ -2075,7 +2026,14 @@ impl Kernel {
         if left_root == right_root {
             return Ok(());
         }
-        let (child, parent) = if left_root > right_root {
+        let priority = |reference: Ref| {
+            (
+                reference.get() >= 0,
+                column == EqColumn::Semantic && self.arena.literal_value(reference).is_none(),
+                reference,
+            )
+        };
+        let (child, parent) = if priority(left_root) > priority(right_root) {
             (left_root, right_root)
         } else {
             (right_root, left_root)
@@ -2104,6 +2062,9 @@ impl Kernel {
         path: SmallVec<[Ref; 8]>,
     ) {
         for member in path {
+            if member.get() < 0 {
+                continue;
+            }
             let parent = (member != representative).then_some(representative);
             let recorded = self.arena.set_eq_column(column, member, parent);
             debug_assert!(recorded, "find path contains only resident rows");
@@ -2186,6 +2147,9 @@ impl Kernel {
 
     fn compress_conv_path(&mut self, path: ConvPath) {
         for member in path.members {
+            if member.get() < 0 {
+                continue;
+            }
             let parent = if member == path.root {
                 path.classifier
             } else {
@@ -2225,7 +2189,16 @@ impl Kernel {
         // kernel, but malformed private state may already have had its left
         // path compressed when that defensive error is returned.
         let left_path = self.conv_path::<E>(left)?;
-        let _right_path = self.conv_path::<E>(right)?;
+        let right_path = self.conv_path::<E>(right)?;
+        if left_path.root.get() < 0
+            && right_path.root.get() < 0
+            && left_path.root != right_path.root
+        {
+            return Err(KernelError::ImmutableRoots {
+                left: left_path.root,
+                right: right_path.root,
+            });
+        }
         let left_root = left_path.root;
         self.compress_conv_path(left_path);
         // Re-read the right path from the state produced by the first
@@ -2270,6 +2243,12 @@ fn remap_row(row: &Row, sort: Option<Ref>, map: &BTreeMap<Ref, Ref>) -> (Row, Op
         Node::KindStar => Node::KindStar,
         Node::KindArr(a, b) => Node::KindArr(remap(a), remap(b)),
         Node::BoolTy => Node::BoolTy,
+        Node::LiteralTy(ty) => Node::LiteralTy(ty),
+        Node::Word(w, value) => Node::Word(w, value),
+        Node::Nat(value) => Node::Nat(value),
+        Node::Int(value) => Node::Int(value),
+        Node::ConstRef(id) => Node::ConstRef(id),
+        Node::Builtin(op) => Node::Builtin(op),
         Node::TyArr(a, b) => Node::TyArr(remap(a), remap(b)),
         Node::TyApp(a, b) => Node::TyApp(remap(a), remap(b)),
         Node::TyLam(a, b) => Node::TyLam(remap(a), remap(b)),
@@ -2296,8 +2275,6 @@ fn remap_row(row: &Row, sort: Option<Ref>, map: &BTreeMap<Ref, Ref>) -> (Row, Op
         Node::App(a, b) => Node::App(remap(a), remap(b)),
         Node::Lam(a, b) => Node::Lam(remap(a), remap(b)),
         Node::Bool(value) => Node::Bool(value),
-        Node::Op1(op, operand) => Node::Op1(op, remap(operand)),
-        Node::Op2(op, left, right) => Node::Op2(op, remap(left), remap(right)),
         Node::Eq(ty, a, b) => Node::Eq(remap(ty), remap(a), remap(b)),
         Node::Eps { ty, predicate } => Node::Eps {
             ty: remap(ty),
@@ -2359,32 +2336,49 @@ mod tests {
         let falsehood = init.get("false").unwrap();
 
         for operand in [falsehood, truth] {
-            let op = Op1::Not;
+            let op = crate::literals::BoolOp::Not;
             let mut lowered = Kernel::with_init(&init);
-            let compact = lowered.op1(op, operand).unwrap();
-            assert_eq!(lowered.arena().op1(compact), Some(op));
-            let result = lowered.lower_logical(&init, compact).unwrap();
+            let compact = lowered
+                .builtin(crate::literals::Builtin::Bool(op), &[operand])
+                .unwrap();
+            assert_eq!(lowered.arena().match_not(compact), Some([operand]));
+            let result = lowered.lower_logical(compact).unwrap();
 
             let mut direct = Kernel::with_init(&init);
-            let direct_compact = direct.op1(op, operand).unwrap();
+            let direct_compact = direct
+                .builtin(crate::literals::Builtin::Bool(op), &[operand])
+                .unwrap();
             assert_eq!(direct_compact, compact);
-            let expected = direct.app(init.get(op.name()).unwrap(), operand).unwrap();
+            let definition = direct.boolean_definition(op).unwrap();
+            let expected = direct.app(definition, operand).unwrap();
             assert_eq!(result, expected);
             assert_eq!(lowered.into_arena(), direct.into_arena());
         }
 
-        for op in [Op2::And, Op2::Or, Op2::Imp] {
+        for op in [
+            crate::literals::BoolOp::And,
+            crate::literals::BoolOp::Or,
+            crate::literals::BoolOp::Imp,
+        ] {
             for left in [falsehood, truth] {
                 for right in [falsehood, truth] {
                     let mut lowered = Kernel::with_init(&init);
-                    let compact = lowered.op2(op, left, right).unwrap();
-                    assert_eq!(lowered.arena().op2(compact), Some(op));
-                    let result = lowered.lower_logical(&init, compact).unwrap();
+                    let compact = lowered
+                        .builtin(crate::literals::Builtin::Bool(op), &[left, right])
+                        .unwrap();
+                    assert_eq!(
+                        lowered.arena().builtin_application(compact),
+                        Some((crate::literals::Builtin::Bool(op), vec![left, right]))
+                    );
+                    let result = lowered.lower_logical(compact).unwrap();
 
                     let mut direct = Kernel::with_init(&init);
-                    let direct_compact = direct.op2(op, left, right).unwrap();
+                    let direct_compact = direct
+                        .builtin(crate::literals::Builtin::Bool(op), &[left, right])
+                        .unwrap();
                     assert_eq!(direct_compact, compact);
-                    let partial = direct.app(init.get(op.name()).unwrap(), left).unwrap();
+                    let definition = direct.boolean_definition(op).unwrap();
+                    let partial = direct.app(definition, left).unwrap();
                     let expected = direct.app(partial, right).unwrap();
                     assert_eq!(result, expected);
                     assert_eq!(lowered.into_arena(), direct.into_arena());
@@ -2395,13 +2389,27 @@ mod tests {
         let mut wrong = Kernel::new();
         let star = wrong.star().unwrap();
         let wrong_bool = wrong.bool_ty(star).unwrap();
-        assert!(wrong.op1(Op1::Not, wrong_bool).is_err());
-        assert!(wrong.op2(Op2::And, wrong_bool, wrong_bool).is_err());
-        let raw_compact = wrong.arena.push_op1(Op1::Not, wrong_bool).unwrap();
-        assert!(matches!(
-            wrong.lower_logical(&init, raw_compact),
-            Err(KernelError::InitPrefixMismatch)
-        ));
+        assert!(
+            wrong
+                .builtin(
+                    crate::literals::Builtin::Bool(crate::literals::BoolOp::Not),
+                    &[wrong_bool]
+                )
+                .is_err()
+        );
+        assert!(
+            wrong
+                .builtin(
+                    crate::literals::Builtin::Bool(crate::literals::BoolOp::And),
+                    &[wrong_bool, wrong_bool]
+                )
+                .is_err()
+        );
+        let function = wrong
+            .builtin_const(crate::literals::Builtin::Bool(crate::literals::BoolOp::Not))
+            .unwrap();
+        let raw_compact = wrong.arena.push_app(function, wrong_bool).unwrap();
+        assert!(wrong.lower_logical(raw_compact).is_err());
         assert_eq!(init.get("bool"), Some(bool_ty));
     }
 
@@ -2412,8 +2420,13 @@ mod tests {
         let truth = init.get("true").unwrap();
 
         let mut unary = Kernel::with_init(&init);
-        let compact = unary.op1(Op1::Not, truth).unwrap();
-        let id = unary.logical_lower_fact(None, &init, compact).unwrap();
+        let compact = unary
+            .builtin(
+                crate::literals::Builtin::Bool(crate::literals::BoolOp::Not),
+                &[truth],
+            )
+            .unwrap();
+        let id = unary.logical_lower_fact(None, compact).unwrap();
         let fact = unary.syn_fact(id).unwrap();
         assert_eq!(fact.rel(), SynRel::Syn);
         assert_eq!(fact.input(), compact);
@@ -2421,40 +2434,55 @@ mod tests {
         assert_eq!(fact.val(), None);
 
         let mut unary_direct = Kernel::with_init(&init);
-        let direct_compact = unary_direct.op1(Op1::Not, truth).unwrap();
-        let direct_expansion = unary_direct.lower_logical(&init, direct_compact).unwrap();
+        let direct_compact = unary_direct
+            .builtin(
+                crate::literals::Builtin::Bool(crate::literals::BoolOp::Not),
+                &[truth],
+            )
+            .unwrap();
+        let direct_expansion = unary_direct.lower_logical(direct_compact).unwrap();
         assert_eq!(fact.output(), direct_expansion);
         unary.union_syn_fact(id).unwrap();
         assert!(unary.equivalent(compact, fact.output()).unwrap());
 
-        for op in [Op2::And, Op2::Or, Op2::Imp] {
+        for op in [
+            crate::literals::BoolOp::And,
+            crate::literals::BoolOp::Or,
+            crate::literals::BoolOp::Imp,
+        ] {
             let mut binary = Kernel::with_init(&init);
-            let compact = binary.op2(op, truth, truth).unwrap();
-            let id = binary.logical_lower_fact(None, &init, compact).unwrap();
+            let compact = binary
+                .builtin(crate::literals::Builtin::Bool(op), &[truth, truth])
+                .unwrap();
+            let id = binary.logical_lower_fact(None, compact).unwrap();
             let fact = binary.syn_fact(id).unwrap();
 
             let mut direct = Kernel::with_init(&init);
-            let direct_compact = direct.op2(op, truth, truth).unwrap();
-            let direct_expansion = direct.lower_logical(&init, direct_compact).unwrap();
+            let direct_compact = direct
+                .builtin(crate::literals::Builtin::Bool(op), &[truth, truth])
+                .unwrap();
+            let direct_expansion = direct.lower_logical(direct_compact).unwrap();
             assert_eq!(fact.rel(), SynRel::Syn);
             assert_eq!(fact.input(), compact);
             assert_eq!(fact.output(), direct_expansion);
         }
 
         let mut initialized = Kernel::with_init(&init);
-        assert!(initialized.logical_lower_fact(None, &init, truth).is_err());
+        assert!(initialized.logical_lower_fact(None, truth).is_err());
         assert_eq!(initialized.syn_fact_len(), 0);
 
         let mut bare = Kernel::new();
         let star = bare.star().unwrap();
         let bool_ty = bare.bool_ty(star).unwrap();
         let bare_truth = bare.bool(bool_ty, true).unwrap();
-        let compact = bare.op1(Op1::Not, bare_truth).unwrap();
-        assert!(matches!(
-            bare.logical_lower_fact(None, &init, compact),
-            Err(KernelError::InitPrefixMismatch)
-        ));
-        assert_eq!(bare.syn_fact_len(), 0);
+        let compact = bare
+            .builtin(
+                crate::literals::Builtin::Bool(crate::literals::BoolOp::Not),
+                &[bare_truth],
+            )
+            .unwrap();
+        assert!(bare.logical_lower_fact(None, compact).is_ok());
+        assert_eq!(bare.syn_fact_len(), 1);
     }
 
     #[test]
@@ -2479,11 +2507,20 @@ mod tests {
         let init = init::compile(&manifest).unwrap();
         let mut kernel = Kernel::with_init(&init);
         let truth = init.get("true").unwrap();
-        let apply1 = |kernel: &mut Kernel, name: &str, argument| {
-            kernel.app(init.get(name).unwrap(), argument).unwrap()
+        let apply1 = |kernel: &mut Kernel, _: &str, argument| {
+            let definition = kernel
+                .boolean_definition(crate::literals::BoolOp::Not)
+                .unwrap();
+            kernel.app(definition, argument).unwrap()
         };
         let apply2 = |kernel: &mut Kernel, name: &str, left, right| {
-            let partial = kernel.app(init.get(name).unwrap(), left).unwrap();
+            let op = if name == "and" {
+                crate::literals::BoolOp::And
+            } else {
+                crate::literals::BoolOp::Imp
+            };
+            let definition = kernel.boolean_definition(op).unwrap();
+            let partial = kernel.app(definition, left).unwrap();
             kernel.app(partial, right).unwrap()
         };
         let negated = apply1(&mut kernel, "not", truth);
@@ -2491,21 +2528,12 @@ mod tests {
         let raw = apply2(&mut kernel, "imp", conjunction, truth);
         let before = kernel.arena.len();
 
-        let alias = kernel.compact_logical_tree(&init, raw).unwrap();
+        let alias = kernel.compact_logical_tree(raw).unwrap();
         assert_eq!(alias.raw, raw);
-        assert_eq!(kernel.arena.op2(alias.compact), Some(Op2::Imp));
-        let [left, right] = kernel
-            .row::<Infallible>(alias.compact)
-            .unwrap()
-            .expr()
-            .children()[..]
-        else {
-            panic!("binary alias")
-        };
+        let [left, right] = kernel.arena.match_implies(alias.compact).unwrap();
         assert_eq!(right, truth);
-        assert_eq!(kernel.arena.op2(left), Some(Op2::And));
-        let negated = kernel.row::<Infallible>(left).unwrap().expr().children()[0];
-        assert_eq!(kernel.arena.op1(negated), Some(Op1::Not));
+        let [negated, _] = kernel.arena.match_and(left).unwrap();
+        assert_eq!(kernel.arena.match_not(negated), Some([truth]));
         let fact = kernel.syn_fact(alias.fact).unwrap();
         assert_eq!(fact.input(), raw);
         assert_eq!(fact.output(), alias.compact);
@@ -2523,7 +2551,7 @@ mod tests {
         let mut kernel = Kernel::with_init(&init);
         let before = kernel.arena.clone();
         let missing = Ref::new(i32::try_from(kernel.arena.len() + 1).unwrap()).unwrap();
-        assert!(kernel.compact_logical_tree(&init, missing).is_err());
+        assert!(kernel.compact_logical_tree(missing).is_err());
         assert_eq!(kernel.arena, before);
     }
 
@@ -2548,8 +2576,12 @@ mod tests {
     #[test]
     fn equality_cycles_have_a_canonical_member_and_can_be_compressed() {
         let mut kernel = Kernel::new();
-        let left = kernel.star().unwrap();
-        let right = kernel.star().unwrap();
+        let left = kernel
+            .push::<Infallible>(Row::new(Node::KindStar), None)
+            .unwrap();
+        let right = kernel
+            .push::<Infallible>(Row::new(Node::KindStar), None)
+            .unwrap();
         assert!(
             kernel
                 .arena
@@ -2569,12 +2601,95 @@ mod tests {
     }
 
     #[test]
+    fn immutable_roots_win_and_distinct_immutable_roots_are_not_cacheable() {
+        use crate::literals::{Builtin, CastOp, LiteralType, LiteralValue, WordOp, WordWidth};
+        let mut kernel = Kernel::new();
+        kernel.add_axiom(AX_INF).unwrap();
+        let zero = kernel.literal(LiteralValue::I8(0)).unwrap();
+        let sum = kernel
+            .builtin(Builtin::Word(WordWidth::W8, WordOp::Add), &[zero, zero])
+            .unwrap();
+        let before = kernel.len();
+        let (result, _) = kernel
+            .reduce_builtin(sum, crate::literals::EvalLimits::default())
+            .unwrap();
+        assert_eq!(result, zero);
+        assert_eq!(
+            kernel.len(),
+            before + 1,
+            "only the equality proposition is resident"
+        );
+        assert_eq!(kernel.find(sum).unwrap(), zero);
+        let (cached, _) = kernel
+            .reduce_builtin(
+                sum,
+                crate::literals::EvalLimits {
+                    max_steps: 1,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(cached, zero);
+        let int_zero = kernel.literal(LiteralValue::I16(0)).unwrap();
+        let before = kernel.arena.clone();
+        for column in [EqColumn::Semantic, EqColumn::Conv, EqColumn::Syn] {
+            assert!(
+                kernel
+                    .union_in::<Infallible>(column, zero, int_zero)
+                    .is_err()
+            );
+            assert_eq!(kernel.arena, before);
+        }
+        // Different builtin names may denote the same function. This is a
+        // cache restriction, not an inference that their meanings differ.
+        let word_nat = kernel
+            .builtin_const(Builtin::Cast(CastOp::WordToNat(WordWidth::W8)))
+            .unwrap();
+        let word_int = kernel
+            .builtin_const(Builtin::Cast(CastOp::WordToIntU(WordWidth::W8)))
+            .unwrap();
+        assert!(matches!(
+            kernel.union::<Infallible>(word_nat, word_int),
+            Err(KernelError::ImmutableRoots { .. })
+        ));
+        assert_eq!(
+            kernel.classifier(zero).unwrap(),
+            crate::global::ty(LiteralType::I8)
+        );
+    }
+
+    #[test]
+    fn fixed_boolean_unfolding_reuses_checked_syntax_equality() {
+        use crate::literals::{BoolOp, Builtin};
+        let mut kernel = Kernel::new();
+        let builtin = kernel.builtin_const(Builtin::Bool(BoolOp::And)).unwrap();
+        let fact = kernel.logical_lower_fact(None, builtin).unwrap();
+        let definition = kernel.syn_fact(fact).unwrap().output();
+        kernel.union_syn_fact(fact).unwrap();
+        let before = kernel.len();
+        assert_eq!(kernel.lower_logical(builtin).unwrap(), definition);
+        assert_eq!(kernel.len(), before);
+        let wrong = kernel.boolean_definition(BoolOp::Or).unwrap();
+        let before = kernel.arena.clone();
+        assert!(kernel.logical_lower_fact_to(None, builtin, wrong).is_err());
+        assert_eq!(kernel.arena, before);
+    }
+
+    #[test]
     fn conversion_compression_preserves_the_root_classifier() {
         let mut kernel = Kernel::new();
-        let star = kernel.star().unwrap();
-        let left = kernel.bool_ty(star).unwrap();
-        let middle = kernel.bool_ty(star).unwrap();
-        let right = kernel.bool_ty(star).unwrap();
+        let star = kernel
+            .push::<Infallible>(Row::new(Node::KindStar), None)
+            .unwrap();
+        let left = kernel
+            .push::<Infallible>(Row::new(Node::BoolTy), Some(star))
+            .unwrap();
+        let middle = kernel
+            .push::<Infallible>(Row::new(Node::BoolTy), Some(star))
+            .unwrap();
+        let right = kernel
+            .push::<Infallible>(Row::new(Node::BoolTy), Some(star))
+            .unwrap();
 
         kernel
             .union_in::<Infallible>(EqColumn::Conv, middle, right)
@@ -2596,14 +2711,22 @@ mod tests {
     #[test]
     fn conversion_union_replaces_an_equivalent_distinct_classifier_atomically() {
         let mut kernel = Kernel::new();
-        let first_star = kernel.star().unwrap();
-        let second_star = kernel.star().unwrap();
+        let first_star = kernel
+            .push::<Infallible>(Row::new(Node::KindStar), None)
+            .unwrap();
+        let second_star = kernel
+            .push::<Infallible>(Row::new(Node::KindStar), None)
+            .unwrap();
         kernel
             .union_in::<Infallible>(EqColumn::Semantic, first_star, second_star)
             .unwrap();
 
-        let left = kernel.bool_ty(first_star).unwrap();
-        let right = kernel.bool_ty(second_star).unwrap();
+        let left = kernel
+            .push::<Infallible>(Row::new(Node::BoolTy), Some(first_star))
+            .unwrap();
+        let right = kernel
+            .push::<Infallible>(Row::new(Node::BoolTy), Some(second_star))
+            .unwrap();
         kernel
             .union_in::<Infallible>(EqColumn::Conv, left, right)
             .unwrap();
@@ -2638,10 +2761,18 @@ mod tests {
     #[test]
     fn equality_union_preflights_both_paths_before_compression() {
         let mut kernel = Kernel::new();
-        let star = kernel.star().unwrap();
-        let first = kernel.bool_ty(star).unwrap();
-        let first_parent = kernel.bool_ty(star).unwrap();
-        let second = kernel.bool_ty(star).unwrap();
+        let star = kernel
+            .push::<Infallible>(Row::new(Node::KindStar), None)
+            .unwrap();
+        let first = kernel
+            .push::<Infallible>(Row::new(Node::BoolTy), Some(star))
+            .unwrap();
+        let first_parent = kernel
+            .push::<Infallible>(Row::new(Node::BoolTy), Some(star))
+            .unwrap();
+        let second = kernel
+            .push::<Infallible>(Row::new(Node::BoolTy), Some(star))
+            .unwrap();
         let boolean = kernel.bool(first, true).unwrap();
 
         assert!(
@@ -2667,9 +2798,15 @@ mod tests {
     #[test]
     fn equality_union_recomputes_the_right_path_and_keeps_the_least_root() {
         let mut kernel = Kernel::new();
-        let root = kernel.star().unwrap();
-        let middle = kernel.star().unwrap();
-        let leaf = kernel.star().unwrap();
+        let root = kernel
+            .push::<Infallible>(Row::new(Node::KindStar), None)
+            .unwrap();
+        let middle = kernel
+            .push::<Infallible>(Row::new(Node::KindStar), None)
+            .unwrap();
+        let leaf = kernel
+            .push::<Infallible>(Row::new(Node::KindStar), None)
+            .unwrap();
 
         assert!(
             kernel
@@ -2696,10 +2833,18 @@ mod tests {
     #[test]
     fn kind_conversion_union_preflights_both_paths_before_compression() {
         let mut kernel = Kernel::new();
-        let first = kernel.star().unwrap();
-        let first_parent = kernel.star().unwrap();
-        let second = kernel.star().unwrap();
-        let ty = kernel.bool_ty(first).unwrap();
+        let first = kernel
+            .push::<Infallible>(Row::new(Node::KindStar), None)
+            .unwrap();
+        let first_parent = kernel
+            .push::<Infallible>(Row::new(Node::KindStar), None)
+            .unwrap();
+        let second = kernel
+            .push::<Infallible>(Row::new(Node::KindStar), None)
+            .unwrap();
+        let ty = kernel
+            .push::<Infallible>(Row::new(Node::BoolTy), Some(first))
+            .unwrap();
 
         assert!(
             kernel
@@ -2772,10 +2917,10 @@ mod tests {
             .copy_terms_from(&source, &[truth, truth])
             .unwrap();
 
-        assert_eq!(copied.len(), 3);
+        assert_eq!(copied.len(), 1);
         assert_eq!(copied.roots(), &[copied.get(truth).unwrap(); 2]);
         assert!(destination.imports().is_empty());
-        assert_eq!(destination.len(), 3);
+        assert_eq!(destination.len(), 0);
     }
 
     #[test]
@@ -2810,7 +2955,7 @@ mod tests {
             right_children,
             [copied_bool_ty, copied_variable, copied_variable]
         );
-        assert_eq!(copied.len(), 5);
+        assert_eq!(copied.len(), 4);
         drop(source);
         assert_eq!(destination.category(copied.roots()[0]).unwrap(), Sort::Tm);
     }
@@ -2822,21 +2967,33 @@ mod tests {
         let bool_ty = source.bool_ty(star).unwrap();
         let p = source.tm_fv(1, bool_ty).unwrap();
         let q = source.tm_fv(2, bool_ty).unwrap();
-        let not_p = source.op1(Op1::Not, p).unwrap();
-        let implication = source.op2(Op2::Imp, not_p, q).unwrap();
+        let not_p = source
+            .builtin(
+                crate::literals::Builtin::Bool(crate::literals::BoolOp::Not),
+                &[p],
+            )
+            .unwrap();
+        let implication = source
+            .builtin(
+                crate::literals::Builtin::Bool(crate::literals::BoolOp::Imp),
+                &[not_p, q],
+            )
+            .unwrap();
         let mut destination = Kernel::new();
 
         let copied = destination.copy_term_from(&source, implication).unwrap();
         let copied_not_p = copied.get(not_p).unwrap();
         let copied_implication = copied.get(implication).unwrap();
 
-        assert_eq!(destination.arena().op1(copied_not_p), Some(Op1::Not));
-        assert_eq!(destination.arena().op2(copied_implication), Some(Op2::Imp));
+        assert_eq!(
+            destination.arena().match_not(copied_not_p),
+            Some([copied.get(p).unwrap()])
+        );
         assert_eq!(
             destination
-                .children(copied_implication)
-                .unwrap()
-                .collect::<Vec<_>>(),
+                .arena()
+                .match_implies(copied_implication)
+                .unwrap(),
             [copied_not_p, copied.get(q).unwrap()]
         );
     }
@@ -2848,17 +3005,38 @@ mod tests {
         let bool_ty = init.get("bool").unwrap();
         let mut source = Kernel::with_init(&init);
         let p = source.tm_fv(21, bool_ty).unwrap();
-        let not_p = source.op1(Op1::Not, p).unwrap();
-        let repeated = source.op2(Op2::And, not_p, not_p).unwrap();
-        let implication = source.op2(Op2::Imp, repeated, not_p).unwrap();
+        let not_p = source
+            .builtin(
+                crate::literals::Builtin::Bool(crate::literals::BoolOp::Not),
+                &[p],
+            )
+            .unwrap();
+        let repeated = source
+            .builtin(
+                crate::literals::Builtin::Bool(crate::literals::BoolOp::And),
+                &[not_p, not_p],
+            )
+            .unwrap();
+        let implication = source
+            .builtin(
+                crate::literals::Builtin::Bool(crate::literals::BoolOp::Imp),
+                &[repeated, not_p],
+            )
+            .unwrap();
         let equation = source.eq(bool_ty, implication, implication).unwrap();
         let mut destination = Kernel::with_init(&init);
 
         let copied = destination
-            .copy_term_lowered_from(&init, &source, equation)
+            .copy_term_lowered_from(&source, equation)
             .unwrap();
         let copied_not = copied.get(not_p).unwrap();
-        let not_definition = init.get(Op1::Not.name()).unwrap();
+        let not_definition = copied
+            .get(
+                source
+                    .builtin_const(crate::literals::Builtin::Bool(crate::literals::BoolOp::Not))
+                    .unwrap(),
+            )
+            .unwrap();
         assert_eq!(
             destination
                 .children(copied_not)
@@ -2877,7 +3055,7 @@ mod tests {
             let reference = Ref::new(i32::try_from(position).unwrap()).unwrap();
             assert!(!matches!(
                 destination.tag(reference),
-                Some(Tag::Tm(TmTag::Op1 | TmTag::Op2))
+                Some(Tag::Tm(TmTag::Builtin))
             ));
         }
         assert_eq!(destination.category(copied.roots()[0]).unwrap(), Sort::Tm);
@@ -2889,16 +3067,18 @@ mod tests {
         let init = init::compile(&manifest).unwrap();
         let truth = init.get("true").unwrap();
         let mut source = Kernel::with_init(&init);
-        let compact = source.op1(Op1::Not, truth).unwrap();
+        let compact = source
+            .builtin(
+                crate::literals::Builtin::Bool(crate::literals::BoolOp::Not),
+                &[truth],
+            )
+            .unwrap();
         let mut destination = Kernel::new();
         let existing = destination.star().unwrap();
         let before = destination.arena().clone();
 
-        assert!(matches!(
-            destination.copy_term_lowered_from(&init, &source, compact),
-            Err(KernelError::InitPrefixMismatch)
-        ));
-        assert_eq!(destination.arena(), &before);
+        assert!(destination.copy_term_lowered_from(&source, compact).is_ok());
+        assert_ne!(destination.arena(), &before);
         assert_eq!(destination.category(existing).unwrap(), Sort::Kind);
     }
 
@@ -2915,7 +3095,7 @@ mod tests {
         let mut destination = Kernel::with_init(&init);
 
         let copied = destination
-            .copy_objects_lowered_from(&init, &source, &[kind, family, truth])
+            .copy_objects_lowered_from(&source, &[kind, family, truth])
             .unwrap();
         assert_eq!(
             copied
@@ -2941,10 +3121,7 @@ mod tests {
 
         assert_eq!(left.arena(), prefix.arena());
         assert_eq!(right.arena(), prefix.arena());
-        assert_eq!(
-            left.init_prefix(),
-            Some((prefix.arena().addr(), prefix.arena().len()))
-        );
+        assert!(left.arena.has_definition_prefix(prefix.arena()));
         assert_eq!(left.copy_term_from(&right, truth).unwrap().roots(), [truth]);
         assert_eq!(left.arena(), prefix.arena());
     }
@@ -2954,7 +3131,7 @@ mod tests {
         let mut source = Kernel::new();
         let star = source.star().unwrap();
         let bool_ty = source.bool_ty(star).unwrap();
-        let self_ref = Ref::new(3).unwrap();
+        let self_ref = Ref::new(1).unwrap();
         source
             .arena
             .push_row(Row::new(Node::App(self_ref, self_ref)), Some(bool_ty));

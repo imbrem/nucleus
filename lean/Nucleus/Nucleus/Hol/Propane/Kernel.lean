@@ -1,4 +1,4 @@
-import Nucleus.Hol.Propane.Syntax
+import Nucleus.Hol.Propane.BooleanDefinition
 
 /-!
 # Propane proof theory
@@ -28,6 +28,14 @@ inductive EqTm : {Γ : List Ty} → {A : Ty} → Tm Γ A → Tm Γ A → Type wh
       EqTm (.app (.lam body) argument) (body.open argument)
   | eta (function : Tm Γ (.arr A B)) :
       EqTm (.lam (.app (function.rename weakenRen) (.bv .zero))) function
+  /-- Only the five fixed equality/lambda definitions can unfold a Boolean constant. -/
+  | boolUnfold (op : BoolOp) : EqTm (op.term (Γ := Γ)) op.definition
+  /-- Concrete successful computation, independently of literal storage. -/
+  | builtinReduce (op : Builtin) {inputs : List LiteralTy} {output : LiteralTy}
+      (signature : op.signature = some (inputs, output))
+      (args : LiteralArgs inputs) (result : output.denote)
+      (checked : op.eval args.values = some (LiteralValue.ofDenote output result)) :
+      EqTm ((Tm.builtin op signature).applyLiterals args) (.literal output result)
 
 abbrev Hyps (Γ : List Ty) := List (Wff Γ)
 

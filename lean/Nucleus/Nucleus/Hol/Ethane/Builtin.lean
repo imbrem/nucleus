@@ -4,7 +4,7 @@ import Nucleus.Hol.Ethane.Logic
 /-!
 # Ethane compact builtin wire contract, version 1
 
-This is an executable mirror of `crates/logic/hol/builtins-v1.tsv`. It is not
+This is the historical compact design's `builtins-v1.tsv` registry. It is not
 part of the opcode-free init signature. The version is carried in the row tag,
 and the numeric code is the `val` field; `ixs` remains ordered left-to-right.
 Natural and byte operations are intentionally not reserved by this version.
@@ -23,7 +23,7 @@ def op2RowTag : String := "tm.op2.v1"
 /-- The registry source is included at elaboration, so Lean cannot silently
 drift from the TSV reviewed by Rust. -/
 def registrySource : String :=
-  include_str ".."/".."/".."/".."/".."/"crates"/"logic"/"hol"/"builtins-v1.tsv"
+  include_str "builtins-v1.tsv"
 
 /-- One row of the finite v1 registry, matching `builtins-v1.tsv`. -/
 structure RegistryEntry where

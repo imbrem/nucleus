@@ -118,7 +118,9 @@ jobs:
           blob = b"installed wheel"
           assert CasAssertion(O256.hash(blob), blob).check().blob == blob
           kernel = Kernel()
-          assert kernel.tm(kernel.bool(kernel.bool_ty(kernel.star()), True)).reference > 0
+          boolean = kernel.bool_ty(kernel.star())
+          assert kernel.tm(kernel.bool(boolean, True)).reference < 0
+          assert kernel.tm(kernel.tm_fv(0, boolean)).reference > 0
           print(package)
           print(covalence.__version__)
           PY

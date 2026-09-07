@@ -128,7 +128,7 @@ impl Compiled {
     /// Manifest names and migration metadata do not affect that identity.
     #[must_use]
     pub fn kernel(&self) -> Kernel {
-        Kernel::with_init_prefix(self.arena.clone())
+        Kernel::from_checked_arena(self.arena.clone())
     }
 
     /// Returns the complete source-manifest hash used for this compilation.
@@ -368,24 +368,29 @@ mod tests {
                 "true",
             ]
         );
-        assert_eq!(first.arena().len(), 33);
-        assert_eq!(first.get("star"), Ref::new(1));
-        assert_eq!(first.get("bool"), Ref::new(2));
-        assert_eq!(first.get("bool->bool"), Ref::new(3));
-        assert_eq!(first.get("bool->bool->bool"), Ref::new(4));
-        assert_eq!(first.get("true"), Ref::new(7));
-        assert_eq!(first.get("false"), Ref::new(12));
-        assert_eq!(first.get("not"), Ref::new(15));
-        assert_eq!(first.get("and"), Ref::new(21));
-        assert_eq!(first.get("or"), Ref::new(27));
-        assert_eq!(first.get("imp"), Ref::new(33));
+        assert_eq!(first.arena().len(), 29);
+        assert_eq!(first.get("star"), Ref::new(-1));
+        assert_eq!(first.get("bool"), Ref::new(-2));
+        let mut kernel = Kernel::new();
+        let bool_ty = first.get("bool").unwrap();
+        let unary = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+        let binary = kernel.ty_arr(bool_ty, unary).unwrap();
+        assert_eq!(first.get("bool->bool"), Some(unary));
+        assert_eq!(first.get("bool->bool->bool"), Some(binary));
+        assert!(kernel.is_empty(), "global signatures occupy no local rows");
+        assert_eq!(first.get("true"), Ref::new(3));
+        assert_eq!(first.get("false"), Ref::new(8));
+        assert_eq!(first.get("not"), Ref::new(11));
+        assert_eq!(first.get("and"), Ref::new(17));
+        assert_eq!(first.get("or"), Ref::new(23));
+        assert_eq!(first.get("imp"), Ref::new(29));
 
         let mut bytes = Vec::new();
         wire::serialize(first.arena(), &mut bytes).unwrap();
         assert_eq!(wire::deserialize(bytes.as_slice()).unwrap(), *first.arena());
         assert_eq!(
             first.arena().addr(),
-            O256::from_hex("f8c65ffe8817adda472f44bfa039738351b88524abaf9f9d798c6cef714ac964")
+            O256::from_hex("d7a1ac93b4cf7215b1e2a68cf500df68a1b3880361c5f99188720acb915bd915")
                 .unwrap()
         );
         assert_eq!(
@@ -414,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn copy_uses_compiled_arena_identity_and_rejects_prefix_mismatch_atomically() {
+    fn copying_named_library_terms_does_not_require_a_remembered_prefix() {
         let manifest: Manifest = serde_json::from_str(FIXTURE).unwrap();
         let compiled = compile(&manifest).unwrap();
         let mut metadata_changed = manifest.clone();
@@ -440,12 +445,12 @@ mod tests {
         let arena_changed = compile(&arena_changed).unwrap();
         assert_ne!(compiled.arena().addr(), arena_changed.arena().addr());
         let mut mismatched = arena_changed.kernel();
-        let before = mismatched.arena().clone();
-        assert!(matches!(
-            mismatched.copy_term_from(&source, root),
-            Err(KernelError::InitPrefixMismatch)
-        ));
-        assert_eq!(*mismatched.arena(), before);
+        let copied = mismatched.copy_term_from(&source, root).unwrap();
+        let copied_root = copied.get(root).unwrap();
+        assert_eq!(
+            mismatched.classifier(copied_root).unwrap(),
+            source.classifier(root).unwrap()
+        );
 
         let mut column_changed = compiled.arena().clone();
         assert!(column_changed.set_eq_column(
@@ -459,10 +464,13 @@ mod tests {
         );
 
         let mut empty = Kernel::new();
-        assert!(matches!(
-            empty.copy_terms_from(&source, &[]),
-            Err(KernelError::InitPrefixMismatch)
-        ));
+        assert!(
+            empty
+                .copy_terms_from(&source, &[])
+                .unwrap()
+                .roots()
+                .is_empty()
+        );
         assert!(empty.is_empty());
     }
 

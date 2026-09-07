@@ -44,8 +44,7 @@
 
 use covalence_lib_error::snafu::Snafu;
 use covalence_logic_hol::{
-    Binder, Kernel, KernelError, Lit, Ref, SubtypeAxiom, ThmId,
-    builtin::{Op1, Op2},
+    Binder, Kernel, KernelError, Ref, SubtypeAxiom, ThmId, literals::BoolOp,
 };
 
 use crate::{
@@ -421,18 +420,23 @@ impl SubtypeExt for Kernel {
         let sub = model.ty;
         let representation = open_exists(self, model.specification)?;
         let abstraction = open_exists(self, representation.body)?;
-        let [abs_rep, tail] = binary(self, abstraction.body, Op2::And)?;
-        let [rep_abs, rep_guarded] = binary(self, tail, Op2::And)?;
+        let [abs_rep, tail] = binary(self, abstraction.body, BoolOp::And)?;
+        let [rep_abs, rep_guarded] = binary(self, tail, BoolOp::And)?;
         let rep_ty = self.classifier(representation.witness)?;
         let abs_ty = self.classifier(abstraction.witness)?;
 
         let property_theorem = self.copy_theorem(model.theorem)?;
         self.convert_theorem(property_theorem, model.specification, abstraction.body)?;
-        let property_lit = Lit::positive(abstraction.body.get());
+        let property_lit = abstraction
+            .body
+            .positive()
+            .expect("theorem atom is a local proposition");
         let abs_rep_theorem =
             self.expand_conclusion(property_theorem, property_lit, Some(false))?;
         let tail_theorem = self.expand_conclusion(property_theorem, property_lit, Some(true))?;
-        let tail_lit = Lit::positive(tail.get());
+        let tail_lit = tail
+            .positive()
+            .expect("theorem atom is a local proposition");
         let rep_abs_theorem = self.expand_conclusion(tail_theorem, tail_lit, Some(false))?;
         let rep_guarded_theorem = self.expand_conclusion(tail_theorem, tail_lit, Some(true))?;
 
@@ -523,8 +527,8 @@ impl Builder<'_> {
         let abs_exists = self.kernel.app(abs_chooser, abs)?;
 
         let (abs_rep, rep_abs, rep_guarded) = self.law_parts(sub, rep, abs)?;
-        let tail = self.kernel.op2(Op2::And, rep_abs, rep_guarded)?;
-        let property = self.kernel.op2(Op2::And, abs_rep, tail)?;
+        let tail = self.kernel.and(rep_abs, rep_guarded)?;
+        let property = self.kernel.and(abs_rep, tail)?;
 
         Ok(Subtype {
             carrier: self.carrier,
@@ -573,9 +577,9 @@ impl Builder<'_> {
             .tm_fv(self.name(Binder::Witness), self.carrier)?;
         let holds_witness = self.kernel.app(self.predicate, witness)?;
         let inhabited = self.kernel.exists_tm(witness, holds_witness)?;
-        let empty = self.kernel.op1(Op1::Not, inhabited)?;
+        let empty = self.kernel.not(inhabited)?;
         let holds_value = self.kernel.app(self.predicate, value)?;
-        self.kernel.op2(Op2::Or, holds_value, empty)
+        self.kernel.or(holds_value, empty)
     }
 
     /// The three package laws for one candidate model type.
@@ -606,7 +610,7 @@ impl Builder<'_> {
             let guard = self.guard(carrier_value)?;
             let applied = self.kernel.app(representation, abs_a)?;
             let equality = self.kernel.eq(self.bool_ty, applied, carrier_value)?;
-            let implication = self.kernel.op2(Op2::Imp, guard, equality)?;
+            let implication = self.kernel.implies(guard, equality)?;
             self.kernel
                 .forall_tm(self.bool_ty, carrier_value, implication)?
         };
@@ -628,25 +632,13 @@ impl Builder<'_> {
     ) -> Result<Ref, KernelError> {
         let (abs_rep, rep_abs, rep_guarded) =
             self.law_parts(model_ty, representation, abstraction)?;
-        let tail = self.kernel.op2(Op2::And, rep_abs, rep_guarded)?;
-        self.kernel.op2(Op2::And, abs_rep, tail)
+        let tail = self.kernel.and(rep_abs, rep_guarded)?;
+        self.kernel.and(abs_rep, tail)
     }
 }
 
-fn binary(kernel: &Kernel, input: Ref, op: Op2) -> Result<[Ref; 2], KernelError> {
-    if kernel.arena().op2(input) != Some(op) {
-        return Err(KernelError::InvalidTheoremRule {
-            rule: "subtype package conjunction",
-        });
-    }
-    let children: Vec<_> = kernel
-        .arena()
-        .children(input)
-        .ok_or(KernelError::MissingDefinition { reference: input })?
-        .collect();
-    children
-        .try_into()
-        .map_err(|_| KernelError::InvalidTheoremRule {
-            rule: "subtype package conjunction",
-        })
+fn binary(kernel: &Kernel, input: Ref, op: BoolOp) -> Result<[Ref; 2], KernelError> {
+    crate::boolean_args(kernel, input, op).ok_or(KernelError::InvalidTheoremRule {
+        rule: "subtype package conjunction",
+    })
 }

@@ -122,8 +122,8 @@ def test_truncation_rebuilds_the_free_list_over_the_prefix() -> None:
 def test_cache_operations_never_add_a_claim() -> None:
     base = basis()
     kernel = base.kernel
-    left, right = bool_pair(base)
-    equal = kernel.syn_congr("syn", left, right, [])
+    left, right = base.var(987), base.var(987)
+    equal = kernel.syn_congr("syn", left, right, [kernel.syn_refl("syn", base.bool_ty)])
     kernel.union_syn_fact(equal)
     address = kernel.addr()
 
@@ -264,10 +264,10 @@ def test_symmetry_reverses_only_a_direct_fact() -> None:
 def test_transitivity_matches_the_middle_reference_exactly() -> None:
     base = basis()
     kernel = base.kernel
-    first, second = bool_pair(base)
-    third = base.literal(True)
-    left = kernel.syn_congr("syn", first, second, [])
-    right = kernel.syn_congr("syn", second, third, [])
+    first, second, third = base.var(987), base.var(987), base.var(987)
+    children = [kernel.syn_refl("syn", base.bool_ty)]
+    left = kernel.syn_congr("syn", first, second, children)
+    right = kernel.syn_congr("syn", second, third, children)
 
     assert fact_view(kernel.syn_trans(left, right)) == (
         "syn",

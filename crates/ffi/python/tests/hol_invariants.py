@@ -22,7 +22,22 @@ from covalence.logic.hol import Arena, Definition, Kernel, SynFact
 
 KIND_TAGS = frozenset({"kind.star", "kind.arr", "kind.ref"})
 TY_TAGS = frozenset(
-    {"ty.bool", "ty.arr", "ty.app", "ty.lam", "ty.fv", "ty.model", "ty.ref"}
+    {
+        "ty.bool",
+        "ty.i8",
+        "ty.i16",
+        "ty.i32",
+        "ty.i64",
+        "ty.nat",
+        "ty.int",
+        "ty.bytes",
+        "ty.arr",
+        "ty.app",
+        "ty.lam",
+        "ty.fv",
+        "ty.model",
+        "ty.ref",
+    }
 )
 TM_TAGS = frozenset(
     {
@@ -32,6 +47,14 @@ TM_TAGS = frozenset(
         "tm.app",
         "tm.lam",
         "tm.bool",
+        "tm.i8",
+        "tm.i16",
+        "tm.i32",
+        "tm.i64",
+        "tm.nat",
+        "tm.int",
+        "tm.const",
+        "tm.builtin",
         "tm.eq",
         "tm.eps",
         "tm.ref",
@@ -152,7 +175,7 @@ def assert_arena_invariants(arena: Arena) -> None:
     for definition in definitions:
         assert definition.tag in TAGS, definition.tag
         assert arena.definition(definition.reference).tag == definition.tag
-        assert all(child >= 1 for child in definition.children)
+        assert all(child != 0 for child in definition.children)
         assert definition.value is None or definition.tag == "tm.bool"
         assert (definition.source is None) == (definition.foreign is None)
     assert arena.context == sorted(set(arena.context))
@@ -221,9 +244,9 @@ def assert_kernel_invariants(kernel: Kernel) -> None:
             continue  # A removed slot, which stays allocated until truncation.
         assert fact.id == slot
         assert fact.relation in RELATIONS
-        assert 1 <= fact.input <= len(kernel)
-        assert 1 <= fact.output <= len(kernel)
-        assert fact.var is None or 1 <= fact.var <= len(kernel)
+        assert arena.definition(fact.input) is not None
+        assert arena.definition(fact.output) is not None
+        assert fact.var is None or arena.definition(fact.var) is not None
         # `val` without `var` is reserved and has no checked meaning.
         assert not (fact.val is not None and fact.var is None)
 

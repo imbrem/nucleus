@@ -3,8 +3,23 @@
 
 mod support;
 
-use covalence_logic_hol::{KernelError, KindTag, Ref, Sort, SynRel, Tag, TmTag, TyTag};
+use covalence_logic_hol::{KernelError, KindTag, Ref, Sort, SynFactId, SynRel, Tag, TmTag, TyTag};
 use support::{Fix, row_id};
+
+/// A local type expression with a checked beta equality to the global Bool type.
+fn bool_alias(fix: &mut Fix) -> (Ref, SynFactId) {
+    let binder = fix.ty_var(900);
+    let identity = fix.ty_lam(binder, binder).expect("type identity");
+    let bool_ty = fix.bool_ty;
+    let alias = fix.ty_app(identity, bool_ty).expect("local type redex");
+    let substitution = fix
+        .syn_sub_var(None, binder, bool_ty)
+        .expect("substitution");
+    let beta = fix
+        .ty_beta_fact(None, alias, substitution)
+        .expect("beta equality");
+    (alias, beta)
+}
 
 #[test]
 fn each_constructor_records_its_own_tag_and_classifier() {
@@ -152,18 +167,23 @@ fn the_boolean_type_must_literally_have_kind_star() {
 fn family_application_compares_kinds_syntactically_not_up_to_equality() {
     let mut fix = Fix::new();
     let star = fix.star;
-    let other_star = fix.star().expect("second star");
     let arrow_kind = fix.kind_arr(star, star).expect("arrow kind");
-    let family = fix.ty_fv(0, arrow_kind).expect("family variable");
-    let argument = fix.ty_fv(1, other_star).expect("argument at the twin kind");
+    let other_arrow = fix.kind_arr(star, star).expect("duplicate arrow kind");
+    let family_kind = fix.kind_arr(arrow_kind, star).expect("family kind");
+    let family = fix.ty_fv(0, family_kind).expect("family variable");
+    let argument = fix
+        .ty_fv(1, other_arrow)
+        .expect("argument at the twin kind");
 
-    // Kinds are syntactic in Ethane, so the twin `kind.star` row is not the
+    // Kinds are syntactic in Ethane, so the twin arrow-kind row is not the
     // arrow's domain even though nothing distinguishes the two rows.
     assert!(matches!(
         fix.ty_app(family, argument),
         Err(KernelError::ClassifierMismatch { .. })
     ));
-    let matching = fix.ty_fv(2, star).expect("argument at the exact kind");
+    let matching = fix
+        .ty_fv(2, arrow_kind)
+        .expect("argument at the exact kind");
     assert!(fix.ty_app(family, matching).is_ok());
 }
 
@@ -203,12 +223,9 @@ fn the_boolean_type_may_be_any_member_of_a_class_containing_ty_bool() {
     let mut fix = Fix::new();
     let star = fix.star;
     let bool_ty = fix.bool_ty;
-    let alias = fix.bool_ty(star).expect("second bool type");
-
-    let prover = fix.prover();
-    prover
-        .union_equal(&mut fix.kernel, bool_ty, alias)
-        .expect("merge the duplicate type rows");
+    let (alias, beta) = bool_alias(&mut fix);
+    fix.union_syn_fact(beta).expect("reduce the type alias");
+    assert_eq!(fix.find(alias).unwrap(), bool_ty);
     assert!(
         fix.bool(alias, true).is_ok(),
         "a class containing `ty.bool` is Boolean"
@@ -224,21 +241,17 @@ fn the_boolean_type_may_be_any_member_of_a_class_containing_ty_bool() {
 #[test]
 fn equality_requires_the_two_sides_to_share_a_type_class() {
     let mut fix = Fix::new();
-    let star = fix.star;
     let bool_ty = fix.bool_ty;
-    let alias = fix.bool_ty(star).expect("second bool type");
-    let left = fix.lit(true);
-    let right = fix.bool(alias, false).expect("literal at the twin type");
+    let (alias, beta) = bool_alias(&mut fix);
+    let left = fix.var(0);
+    let right = fix.tm_fv(1, alias).expect("term at the unreduced alias");
 
     assert!(matches!(
         fix.eq(bool_ty, left, right),
         Err(KernelError::ClassifierMismatch { .. })
     ));
 
-    let prover = fix.prover();
-    prover
-        .union_equal(&mut fix.kernel, bool_ty, alias)
-        .expect("merge the duplicate type rows");
+    fix.union_syn_fact(beta).expect("reduce the type alias");
     assert!(fix.eq(bool_ty, left, right).is_ok());
 }
 
@@ -247,12 +260,10 @@ fn equality_can_retain_an_exact_equivalent_operand_type() {
     let mut fix = Fix::new();
     let star = fix.star;
     let bool_ty = fix.bool_ty;
-    let alias = fix.bool_ty(star).expect("second bool type");
+    let (alias, beta) = bool_alias(&mut fix);
     let left = fix.lit(true);
-    let right = fix.bool(alias, false).expect("literal at the twin type");
-    fix.prover()
-        .union_equal(&mut fix.kernel, bool_ty, alias)
-        .expect("merge the duplicate type rows");
+    let right = fix.lit(false);
+    fix.union_syn_fact(beta).expect("reduce the type alias");
 
     let equality = fix
         .eq_at(bool_ty, alias, left, right)
@@ -329,10 +340,17 @@ fn the_logical_context_and_axiom_set_are_both_checked() {
 fn merging_classes_keeps_the_smallest_row_canonical() {
     let mut fix = Fix::new();
     let bool_ty = fix.bool_ty;
-    let star = fix.star;
-    let copies: Vec<Ref> = (0..5)
-        .map(|_| fix.bool_ty(star).expect("duplicate bool type"))
+    let binder = fix.ty_var(0);
+    let identity = fix.ty_lam(binder, binder).unwrap();
+    let substitution = fix.syn_sub_var(None, binder, bool_ty).unwrap();
+    let aliases: Vec<_> = (0..5)
+        .map(|_| {
+            let alias = fix.ty_app(identity, bool_ty).unwrap();
+            let beta = fix.ty_beta_fact(None, alias, substitution).unwrap();
+            (alias, beta)
+        })
         .collect();
+    let copies: Vec<_> = aliases.iter().map(|&(reference, _)| reference).collect();
     let prover = fix.prover();
 
     // Merge the copies in descending order; the smallest row must still win.
@@ -341,9 +359,8 @@ fn merging_classes_keeps_the_smallest_row_canonical() {
             .union_equal(&mut fix.kernel, window[1], window[0])
             .expect("duplicates merge");
     }
-    prover
-        .union_equal(&mut fix.kernel, copies[0], bool_ty)
-        .expect("duplicates merge");
+    fix.union_syn_fact(aliases[0].1)
+        .expect("local class bottoms out at global Bool");
 
     for copy in &copies {
         assert_eq!(fix.find(*copy).expect("resident"), bool_ty);
@@ -354,11 +371,8 @@ fn merging_classes_keeps_the_smallest_row_canonical() {
 #[test]
 fn path_compression_preserves_the_partition() {
     let mut fix = Fix::new();
-    let star = fix.star;
     let bool_ty = fix.bool_ty;
-    let copies: Vec<Ref> = (0..4)
-        .map(|_| fix.bool_ty(star).expect("duplicate bool type"))
-        .collect();
+    let copies: Vec<Ref> = (0..4).map(|_| fix.ty_var(0)).collect();
     let prover = fix.prover();
     for window in copies.windows(2) {
         prover

@@ -10,7 +10,7 @@ use covalence_logic_classical::{LitError, Refuter};
 use super::{Kernel, KernelError, Node};
 use crate::{
     Ref,
-    builtin::{Op1, Op2},
+    literals::{BoolOp, Builtin, LiteralValue},
 };
 
 #[derive(Clone)]
@@ -23,12 +23,28 @@ impl Thm {
 }
 
 fn positive(reference: Ref) -> Lit {
-    Lit::positive(reference.get())
+    reference.positive().expect("checked local proposition")
 }
 
 fn reference(proposition: Lit) -> Ref {
-    Ref::new(i32::try_from(proposition.magnitude()).expect("literal magnitude fits i32"))
-        .expect("literal magnitude is nonzero")
+    Ref::from_literal(proposition)
+}
+
+/// Transient formula, never stored in the classical arena. Constants become
+/// empty rows/matrices rather than consuming the signed local-literal namespace.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Formula {
+    Constant(bool),
+    Atom(Lit),
+}
+
+impl Formula {
+    fn negated(self) -> Self {
+        match self {
+            Self::Constant(value) => Self::Constant(!value),
+            Self::Atom(literal) => Self::Atom(literal.negated()),
+        }
+    }
 }
 
 /// The exact theorem and syntax produced by equality reflexivity.
@@ -112,6 +128,47 @@ pub struct ApTerm {
 }
 
 impl Kernel {
+    /// Converts a checked local Boolean term to a positive theorem literal.
+    ///
+    /// # Errors
+    ///
+    /// Rejects non-Boolean terms and global references, including truth values.
+    pub fn lit(&self, term: Ref) -> Result<Lit, KernelError> {
+        self.require_bool_term::<std::convert::Infallible>(term)?;
+        term.positive()
+            .map_err(|_| KernelError::InvalidTheoremRule {
+                rule: "theorem literal requires a local Boolean term",
+            })
+    }
+
+    fn formula(&self, term: Ref) -> Result<Formula, KernelError> {
+        self.require_bool_term::<std::convert::Infallible>(term)?;
+        match self.arena.bool_value(term) {
+            Some(value) => Ok(Formula::Constant(value)),
+            None => self.lit(term).map(Formula::Atom),
+        }
+    }
+
+    fn conclusion(&self, term: Ref) -> Result<Matrix, KernelError> {
+        Ok(formula_matrix([self.formula(term)?], TreeSide::Disjunctive))
+    }
+
+    fn sole_positive_conclusion(theorem: &ThmRef) -> Result<Ref, KernelError> {
+        let rows = theorem.rhs.to_rows();
+        if rows.is_empty() {
+            return Ok(crate::global::literal(&LiteralValue::Bool(false)).expect("global false"));
+        }
+        if rows.len() == 1 && rows[0].is_empty() {
+            return Ok(crate::global::literal(&LiteralValue::Bool(true)).expect("global true"));
+        }
+        if rows.len() == 1 && rows[0].len() == 1 && rows[0][0].is_positive() {
+            return Ok(reference(rows[0][0]));
+        }
+        Err(KernelError::InvalidTheoremRule {
+            rule: "single positive conclusion",
+        })
+    }
+
     /// Borrows the universally valid syllogism arena.
     #[must_use]
     pub const fn syl(&self) -> &ClassicalArena {
@@ -264,20 +321,11 @@ impl Kernel {
             });
         }
         let old = self.require_thm(theorem)?;
-        let premises: Vec<LitVec> = old
-            .lhs
-            .rows()
-            .map(|row| replace_atom(row, source, target))
-            .collect();
-        let conclusions: Vec<LitVec> = old
-            .rhs
-            .rows()
-            .map(|row| replace_atom(row, source, target))
-            .collect();
-        self.replace_theorem(
-            theorem,
-            Thm::new(Matrix::new(premises), Matrix::new(conclusions)),
-        )
+        let source = self.formula(source)?;
+        let target = self.formula(target)?;
+        let premises = replace_formula(&old.lhs, source, target, TreeSide::Conjunctive);
+        let conclusions = replace_formula(&old.rhs, source, target, TreeSide::Disjunctive);
+        self.replace_theorem(theorem, Thm::new(premises, conclusions))
     }
 
     /// Replaces an atom only in a theorem's conclusion matrix.
@@ -306,12 +354,10 @@ impl Kernel {
         }
         let old = self.require_thm(theorem)?;
         let premises = old.lhs.clone();
-        let conclusions: Vec<LitVec> = old
-            .rhs
-            .rows()
-            .map(|row| replace_atom(row, source, target))
-            .collect();
-        self.replace_theorem(theorem, Thm::new(premises, Matrix::new(conclusions)))
+        let source = self.formula(source)?;
+        let target = self.formula(target)?;
+        let conclusions = replace_formula(&old.rhs, source, target, TreeSide::Disjunctive);
+        self.replace_theorem(theorem, Thm::new(premises, conclusions))
     }
 
     /// Introduces equality reflexivity (`REFL`).
@@ -326,10 +372,7 @@ impl Kernel {
     pub fn refl(&mut self, bool_ty: Ref, term: Ref) -> Result<ReflThm, KernelError> {
         self.require_bool_type::<std::convert::Infallible>(bool_ty)?;
         self.require_category::<std::convert::Infallible>(term, crate::Sort::Tm)?;
-        let mut staged = Self {
-            arena: self.arena.clone(),
-            init_prefix: self.init_prefix,
-        };
+        let mut staged = self.fork();
         let equality = staged.eq(bool_ty, term, term)?;
         let theorem = staged.push_theorem(Thm::new(
             Matrix::default(),
@@ -353,7 +396,7 @@ impl Kernel {
     /// neither syntax nor theorem slots are changed.
     pub fn ap_thm(&mut self, theorem: ThmId, argument: Ref) -> Result<ApThm, KernelError> {
         let source_theorem = self.require_thm(theorem)?;
-        let source = sole_positive_conclusion(&source_theorem)?;
+        let source = Self::sole_positive_conclusion(&source_theorem)?;
         let premises = source_theorem.lhs.clone();
         let bool_ty = self.require_bool_term::<std::convert::Infallible>(source)?;
         self.require_category::<std::convert::Infallible>(argument, crate::Sort::Tm)?;
@@ -364,10 +407,7 @@ impl Kernel {
         };
         self.type_arrow_member::<std::convert::Infallible>(function_ty)?;
 
-        let mut staged = Self {
-            arena: self.arena.clone(),
-            init_prefix: self.init_prefix,
-        };
+        let mut staged = self.fork();
         let left = staged.app(function, argument)?;
         let right = staged.app(varied, argument)?;
         let equality = staged.eq(bool_ty, left, right)?;
@@ -396,7 +436,7 @@ impl Kernel {
     /// any premise proposition. Rejection is transactional.
     pub fn abs_thm(&mut self, theorem: ThmId, binder: Ref) -> Result<AbsThm, KernelError> {
         let source_theorem = self.require_thm(theorem)?;
-        let source = sole_positive_conclusion(&source_theorem)?;
+        let source = Self::sole_positive_conclusion(&source_theorem)?;
         let premises = source_theorem.lhs.clone();
         let bool_ty = self.require_bool_term::<std::convert::Infallible>(source)?;
         self.require_form::<std::convert::Infallible>(binder, "tm.fv", |node| {
@@ -416,10 +456,7 @@ impl Kernel {
             }
         }
 
-        let mut staged = Self {
-            arena: self.arena.clone(),
-            init_prefix: self.init_prefix,
-        };
+        let mut staged = self.fork();
         let body_ty = staged.classifier(left_body)?;
         let right_body_ty = staged.classifier(right_body)?;
         if !staged.equivalent(body_ty, right_body_ty)? {
@@ -457,7 +494,7 @@ impl Kernel {
     /// transactional.
     pub fn ap_term(&mut self, theorem: ThmId, function: Ref) -> Result<ApTerm, KernelError> {
         let source_theorem = self.require_thm(theorem)?;
-        let source = sole_positive_conclusion(&source_theorem)?;
+        let source = Self::sole_positive_conclusion(&source_theorem)?;
         let premises = source_theorem.lhs.clone();
         let bool_ty = self.require_bool_term::<std::convert::Infallible>(source)?;
         let Node::Eq(_, left_operand, right_operand) = *self.row(source)?.expr() else {
@@ -466,10 +503,7 @@ impl Kernel {
             });
         };
 
-        let mut staged = Self {
-            arena: self.arena.clone(),
-            init_prefix: self.init_prefix,
-        };
+        let mut staged = self.fork();
         let left = staged.app(function, left_operand)?;
         let right = staged.app(function, right_operand)?;
         let equality = staged.eq(bool_ty, left, right)?;
@@ -501,9 +535,9 @@ impl Kernel {
         premise_theorem: ThmId,
     ) -> Result<ThmId, KernelError> {
         let equality_source = self.require_thm(equality_theorem)?;
-        let equality = sole_positive_conclusion(&equality_source)?;
+        let equality = Self::sole_positive_conclusion(&equality_source)?;
         let premise_source = self.require_thm(premise_theorem)?;
-        let premise = sole_positive_conclusion(&premise_source)?;
+        let premise = Self::sole_positive_conclusion(&premise_source)?;
         self.require_bool_term::<std::convert::Infallible>(equality)?;
         let Node::Eq(ty, left, right) = *self.row(equality)?.expr() else {
             return Err(KernelError::InvalidTheoremRule {
@@ -519,10 +553,7 @@ impl Kernel {
         }
         let mut premises = equality_source.lhs.to_rows();
         premises.extend(premise_source.lhs.to_rows());
-        self.push_theorem(Thm::new(
-            Matrix::new(premises),
-            Matrix::new(vec![unit_row(positive(right))]),
-        ))
+        self.push_theorem(Thm::new(Matrix::new(premises), self.conclusion(right)?))
     }
 
     /// Eliminates equality with truth (`EQT_ELIM`).
@@ -537,7 +568,7 @@ impl Kernel {
     /// Rejection does not alter theorem storage.
     pub fn eqt_elim(&mut self, theorem: ThmId) -> Result<ThmId, KernelError> {
         let source_theorem = self.require_thm(theorem)?;
-        let source = sole_positive_conclusion(&source_theorem)?;
+        let source = Self::sole_positive_conclusion(&source_theorem)?;
         let premises = source_theorem.lhs.clone();
         self.require_bool_term::<std::convert::Infallible>(source)?;
         let Node::Eq(_, proposition, truth) = *self.row(source)?.expr() else {
@@ -551,10 +582,7 @@ impl Kernel {
                 rule: "EQT_ELIM truth operand",
             });
         }
-        self.push_theorem(Thm::new(
-            premises,
-            Matrix::new(vec![unit_row(positive(proposition))]),
-        ))
+        self.push_theorem(Thm::new(premises, self.conclusion(proposition)?))
     }
 
     /// Introduces Hilbert choice from one proved witness.
@@ -569,7 +597,7 @@ impl Kernel {
     /// of application form. Rejection is transactional.
     pub fn choice_intro(&mut self, theorem: ThmId) -> Result<ChoiceThm, KernelError> {
         let source_theorem = self.require_thm(theorem)?;
-        let source = sole_positive_conclusion(&source_theorem)?;
+        let source = Self::sole_positive_conclusion(&source_theorem)?;
         self.require_bool_term::<std::convert::Infallible>(source)?;
         let Node::App(predicate, _) = *self.row(source)?.expr() else {
             return Err(KernelError::InvalidTheoremRule {
@@ -579,10 +607,7 @@ impl Kernel {
         let predicate_ty = self.classifier(predicate)?;
         let (domain, _) = self.type_arrow_member::<std::convert::Infallible>(predicate_ty)?;
 
-        let mut staged = Self {
-            arena: self.arena.clone(),
-            init_prefix: self.init_prefix,
-        };
+        let mut staged = self.fork();
         let witness = staged.eps(domain, predicate)?;
         let proposition = staged.app(predicate, witness)?;
         let theorem = staged.choice_intro_at(theorem, proposition)?;
@@ -602,7 +627,7 @@ impl Kernel {
     /// and `target` is exactly `predicate (ε predicate)`.
     pub fn choice_intro_at(&mut self, theorem: ThmId, target: Ref) -> Result<ThmId, KernelError> {
         let source_theorem = self.require_thm(theorem)?;
-        let source = sole_positive_conclusion(&source_theorem)?;
+        let source = Self::sole_positive_conclusion(&source_theorem)?;
         let premises = source_theorem.lhs.clone();
         self.require_bool_term::<std::convert::Infallible>(source)?;
         self.require_bool_term::<std::convert::Infallible>(target)?;
@@ -630,10 +655,7 @@ impl Kernel {
                 rule: "choice introduction target predicate",
             });
         }
-        self.push_theorem(Thm::new(
-            premises,
-            Matrix::new(vec![unit_row(positive(target))]),
-        ))
+        self.push_theorem(Thm::new(premises, self.conclusion(target)?))
     }
 
     /// Universally generalizes one theorem (`GEN`).
@@ -648,13 +670,10 @@ impl Kernel {
     /// conclusion, `binder` is a checked term variable, and `binder` is absent
     /// from every premise proposition. Rejection is transactional.
     pub fn forall_intro(&mut self, theorem: ThmId, binder: Ref) -> Result<ForallThm, KernelError> {
-        let body = sole_positive_conclusion(&self.require_thm(theorem)?)?;
+        let body = Self::sole_positive_conclusion(&self.require_thm(theorem)?)?;
         let bool_ty = self.require_bool_term::<std::convert::Infallible>(body)?;
 
-        let mut staged = Self {
-            arena: self.arena.clone(),
-            init_prefix: self.init_prefix,
-        };
+        let mut staged = self.fork();
         let universal = staged.forall_tm(bool_ty, binder, body)?;
         let theorem = staged.forall_intro_at(theorem, binder, universal)?;
         *self = staged;
@@ -679,7 +698,7 @@ impl Kernel {
         universal: Ref,
     ) -> Result<ThmId, KernelError> {
         let source = self.require_thm(theorem)?;
-        let body = sole_positive_conclusion(&source)?;
+        let body = Self::sole_positive_conclusion(&source)?;
         let premises = source.lhs.clone();
         let bool_ty = self.require_bool_term::<std::convert::Infallible>(body)?;
         self.require_form::<std::convert::Infallible>(binder, "tm.fv", |node| {
@@ -748,11 +767,8 @@ impl Kernel {
                 rule: "type universal introduction",
             });
         }
-        let predicate = sole_positive_conclusion(&source)?;
-        let mut staged = Self {
-            arena: self.arena.clone(),
-            init_prefix: self.init_prefix,
-        };
+        let predicate = Self::sole_positive_conclusion(&source)?;
+        let mut staged = self.fork();
         let universal = staged.ty_forall(name, predicate)?;
         let theorem = staged.push_theorem(Thm::new(
             Matrix::default(),
@@ -872,13 +888,9 @@ impl Kernel {
     ///
     /// # Errors
     ///
-    /// Returns an error unless `falsehood` is a signed Boolean literal whose
-    /// checked constant value is false.
-    pub fn false_left(&mut self, falsehood: Lit) -> Result<ThmId, KernelError> {
-        if self.signed_bool_value(falsehood)? != Some(false) {
-            return Err(KernelError::InvalidTheoremRule { rule: "false left" });
-        }
-        self.push_sequent(&[falsehood], &[])
+    /// Returns an error if theorem allocation fails.
+    pub fn false_left(&mut self) -> Result<ThmId, KernelError> {
+        self.push_theorem(Thm::new(Matrix::new([LitVec::new()]), Matrix::default()))
     }
 
     /// Records `conclusion` as a premise-free theorem.
@@ -894,21 +906,16 @@ impl Kernel {
     /// Returns an error unless `conclusion` is a checked Boolean term, or if
     /// the theorem arena is full.
     pub(super) fn push_axiom(&mut self, conclusion: Ref) -> Result<ThmId, KernelError> {
-        self.require_bool_term::<std::convert::Infallible>(conclusion)?;
-        self.push_sequent(&[], &[positive(conclusion)])
+        self.push_theorem(Thm::new(Matrix::default(), self.conclusion(conclusion)?))
     }
 
     /// Introduces truth on the right.
     ///
     /// # Errors
     ///
-    /// Returns an error unless `truth` is a signed Boolean literal whose
-    /// checked constant value is true.
-    pub fn true_right(&mut self, truth: Lit) -> Result<ThmId, KernelError> {
-        if self.signed_bool_value(truth)? != Some(true) {
-            return Err(KernelError::InvalidTheoremRule { rule: "true right" });
-        }
-        self.push_sequent(&[], &[truth])
+    /// Returns an error if theorem allocation fails.
+    pub fn true_right(&mut self) -> Result<ThmId, KernelError> {
+        self.push_theorem(Thm::new(Matrix::default(), Matrix::new([LitVec::new()])))
     }
 
     /// Moves a conclusion to the left with complementary polarity in place.
@@ -949,17 +956,17 @@ impl Kernel {
         self.replace_theorem(theorem, replacement)
     }
 
-    /// Folds two conjunct premises into their checked conjunction opcode.
+    /// Folds two conjunct premises into their checked conjunction builtin.
     ///
     /// # Errors
     ///
     /// Returns an error unless both operands occur in the premise and
-    /// `conjunction` is their positive `tm.and` opcode.
+    /// `conjunction` is their positive `bool.and` builtin.
     pub fn and_left(&mut self, theorem: ThmId, conjunction: Lit) -> Result<ThmId, KernelError> {
-        let (left, right) = self.require_binary(conjunction, Op2::And)?;
+        let (left, right) = self.require_binary(conjunction, BoolOp::And)?;
         let source = self.require_thm(theorem)?;
         let mut premises = source.lhs.to_rows();
-        if !remove_unit_pair(&mut premises, left, right) {
+        if !remove_formula_pair(&mut premises, left, right, TreeSide::Conjunctive) {
             return Err(KernelError::InvalidTheoremRule { rule: "and left" });
         }
         premises.push(unit_row(conjunction));
@@ -977,12 +984,14 @@ impl Kernel {
         right_theorem: ThmId,
         conjunction: Lit,
     ) -> Result<ThmId, KernelError> {
-        let (left, right) = self.require_binary(conjunction, Op2::And)?;
+        let (left, right) = self.require_binary(conjunction, BoolOp::And)?;
         let lhs = self.require_thm(left_theorem)?;
         let rhs = self.require_thm(right_theorem)?;
         let mut left_conc = lhs.rhs.to_rows();
         let mut right_conc = rhs.rhs.to_rows();
-        if !remove_unit(&mut left_conc, left) || !remove_unit(&mut right_conc, right) {
+        if !remove_formula(&mut left_conc, left, TreeSide::Disjunctive)
+            || !remove_formula(&mut right_conc, right, TreeSide::Disjunctive)
+        {
             return Err(KernelError::InvalidTheoremRule { rule: "and right" });
         }
         let mut premises = lhs.lhs.to_rows();
@@ -1004,12 +1013,14 @@ impl Kernel {
         right_theorem: ThmId,
         disjunction: Lit,
     ) -> Result<ThmId, KernelError> {
-        let (left, right) = self.require_binary(disjunction, Op2::Or)?;
+        let (left, right) = self.require_binary(disjunction, BoolOp::Or)?;
         let lhs = self.require_thm(left_theorem)?;
         let rhs = self.require_thm(right_theorem)?;
         let mut left_prem = lhs.lhs.to_rows();
         let mut right_prem = rhs.lhs.to_rows();
-        if !remove_unit(&mut left_prem, left) || !remove_unit(&mut right_prem, right) {
+        if !remove_formula(&mut left_prem, left, TreeSide::Conjunctive)
+            || !remove_formula(&mut right_prem, right, TreeSide::Conjunctive)
+        {
             return Err(KernelError::InvalidTheoremRule { rule: "or left" });
         }
         let mut premises = left_prem;
@@ -1020,17 +1031,17 @@ impl Kernel {
         self.push_theorem(Thm::new(Matrix::new(premises), Matrix::new(conclusions)))
     }
 
-    /// Folds two conclusions into their checked disjunction opcode.
+    /// Folds two conclusions into their checked disjunction builtin.
     ///
     /// # Errors
     ///
     /// Returns an error unless both operands occur in the conclusion and
-    /// `disjunction` is their positive `tm.or` opcode.
+    /// `disjunction` is their positive `bool.or` builtin.
     pub fn or_right(&mut self, theorem: ThmId, disjunction: Lit) -> Result<ThmId, KernelError> {
-        let (left, right) = self.require_binary(disjunction, Op2::Or)?;
+        let (left, right) = self.require_binary(disjunction, BoolOp::Or)?;
         let source = self.require_thm(theorem)?;
         let mut conclusions = source.rhs.to_rows();
-        if !remove_unit_pair(&mut conclusions, left, right) {
+        if !remove_formula_pair(&mut conclusions, left, right, TreeSide::Disjunctive) {
             return Err(KernelError::InvalidTheoremRule { rule: "or right" });
         }
         conclusions.push(unit_row(disjunction));
@@ -1049,12 +1060,14 @@ impl Kernel {
         right_theorem: ThmId,
         implication: Lit,
     ) -> Result<ThmId, KernelError> {
-        let (antecedent, consequent) = self.require_binary(implication, Op2::Imp)?;
+        let (antecedent, consequent) = self.require_binary(implication, BoolOp::Imp)?;
         let lhs = self.require_thm(left_theorem)?;
         let rhs = self.require_thm(right_theorem)?;
         let mut left_conc = lhs.rhs.to_rows();
         let mut right_prem = rhs.lhs.to_rows();
-        if !remove_unit(&mut left_conc, antecedent) || !remove_unit(&mut right_prem, consequent) {
+        if !remove_formula(&mut left_conc, antecedent, TreeSide::Disjunctive)
+            || !remove_formula(&mut right_prem, consequent, TreeSide::Conjunctive)
+        {
             return Err(KernelError::InvalidTheoremRule { rule: "imp left" });
         }
         let mut premises = lhs.lhs.to_rows();
@@ -1072,11 +1085,13 @@ impl Kernel {
     /// Returns an error unless the antecedent occurs in the premise and the
     /// consequent occurs in the conclusion.
     pub fn imp_right(&mut self, theorem: ThmId, implication: Lit) -> Result<ThmId, KernelError> {
-        let (antecedent, consequent) = self.require_binary(implication, Op2::Imp)?;
+        let (antecedent, consequent) = self.require_binary(implication, BoolOp::Imp)?;
         let source = self.require_thm(theorem)?;
         let mut premises = source.lhs.to_rows();
         let mut conclusions = source.rhs.to_rows();
-        if !remove_unit(&mut premises, antecedent) || !remove_unit(&mut conclusions, consequent) {
+        if !remove_formula(&mut premises, antecedent, TreeSide::Conjunctive)
+            || !remove_formula(&mut conclusions, consequent, TreeSide::Disjunctive)
+        {
             return Err(KernelError::InvalidTheoremRule { rule: "imp right" });
         }
         conclusions.push(unit_row(implication));
@@ -1107,12 +1122,12 @@ impl Kernel {
     /// Replaces one right-side connective by a sound one-step expansion.
     ///
     /// `branch` selects an operand for conjunctive results and is ignored for
-    /// disjunctive results. Repeating this operation expands opcode trees.
+    /// disjunctive results. Repeating this operation expands builtin trees.
     ///
     /// # Errors
     ///
     /// Returns an error unless `formula` occurs in the conclusion and names a
-    /// supported Boolean opcode with an appropriate branch.
+    /// supported Boolean builtin with an appropriate branch.
     pub fn expand_conclusion(
         &mut self,
         theorem: ThmId,
@@ -1127,13 +1142,13 @@ impl Kernel {
             });
         }
         let replacement = self.expand_right(formula, branch)?;
-        conc.extend(replacement.into_iter().map(unit_row));
+        conc.extend(formula_matrix(replacement, TreeSide::Disjunctive).to_rows());
         self.push_theorem(Thm::new(source.lhs.clone(), Matrix::new(conc)))
     }
 
-    /// Recursively flattens a disjunctive opcode tree on the right side.
+    /// Recursively flattens a disjunctive builtin tree on the right side.
     ///
-    /// Negation is pushed through supported opcodes. The operation rejects a
+    /// Negation is pushed through supported builtins. The operation rejects a
     /// connective whose flattened form is conjunctive, since choosing a
     /// branch is then required for soundness.
     ///
@@ -1153,19 +1168,12 @@ impl Kernel {
                 rule: "conclusion flattening",
             });
         }
-        let mut pending = vec![formula];
-        let mut leaves = Vec::new();
-        while let Some(current) = pending.pop() {
-            match self.disjunctive_children(current)? {
-                Some(children) => pending.extend(children.into_iter().rev()),
-                None => leaves.push(current),
-            }
-        }
-        conclusions.extend(leaves.into_iter().map(unit_row));
+        let leaves = self.collect_tree(formula, TreeSide::Disjunctive)?;
+        conclusions.extend(formula_matrix(leaves, TreeSide::Disjunctive).to_rows());
         self.push_theorem(Thm::new(source.lhs.clone(), Matrix::new(conclusions)))
     }
 
-    /// Recursively flattens a conjunctive opcode tree on the left side.
+    /// Recursively flattens a conjunctive builtin tree on the left side.
     ///
     /// # Errors
     ///
@@ -1180,11 +1188,11 @@ impl Kernel {
             });
         }
         let leaves = self.collect_tree(formula, TreeSide::Conjunctive)?;
-        premises.extend(leaves.into_iter().map(unit_row));
+        premises.extend(formula_matrix(leaves, TreeSide::Conjunctive).to_rows());
         self.push_theorem(Thm::new(Matrix::new(premises), source.rhs.clone()))
     }
 
-    /// Folds the leaves of a conjunctive opcode tree on the left side.
+    /// Folds the leaves of a conjunctive builtin tree on the left side.
     ///
     /// # Errors
     ///
@@ -1193,7 +1201,7 @@ impl Kernel {
         self.fold_tree(theorem, formula, TreeSide::Conjunctive)
     }
 
-    /// Folds the leaves of a disjunctive opcode tree on the right side.
+    /// Folds the leaves of a disjunctive builtin tree on the right side.
     ///
     /// # Errors
     ///
@@ -1254,36 +1262,25 @@ impl Kernel {
             .replace(id, theorem.0, theorem.1)
             .map_err(|_| KernelError::MissingTheorem { id })
     }
-    fn signed_bool_value(&self, proposition: Lit) -> Result<Option<bool>, KernelError> {
+    fn require_binary(
+        &self,
+        proposition: Lit,
+        expected: BoolOp,
+    ) -> Result<(Formula, Formula), KernelError> {
         self.validate_prop(proposition)?;
-        Ok(self.arena.bool_value(reference(proposition)).map(|value| {
-            if proposition.is_positive() {
-                value
-            } else {
-                !value
-            }
-        }))
-    }
-    fn require_binary(&self, proposition: Lit, expected: Op2) -> Result<(Lit, Lit), KernelError> {
-        self.validate_prop(proposition)?;
-        if !proposition.is_positive() || self.arena.op2(reference(proposition)) != Some(expected) {
+        let Some((Builtin::Bool(operation), children)) =
+            self.arena.builtin_application(reference(proposition))
+        else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "binary connective",
+            });
+        };
+        if !proposition.is_positive() || operation != expected || children.len() != 2 {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "binary connective",
             });
         }
-        let mut children =
-            self.arena
-                .children(reference(proposition))
-                .ok_or(KernelError::MissingDefinition {
-                    reference: reference(proposition),
-                })?;
-        let left = children.next().ok_or(KernelError::InvalidTheoremRule {
-            rule: "binary connective",
-        })?;
-        let right = children.next().ok_or(KernelError::InvalidTheoremRule {
-            rule: "binary connective",
-        })?;
-        Ok((positive(left), positive(right)))
+        Ok((self.formula(children[0])?, self.formula(children[1])?))
     }
     fn validate_props(
         &self,
@@ -1296,6 +1293,7 @@ impl Kernel {
     }
 
     fn decode_cnf(&self, formula: Lit) -> Result<Matrix, KernelError> {
+        self.validate_prop(formula)?;
         if !formula.is_positive() {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "CNF polarity",
@@ -1307,12 +1305,9 @@ impl Kernel {
             if self.arena.bool_value(current) == Some(true) {
                 continue;
             }
-            if self.arena.op2(current) == Some(Op2::And) {
-                let children: Vec<_> = self
-                    .arena
-                    .children(current)
-                    .ok_or(KernelError::MissingDefinition { reference: current })?
-                    .collect();
+            if let Some((Builtin::Bool(BoolOp::And), children)) =
+                self.arena.builtin_application(current)
+            {
                 pending.extend(children.into_iter().rev());
             } else {
                 rows.push(self.decode_disjunction(current)?);
@@ -1328,12 +1323,9 @@ impl Kernel {
             if self.arena.bool_value(current) == Some(false) {
                 continue;
             }
-            if self.arena.op2(current) == Some(Op2::Or) {
-                let children: Vec<_> = self
-                    .arena
-                    .children(current)
-                    .ok_or(KernelError::MissingDefinition { reference: current })?
-                    .collect();
+            if let Some((Builtin::Bool(BoolOp::Or), children)) =
+                self.arena.builtin_application(current)
+            {
                 pending.extend(children.into_iter().rev());
             } else {
                 row.push(self.decode_canonical_literal(current)?);
@@ -1343,14 +1335,14 @@ impl Kernel {
     }
 
     fn decode_canonical_literal(&self, term: Ref) -> Result<Lit, KernelError> {
-        if self.arena.op1(term) == Some(Op1::Not) {
-            let child = self
-                .arena
-                .children(term)
-                .and_then(|mut children| children.next())
-                .ok_or(KernelError::InvalidTheoremRule {
-                    rule: "canonical negative literal",
-                })?;
+        self.require_bool_term::<std::convert::Infallible>(term)?;
+        if let Some((Builtin::Bool(BoolOp::Not), children)) = self.arena.builtin_application(term) {
+            let [child] = children.as_slice() else {
+                return Err(KernelError::InvalidTheoremRule {
+                    rule: "canonical negative literal arity",
+                });
+            };
+            let child = *child;
             self.validate_cnf_atom(child)?;
             return Ok(positive(child).negated());
         }
@@ -1359,10 +1351,11 @@ impl Kernel {
     }
 
     fn validate_cnf_atom(&self, atom: Ref) -> Result<(), KernelError> {
-        self.validate_prop(positive(atom))?;
-        if self.arena.op1(atom).is_some()
-            || self.arena.op2(atom).is_some()
-            || self.arena.bool_value(atom).is_some()
+        self.require_bool_term::<std::convert::Infallible>(atom)?;
+        if matches!(
+            self.arena.builtin_application(atom),
+            Some((Builtin::Bool(_), _))
+        ) || self.arena.bool_value(atom).is_some()
         {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "canonical CNF atom",
@@ -1379,153 +1372,94 @@ impl Kernel {
         }
         Ok(LitVec::from_slice(&propositions))
     }
-    fn expand_right(&self, formula: Lit, branch: Option<bool>) -> Result<Vec<Lit>, KernelError> {
-        let reference = reference(formula);
-        if let Some(value) = self.arena.bool_value(reference) {
-            if value != formula.is_positive() {
-                return Ok(Vec::new());
-            }
+    fn expand_right(
+        &self,
+        formula: Lit,
+        branch: Option<bool>,
+    ) -> Result<Vec<Formula>, KernelError> {
+        let (side, children) =
+            self.connective_children(formula)?
+                .ok_or(KernelError::InvalidTheoremRule {
+                    rule: "conclusion builtin expansion",
+                })?;
+        if side == TreeSide::Disjunctive {
+            return Ok(children);
+        }
+        let selected = branch.ok_or(KernelError::InvalidTheoremRule {
+            rule: "conjunctive conclusion expansion",
+        })?;
+        Ok(vec![children[usize::from(selected)]])
+    }
+
+    /// A single polarity-aware Boolean expansion. Iff remains an atomic
+    /// proposition here; its executable semantics is handled by the evaluator.
+    fn connective_children(
+        &self,
+        formula: Lit,
+    ) -> Result<Option<(TreeSide, Vec<Formula>)>, KernelError> {
+        self.validate_prop(formula)?;
+        let Some((Builtin::Bool(operation), children)) =
+            self.arena.builtin_application(reference(formula))
+        else {
+            return Ok(None);
+        };
+        if children.len() != if operation == BoolOp::Not { 1 } else { 2 } {
             return Err(KernelError::InvalidTheoremRule {
-                rule: "true conclusion expansion",
+                rule: "Boolean connective arity",
             });
         }
-        let children: Vec<_> = self
-            .arena
-            .children(reference)
-            .ok_or(KernelError::MissingDefinition { reference })?
-            .collect();
-        let signed = |child| {
-            let positive = positive(child);
-            if formula.is_positive() {
-                positive
+        let signed = |term| -> Result<Formula, KernelError> {
+            let value = self.formula(term)?;
+            Ok(if formula.is_positive() {
+                value
             } else {
-                positive.negated()
-            }
+                value.negated()
+            })
         };
-        match (
-            self.arena.op1(reference),
-            self.arena.op2(reference),
-            formula.is_positive(),
-        ) {
-            (Some(Op1::Not), _, _) => Ok(vec![signed(children[0]).negated()]),
-            (_, Some(Op2::Or), true) | (_, Some(Op2::And), false) => {
-                Ok(vec![signed(children[0]), signed(children[1])])
+        let positive = formula.is_positive();
+        let result = match operation {
+            BoolOp::Not => (TreeSide::Disjunctive, vec![signed(children[0])?.negated()]),
+            BoolOp::And | BoolOp::Or => {
+                let conjunctive = (operation == BoolOp::And) == positive;
+                (
+                    if conjunctive {
+                        TreeSide::Conjunctive
+                    } else {
+                        TreeSide::Disjunctive
+                    },
+                    vec![signed(children[0])?, signed(children[1])?],
+                )
             }
-            (_, Some(Op2::And), true) | (_, Some(Op2::Or), false) => {
-                let selected = branch.ok_or(KernelError::InvalidTheoremRule {
-                    rule: "conjunctive conclusion expansion",
-                })?;
-                Ok(vec![signed(children[usize::from(selected)])])
-            }
-            (_, Some(Op2::Imp), true) => {
-                Ok(vec![positive(children[0]).negated(), positive(children[1])])
-            }
-            (_, Some(Op2::Imp), false) => {
-                let selected = branch.ok_or(KernelError::InvalidTheoremRule {
-                    rule: "conjunctive conclusion expansion",
-                })?;
-                let a = positive(children[0]);
-                let b = positive(children[1]).negated();
-                Ok(vec![if selected { b } else { a }])
-            }
-            _ => Err(KernelError::InvalidTheoremRule {
-                rule: "conclusion opcode expansion",
-            }),
-        }
+            BoolOp::Imp => (
+                if positive {
+                    TreeSide::Disjunctive
+                } else {
+                    TreeSide::Conjunctive
+                },
+                vec![signed(children[0])?.negated(), signed(children[1])?],
+            ),
+            BoolOp::Iff => return Ok(None),
+        };
+        Ok(Some(result))
     }
 
-    fn disjunctive_children(&self, formula: Lit) -> Result<Option<Vec<Lit>>, KernelError> {
-        let reference = reference(formula);
-        if let Some(value) = self.arena.bool_value(reference) {
-            if value != formula.is_positive() {
-                return Ok(Some(Vec::new()));
-            }
-            return Ok(None);
-        }
-        let children: Vec<_> = self
-            .arena
-            .children(reference)
-            .ok_or(KernelError::MissingDefinition { reference })?
-            .collect();
-        let positive = positive;
-        match (
-            self.arena.op1(reference),
-            self.arena.op2(reference),
-            formula.is_positive(),
-        ) {
-            (Some(Op1::Not), _, true) => Ok(Some(vec![positive(children[0]).negated()])),
-            (Some(Op1::Not), _, false) => Ok(Some(vec![positive(children[0])])),
-            (_, Some(Op2::Or), true) => {
-                Ok(Some(vec![positive(children[0]), positive(children[1])]))
-            }
-            (_, Some(Op2::And), false) => Ok(Some(vec![
-                positive(children[0]).negated(),
-                positive(children[1]).negated(),
-            ])),
-            (_, Some(Op2::Imp), true) => Ok(Some(vec![
-                positive(children[0]).negated(),
-                positive(children[1]),
-            ])),
-            (_, Some(Op2::And), true) | (_, Some(Op2::Or | Op2::Imp), false) => {
-                Err(KernelError::InvalidTheoremRule {
-                    rule: "disjunctive conclusion flattening",
-                })
-            }
-            _ => Ok(None),
-        }
-    }
-
-    fn conjunctive_children(&self, formula: Lit) -> Result<Option<Vec<Lit>>, KernelError> {
-        let reference = reference(formula);
-        if let Some(value) = self.arena.bool_value(reference) {
-            if value == formula.is_positive() {
-                return Ok(Some(Vec::new()));
-            }
-            return Ok(None);
-        }
-        let children: Vec<_> = self
-            .arena
-            .children(reference)
-            .ok_or(KernelError::MissingDefinition { reference })?
-            .collect();
-        let positive = positive;
-        match (
-            self.arena.op1(reference),
-            self.arena.op2(reference),
-            formula.is_positive(),
-        ) {
-            (Some(Op1::Not), _, true) => Ok(Some(vec![positive(children[0]).negated()])),
-            (Some(Op1::Not), _, false) => Ok(Some(vec![positive(children[0])])),
-            (_, Some(Op2::And), true) => {
-                Ok(Some(vec![positive(children[0]), positive(children[1])]))
-            }
-            (_, Some(Op2::Or), false) => Ok(Some(vec![
-                positive(children[0]).negated(),
-                positive(children[1]).negated(),
-            ])),
-            (_, Some(Op2::Imp), false) => Ok(Some(vec![
-                positive(children[0]),
-                positive(children[1]).negated(),
-            ])),
-            (_, Some(Op2::Or | Op2::Imp), true) | (_, Some(Op2::And), false) => {
-                Err(KernelError::InvalidTheoremRule {
-                    rule: "conjunctive premise flattening",
-                })
-            }
-            _ => Ok(None),
-        }
-    }
-
-    fn collect_tree(&self, formula: Lit, side: TreeSide) -> Result<LitVec, KernelError> {
-        let mut pending = vec![formula];
-        let mut leaves = LitVec::new();
+    fn collect_tree(&self, formula: Lit, side: TreeSide) -> Result<Vec<Formula>, KernelError> {
+        let mut pending = vec![Formula::Atom(formula)];
+        let mut leaves = Vec::new();
         while let Some(current) = pending.pop() {
-            let children = match side {
-                TreeSide::Conjunctive => self.conjunctive_children(current)?,
-                TreeSide::Disjunctive => self.disjunctive_children(current)?,
+            let Formula::Atom(atom) = current else {
+                leaves.push(current);
+                continue;
             };
-            match children {
-                Some(children) => pending.extend(children.into_iter().rev()),
+            match self.connective_children(atom)? {
+                Some((actual_side, children)) if actual_side == side || children.len() == 1 => {
+                    pending.extend(children.into_iter().rev());
+                }
+                Some(_) => {
+                    return Err(KernelError::InvalidTheoremRule {
+                        rule: "Boolean tree flattening",
+                    });
+                }
                 None => leaves.push(current),
             }
         }
@@ -1543,14 +1477,16 @@ impl Kernel {
         let mut premises = source.lhs.to_rows();
         let mut conclusions = source.rhs.to_rows();
         let matched = match side {
-            TreeSide::Conjunctive => leaves.iter().all(|leaf| remove_unit(&mut premises, *leaf)),
+            TreeSide::Conjunctive => leaves
+                .iter()
+                .all(|leaf| remove_formula(&mut premises, *leaf, side)),
             TreeSide::Disjunctive => leaves
                 .iter()
-                .all(|leaf| remove_unit(&mut conclusions, *leaf)),
+                .all(|leaf| remove_formula(&mut conclusions, *leaf, side)),
         };
         if !matched {
             return Err(KernelError::InvalidTheoremRule {
-                rule: "opcode tree folding",
+                rule: "builtin tree folding",
             });
         }
         match side {
@@ -1561,46 +1497,81 @@ impl Kernel {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum TreeSide {
     Conjunctive,
     Disjunctive,
 }
 
-fn sole_positive_conclusion(theorem: &ThmRef) -> Result<Ref, KernelError> {
-    let mut rows = theorem.rhs.rows();
-    let row = rows.next().ok_or(KernelError::InvalidTheoremRule {
-        rule: "AP_THM single conclusion",
-    })?;
-    if rows.next().is_some() || row.len() != 1 {
-        return Err(KernelError::InvalidTheoremRule {
-            rule: "AP_THM single conclusion",
-        });
+fn formula_matrix(formulas: impl IntoIterator<Item = Formula>, side: TreeSide) -> Matrix {
+    let mut rows = Vec::new();
+    for formula in formulas {
+        match formula {
+            Formula::Atom(literal) => rows.push(unit_row(literal)),
+            Formula::Constant(value) if value == (side == TreeSide::Conjunctive) => {}
+            Formula::Constant(_) => return Matrix::new([LitVec::new()]),
+        }
     }
-    let literal = row[0];
-    if !literal.is_positive() {
-        return Err(KernelError::InvalidTheoremRule {
-            rule: "AP_THM positive equality",
-        });
-    }
-    Ok(reference(literal))
+    Matrix::new(rows)
 }
 
-fn replace_atom(row: &[Lit], source: Ref, target: Ref) -> LitVec {
-    row.iter()
-        .copied()
-        .map(|literal| {
-            if reference(literal) != source {
-                return literal;
+fn remove_formula(rows: &mut Vec<LitVec>, formula: Formula, side: TreeSide) -> bool {
+    match formula {
+        Formula::Atom(literal) => remove_unit(rows, literal),
+        Formula::Constant(value) if value == (side == TreeSide::Conjunctive) => true,
+        Formula::Constant(_) => {
+            let Some(index) = rows.iter().position(LitVec::is_empty) else {
+                return false;
+            };
+            rows.remove(index);
+            true
+        }
+    }
+}
+
+fn replace_formula(matrix: &Matrix, source: Formula, target: Formula, side: TreeSide) -> Matrix {
+    match source {
+        Formula::Atom(atom) => Matrix::new(
+            matrix
+                .rows()
+                .filter_map(|row| replace_atom(row, reference(atom), target, side)),
+        ),
+        Formula::Constant(value) => {
+            let neutral = side == TreeSide::Conjunctive;
+            if matrix.rows().next().is_none() && value == neutral {
+                return formula_matrix([target], side);
             }
-            let replacement = positive(target);
-            if literal.is_positive() {
-                replacement
-            } else {
-                replacement.negated()
-            }
-        })
-        .collect()
+            Matrix::new(matrix.rows().filter_map(|row| {
+                if !row.is_empty() || value == neutral {
+                    return Some(LitVec::from_slice(row));
+                }
+                match target {
+                    Formula::Atom(atom) => Some(unit_row(atom)),
+                    Formula::Constant(replacement) if replacement == neutral => None,
+                    Formula::Constant(_) => Some(LitVec::new()),
+                }
+            }))
+        }
+    }
+}
+
+fn replace_atom(row: &[Lit], source: Ref, target: Formula, side: TreeSide) -> Option<LitVec> {
+    let mut output = LitVec::new();
+    for &literal in row {
+        let replacement = if reference(literal) != source {
+            Formula::Atom(literal)
+        } else if literal.is_positive() {
+            target
+        } else {
+            target.negated()
+        };
+        match replacement {
+            Formula::Atom(atom) => output.push(atom),
+            Formula::Constant(value) if value == (side == TreeSide::Conjunctive) => return None,
+            Formula::Constant(_) => {}
+        }
+    }
+    Some(output)
 }
 
 fn unit_row(proposition: Lit) -> LitVec {
@@ -1619,11 +1590,16 @@ fn remove_unit_row<T>(rows: &mut Vec<T>, proposition: Lit, literals: fn(&T) -> &
     true
 }
 
-fn remove_unit_pair(rows: &mut Vec<LitVec>, left: Lit, right: Lit) -> bool {
-    if !remove_unit(rows, left) {
+fn remove_formula_pair(
+    rows: &mut Vec<LitVec>,
+    left: Formula,
+    right: Formula,
+    side: TreeSide,
+) -> bool {
+    if !remove_formula(rows, left, side) {
         return false;
     }
-    left == right || remove_unit(rows, right)
+    left == right || remove_formula(rows, right, side)
 }
 
 #[cfg(test)]
@@ -1866,7 +1842,7 @@ mod tests {
                 .is_none()
         );
 
-        let truth = kernel.bool(bool_ty, true).unwrap();
+        let truth = kernel.tm_fv(987, bool_ty).unwrap();
         let contextual = kernel.copy_theorem(source.theorem).unwrap();
         kernel.weaken(contextual, &[positive(truth)], &[]).unwrap();
         let contextual = kernel.abs_thm(contextual, binder).unwrap();
@@ -2269,8 +2245,20 @@ mod tests {
         let mut kernel = Kernel::new();
         let star = kernel.star().unwrap();
         let bool_ty = kernel.bool_ty(star).unwrap();
-        let falsehood = positive(kernel.bool(bool_ty, false).unwrap());
-        let truth = positive(kernel.bool(bool_ty, true).unwrap());
+        let false_value = kernel.bool(bool_ty, false).unwrap();
+        let true_value = kernel.bool(bool_ty, true).unwrap();
+        assert!(kernel.lit(false_value).is_err());
+        assert!(kernel.lit(true_value).is_err());
+        let falsehood = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::Not), &[true_value])
+                .unwrap(),
+        );
+        let truth = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::Not), &[false_value])
+                .unwrap(),
+        );
 
         for signed_false in [falsehood, truth.negated()] {
             let identity = kernel.identity(signed_false).unwrap();
@@ -2290,10 +2278,12 @@ mod tests {
 
         for signed_true in [truth, falsehood.negated()] {
             let identity = kernel.identity(signed_true).unwrap();
-            assert!(
-                kernel
-                    .expand_conclusion(identity, signed_true, None)
-                    .is_err()
+            let expanded = kernel
+                .expand_conclusion(identity, signed_true, None)
+                .unwrap();
+            assert_eq!(
+                kernel.require_thm(expanded).unwrap().rhs.to_rows(),
+                vec![LitVec::new()]
             );
         }
     }
@@ -2326,9 +2316,13 @@ mod tests {
     #[test]
     fn opcode_tree_expansion_refutes_p_and_not_p() {
         let Fixture { mut kernel, p, .. } = fixture();
-        let not_p_ref = kernel.op1(Op1::Not, reference(p)).unwrap();
+        let not_p_ref = kernel
+            .builtin(Builtin::Bool(BoolOp::Not), &[reference(p)])
+            .unwrap();
         let not_p = positive(not_p_ref);
-        let formula_ref = kernel.op2(Op2::And, reference(p), not_p_ref).unwrap();
+        let formula_ref = kernel
+            .builtin(Builtin::Bool(BoolOp::And), &[reference(p), not_p_ref])
+            .unwrap();
         let formula = positive(formula_ref);
         let root = kernel.identity(formula).unwrap();
         let p_clause = kernel
@@ -2345,9 +2339,15 @@ mod tests {
     #[test]
     fn recursive_flattening_handles_or_not_imp_and_false() {
         let Fixture { mut kernel, p, q } = fixture();
-        let not_p = kernel.op1(Op1::Not, reference(p)).unwrap();
-        let implication = kernel.op2(Op2::Imp, reference(p), reference(q)).unwrap();
-        let nested = kernel.op2(Op2::Or, not_p, implication).unwrap();
+        let not_p = kernel
+            .builtin(Builtin::Bool(BoolOp::Not), &[reference(p)])
+            .unwrap();
+        let implication = kernel
+            .builtin(Builtin::Bool(BoolOp::Imp), &[reference(p), reference(q)])
+            .unwrap();
+        let nested = kernel
+            .builtin(Builtin::Bool(BoolOp::Or), &[not_p, implication])
+            .unwrap();
         let nested = positive(nested);
         let theorem = kernel.identity(nested).unwrap();
         let flattened = kernel.flatten_conclusion(theorem, nested).unwrap();
@@ -2357,8 +2357,12 @@ mod tests {
         );
 
         let bool_ty = kernel.classifier(reference(p)).unwrap();
-        let falsehood = kernel.bool(bool_ty, false).unwrap();
-        let falsehood = positive(falsehood);
+        let truth = kernel.bool(bool_ty, true).unwrap();
+        let falsehood = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::Not), &[truth])
+                .unwrap(),
+        );
         let false_theorem = kernel.identity(falsehood).unwrap();
         let eliminated = kernel
             .expand_conclusion(false_theorem, falsehood, None)
@@ -2377,7 +2381,11 @@ mod tests {
     #[test]
     fn recursive_tree_folding_round_trips_both_sides() {
         let Fixture { mut kernel, p, q } = fixture();
-        let conjunction = positive(kernel.op2(Op2::And, reference(p), reference(q)).unwrap());
+        let conjunction = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::And), &[reference(p), reference(q)])
+                .unwrap(),
+        );
         let conjunction_id = kernel.identity(conjunction).unwrap();
         let flat_left = kernel.flatten_premise(conjunction_id, conjunction).unwrap();
         let folded_left = kernel.fold_premise(flat_left, conjunction).unwrap();
@@ -2386,7 +2394,11 @@ mod tests {
             kernel.require_thm(conjunction_id).unwrap()
         );
 
-        let disjunction = positive(kernel.op2(Op2::Or, reference(p), reference(q)).unwrap());
+        let disjunction = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::Or), &[reference(p), reference(q)])
+                .unwrap(),
+        );
         let disjunction_id = kernel.identity(disjunction).unwrap();
         let flat_right = kernel
             .flatten_conclusion(disjunction_id, disjunction)
@@ -2401,10 +2413,17 @@ mod tests {
     #[test]
     fn recursive_tree_folding_preserves_repeated_leaves() {
         let Fixture { mut kernel, p, .. } = fixture();
-        let repeated_and = positive(kernel.op2(Op2::And, reference(p), reference(p)).unwrap());
+        let repeated_and = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::And), &[reference(p), reference(p)])
+                .unwrap(),
+        );
         let nested_and = positive(
             kernel
-                .op2(Op2::And, reference(repeated_and), reference(p))
+                .builtin(
+                    Builtin::Bool(BoolOp::And),
+                    &[reference(repeated_and), reference(p)],
+                )
                 .unwrap(),
         );
         let and_identity = kernel.identity(nested_and).unwrap();
@@ -2419,10 +2438,17 @@ mod tests {
             kernel.require_thm(and_identity).unwrap()
         );
 
-        let repeated_or = positive(kernel.op2(Op2::Or, reference(p), reference(p)).unwrap());
+        let repeated_or = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::Or), &[reference(p), reference(p)])
+                .unwrap(),
+        );
         let nested_or = positive(
             kernel
-                .op2(Op2::Or, reference(repeated_or), reference(p))
+                .builtin(
+                    Builtin::Bool(BoolOp::Or),
+                    &[reference(repeated_or), reference(p)],
+                )
                 .unwrap(),
         );
         let or_identity = kernel.identity(nested_or).unwrap();
@@ -2501,13 +2527,125 @@ mod tests {
     #[test]
     fn constants_are_valid_for_every_valuation() {
         let Fixture { mut kernel, p, q } = fixture();
-        let bool_ty = kernel.classifier(reference(p)).unwrap();
-        let falsehood = positive(kernel.bool(bool_ty, false).unwrap());
-        let truth = positive(kernel.bool(bool_ty, true).unwrap());
-        let false_left = kernel.false_left(falsehood).unwrap();
-        let true_right = kernel.true_right(truth).unwrap();
+        let false_left = kernel.false_left().unwrap();
+        let true_right = kernel.true_right().unwrap();
         assert_valid(&kernel, false_left, &[p, q]);
         assert_valid(&kernel, true_right, &[p, q]);
+    }
+
+    #[test]
+    fn canonical_truth_generalizes_and_equality_elimination_normalizes_constants() {
+        let Fixture { mut kernel, p, .. } = fixture();
+        let bool_ty = kernel.classifier(reference(p)).unwrap();
+        let truth = kernel.bool(bool_ty, true).unwrap();
+        let falsehood = kernel.bool(bool_ty, false).unwrap();
+        assert!(truth.get() < 0 && falsehood.get() < 0);
+        assert!(kernel.lit(truth).is_err());
+        assert!(kernel.lit(falsehood).is_err());
+
+        let proved_truth = kernel.true_right().unwrap();
+        let generalized = kernel.forall_intro(proved_truth, reference(p)).unwrap();
+        assert_eq!(
+            unit_conclusions(kernel.require_thm(generalized.theorem).unwrap()),
+            [positive(generalized.universal)]
+        );
+        let polymorphic = kernel.ty_forall_intro(proved_truth, 123).unwrap();
+        assert_eq!(
+            unit_conclusions(kernel.require_thm(polymorphic.theorem).unwrap()),
+            [positive(polymorphic.universal)]
+        );
+
+        let reflexive = kernel.refl(bool_ty, truth).unwrap();
+        let eliminated = kernel.eqt_elim(reflexive.theorem).unwrap();
+        assert_eq!(
+            kernel.require_thm(eliminated).unwrap().rhs.to_rows(),
+            vec![LitVec::new()]
+        );
+
+        let equation = kernel.eq(bool_ty, truth, falsehood).unwrap();
+        let assumed = kernel.identity(positive(equation)).unwrap();
+        let contradiction = kernel.eq_mp(assumed, proved_truth).unwrap();
+        assert!(
+            kernel
+                .require_thm(contradiction)
+                .unwrap()
+                .rhs
+                .to_rows()
+                .is_empty()
+        );
+        assert_eq!(
+            unit_premises(kernel.require_thm(contradiction).unwrap()),
+            [positive(equation)]
+        );
+    }
+
+    #[test]
+    fn theorem_conversion_round_trips_global_constants_and_local_terms() {
+        let Fixture { mut kernel, p, .. } = fixture();
+        let bool_ty = kernel.classifier(reference(p)).unwrap();
+        let identity = kernel.lam(reference(p), reference(p)).unwrap();
+        for value in [false, true] {
+            let constant = kernel.bool(bool_ty, value).unwrap();
+            let application = kernel.app(identity, constant).unwrap();
+            let substitution = kernel.syn_sub_var(None, reference(p), constant).unwrap();
+            let beta = kernel
+                .tm_beta_fact(None, application, substitution)
+                .unwrap();
+            kernel.union_syn_fact(beta).unwrap();
+            let theorem = kernel.identity(positive(application)).unwrap();
+            kernel
+                .convert_theorem(theorem, application, constant)
+                .unwrap();
+            let converted = kernel.require_thm(theorem).unwrap();
+            assert_eq!(
+                converted.lhs,
+                formula_matrix([Formula::Constant(value)], TreeSide::Conjunctive)
+            );
+            assert_eq!(
+                converted.rhs,
+                formula_matrix([Formula::Constant(value)], TreeSide::Disjunctive)
+            );
+            kernel
+                .convert_theorem(theorem, constant, application)
+                .unwrap();
+            let converted = kernel.require_thm(theorem).unwrap();
+            assert_eq!(unit_premises(converted.clone()), [positive(application)]);
+            assert_eq!(unit_conclusions(converted), [positive(application)]);
+        }
+    }
+
+    #[test]
+    fn boolean_connective_children_normalize_constants_without_proxy_atoms() {
+        let Fixture { mut kernel, p, .. } = fixture();
+        let bool_ty = kernel.classifier(reference(p)).unwrap();
+        let truth = kernel.bool(bool_ty, true).unwrap();
+        let falsehood = kernel.bool(bool_ty, false).unwrap();
+        for (operation, constant, side) in [
+            (BoolOp::And, truth, TreeSide::Conjunctive),
+            (BoolOp::Or, falsehood, TreeSide::Disjunctive),
+        ] {
+            let term = kernel
+                .builtin(Builtin::Bool(operation), &[reference(p), constant])
+                .unwrap();
+            let formula = kernel.lit(term).unwrap();
+            let identity = kernel.identity(formula).unwrap();
+            let flattened = match side {
+                TreeSide::Conjunctive => kernel.flatten_premise(identity, formula).unwrap(),
+                TreeSide::Disjunctive => kernel.flatten_conclusion(identity, formula).unwrap(),
+            };
+            assert_valid(&kernel, flattened, &[p]);
+            let folded = kernel.fold_tree(flattened, formula, side).unwrap();
+            assert_valid(&kernel, folded, &[p]);
+        }
+        let conjunction = kernel
+            .builtin(Builtin::Bool(BoolOp::And), &[truth, reference(p)])
+            .unwrap();
+        let proved_truth = kernel.true_right().unwrap();
+        let assumed_p = kernel.identity(p).unwrap();
+        let joined = kernel
+            .and_right(proved_truth, assumed_p, positive(conjunction))
+            .unwrap();
+        assert_valid(&kernel, joined, &[p]);
     }
 
     #[test]
@@ -2529,7 +2667,11 @@ mod tests {
     #[test]
     fn and_left_is_valid_for_every_valuation() {
         let Fixture { mut kernel, p, q } = fixture();
-        let conjunction = positive(kernel.op2(Op2::And, reference(p), reference(q)).unwrap());
+        let conjunction = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::And), &[reference(p), reference(q)])
+                .unwrap(),
+        );
         let assumed = kernel.identity(p).unwrap();
         kernel.weaken(assumed, &[q], &[]).unwrap();
         let theorem = kernel.and_left(assumed, conjunction).unwrap();
@@ -2539,7 +2681,11 @@ mod tests {
     #[test]
     fn and_right_is_valid_for_every_valuation() {
         let Fixture { mut kernel, p, q } = fixture();
-        let conjunction = positive(kernel.op2(Op2::And, reference(p), reference(q)).unwrap());
+        let conjunction = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::And), &[reference(p), reference(q)])
+                .unwrap(),
+        );
         let left = kernel.identity(p).unwrap();
         let right = kernel.identity(q).unwrap();
         let theorem = kernel.and_right(left, right, conjunction).unwrap();
@@ -2549,7 +2695,11 @@ mod tests {
     #[test]
     fn or_left_is_valid_for_every_valuation() {
         let Fixture { mut kernel, p, q } = fixture();
-        let disjunction = positive(kernel.op2(Op2::Or, reference(p), reference(q)).unwrap());
+        let disjunction = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::Or), &[reference(p), reference(q)])
+                .unwrap(),
+        );
         let left = kernel.identity(p).unwrap();
         let right = kernel.identity(q).unwrap();
         let theorem = kernel.or_left(left, right, disjunction).unwrap();
@@ -2559,7 +2709,11 @@ mod tests {
     #[test]
     fn or_right_is_valid_for_every_valuation() {
         let Fixture { mut kernel, p, q } = fixture();
-        let disjunction = positive(kernel.op2(Op2::Or, reference(p), reference(q)).unwrap());
+        let disjunction = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::Or), &[reference(p), reference(q)])
+                .unwrap(),
+        );
         let assumed = kernel.identity(p).unwrap();
         kernel.weaken(assumed, &[], &[q]).unwrap();
         let theorem = kernel.or_right(assumed, disjunction).unwrap();
@@ -2569,7 +2723,11 @@ mod tests {
     #[test]
     fn imp_left_is_valid_for_every_valuation() {
         let Fixture { mut kernel, p, q } = fixture();
-        let implication = positive(kernel.op2(Op2::Imp, reference(p), reference(q)).unwrap());
+        let implication = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::Imp), &[reference(p), reference(q)])
+                .unwrap(),
+        );
         let left = kernel.identity(p).unwrap();
         let right = kernel.identity(q).unwrap();
         let theorem = kernel.imp_left(left, right, implication).unwrap();
@@ -2579,7 +2737,11 @@ mod tests {
     #[test]
     fn imp_right_is_valid_for_every_valuation() {
         let Fixture { mut kernel, p, q } = fixture();
-        let implication = positive(kernel.op2(Op2::Imp, reference(p), reference(q)).unwrap());
+        let implication = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::Imp), &[reference(p), reference(q)])
+                .unwrap(),
+        );
         let assumed = kernel.identity(q).unwrap();
         kernel.weaken(assumed, &[p], &[]).unwrap();
         let theorem = kernel.imp_right(assumed, implication).unwrap();
@@ -2698,8 +2860,16 @@ mod tests {
     #[test]
     fn repeated_operands_support_idempotent_connective_rules() {
         let Fixture { mut kernel, p, q } = fixture();
-        let conjunction = positive(kernel.op2(Op2::And, reference(p), reference(p)).unwrap());
-        let disjunction = positive(kernel.op2(Op2::Or, reference(p), reference(p)).unwrap());
+        let conjunction = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::And), &[reference(p), reference(p)])
+                .unwrap(),
+        );
+        let disjunction = positive(
+            kernel
+                .builtin(Builtin::Bool(BoolOp::Or), &[reference(p), reference(p)])
+                .unwrap(),
+        );
         let identity = kernel.identity(p).unwrap();
         let and_left = kernel.and_left(identity, conjunction).unwrap();
         let or_right = kernel.or_right(identity, disjunction).unwrap();
@@ -2755,32 +2925,32 @@ mod tests {
     }
 
     fn evaluate(kernel: &Kernel, proposition: Lit, atoms: &BTreeMap<Ref, bool>) -> bool {
-        let reference = reference(proposition);
-        let positive = if let Some(value) = kernel.arena().bool_value(reference) {
-            value
-        } else if let Some(op) = kernel.arena().op1(reference) {
-            let child = kernel.arena().children(reference).unwrap().next().unwrap();
-            match op {
-                Op1::Not => !evaluate(kernel, positive(child), atoms),
-            }
-        } else if let Some(op) = kernel.arena().op2(reference) {
-            let children: Vec<_> = kernel.arena().children(reference).unwrap().collect();
-            let left = evaluate(kernel, positive(children[0]), atoms);
-            let right = evaluate(kernel, positive(children[1]), atoms);
-            match op {
-                Op2::And => left && right,
-                Op2::Or => left || right,
-                Op2::Imp => !left || right,
-            }
-        } else {
-            *atoms
-                .get(&reference)
-                .expect("test valuation covers every atom")
-        };
+        let value = evaluate_term(kernel, reference(proposition), atoms);
         if proposition.is_positive() {
-            positive
+            value
         } else {
-            !positive
+            !value
         }
+    }
+
+    fn evaluate_term(kernel: &Kernel, term: Ref, atoms: &BTreeMap<Ref, bool>) -> bool {
+        if let Some(value) = kernel.arena().bool_value(term) {
+            return value;
+        }
+        if let Some((Builtin::Bool(op), children)) = kernel.arena().builtin_application(term) {
+            let left = evaluate_term(kernel, children[0], atoms);
+            if op == BoolOp::Not {
+                return !left;
+            }
+            let right = evaluate_term(kernel, children[1], atoms);
+            return match op {
+                BoolOp::And => left && right,
+                BoolOp::Or => left || right,
+                BoolOp::Imp => !left || right,
+                BoolOp::Iff => left == right,
+                BoolOp::Not => unreachable!(),
+            };
+        }
+        *atoms.get(&term).expect("test valuation covers every atom")
     }
 }
