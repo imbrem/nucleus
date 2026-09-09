@@ -1,17 +1,17 @@
 import Nucleus.Classical.Tagged.Runtime.SemanticWire
 
 /-!
-# Classical arena V3 semantic wire
+# Classical semantic token wire
 
-V3 stores each formula as a flat preorder token array. Tokens contain only
+The wire stores each formula as a flat preorder token array. Tokens contain only
 constructor, polarity, and atom or arity. Allocator metadata is absent.
 -/
 
-namespace Nucleus.Classical.Tagged.Runtime.V3
+namespace Nucleus.Classical.Tagged.Runtime.TokenWire
 
 open Nucleus.Classical.Tagged
 
-def typeName : String := "io.github.imbrem.nucleus.classicalArenaV3"
+def typeName : String := "io.github.imbrem.nucleus.classicalArena"
 def maxSequents : Nat := 500000
 def maxTokens : Nat := 1000000
 
@@ -81,4 +81,4 @@ theorem constructorCorrespondence
     api.represents representation (SemanticWire.decode wire) :=
   SemanticWire.rebuild?_sound api rebuilt
 
-end Nucleus.Classical.Tagged.Runtime.V3
+end Nucleus.Classical.Tagged.Runtime.TokenWire

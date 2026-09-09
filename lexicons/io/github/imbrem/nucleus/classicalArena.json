@@ -1,0 +1,69 @@
+{
+  "lexicon": 1,
+  "id": "io.github.imbrem.nucleus.classicalArena",
+  "defs": {
+    "main": {
+      "type": "object",
+      "description": "The current semantic classical syntax format. Each formula is a nonempty preorder token array; child arities must consume exactly that array. The total token count across all sequents is at most 1000000. Only the declared fields are accepted. No allocator state or version dispatch is supported.",
+      "required": ["sequents"],
+      "properties": {
+        "sequents": {
+          "type": "array",
+          "maxLength": 500000,
+          "items": {
+            "type": "ref",
+            "ref": "#sequent"
+          }
+        }
+      }
+    },
+    "sequent": {
+      "type": "object",
+      "required": ["premise", "conclusion"],
+      "properties": {
+        "premise": {
+          "type": "array",
+          "minLength": 1,
+          "maxLength": 1000000,
+          "items": {
+            "type": "ref",
+            "ref": "#token"
+          }
+        },
+        "conclusion": {
+          "type": "array",
+          "minLength": 1,
+          "maxLength": 1000000,
+          "items": {
+            "type": "ref",
+            "ref": "#token"
+          }
+        }
+      }
+    },
+    "token": {
+      "type": "object",
+      "description": "Exactly three fields: kind, negative, and atom for a literal or arity for a connective. Atom and arity are mutually exclusive. Arity counts immediate children, not all descendant tokens. Runtime representation bounds also apply to atoms.",
+      "required": ["kind", "negative"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["literal", "and", "or", "sat"]
+        },
+        "negative": {
+          "type": "boolean"
+        },
+        "atom": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "arity": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        }
+      }
+    }
+  }
+}

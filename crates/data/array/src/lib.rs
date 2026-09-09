@@ -1,4 +1,8 @@
-//! Flat O256 sequences in Iroh-compatible wire form.
+//! Opaque word array tables and flat O256 hash sequences.
+//!
+//! [`table`] supplies reusable length-delimited arrays with a generic header
+//! codec, copy-on-write, and intrusive free rings. [`HashSeq`] is the separate
+//! Iroh-compatible wire sequence described below.
 //!
 //! Elements are concatenated without a header. Order and duplicates matter.
 //! This crate defines representation, not addressing.
@@ -21,5 +25,6 @@
 #![deny(unsafe_code)]
 
 mod seq;
+pub mod table;
 
 pub use seq::{HashSeq, HashSeqRef, WIDTH, WidthError};
